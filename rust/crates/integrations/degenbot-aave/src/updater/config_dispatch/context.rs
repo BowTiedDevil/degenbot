@@ -445,8 +445,7 @@ impl<'span> ChunkContext<'span> {
         let gho_asset = self.gho_asset()?;
         let underlying = gho_asset
             .as_ref()
-            .and_then(|g| g.gho_token_address.as_deref())
-            .and_then(|s| s.parse().ok());
+            .and_then(|g| g.gho_token_address.parse().ok());
         let gho_vtoken = gho_asset
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())

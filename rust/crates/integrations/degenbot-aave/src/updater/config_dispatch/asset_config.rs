@@ -436,7 +436,7 @@ pub(super) async fn resolve_reserve_initialized(
         //    against `gho_asset.v_token_address`, resolved via the FK).
         gho_link_token_id: gho_asset
             .as_ref()
-            .filter(|g| g.gho_token_address.as_deref() == Some(underlying_str.as_str()))
+            .filter(|g| g.gho_token_address == underlying_str)
             .map(|g| g.id),
     })
 }

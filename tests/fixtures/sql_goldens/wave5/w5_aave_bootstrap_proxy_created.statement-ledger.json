@@ -22,9 +22,9 @@
       "sql": "SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.a_token_id WHERE m.chain_id = ? UNION SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.v_token_id WHERE m.chain_id = ?"
     },
     {
-      "arg_count": 1,
+      "arg_count": 0,
       "rows_changed": 0,
-      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
     },
     {
       "arg_count": 2,
@@ -32,9 +32,9 @@
       "sql": "SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.a_token_id WHERE m.chain_id = ? UNION SELECT DISTINCT et.address FROM aave_v3_assets a JOIN aave_v3_markets m ON m.id = a.market_id JOIN erc20_tokens et ON et.id = a.v_token_id WHERE m.chain_id = ?"
     },
     {
-      "arg_count": 1,
+      "arg_count": 0,
       "rows_changed": 0,
-      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
     },
     {
       "arg_count": 0,
@@ -52,9 +52,9 @@
       "sql": "SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?"
     },
     {
-      "arg_count": 1,
+      "arg_count": 0,
       "rows_changed": 0,
-      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.address, et_v.address FROM aave_gho_tokens g JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id WHERE et_gho.chain = ?"
+      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
     },
     {
       "arg_count": 7,

@@ -18,8 +18,15 @@
 //! no checksum normalization, so byte-exact parity regardless of stored case);
 //! the pure core keys `price_map` by the same stored strings (all sourced from
 //! the single `erc20_tokens.address` column), so internal consistency holds.
+//!
+//! A well-formed row always resolves the token relationships these reads join:
+//! `aave_v3_assets.underlying_asset_id` and `aave_gho_tokens.token_id` are
+//! `NOT NULL` FKs, so an unresolvable underlying-token join means the database
+//! lost a row the asset depends on. Those reads return [`DbError::MissingRow`]
+//! naming the user / asset / chain instead of substituting a placeholder
+//! address or dropping the row from the result.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use alloy::primitives::U256;
 use rusqlite::{params, Connection};
@@ -27,12 +34,6 @@ use rusqlite::{params, Connection};
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
 use crate::rows::decode::decode_u256;
-
-/// The EIP-55 checksummed zero address (the Python fallback when an asset's
-/// underlying token relationship is absent — `underlying_asset_id` is `NOT
-/// NULL` with a `FK` so this never triggers on a well-formed DB, but the
-/// Python `_convert_*` path emits it defensively; mirrored here for parity).
-const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 /// Flat user record (mirrors Python `UserRecord`).
 /// `isolation_debt_ceiling` is materialized from the LEFT JOIN
@@ -82,31 +83,35 @@ pub struct AaveDebtPositionRecord {
 
 /// The GHO-token row for a market, with the underlying GHO token + vToken
 /// addresses resolved via the `erc20_tokens` FK joins (`fetch_aave_gho_asset`).
-/// Carries the GHO token's own row plus its `token`/`v_token` relationships
-/// resolved.
 ///
 /// `v_gho_discount_token` is the stkAAVE address (the discount-token that
 /// stkAAVE-`Transfer`s are fetched against in `fetch_stk_aave_events`);
 /// `v_gho_discount_rate_strategy` is the discount-rate-strategy contract (no
 /// fetch target itself — only the `DISCOUNT_RATE_STRATEGY_UPDATED` event reads
-/// it). `gho_token_address` / `v_token_address` are the resolved checksummed
-/// `erc20_tokens.address` strings (the FK table).
+/// it).
+///
+/// The underlying GHO token IS the row's chain-unique identity (`token_id` is a
+/// `NOT NULL` FK), so [`Self::gho_token_address`] is a plain address: a GHO row
+/// whose token join does not resolve is a read failure, never a row without an
+/// address. The vToken relationship is genuinely optional — a GHO reserve that
+/// has not emitted `ReserveInitialized` yet has none — so both vToken fields are
+/// `None` together, and a set `v_token_id` that does not resolve is an error
+/// rather than a `None` address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AaveGhoAsset {
     /// `aave_gho_tokens.id` (the row id; the chain-unique GHO token row).
     pub id: i64,
     /// The underlying GHO erc20 token id (`aave_gho_tokens.token_id`).
     pub token_id: i64,
-    /// The GHO variable-debt token id (`aave_gho_tokens.v_token_id`; `None` if
-    /// the GHO token row has no vToken FK — shouldn't happen on a
-    /// well-formed DB, but mirrored for parity).
+    /// The GHO variable-debt token id (`aave_gho_tokens.v_token_id`); `None`
+    /// until the GHO reserve is initialized (the `ReserveInitialized` apply
+    /// links it).
     pub v_token_id: Option<i64>,
     /// The checksummed underlying GHO token address (`erc20_tokens.address`
-    /// joined via `token_id`). `None` if the FK is missing.
-    pub gho_token_address: Option<String>,
+    /// joined via `token_id`).
+    pub gho_token_address: String,
     /// The checksummed GHO variable-debt token address (`erc20_tokens.address`
-    /// joined via `v_token_id`). `None` if `v_token_id` is `None` or the FK is
-    /// missing.
+    /// joined via `v_token_id`); `None` exactly when `v_token_id` is `None`.
     pub v_token_address: Option<String>,
     /// The checksummed discount-rate-strategy contract address (or `None` if
     /// not set).
@@ -115,6 +120,14 @@ pub struct AaveGhoAsset {
     /// market has no GHO discount token). `fetch_stk_aave_events` skips when
     /// this is `None`.
     pub v_gho_discount_token: Option<String>,
+}
+
+/// Render a row's chain id for a read-failure message.
+///
+/// `None` is the joined market row itself being absent — the message says so
+/// rather than filling in a sentinel chain.
+fn chain_context(chain_id: Option<i64>) -> String {
+    chain_id.map_or_else(|| "unresolved".to_owned(), |id| id.to_string())
 }
 
 impl DegenbotDb {
@@ -187,38 +200,51 @@ impl DegenbotDb {
     /// `get_collateral_positions`: joinedloads `asset.underlying_token`,
     /// `asset.asset_config`, `asset.e_mode_category`).
     ///
+    /// The underlying-token and market joins are `LEFT JOIN`s so a position
+    /// whose `underlying_asset_id` no longer resolves is reported as a
+    /// [`DbError::MissingRow`] carrying the user, the asset, and the chain. An
+    /// inner join would drop the position from the result and a `COALESCE`
+    /// would hand back an address no token occupies; both hide the corruption.
+    ///
+    /// The `asset_config` columns keep their `COALESCE … 0`: `ltv` /
+    /// `liquidation_threshold` are `NOT NULL` on their own row, and an asset
+    /// with no config row yet carries exactly those zero defaults (the
+    /// `get_or_create_asset_config` seed) — the protocol's unconfigured value,
+    /// not an address.
+    ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a `SQLite` query / `U256` decode failure.
+    /// Returns [`DbError::Sqlite`] on a query failure, [`DbError::MissingRow`]
+    /// when the position's underlying token (or its asset's market) has no row,
+    /// or [`DbError::Decode`] on a `U256` decode failure.
     pub fn fetch_aave_collateral_positions(
         &self,
         user_id: i64,
     ) -> Result<Vec<AaveCollateralPositionRecord>, DbError> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            // erc20_tokens joined INNER (underlying_asset_id NOT NULL + FK) —
-            // always present; COALESCE to the zero addr matches the Python
-            // defensive fallback for parity.
             "SELECT cp.asset_id, cp.balance, \
-                    COALESCE(et.address, ?2) AS underlying_address, \
+                    et.address AS underlying_address, \
                     et.symbol AS underlying_symbol, \
                     a.liquidity_index, a.e_mode_category_id, \
                     COALESCE(ac.liquidation_threshold, 0) AS asset_lt, \
                     COALESCE(ac.ltv, 0) AS asset_ltv, \
                     emc.liquidation_threshold AS emode_lt, \
-                    emc.ltv AS emode_ltv \
+                    emc.ltv AS emode_ltv, \
+                    a.underlying_asset_id, m.chain_id \
              FROM aave_v3_collateral_positions cp \
              JOIN aave_v3_assets a ON a.id = cp.asset_id \
              LEFT JOIN erc20_tokens et ON et.id = a.underlying_asset_id \
              LEFT JOIN aave_v3_asset_configs ac ON ac.asset_id = a.id \
              LEFT JOIN aave_v3_emode_categories emc ON emc.id = a.e_mode_category_id \
+             LEFT JOIN aave_v3_markets m ON m.id = a.market_id \
              WHERE cp.user_id = ?1",
         )?;
-        let rows = stmt.query_map(params![user_id, ZERO_ADDRESS], |r| {
+        let rows = stmt.query_map(params![user_id], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, Option<i64>>(5)?,
@@ -226,6 +252,8 @@ impl DegenbotDb {
                 r.get::<_, i64>(7)?,
                 r.get::<_, Option<i64>>(8)?,
                 r.get::<_, Option<i64>>(9)?,
+                r.get::<_, i64>(10)?,
+                r.get::<_, Option<i64>>(11)?,
             ))
         })?;
         let mut out = Vec::new();
@@ -241,7 +269,17 @@ impl DegenbotDb {
                 asset_ltv,
                 emode_lt,
                 emode_ltv,
+                underlying_asset_id,
+                chain_id,
             ) = row?;
+            let Some(underlying_address) = underlying_address else {
+                return Err(DbError::MissingRow(format!(
+                    "aave_v3_collateral_positions user_id={user_id} asset_id={asset_id} \
+                     underlying_asset_id={underlying_asset_id} \
+                     (chain_id={}: underlying erc20_tokens row missing)",
+                    chain_context(chain_id),
+                )));
+            };
             out.push(AaveCollateralPositionRecord {
                 asset_id,
                 balance: decode_u256(&balance_str)?,
@@ -261,9 +299,16 @@ impl DegenbotDb {
     /// Debt positions for `user_id` (mirrors Python `get_debt_positions`:
     /// joinedloads `asset.underlying_token`, `asset.e_mode_category`).
     ///
+    /// The same required-relationship contract as
+    /// [`Self::fetch_aave_collateral_positions`]: the underlying-token and
+    /// market joins are `LEFT JOIN`s and an unresolvable underlying-token row is
+    /// a [`DbError::MissingRow`], never a dropped position or an empty address.
+    ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a `SQLite` query / `U256` decode failure.
+    /// Returns [`DbError::Sqlite`] on a query failure, [`DbError::MissingRow`]
+    /// when the position's underlying token (or its asset's market) has no row,
+    /// or [`DbError::Decode`] on a `U256` decode failure.
     pub fn fetch_aave_debt_positions(
         &self,
         user_id: i64,
@@ -271,22 +316,26 @@ impl DegenbotDb {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT dp.asset_id, dp.balance, \
-                    COALESCE(et.address, ?2) AS underlying_address, \
+                    et.address AS underlying_address, \
                     et.symbol AS underlying_symbol, \
-                    a.borrow_index, a.e_mode_category_id \
+                    a.borrow_index, a.e_mode_category_id, \
+                    a.underlying_asset_id, m.chain_id \
              FROM aave_v3_debt_positions dp \
              JOIN aave_v3_assets a ON a.id = dp.asset_id \
              LEFT JOIN erc20_tokens et ON et.id = a.underlying_asset_id \
+             LEFT JOIN aave_v3_markets m ON m.id = a.market_id \
              WHERE dp.user_id = ?1",
         )?;
-        let rows = stmt.query_map(params![user_id, ZERO_ADDRESS], |r| {
+        let rows = stmt.query_map(params![user_id], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, Option<i64>>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, Option<i64>>(7)?,
             ))
         })?;
         let mut out = Vec::new();
@@ -298,7 +347,17 @@ impl DegenbotDb {
                 underlying_symbol,
                 borrow_idx_str,
                 emode_cat_id,
+                underlying_asset_id,
+                chain_id,
             ) = row?;
+            let Some(underlying_address) = underlying_address else {
+                return Err(DbError::MissingRow(format!(
+                    "aave_v3_debt_positions user_id={user_id} asset_id={asset_id} \
+                     underlying_asset_id={underlying_asset_id} \
+                     (chain_id={}: underlying erc20_tokens row missing)",
+                    chain_context(chain_id),
+                )));
+            };
             out.push(AaveDebtPositionRecord {
                 asset_id,
                 balance: decode_u256(&balance_str)?,
@@ -465,27 +524,45 @@ impl DegenbotDb {
         }
     }
 
-    /// The set of distinct underlying-token addresses for `market_id` (mirrors
-    /// Python `get_asset_addresses`). Returns a `Vec` (deduplicated via
-    /// `SELECT DISTINCT`); the seam wraps into a Python `set`.
+    /// The distinct underlying-token addresses of `market_id`, deduplicated by
+    /// address and sorted so the read is deterministic.
+    ///
+    /// `aave_v3_assets.underlying_asset_id` is a `NOT NULL` FK, so an asset whose
+    /// underlying-token row does not resolve is a [`DbError::MissingRow`] naming
+    /// the market and the asset: omitting it silently would report the market as
+    /// having no such collateral.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a `SQLite` query failure.
+    /// Returns [`DbError::Sqlite`] on a query failure, or [`DbError::MissingRow`]
+    /// when an asset in `market_id` has no underlying-token row.
     pub fn fetch_aave_asset_addresses(&self, market_id: i64) -> Result<Vec<String>, DbError> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT et.address \
+            "SELECT a.id, a.underlying_asset_id, et.address \
              FROM aave_v3_assets a \
-             JOIN erc20_tokens et ON et.id = a.underlying_asset_id \
+             LEFT JOIN erc20_tokens et ON et.id = a.underlying_asset_id \
              WHERE a.market_id = ?1",
         )?;
-        let rows = stmt.query_map(params![market_id], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
+        let rows = stmt.query_map(params![market_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut out = BTreeSet::new();
         for row in rows {
-            out.push(row?);
+            let (asset_id, underlying_asset_id, address) = row?;
+            let Some(address) = address else {
+                return Err(DbError::MissingRow(format!(
+                    "aave_v3_assets id={asset_id} underlying_asset_id={underlying_asset_id} \
+                     (asset address set for market_id={market_id}: underlying erc20_tokens row missing)"
+                )));
+            };
+            out.insert(address);
         }
-        Ok(out)
+        Ok(out.into_iter().collect())
     }
 
     // ── the orchestrator's market-bootstrap substrate ─────────
@@ -690,7 +767,9 @@ impl DegenbotDb {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a `SQLite` query failure.
+    /// Returns [`DbError::Sqlite`] on a query failure, or [`DbError::MissingRow`]
+    /// when a GHO row's underlying token (or a vToken it points at) has no
+    /// `erc20_tokens` row.
     pub fn fetch_aave_gho_asset(&self, chain_id: i64) -> Result<Option<AaveGhoAsset>, DbError> {
         Self::fetch_aave_gho_asset_on_conn(&self.lock(), chain_id)
     }
@@ -698,9 +777,19 @@ impl DegenbotDb {
     /// The `&Connection`-bound variant (for the chunk-loop's single
     /// `Transaction` — the chunk-atomicity invariant).
     ///
+    /// The chain filter runs here rather than in the query, because a GHO row's
+    /// chain is a property of its underlying `erc20_tokens` row: `WHERE
+    /// et_gho.chain = ?1` would silently drop a row whose `token_id` no longer
+    /// resolves, which is exactly the corruption this read has to report. Every
+    /// row is scanned instead (the table holds one GHO token per chain) and each
+    /// one must resolve, so `None` keeps its one meaning: this chain has no GHO
+    /// token at all.
+    ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a `SQLite` query failure.
+    /// Returns [`DbError::Sqlite`] on a query failure, or [`DbError::MissingRow`]
+    /// when a GHO row's underlying token — or a vToken the row points at — has
+    /// no `erc20_tokens` row.
     pub fn fetch_aave_gho_asset_on_conn(
         conn: &rusqlite::Connection,
         chain_id: i64,
@@ -708,23 +797,58 @@ impl DegenbotDb {
         let mut stmt = conn.prepare(
             "SELECT g.id, g.token_id, g.v_token_id, \
                     g.v_gho_discount_rate_strategy, g.v_gho_discount_token, \
-                    et_gho.address, et_v.address \
+                    et_gho.chain, et_gho.address, et_v.address \
              FROM aave_gho_tokens g \
-             JOIN erc20_tokens et_gho ON et_gho.id = g.token_id \
-             LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id \
-             WHERE et_gho.chain = ?1",
+             LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id \
+             LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id",
         )?;
-        let mut rows = stmt.query(params![chain_id])?;
-        match rows.next()? {
-            Some(row) => {
-                let id: i64 = row.get(0)?;
-                let token_id: i64 = row.get(1)?;
-                let v_token_id: Option<i64> = row.get(2)?;
-                let v_gho_discount_rate_strategy: Option<String> = row.get(3)?;
-                let v_gho_discount_token: Option<String> = row.get(4)?;
-                let gho_token_address: Option<String> = row.get(5)?;
-                let v_token_address: Option<String> = row.get(6)?;
-                Ok(Some(AaveGhoAsset {
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<i64>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<String>>(7)?,
+            ))
+        })?;
+        let mut chain_gho: Option<AaveGhoAsset> = None;
+        for row in rows {
+            let (
+                id,
+                token_id,
+                v_token_id,
+                v_gho_discount_rate_strategy,
+                v_gho_discount_token,
+                row_chain_id,
+                gho_address,
+                v_address,
+            ) = row?;
+            // A row without its underlying token has lost the only record of
+            // which chain it belongs to, so no chain-scoped answer — "this
+            // chain has no GHO" included — is truthful any more.
+            let Some(gho_token_address) = gho_address else {
+                return Err(DbError::MissingRow(format!(
+                    "aave_gho_tokens id={id} token_id={token_id} \
+                     (GHO token read for chain_id={chain_id}: underlying erc20_tokens row missing)"
+                )));
+            };
+            // `v_token_id` absent is the pre-`ReserveInitialized` cold-boot
+            // state; `v_token_id` present without its token is corruption.
+            let v_token_address = match (v_token_id, v_address) {
+                (None, _) => None,
+                (Some(_), Some(address)) => Some(address),
+                (Some(v_token_id), None) => {
+                    return Err(DbError::MissingRow(format!(
+                        "aave_gho_tokens id={id} v_token_id={v_token_id} \
+                         (GHO token read for chain_id={chain_id}: vToken erc20_tokens row missing)"
+                    )));
+                }
+            };
+            if row_chain_id == Some(chain_id) && chain_gho.is_none() {
+                chain_gho = Some(AaveGhoAsset {
                     id,
                     token_id,
                     v_token_id,
@@ -732,10 +856,10 @@ impl DegenbotDb {
                     v_token_address,
                     v_gho_discount_rate_strategy,
                     v_gho_discount_token,
-                }))
+                });
             }
-            None => Ok(None),
         }
+        Ok(chain_gho)
     }
 
     /// All aToken + vToken addresses for `chain_id` (mirrors Python
@@ -807,6 +931,8 @@ impl DegenbotDb {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use crate::connection::DegenbotDb;
+    use crate::error::DbError;
+    use alloy::primitives::U256;
     use rusqlite::params;
     use std::path::Path;
 
@@ -888,6 +1014,55 @@ mod tests {
         db
     }
 
+    /// Lift foreign-key enforcement on the write connection so a test can model
+    /// a row whose referenced token is gone — a state no writer produces, but a
+    /// restored or hand-edited database can hold.
+    fn allow_dangling_foreign_keys(db: &DegenbotDb) {
+        db.lock().execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+    }
+
+    /// Seed one `aave_v3_users` row (`id=1`, market 1) outside isolation mode.
+    fn seed_user(db: &DegenbotDb) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_users \
+                (id, market_id, address, e_mode, gho_discount, isolation_mode_debt) \
+             VALUES (1, 1, '0xuser', 0, 0, '0')",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// Seed one `aave_v3_assets` row (`id`, market 1) whose `underlying_asset_id`
+    /// is `underlying_asset_id` — which may name an absent `erc20_tokens` row.
+    fn seed_asset_row(db: &DegenbotDb, id: i64, underlying_asset_id: i64) {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_assets \
+                (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                 v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                 borrow_index, borrow_rate) \
+             VALUES (?1, 1, ?2, 2, 1, 3, 1, '0', '0', '1', '0')",
+            params![id, underlying_asset_id],
+        )
+        .unwrap();
+    }
+
+    /// Seed one position row (`id`, `user_id=1`, `asset_id`, balance `42`) in
+    /// `position_table` — `aave_v3_collateral_positions` /
+    /// `aave_v3_debt_positions`, which share this column shape.
+    fn seed_position(db: &DegenbotDb, position_table: &str, id: i64, asset_id: i64) {
+        let conn = db.lock();
+        conn.execute(
+            &format!(
+                "INSERT INTO {position_table} (id, user_id, asset_id, balance) \
+                 VALUES (?1, 1, ?2, '42')"
+            ),
+            params![id, asset_id],
+        )
+        .unwrap();
+    }
+
     #[test]
     fn fetch_aave_market_row_reads_seeded_market() {
         let db = db_with_market_and_assets();
@@ -949,7 +1124,7 @@ mod tests {
         assert_eq!(gho.id, 1);
         assert_eq!(gho.token_id, 1, "underlying GHO token id");
         assert_eq!(gho.v_token_id, Some(3), "vToken id");
-        assert_eq!(gho.gho_token_address.as_deref(), Some("0xu1"));
+        assert_eq!(gho.gho_token_address, "0xu1");
         assert_eq!(gho.v_token_address.as_deref(), Some("0xv1"));
         assert_eq!(
             gho.v_gho_discount_rate_strategy.as_deref(),
@@ -1075,5 +1250,170 @@ mod tests {
         let db = db_with_market_and_assets();
         // chain 2 has no assets → empty.
         assert!(db.fetch_aave_scaled_token_addresses(2).unwrap().is_empty());
+    }
+
+    /// A position whose asset's underlying token row is absent is corruption,
+    /// not a position without an address: the collateral read refuses it with
+    /// the user / asset / chain that led there.
+    #[test]
+    fn fetch_aave_collateral_positions_missing_underlying_token_errors() {
+        let db = db_with_market_and_assets();
+        allow_dangling_foreign_keys(&db);
+        seed_asset_row(&db, 2, 999); // underlying 999 has no erc20_tokens row
+        seed_user(&db);
+        seed_position(&db, "aave_v3_collateral_positions", 1, 2);
+
+        let err = db.fetch_aave_collateral_positions(1).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m)
+                if m.contains("aave_v3_collateral_positions user_id=1 asset_id=2")
+                    && m.contains("underlying_asset_id=999")
+                    && m.contains("chain_id=1")),
+            "got {err:?}"
+        );
+    }
+
+    /// The debt read applies the same contract as the collateral read.
+    #[test]
+    fn fetch_aave_debt_positions_missing_underlying_token_errors() {
+        let db = db_with_market_and_assets();
+        allow_dangling_foreign_keys(&db);
+        seed_asset_row(&db, 2, 999); // underlying 999 has no erc20_tokens row
+        seed_user(&db);
+        seed_position(&db, "aave_v3_debt_positions", 1, 2);
+
+        let err = db.fetch_aave_debt_positions(1).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m)
+                if m.contains("aave_v3_debt_positions user_id=1 asset_id=2")
+                    && m.contains("underlying_asset_id=999")
+                    && m.contains("chain_id=1")),
+            "got {err:?}"
+        );
+    }
+
+    /// A GHO row whose underlying `token_id` names no `erc20_tokens` row has lost
+    /// the only record of its chain, so the chain-scoped read must not report
+    /// `None` ("this chain has no GHO").
+    #[test]
+    fn fetch_aave_gho_asset_missing_underlying_token_errors() {
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        allow_dangling_foreign_keys(&db);
+        db.lock()
+            .execute(
+                "INSERT INTO aave_gho_tokens \
+                    (id, token_id, v_token_id, v_gho_discount_rate_strategy, \
+                     v_gho_discount_token) \
+                 VALUES (1, 999, NULL, NULL, NULL)",
+                [],
+            )
+            .unwrap();
+
+        let err = db.fetch_aave_gho_asset(1).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m)
+                if m.contains("aave_gho_tokens id=1")
+                    && m.contains("token_id=999")
+                    && m.contains("chain_id=1")),
+            "got {err:?}"
+        );
+    }
+
+    /// `v_token_id` absent is the pre-`ReserveInitialized` cold-boot state; a
+    /// `v_token_id` whose token row is missing is corruption, and must not read
+    /// back as the same `None` address the cold-boot state produces.
+    #[test]
+    fn fetch_aave_gho_asset_broken_v_token_relation_errors() {
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        allow_dangling_foreign_keys(&db);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xgho')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_gho_tokens \
+                    (id, token_id, v_token_id, v_gho_discount_rate_strategy, \
+                     v_gho_discount_token) \
+                 VALUES (1, 1, 999, NULL, NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let err = db.fetch_aave_gho_asset(1).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m)
+                if m.contains("aave_gho_tokens id=1") && m.contains("v_token_id=999")),
+            "got {err:?}"
+        );
+    }
+
+    /// The retained reads still return the joined values for a well-formed row:
+    /// one collateral + one debt position, the asset's `erc20_tokens.address`
+    /// verbatim, and the zero `asset_config` defaults an unconfigured asset
+    /// carries.
+    #[test]
+    fn fetch_aave_positions_read_seeded_rows() {
+        let db = db_with_market_and_assets();
+        seed_user(&db);
+        seed_position(&db, "aave_v3_collateral_positions", 1, 1);
+        seed_position(&db, "aave_v3_debt_positions", 1, 1);
+
+        let collateral = db.fetch_aave_collateral_positions(1).unwrap();
+        assert_eq!(collateral.len(), 1, "one collateral position");
+        let c = &collateral[0];
+        assert_eq!(c.asset_id, 1);
+        assert_eq!(c.balance, U256::from(42));
+        assert_eq!(
+            c.underlying_address, "0xu1",
+            "the joined erc20_tokens.address, verbatim"
+        );
+        assert_eq!(c.underlying_symbol, None);
+        assert_eq!(c.asset_lt, 0, "no asset_config row → the unconfigured zero");
+        assert_eq!(c.asset_ltv, 0);
+        assert_eq!(c.emode_lt, None);
+        assert_eq!(c.emode_ltv, None);
+
+        let debt = db.fetch_aave_debt_positions(1).unwrap();
+        assert_eq!(debt.len(), 1, "one debt position");
+        let d = &debt[0];
+        assert_eq!(d.asset_id, 1);
+        assert_eq!(d.balance, U256::from(42));
+        assert_eq!(d.underlying_address, "0xu1");
+        assert_eq!(d.underlying_symbol, None);
+        assert_eq!(d.borrow_index, U256::from(1));
+    }
+
+    /// The market's address set still reads the joined underlying addresses for
+    /// a well-formed asset, and an empty market is still an empty set.
+    #[test]
+    fn fetch_aave_asset_addresses_reads_seeded_market() {
+        let db = db_with_market_and_assets();
+        assert_eq!(
+            db.fetch_aave_asset_addresses(1).unwrap(),
+            vec!["0xu1".to_owned()]
+        );
+        assert!(db.fetch_aave_asset_addresses(2).unwrap().is_empty());
+    }
+
+    /// An asset whose underlying token row is gone must not vanish from the
+    /// market's address set: the read names the market and the asset instead.
+    #[test]
+    fn fetch_aave_asset_addresses_missing_underlying_token_errors() {
+        let db = db_with_market_and_assets();
+        allow_dangling_foreign_keys(&db);
+        seed_asset_row(&db, 2, 999); // underlying 999 has no erc20_tokens row
+
+        let err = db.fetch_aave_asset_addresses(1).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m)
+                if m.contains("aave_v3_assets id=2")
+                    && m.contains("underlying_asset_id=999")
+                    && m.contains("market_id=1")),
+            "got {err:?}"
+        );
     }
 }
