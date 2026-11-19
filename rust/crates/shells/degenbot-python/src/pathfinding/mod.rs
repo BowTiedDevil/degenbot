@@ -26,10 +26,12 @@ use degenbot_pathfinding::directions::resolve_directions as core_resolve_directi
 use degenbot_pathfinding::directions::CurrencyBridge as CoreCurrencyBridge;
 use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
 use degenbot_pathfinding::directions::DirectionToken as CoreDirectionToken;
-use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec};
+use degenbot_pathfinding::graph::{
+    OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec, MAX_HOP_DEPTH,
+};
 use degenbot_pools::RegisteredPoolFamily;
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
-use pyo3::types::{PyDict, PyList, PySet, PyTuple};
+use pyo3::types::{PyDict, PyInt, PyList, PySet, PyTuple};
 use std::collections::{HashMap, HashSet};
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use std::path::Path;
@@ -558,6 +560,29 @@ impl PathGraph {
     }
 }
 
+/// Project a caller-supplied hop bound onto the core's depth domain.
+///
+/// `None` is the sole unlimited representation: the core carries a bound as a
+/// hop count in `0..=MAX_HOP_DEPTH` (the width its remaining-budget arithmetic
+/// works in), so every other spelling is refused here — before a graph is
+/// built — instead of being reinterpreted inside the walk.
+///
+/// The bound arrives as a `PyInt` rather than a fixed-width integer because
+/// Python integers are arbitrary precision: keeping the range check here makes
+/// a value far past the ceiling the same deliberate error as one just past it,
+/// instead of an overflow raised inside the extractor. A non-integer bound is
+/// still refused by the extractor itself, as a `TypeError`.
+fn project_max_depth(raw: Option<Bound<'_, PyInt>>) -> PyResult<Option<u32>> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    value.extract::<u32>().map(Some).map_err(|_| {
+        PyValueError::new_err(format!(
+            "max_depth must be None (unlimited) or a hop count in 0..={MAX_HOP_DEPTH}; got {value}"
+        ))
+    })
+}
+
 /// Find arbitrage paths (cycles) through a liquidity-pool graph.
 ///
 /// This is the Rust-backed DFS that replaces the Python ``networkx``-based
@@ -570,7 +595,9 @@ impl PathGraph {
 ///     start_token_id: The token ID where the search begins.
 ///     end_token_id: The token ID the path must return to.
 ///     min_depth: Minimum number of hops in a completed path.
-///     max_depth: Maximum number of hops, or ``None`` for no limit.
+///     max_depth: Maximum number of hops, or ``None`` for no limit (the only
+///         unlimited spelling). A bound outside ``0..=4294967295`` — negative
+///         bounds included — is refused before any graph is built.
 ///     include_reverse: If ``True``, yield each found path again reversed.
 ///     pool_type_per_depth: Optional per-depth allowed pool kinds. A list where
 ///         each element is ``None`` (all kinds allowed) or a set of
@@ -579,7 +606,17 @@ impl PathGraph {
 /// Returns:
 ///     A ``PathIterator`` — iterate it (``for path in iter: ...``) to lazily
 ///     yield paths, each a list of ``(pool_id, pool_kind)`` tuples.
-#[must_use]
+///
+/// Raises:
+///     ValueError: when ``max_depth`` is negative or above the hop ceiling
+///         ``4294967295``. ``None`` (unlimited) and ``0`` are both accepted;
+///         ``0`` admits no completed path.
+///
+/// # Errors
+///
+/// Returns `PyValueError` when `max_depth` is negative or wider than
+/// `MAX_HOP_DEPTH`. `None` (unlimited) and `0` are both accepted; `0` admits no
+/// completed path.
 #[expect(clippy::implicit_hasher)]
 #[pyfunction]
 #[pyo3(signature = (
@@ -596,11 +633,12 @@ pub fn find_paths_rust(
     start_token_id: u64,
     end_token_id: u64,
     min_depth: usize,
-    max_depth: Option<usize>,
+    max_depth: Option<Bound<'_, PyInt>>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<HashSet<PoolKind>>>>,
-) -> PathIterator {
-    PathIterator {
+) -> PyResult<PathIterator> {
+    let max_depth = project_max_depth(max_depth)?;
+    Ok(PathIterator {
         finder: build_owned_finder(
             edges,
             start_token_id,
@@ -613,7 +651,7 @@ pub fn find_paths_rust(
         buffer: Vec::new(),
         batch_lens: Vec::new(),
         pool_keys: Vec::new(),
-    }
+    })
 }
 
 /// Create a batched **async** iterator over the lazy arbitrage DFS.
@@ -630,7 +668,9 @@ pub fn find_paths_rust(
 ///     start_token_id: The token ID where the search begins.
 ///     end_token_id: The token ID the path must return to.
 ///     min_depth: Minimum number of hops in a completed path.
-///     max_depth: Maximum number of hops, or `None` for no limit.
+///     max_depth: Maximum number of hops, or `None` for no limit (the only
+///         unlimited spelling). A bound outside `0..=4294967295` — negative
+///         bounds included — is refused before any graph is built.
 ///     include_reverse: If `True`, yield each found path again reversed.
 ///     pool_type_per_depth: Optional per-depth allowed pool kinds.
 ///     batch_size: Maximum number of paths per `__anext__` batch
@@ -640,7 +680,16 @@ pub fn find_paths_rust(
 ///     A `PathBatchIterator` — `async for batch in iter:` yields
 ///     `list[list[tuple[int, int]]]`; exhaustion raises
 ///     `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
-#[must_use]
+///
+/// Raises:
+///     ValueError: when ``max_depth`` is negative or above the hop ceiling
+///         ``4294967295``, exactly as [`find_paths_rust`] refuses it (the two
+///         seams share one projection).
+///
+/// # Errors
+///
+/// Returns `PyValueError` when `max_depth` is negative or wider than
+/// `MAX_HOP_DEPTH`, through the projection [`find_paths_rust`] applies.
 #[expect(clippy::implicit_hasher)]
 #[expect(clippy::too_many_arguments)] // one parameter per caller-supplied pathfinding input
 #[pyfunction]
@@ -659,11 +708,12 @@ pub fn find_paths_async_rust(
     start_token_id: u64,
     end_token_id: u64,
     min_depth: usize,
-    max_depth: Option<usize>,
+    max_depth: Option<Bound<'_, PyInt>>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<HashSet<PoolKind>>>>,
     batch_size: usize,
-) -> PathBatchIterator {
+) -> PyResult<PathBatchIterator> {
+    let max_depth = project_max_depth(max_depth)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let finder = build_owned_finder(
         edges,
@@ -675,7 +725,7 @@ pub fn find_paths_async_rust(
         pool_type_per_depth,
     )
     .with_cancel(Arc::clone(&cancel));
-    PathBatchIterator::new(finder, cancel, batch_size)
+    Ok(PathBatchIterator::new(finder, cancel, batch_size))
 }
 
 /// Parse the flat int tuples + optional per-depth kind filter, build the
@@ -688,7 +738,7 @@ fn build_owned_finder(
     start_token_id: u64,
     end_token_id: u64,
     min_depth: usize,
-    max_depth: Option<usize>,
+    max_depth: Option<u32>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<HashSet<PoolKind>>>>,
 ) -> OwnedPathFinder {

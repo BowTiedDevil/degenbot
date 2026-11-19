@@ -30,9 +30,9 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
 
 use super::{
-    transition, CrawlAbort, CrawlConfig, CrawlController, CrawlEvent, CrawlHandle, CrawlHost,
-    CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture, CrawlUnitSeat, RunPhase,
-    SeatHold, SnapshotArm,
+    transition, CrawlAbort, CrawlConfig, CrawlConfigError, CrawlController, CrawlEvent,
+    CrawlHandle, CrawlHost, CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture,
+    CrawlUnitSeat, RunPhase, SeatHold, SnapshotArm,
 };
 use crate::arb_engine::crawl::admission::{CrawlLedger, DiscoveredHop, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
@@ -466,6 +466,30 @@ fn config(window: usize, batch: usize) -> CrawlConfig {
         snapshot_block: None,
         state_block: Some(BLOCK),
     }
+}
+
+#[test]
+fn discovery_carries_a_bounded_hop_depth_unchanged() {
+    // The crawl's `max_depth` is a `usize` at the configuration boundary and a
+    // hop count in the search: an in-range bound converts without reinterpretation.
+    let mut bounded = config(2, 1);
+    bounded.max_depth = Some(usize::try_from(u32::MAX).unwrap());
+    assert_eq!(bounded.discovery().unwrap().max_depth, Some(u32::MAX));
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn discovery_refuses_a_hop_bound_above_the_pathfinding_domain() {
+    // A wider-than-`u32` bound cannot be honoured by the search's budget
+    // arithmetic, so it is refused here instead of being read as "no cutoff".
+    let mut wide = config(2, 1);
+    wide.max_depth = Some(usize::MAX);
+    let refused = wide.discovery().unwrap_err();
+    assert!(
+        matches!(refused, CrawlConfigError::MaxDepthOutOfRange { .. }),
+        "unexpected refusal: {refused}"
+    );
+    assert!(refused.to_string().contains("max_depth"), "{refused}");
 }
 
 /// The controller over a scripted source and an arbitrary seat — the seam every

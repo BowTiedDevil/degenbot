@@ -28,7 +28,7 @@ mod progress;
 mod spec;
 
 pub use progress::WalkerTally;
-pub use spec::SearchSpec;
+pub use spec::{SearchSpec, MAX_HOP_DEPTH};
 
 use expansion::WalkExpansion;
 use progress::ProgressReporter;
@@ -727,7 +727,11 @@ pub struct BundledSearch<B: Borrow<PathGraph>> {
     graph: B,
     end: Option<u32>,
     min_depth: usize,
-    effective_max_depth: Option<usize>,
+    /// The effective hop bound, `None` for unlimited. Carried as a `u32`
+    /// (see [`MAX_HOP_DEPTH`]) so remaining-budget subtraction is exact: an
+    /// out-of-range caller value is refused at its own boundary, never
+    /// reinterpreted here.
+    effective_max_depth: Option<u32>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
     node_valid_depths: Option<Vec<Vec<bool>>>,
@@ -1082,37 +1086,37 @@ impl<B: Borrow<PathGraph>> BundledSearch<B> {
                 }
             }
 
-            // Stop recursion if the walk has reached the maximum depth.
-            if let Some(effective_max_depth) = self.effective_max_depth {
-                if self.walk_bundles.len() >= effective_max_depth {
-                    // Backtrack.
-                    self.stack.pop();
-                    if let Some(bundle) = self.walk_bundles.pop() {
-                        self.bundle_use[bundle as usize] -= 1;
-                    }
-                    continue;
+            // Stop recursion if the walk has reached the maximum depth. The
+            // bound is a validated `u32` and the walk length is bounded by the
+            // graph's pool count — itself bounded at `u32::MAX` — so the
+            // conversion goes through the same architectural-bound helper as
+            // every other compact index here.
+            let walk_depth = expect_u32(self.walk_bundles.len(), "walk depth exceeds u32::MAX");
+            if self
+                .effective_max_depth
+                .is_some_and(|max_depth| walk_depth >= max_depth)
+            {
+                // Backtrack.
+                self.stack.pop();
+                if let Some(bundle) = self.walk_bundles.pop() {
+                    self.bundle_use[bundle as usize] -= 1;
                 }
+                continue;
             }
 
-            // Remaining hop budget for the step chosen at THIS node
-            // visit. A trail extended by one bundle must still reach the
-            // target within `effective_max_depth - len - 1` hops; the BFS
-            // hop distance is a lower bound on how many hops that takes,
-            // so the cutoff never discards a yieldable trail. The walk
-            // length is below `effective_max_depth` (guaranteed by the
-            // max-depth backtrack above), so the subtraction cannot
-            // underflow. (At the closing depth the remaining budget is 0,
-            // and since `end` is the unique token at hop distance 0, the
-            // prefix break admits only target-adjacent bundles.)
-            let remaining_budget = self.effective_max_depth.map(|effective_max_depth| {
-                // Saturating on purpose, NOT the panic helper:
-                // `effective_max_depth` derives from the caller's
-                // unchecked `max_depth` (reachable FFI input), so the
-                // subtraction can exceed `u32::MAX`. The clamp means
-                // "no cutoff" — the sorted prefix break below never
-                // discards a yieldable trail.
-                u32::try_from(effective_max_depth - self.walk_bundles.len() - 1).unwrap_or(u32::MAX)
-            });
+            // Remaining hop budget for the step chosen at THIS node visit. A
+            // trail extended by one bundle must still reach the target within
+            // `max_depth - walk_depth - 1` hops; the BFS hop distance is a
+            // lower bound on how many hops that takes, so the cutoff never
+            // discards a yieldable trail. The walk depth is strictly below the
+            // bound (the max-depth backtrack above), so the `u32` subtraction
+            // is exact and cannot underflow. (At the closing depth the
+            // remaining budget is 0, and since `end` is the unique token at hop
+            // distance 0, the prefix break admits only target-adjacent
+            // bundles.)
+            let remaining_budget = self
+                .effective_max_depth
+                .map(|max_depth| max_depth - walk_depth - 1);
             let entry_base = self.tok_bundle_offsets[*node as usize] as usize;
             let entries_len = self.tok_bundle_offsets[*node as usize + 1] as usize - entry_base;
             let mut found_bundle = false;
@@ -1429,6 +1433,7 @@ mod tests {
     /// site's positional argument list identical to the pre-refactor form
     /// (start, end, min, max, `include_reverse`, filter) so per-callsite
     /// semantics stay reviewable against the pinned expectations.
+    #[expect(clippy::expect_used)]
     fn spec(
         start: u64,
         end: u64,
@@ -1441,7 +1446,9 @@ mod tests {
             start,
             end,
             min_depth,
-            max_depth,
+            max_depth.map(|max_depth| {
+                u32::try_from(max_depth).expect("test max_depth exceeds MAX_HOP_DEPTH")
+            }),
             include_reverse,
             pool_type_per_depth,
         )
@@ -1526,6 +1533,46 @@ mod tests {
         let paths = graph.find_paths(spec(WETH, WETH, 2, Some(2), false, None), None);
         for path in &paths {
             assert!(path.len() <= 2, "max_depth=2 should cap path length");
+        }
+    }
+
+    #[test]
+    fn test_max_depth_zero_admits_no_completed_path() {
+        // Every path has at least one hop, so a zero bound admits none.
+        let graph = build_fixture_graph();
+        let paths = graph.find_paths(spec(WETH, WETH, 1, Some(0), false, None), None);
+        assert!(paths.is_empty(), "max_depth=0 admits no completed path");
+    }
+
+    #[test]
+    fn test_max_depth_zero_admits_only_the_empty_walk() {
+        // The unique zero-length walk closes at the start token; a zero bound
+        // is its only setting, so the parity there is exact, not lenient.
+        let graph = build_fixture_graph();
+        let paths = graph.find_paths(spec(WETH, WETH, 0, Some(0), false, None), None);
+        assert_eq!(paths, vec![Vec::new()]);
+    }
+
+    #[test]
+    fn test_max_depth_at_the_hop_ceiling_matches_unlimited() {
+        // The widest accepted bound is the widest budget; `None` is the only
+        // unlimited representation and both must enumerate the same trails.
+        let graph = build_fixture_graph();
+        let hop_ceiling = usize::try_from(MAX_HOP_DEPTH).unwrap();
+        for min_depth in [1usize, 2, 3] {
+            let ceiling = graph.find_paths(
+                spec(WETH, WETH, min_depth, Some(hop_ceiling), false, None),
+                None,
+            );
+            let unlimited = graph.find_paths(spec(WETH, WETH, min_depth, None, false, None), None);
+            assert!(
+                !unlimited.is_empty(),
+                "min_depth={min_depth}: the fixture has cycles"
+            );
+            assert_eq!(
+                ceiling, unlimited,
+                "min_depth={min_depth}: the ceiling bound is exact"
+            );
         }
     }
 
@@ -2216,6 +2263,29 @@ mod tests {
         edges
     }
 
+    fn assert_parity_case(
+        edges: &[(u64, u64, u64, PoolKind)],
+        start: u64,
+        end: u64,
+        min_depth: usize,
+        max_depth: Option<usize>,
+        label: &str,
+    ) {
+        let mut found: BTreeSet<Vec<u64>> = BTreeSet::new();
+        let mut finder = OwnedPathFinder::new(
+            PathGraph::from_edges(edges.to_vec()),
+            spec(start, end, min_depth, max_depth, false, None),
+        );
+        while let Some(path) = finder.next_path() {
+            found.insert(path.into_iter().map(|(pid, _)| pid).collect());
+        }
+        let reference = reference_trails(edges, start, end, min_depth, max_depth);
+        assert_eq!(
+            found, reference,
+            "{label} min={min_depth} max={max_depth:?}: pruned search diverged"
+        );
+    }
+
     fn assert_search_parity(
         edges: &[(u64, u64, u64, PoolKind)],
         start: u64,
@@ -2224,19 +2294,23 @@ mod tests {
     ) {
         for min_depth in [1usize, 2, 3] {
             for max_depth in [Some(min_depth), Some(min_depth + 1), Some(min_depth + 2)] {
-                let mut found: BTreeSet<Vec<u64>> = BTreeSet::new();
-                let mut finder = OwnedPathFinder::new(
-                    PathGraph::from_edges(edges.to_vec()),
-                    spec(start, end, min_depth, max_depth, false, None),
-                );
-                while let Some(path) = finder.next_path() {
-                    found.insert(path.into_iter().map(|(pid, _)| pid).collect());
-                }
-                let reference = reference_trails(edges, start, end, min_depth, max_depth);
-                assert_eq!(
-                    found, reference,
-                    "{label} min={min_depth} max={max_depth:?}: pruned search diverged"
-                );
+                assert_parity_case(edges, start, end, min_depth, max_depth, label);
+            }
+        }
+    }
+
+    /// The hop ceiling must reproduce the oracle's uncapped enumeration: the
+    /// interior budget arithmetic is exact at its widest value, never wrapped,
+    /// saturated, or silently widened into "unlimited".
+    #[test]
+    fn test_max_depth_ceiling_matches_the_reference_enumerator() {
+        let ceiling = usize::try_from(MAX_HOP_DEPTH).unwrap();
+        for (label, edges) in [
+            ("go_around", battery_go_around()),
+            ("bridge_in_2core", battery_bridge_in_2core()),
+        ] {
+            for min_depth in [1usize, 2, 3] {
+                assert_parity_case(&edges, 1, 1, min_depth, Some(ceiling), label);
             }
         }
     }

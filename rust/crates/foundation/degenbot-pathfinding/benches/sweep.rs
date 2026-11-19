@@ -31,7 +31,7 @@ fn sweep_paths(
     start: u64,
     end: u64,
     min_depth: usize,
-    max_depth: Option<usize>,
+    max_depth: Option<u32>,
 ) -> usize {
     let mut hops = 0usize;
     let filter = depths.map(kind_filter);

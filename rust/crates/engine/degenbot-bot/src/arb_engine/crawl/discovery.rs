@@ -267,8 +267,9 @@ pub struct DiscoveryConfig {
     pub end_tokens: Vec<TokenIdentity>,
     /// The minimum hop count, before any per-depth filter floor.
     pub min_depth: usize,
-    /// The maximum hop count (`None` = unbounded).
-    pub max_depth: Option<usize>,
+    /// The maximum hop count in the pathfinding core's hop domain
+    /// (`None` = unbounded).
+    pub max_depth: Option<u32>,
 }
 
 /// One discovered candidate: the hops the discovery edge carried, in hop order.
@@ -370,7 +371,7 @@ pub struct DiscoverySweep {
     graph: PathGraph,
     plan: std::vec::IntoIter<TraversalSpec>,
     finder: Option<OwnedPathFinder>,
-    max_depth: Option<usize>,
+    max_depth: Option<u32>,
     filter: Option<Vec<Option<Vec<PoolKind>>>>,
     exhausted: bool,
 }

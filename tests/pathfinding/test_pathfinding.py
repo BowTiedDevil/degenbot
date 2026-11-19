@@ -390,3 +390,107 @@ def test_whitelist_none_is_same_as_no_whitelist(db: pathlib.Path) -> None:
         )
     )
     assert sorted(paths_no_arg, key=_step_ids) == sorted(paths_none_arg, key=_step_ids)
+
+
+U32_MAX = 2**32 - 1
+
+
+def _weth_cycles(db: pathlib.Path, max_depth: int | None) -> list[list[PathStep]]:
+    """Every all-family WETH->WETH cycle at one depth bound."""
+    return list(
+        find_paths(
+            request=_request(
+                db,
+                start_tokens=[WETH_ADDRESS],
+                end_tokens=[WETH_ADDRESS],
+                pool_types=[PoolKind.V2, PoolKind.V3, PoolKind.V4],
+                max_depth=max_depth,
+            )
+        )
+    )
+
+
+async def _weth_cycles_async(db: pathlib.Path, max_depth: int | None) -> list[list[PathStep]]:
+    """Async twin of :func:`_weth_cycles`."""
+    return [
+        path
+        async for path in find_paths_async(
+            request=_request(
+                db,
+                start_tokens=[WETH_ADDRESS],
+                end_tokens=[WETH_ADDRESS],
+                pool_types=[PoolKind.V2, PoolKind.V3, PoolKind.V4],
+                max_depth=max_depth,
+            )
+        )
+    ]
+
+
+def test_max_depth_zero_yields_no_paths(db: pathlib.Path) -> None:
+    """A zero hop bound admits no completed path (every cycle is >= 2 hops)."""
+    assert _weth_cycles(db, 0) == []
+
+
+async def test_max_depth_zero_yields_no_paths_async(db: pathlib.Path) -> None:
+    """Async twin of :func:`test_max_depth_zero_yields_no_paths`."""
+    assert await _weth_cycles_async(db, 0) == []
+
+
+def test_max_depth_none_is_unlimited(db: pathlib.Path) -> None:
+    """``None`` is the sole unlimited spelling: it admits the long cycles too."""
+    bounded = _weth_cycles(db, 2)
+    unlimited = _weth_cycles(db, None)
+    assert all(len(path) == 2 for path in bounded)
+    assert {_step_ids(path) for path in bounded} < {_step_ids(path) for path in unlimited}
+    assert any(len(path) > 2 for path in unlimited)
+
+
+async def test_max_depth_none_is_unlimited_async(db: pathlib.Path) -> None:
+    """Async twin of :func:`test_max_depth_none_is_unlimited`."""
+    unlimited = await _weth_cycles_async(db, None)
+    bounded = await _weth_cycles_async(db, 2)
+    assert all(len(path) == 2 for path in bounded)
+    assert {_step_ids(path) for path in bounded} < {_step_ids(path) for path in unlimited}
+    assert any(len(path) > 2 for path in unlimited)
+
+
+def test_max_depth_at_the_hop_ceiling_matches_unlimited(db: pathlib.Path) -> None:
+    """The largest accepted bound behaves exactly like ``None``."""
+    assert sorted(_weth_cycles(db, U32_MAX), key=_step_ids) == sorted(
+        _weth_cycles(db, None), key=_step_ids
+    )
+
+
+@pytest.mark.parametrize("max_depth", [-1, 2**32, 10**40])
+def test_max_depth_rejects_out_of_range(db: pathlib.Path, max_depth: int) -> None:
+    """Negative and over-wide bounds fail deliberately, naming the range."""
+    with pytest.raises(ValueError, match=r"max_depth .*4294967295"):
+        list(
+            find_paths(
+                request=_request(
+                    db,
+                    start_tokens=[WETH_ADDRESS],
+                    end_tokens=[WETH_ADDRESS],
+                    pool_types=[PoolKind.V2],
+                    max_depth=max_depth,
+                )
+            )
+        )
+
+
+@pytest.mark.parametrize("max_depth", [-1, 2**32, 10**40])
+async def test_max_depth_rejects_out_of_range_async(db: pathlib.Path, max_depth: int) -> None:
+    """Async twin of :func:`test_max_depth_rejects_out_of_range`."""
+    with pytest.raises(ValueError, match=r"max_depth .*4294967295"):
+        [
+            path
+            async for path in find_paths_async(
+                request=_request(
+                    db,
+                    start_tokens=[WETH_ADDRESS],
+                    end_tokens=[WETH_ADDRESS],
+                    pool_types=[PoolKind.V2],
+                    max_depth=max_depth,
+                )
+            )
+        ]

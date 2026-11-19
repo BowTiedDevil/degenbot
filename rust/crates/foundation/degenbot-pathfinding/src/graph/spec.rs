@@ -6,7 +6,18 @@
 //! and the per-depth-filter floor/cap has exactly one enforcement point
 //! ([`SearchSpec::validate`]).
 
+use super::expect_u32;
 use crate::graph::PoolKind;
+
+/// The widest hop bound a search can carry: a depth bound is a hop count in
+/// `0..=MAX_HOP_DEPTH`, and `None` (unlimited) is the only other
+/// representation — no in-range value is a sentinel for "unlimited".
+///
+/// The bound is a `u32` because that is the width the walk's remaining-budget
+/// arithmetic works in, and the width every compact index in the graph is
+/// bounded by. A caller holding a wider number rejects an out-of-range value at
+/// its own boundary; nothing inside a search reinterprets one.
+pub const MAX_HOP_DEPTH: u32 = u32::MAX;
 
 /// All caller-supplied parameters of one path search — the value that
 /// replaces the puts of the former seven-argument constructors
@@ -23,8 +34,10 @@ pub struct SearchSpec {
     pub end: u64,
     /// Minimum number of hops in a completed path.
     pub min_depth: usize,
-    /// Maximum number of hops, or `None` for no limit.
-    pub max_depth: Option<usize>,
+    /// Maximum number of hops in `0..=MAX_HOP_DEPTH`, or `None` for no
+    /// limit (the only unlimited representation). Zero admits no completed
+    /// path: only an empty walk can satisfy it, at `min_depth == 0`.
+    pub max_depth: Option<u32>,
     /// If `true`, each found path is yielded again in reverse.
     pub include_reverse: bool,
     /// Optional per-depth allowed pool kinds. A `None` entry allows all
@@ -43,7 +56,7 @@ impl SearchSpec {
         start: u64,
         end: u64,
         min_depth: usize,
-        max_depth: Option<usize>,
+        max_depth: Option<u32>,
         include_reverse: bool,
         pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
     ) -> Self {
@@ -64,7 +77,9 @@ impl SearchSpec {
     /// - a per-depth filter of length N pins an exactly-N-hop permutation
     ///   regardless of kind constraints (all-`None` filters included), so
     ///   the effective maximum depth is capped at N (pinned there when the
-    ///   caller passed `None`);
+    ///   caller passed `None`). A filter longer than [`MAX_HOP_DEPTH`] would
+    ///   describe a path no graph can hold, so that length converts through
+    ///   the graph's architectural-bound helper;
     /// - the effective minimum depth is floored at N. Without the floor,
     ///   the yield condition only checks `>= min_depth`, so a walk shorter
     ///   than the filter that prefix-matches its early depths leaks
@@ -83,9 +98,10 @@ impl SearchSpec {
     pub fn validate(&mut self) {
         if let Some(filter) = &self.pool_type_per_depth {
             let filter_len = filter.len();
+            let filter_hops = expect_u32(filter_len, "filter length exceeds u32::MAX");
             self.max_depth = Some(match self.max_depth {
-                Some(md) => md.min(filter_len),
-                None => filter_len,
+                Some(md) => md.min(filter_hops),
+                None => filter_hops,
             });
             self.min_depth = self.min_depth.max(filter_len);
         }

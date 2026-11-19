@@ -41,5 +41,6 @@ pub use directions::{
 };
 pub use graph::{
     Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec, UnknownVariant,
+    MAX_HOP_DEPTH,
 };
 pub use plan::{prepare_traversal_plan, TraversalSpec};

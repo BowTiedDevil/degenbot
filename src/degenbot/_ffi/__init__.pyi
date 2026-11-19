@@ -4872,7 +4872,7 @@ def find_paths_async_rust(
     start_token_id: SupportsIndex,
     end_token_id: SupportsIndex,
     min_depth: SupportsIndex,
-    max_depth: SupportsIndex | None,
+    max_depth: int | None,
     include_reverse: bool,
     pool_type_per_depth: SupportsGetItem[int, set[PoolKind] | None] | None = None,
     batch_size: SupportsIndex = 1000,
@@ -4892,7 +4892,9 @@ def find_paths_async_rust(
         start_token_id: The token ID where the search begins.
         end_token_id: The token ID the path must return to.
         min_depth: Minimum number of hops in a completed path.
-        max_depth: Maximum number of hops, or `None` for no limit.
+        max_depth: Maximum number of hops, or `None` for no limit (the only
+            unlimited spelling). A bound outside `0..=4294967295` — negative
+            bounds included — is refused before any graph is built.
         include_reverse: If `True`, yield each found path again reversed.
         pool_type_per_depth: Optional per-depth allowed pool kinds.
         batch_size: Maximum number of paths per `__anext__` batch
@@ -4902,6 +4904,16 @@ def find_paths_async_rust(
         A `PathBatchIterator` — `async for batch in iter:` yields
         `list[list[tuple[int, int]]]`; exhaustion raises
         `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
+
+    Raises:
+        ValueError: when ``max_depth`` is negative or above the hop ceiling
+            ``4294967295``, exactly as [`find_paths_rust`] refuses it (the two
+            seams share one projection).
+
+    # Errors
+
+    Returns `PyValueError` when `max_depth` is negative or wider than
+    `MAX_HOP_DEPTH`, through the projection [`find_paths_rust`] applies.
     """
 
 def find_paths_rust(
@@ -4909,7 +4921,7 @@ def find_paths_rust(
     start_token_id: SupportsIndex,
     end_token_id: SupportsIndex,
     min_depth: SupportsIndex,
-    max_depth: SupportsIndex | None,
+    max_depth: int | None,
     include_reverse: bool,
     pool_type_per_depth: SupportsGetItem[int, set[PoolKind] | None] | None = None,
 ) -> PathIterator:
@@ -4926,7 +4938,9 @@ def find_paths_rust(
         start_token_id: The token ID where the search begins.
         end_token_id: The token ID the path must return to.
         min_depth: Minimum number of hops in a completed path.
-        max_depth: Maximum number of hops, or ``None`` for no limit.
+        max_depth: Maximum number of hops, or ``None`` for no limit (the only
+            unlimited spelling). A bound outside ``0..=4294967295`` — negative
+            bounds included — is refused before any graph is built.
         include_reverse: If ``True``, yield each found path again reversed.
         pool_type_per_depth: Optional per-depth allowed pool kinds. A list where
             each element is ``None`` (all kinds allowed) or a set of
@@ -4935,6 +4949,17 @@ def find_paths_rust(
     Returns:
         A ``PathIterator`` — iterate it (``for path in iter: ...``) to lazily
         yield paths, each a list of ``(pool_id, pool_kind)`` tuples.
+
+    Raises:
+        ValueError: when ``max_depth`` is negative or above the hop ceiling
+            ``4294967295``. ``None`` (unlimited) and ``0`` are both accepted;
+            ``0`` admits no completed path.
+
+    # Errors
+
+    Returns `PyValueError` when `max_depth` is negative or wider than
+    `MAX_HOP_DEPTH`. `None` (unlimited) and `0` are both accepted; `0` admits no
+    completed path.
     """
 
 def flush_telemetry() -> None:

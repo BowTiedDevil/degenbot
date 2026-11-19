@@ -254,8 +254,9 @@ pub struct DiscoveryParams {
     pub end_tokens: Vec<u64>,
     /// Minimum hops (Python `find_paths` default: 2).
     pub min_depth: usize,
-    /// Maximum hops (`discovery_sweep`: 3).
-    pub max_depth: Option<usize>,
+    /// Maximum hops in the core's hop domain (`discovery_sweep`: 3), or `None`
+    /// for no limit.
+    pub max_depth: Option<u32>,
     /// Per-depth pool-kind filter (from the permutation filter).
     pub pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
     /// Paths per delivery batch (`discovery_batch_size`; `<= 1` = per-path).

@@ -194,7 +194,7 @@ impl AnchoredGraph {
                 let mut finder = self
                     .graph
                     .find_paths_iter(
-                        SearchSpec::new(exit, entry, 1, Some(max_hops - 1), false, None),
+                        SearchSpec::new(exit, entry, 1, cycle_hop_bound(max_hops), false, None),
                         None,
                     )
                     .with_progress(Duration::from_secs(1), move |tally| {
@@ -292,6 +292,16 @@ struct Candidate {
     cycle: DfsCycle,
     key: Vec<(u64, u8, u64)>,
     touched_count: usize,
+}
+
+/// The core hop bound for an operator cycle cap: a cap of `n >= 2` hops bounds
+/// a walk to `n - 1` connectors. A cap wider than the core's representable hop
+/// domain admits every trail any graph can hold, so it maps to `None` — the
+/// search's explicit no-cutoff bound — rather than to a largest-value sentinel.
+///
+/// Callers apply the enumeration's `max_hops < 2` guard first.
+fn cycle_hop_bound(max_hops: usize) -> Option<u32> {
+    u32::try_from(max_hops - 1).ok()
 }
 
 /// Cycles carrying more touched pools rank first; ties break on the canonical
@@ -494,5 +504,34 @@ mod tests {
             cycles.iter().all(|c| carries(c, &[101, 102])),
             "dual-touched cycles must outrank the singles under the cap: {cycles:?}"
         );
+    }
+
+    #[test]
+    fn cycle_hop_bound_is_the_connector_count_of_a_valid_cap() {
+        assert_eq!(cycle_hop_bound(2), Some(1));
+        assert_eq!(cycle_hop_bound(3), Some(2));
+        assert_eq!(cycle_hop_bound(5), Some(4));
+    }
+
+    // The boundary cases need a `max_hops` one past the `u32` domain, which
+    // only a wider `usize` can hold.
+    #[cfg(target_pointer_width = "64")]
+    #[expect(clippy::expect_used)]
+    #[test]
+    fn cycle_hop_bound_keeps_the_representable_ceiling_exact() {
+        // A cap one hop wider than the core's domain bounds a walk at exactly
+        // `u32::MAX` connectors.
+        let widest_cap = usize::try_from(u32::MAX).expect("64-bit target") + 1;
+        assert_eq!(cycle_hop_bound(widest_cap), Some(u32::MAX));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[expect(clippy::expect_used)]
+    #[test]
+    fn cycle_hop_bound_maps_a_cap_wider_than_the_core_domain_to_no_cutoff() {
+        // Past that ceiling every trail any graph can hold is admitted, which
+        // `None` states directly instead of pinning a largest-value sentinel.
+        let wider_cap = usize::try_from(u32::MAX).expect("64-bit target") + 2;
+        assert_eq!(cycle_hop_bound(wider_cap), None);
     }
 }

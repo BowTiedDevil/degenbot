@@ -450,7 +450,8 @@ pub struct CrawlConfig {
     pub end_tokens: Vec<TokenIdentity>,
     /// The minimum hop count, before any per-depth filter floor.
     pub min_depth: usize,
-    /// The maximum hop count (`None` = unbounded).
+    /// The maximum hop count (`None` = unbounded), validated against the
+    /// pathfinding core's hop domain by [`Self::discovery`].
     pub max_depth: Option<usize>,
     /// How many candidates the loop pulls from the sweep per turn before it
     /// reaps the window.
@@ -488,7 +489,9 @@ impl CrawlConfig {
     /// # Errors
     ///
     /// [`CrawlConfigError::ChainIdOutOfRange`] when `chain_id` does not fit the
-    /// signed id the database reads take.
+    /// signed id the database reads take, and
+    /// [`CrawlConfigError::MaxDepthOutOfRange`] when `max_depth` is wider than
+    /// the pathfinding core's hop domain.
     pub fn discovery(&self) -> Result<DiscoveryConfig, CrawlConfigError> {
         Ok(DiscoveryConfig {
             chain_id: chain_id_i64(self.chain_id)?,
@@ -497,7 +500,13 @@ impl CrawlConfig {
             start_tokens: self.start_tokens.clone(),
             end_tokens: self.end_tokens.clone(),
             min_depth: self.min_depth,
-            max_depth: self.max_depth,
+            max_depth: self
+                .max_depth
+                .map(|max_depth| {
+                    u32::try_from(max_depth)
+                        .map_err(|_| CrawlConfigError::MaxDepthOutOfRange { max_depth })
+                })
+                .transpose()?,
         })
     }
 
@@ -601,6 +610,13 @@ pub enum CrawlConfigError {
     ChainIdOutOfRange {
         /// The rejected id.
         chain_id: u64,
+    },
+    /// The hop bound is wider than the pathfinding core's hop domain, so no
+    /// search could honour it.
+    #[error("the crawl's max_depth ({max_depth}) is above the pathfinding hop ceiling")]
+    MaxDepthOutOfRange {
+        /// The rejected bound.
+        max_depth: usize,
     },
     /// The discovery source could not be opened.
     #[error(transparent)]
