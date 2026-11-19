@@ -1328,8 +1328,17 @@ mod tests {
     }
 
     /// Write an executable `#!/bin/sh` program standing in for the node binary.
+    ///
+    /// The body is written by a CHILD, not by this process. `execve` refuses a
+    /// program any process holds open for writing (`ETXTBSY`), and a sibling
+    /// test's concurrent `fork` captures this thread's in-flight descriptor
+    /// until its own exec — a window no write-then-exec inside this process can
+    /// close. A descriptor the child owns dies with the child, which is reaped
+    /// here before the script is ever spawned.
     fn scripted_node(body: &str) -> std::path::PathBuf {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
+        use std::process::{Command, Stdio};
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
@@ -1337,7 +1346,27 @@ mod tests {
             "degenbot-fork-scripted-node-{}-{n}.sh",
             std::process::id()
         ));
-        std::fs::write(&path, body).expect("write scripted node");
+
+        let mut writer = Command::new("sh")
+            .arg("-c")
+            .arg("cat > \"$1\"")
+            .arg("sh")
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("start the scripted node's writer");
+        writer
+            .stdin
+            .take()
+            .expect("the writer's stdin is piped")
+            .write_all(body.as_bytes())
+            .expect("hand the script body to the writer");
+        assert!(
+            writer.wait().expect("reap the writer").success(),
+            "the writer must land the script at {}",
+            path.display()
+        );
+
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
             .expect("make scripted node executable");
         path
