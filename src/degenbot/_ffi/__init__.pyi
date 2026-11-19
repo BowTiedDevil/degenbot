@@ -1002,7 +1002,11 @@ class Bot:
         `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
         opened (WAL permits the concurrent connection) + wrapped in
         `DegenbotDbConstruction`; construction DB reads route through this held
-        connection (no per-call `DegenbotDb::open`).
+        connection (no per-call `DegenbotDb::open`). A path with no file yet is
+        the cold start: the open creates it with the embedded schema, so the
+        session reads an EMPTY database rather than skipping a missing one. A
+        path the database refuses raises `ValueError` naming the path — the boot
+        refuses rather than degrading to the no-DB shape.
         """
     def build_curve_pool(
         self, /, address: str, registry_addresses: list, block: SupportsIndex | None = None

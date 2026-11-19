@@ -78,29 +78,42 @@ use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
 
-/// Open the construction DB half for `attach_construction_io` (ADR-070: the
+/// Open the construction DB half for `attach_construction_io` (ADR-070 D7: the
 /// write open lives in the shell, a writer-enabled crate — the engine crate
-/// never touches `open_for_writes`). `None` for the no-DB path, a write-capable
-/// held connection otherwise (the construction executor does reads AND the
-/// `update_erc20_token_metadata` write-back). A missing file (`SQLAlchemy`
-/// creates the DB lazily on first write) surfaces as `None` after the
-/// diagnostic — the DB methods then return the no-DB shape (matching the
-/// original `database_path` cold-start skip); a `Bot` restart after the file
-/// exists picks it up.
+/// never touches `open_for_writes`).
+///
+/// `Ok(None)` is the session's declared no-DB shape and answers ONLY
+/// `database_path = None`. With a path the handle is write-capable (the
+/// construction executor does reads AND the `update_erc20_token_metadata`
+/// write-back). A path whose file does not exist yet is the cold-start boot:
+/// `SQLite` creates the file and the open applies the embedded schema, so the
+/// session starts on an EMPTY database and its first write lands in a schema it
+/// already knows.
+///
+/// # Errors
+///
+/// Every open the database refuses — an unreadable or non-file path, a foreign
+/// or corrupt file, a schema ahead of this binary — propagates through the
+/// shell's DB error mapper with the path attached. Degrading a refused open to
+/// `NoDb` would present a mistyped or unreadable database as a healthy session
+/// holding no state, which is indistinguishable from a genuinely empty one.
 fn open_construction_db(
     database_path: Option<&str>,
-) -> Option<std::sync::Arc<degenbot_db::DegenbotDb>> {
-    let path = database_path?;
-    match degenbot_db::DegenbotDb::open_for_writes(std::path::Path::new(path)) {
-        Ok((db, _state)) => Some(std::sync::Arc::new(db)),
+) -> PyResult<Option<std::sync::Arc<degenbot_db::DegenbotDb>>> {
+    let Some(path) = database_path else {
+        return Ok(None);
+    };
+    let path = std::path::Path::new(path);
+    match degenbot_db::DegenbotDb::open_for_writes(path) {
+        Ok((db, _state)) => Ok(Some(std::sync::Arc::new(db))),
         Err(e) => {
             degenbot_core::diag!(
                 domain = state,
-                path = %path,
+                path = %path.display(),
                 %e,
-                "Construction-I/O DB open failed; falling back to NoDb"
+                "Construction-I/O DB open refused"
             );
-            None
+            Err(crate::db::db_open_err_to_py(path, &e))
         }
     }
 }
@@ -809,9 +822,13 @@ impl PyBot {
     /// `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
     /// opened (WAL permits the concurrent connection) + wrapped in
     /// `DegenbotDbConstruction`; construction DB reads route through this held
-    /// connection (no per-call `DegenbotDb::open`).
+    /// connection (no per-call `DegenbotDb::open`). A path with no file yet is
+    /// the cold start: the open creates it with the embedded schema, so the
+    /// session reads an EMPTY database rather than skipping a missing one. A
+    /// path the database refuses raises `ValueError` naming the path — the boot
+    /// refuses rather than degrading to the no-DB shape.
     #[pyo3(signature = (provider, database_path=None))]
-    #[expect(clippy::unnecessary_wraps, clippy::needless_pass_by_value)]
+    #[expect(clippy::needless_pass_by_value)]
     fn attach_construction_io(
         &self,
         py: Python<'_>,
@@ -837,14 +854,12 @@ impl PyBot {
         let rpc = std::sync::Arc::new(AlloyRpcConstruction::new((*alloy).clone()));
 
         // The DB half — open (write-capable; the construction executor does
-        // reads AND the `update_erc20_token_metadata` write-back), with the
-        // missing-file cold-start fallback to `NoDb` so the DB methods
-        // return the no-DB shape (matching the original `database_path`
-        // cold-start skip; a `Bot` restart after the file exists picks it
-        // up) — is shell-owned ([`open_construction_db`], run under this
-        // py.detach).
+        // reads AND the `update_erc20_token_metadata` write-back) — is
+        // shell-owned ([`open_construction_db`], run under this py.detach). A
+        // refused open aborts the boot HERE: `NoDb` is what a session that
+        // declared no database gets, never what a failed open is retried as.
         let db: std::sync::Arc<dyn degenbot_bot::bot_core::DbConstruction + Send + Sync> =
-            match py.detach(|| open_construction_db(database_path)) {
+            match py.detach(|| open_construction_db(database_path))? {
                 Some(db) => {
                     // Bind the session's position reader HERE, and only
                     // here: this is the one point in a bot boot where the
@@ -4501,7 +4516,6 @@ mod tests {
 
     /// A throwaway database path, unique per call so a parallel test run
     /// cannot read another test's rows.
-    #[cfg(feature = "aave-updater")]
     fn position_db_path(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "degenbot_{tag}_{}_{:x}.db",
@@ -4558,7 +4572,6 @@ mod tests {
     /// The production boot's provider argument: a `PyAlloyProvider` over an
     /// offline transport, which is the shape `extract_native_alloy` accepts
     /// and the shape a configured session resolves to.
-    #[cfg(feature = "aave-updater")]
     fn boot_provider(py: pyo3::Python<'_>) -> pyo3::Bound<'_, pyo3::PyAny> {
         use degenbot_rpc::offline::OfflineProvider;
         use serde_json::json;
@@ -4757,5 +4770,181 @@ mod tests {
         });
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    // ── the construction-DB half of the boot ─────────────────────────────
+    //
+    // `attach_construction_io` is the one place a session's database is
+    // opened, and its `database_path` contract has three shapes: no path at
+    // all, a path whose file the cold start has not created yet, and a path the
+    // database cannot open. Only the first is the no-DB shape.
+
+    /// Boot a fresh session against `db_path` and answer its rendered refusal.
+    ///
+    /// The helper pins the refusal's class and its consequence: a `ValueError`
+    /// (the shell's one DB → Python mapping) and NO attached construction I/O —
+    /// a refused boot leaves nothing a later call could mistake for the no-DB
+    /// shape.
+    fn boot_refusal(db_path: &std::path::Path) -> String {
+        pyo3::Python::attach(|py| {
+            let bot = PyBot::new(1);
+            let err = bot
+                .attach_construction_io(
+                    py,
+                    boot_provider(py),
+                    Some(db_path.to_string_lossy().as_ref()),
+                )
+                .expect_err("a database the open refuses must refuse the boot");
+            assert!(
+                err.is_instance_of::<pyo3::exceptions::PyValueError>(py),
+                "the DB error mapping raises ValueError, saw {err}"
+            );
+            assert!(
+                bot.bot.construction_io_arc().is_none(),
+                "a refused boot attaches no construction I/O"
+            );
+            // The message alone (the exception's `str`), so the assertions below
+            // pin the text an operator reads rather than `PyErr`'s rendering.
+            err.value(py)
+                .str()
+                .map_or_else(|_| err.to_string(), |message| message.to_string())
+        })
+    }
+
+    /// The rendering a refusal must carry: the path the boot asked for, then
+    /// the database's own reason. The expected reason comes from the same open
+    /// the boot performs, so the test pins the contract (path + source) rather
+    /// than a `SQLite` message vintage.
+    fn expected_refusal(db_path: &std::path::Path) -> String {
+        let err = degenbot_db::connection::DegenbotDb::open_for_writes(db_path)
+            .err()
+            .expect("the test's path must not open as a database");
+        format!("cannot open database at {}: {err}", db_path.display())
+    }
+
+    /// The read a booted session's DB half answers, through the trait object
+    /// the boot attached (not a handle the test opened itself).
+    fn booted_token_read(
+        py: pyo3::Python<'_>,
+        bot: &PyBot,
+        token: Address,
+    ) -> Result<Option<degenbot_db::rows::Erc20TokenRow>, degenbot_db::DbError> {
+        let io = bot
+            .bot
+            .construction_io_arc()
+            .expect("the boot attaches its construction I/O");
+        py.detach(|| degenbot_core::runtime::get_runtime().block_on(io.fetch_erc20_token(1, token)))
+    }
+
+    /// `database_path = None` stays the no-DB boot: nothing is opened, and the
+    /// attached DB half answers the empty shape.
+    #[test]
+    fn a_session_with_no_database_path_attaches_the_no_db_shape() {
+        assert!(
+            open_construction_db(None)
+                .expect("declaring no database is not a failure")
+                .is_none(),
+            "database_path=None is the declared no-DB shape"
+        );
+
+        pyo3::Python::attach(|py| {
+            let bot = PyBot::new(1);
+            bot.attach_construction_io(py, boot_provider(py), None)
+                .expect("a session with no database boots");
+            let read = booted_token_read(py, &bot, Address::from([0x3c; 20]));
+            assert!(
+                matches!(read, Ok(None)),
+                "the no-DB half answers empty, saw {read:?}"
+            );
+        });
+    }
+
+    /// A path whose file does not exist yet is the COLD START, not a missing
+    /// database: the open creates the file with the embedded schema, the boot
+    /// succeeds, and the attached half is the live handle on that file (the
+    /// second read sees a row written after the boot — a `NoDb` half, or a copy
+    /// taken at boot, answers `None` to it).
+    #[test]
+    fn a_boot_against_a_path_with_no_file_starts_on_the_database_it_creates() {
+        let db_path = position_db_path("construction_cold_start");
+        assert!(
+            !db_path.exists(),
+            "precondition: a cold-start path names no file"
+        );
+        let token = Address::from([0x3c; 20]);
+
+        pyo3::Python::attach(|py| {
+            let bot = PyBot::new(1);
+            bot.attach_construction_io(
+                py,
+                boot_provider(py),
+                Some(db_path.to_string_lossy().as_ref()),
+            )
+            .expect("a path with no file yet is the cold-start boot");
+            assert!(
+                db_path.exists(),
+                "the boot creates the database the path names"
+            );
+
+            let cold = booted_token_read(py, &bot, token);
+            assert!(
+                matches!(cold, Ok(None)),
+                "a cold-start database answers empty, saw {cold:?}"
+            );
+
+            // The database is live: a write landing on the file after the boot
+            // is what the session's attached handle reads back.
+            {
+                let (writer, _state) =
+                    degenbot_db::connection::DegenbotDb::open_for_writes(&db_path)
+                        .expect("the writer opens its own connection");
+                writer
+                    .lock()
+                    .execute(
+                        "INSERT INTO erc20_tokens (id, chain, address, name, symbol, decimals) \
+                         VALUES (1, 1, ?1, 'Cold Start Token', 'CST', 18)",
+                        [token.to_checksum(None)],
+                    )
+                    .expect("the writer stores a token row");
+            }
+            let stored = booted_token_read(py, &bot, token)
+                .expect("the booted session reads the database it opened")
+                .expect("the attached DB half is the live handle on that file");
+            assert_eq!(stored.symbol.as_deref(), Some("CST"));
+        });
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// A path that names a directory is not a database: the boot refuses with a
+    /// `ValueError` carrying the path and the `SQLite` reason, and attaches
+    /// nothing — never `NoDb`, which would answer every read as if the session
+    /// simply held no state.
+    #[test]
+    fn a_boot_against_a_directory_refuses_instead_of_answering_no_db() {
+        let not_a_database = position_db_path("construction_directory");
+        std::fs::create_dir_all(&not_a_database).expect("create the path the boot is pointed at");
+
+        let refused = boot_refusal(&not_a_database);
+
+        assert_eq!(refused, expected_refusal(&not_a_database));
+
+        let _ = std::fs::remove_dir_all(&not_a_database);
+    }
+
+    /// An existing file that is not a database refuses the boot the same way: a
+    /// mistyped or foreign path cannot present as a healthy session holding an
+    /// empty database.
+    #[test]
+    fn a_boot_against_an_invalid_database_refuses_instead_of_answering_no_db() {
+        let foreign = position_db_path("construction_invalid");
+        std::fs::write(&foreign, b"this file is not a sqlite database\n")
+            .expect("write the file the boot is pointed at");
+
+        let refused = boot_refusal(&foreign);
+
+        assert_eq!(refused, expected_refusal(&foreign));
+
+        let _ = std::fs::remove_file(&foreign);
     }
 }

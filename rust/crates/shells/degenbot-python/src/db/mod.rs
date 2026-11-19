@@ -194,6 +194,17 @@ pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
+/// The open-time arm of [`db_err_to_py`]: the same `ValueError` class, with the
+/// path the open was for in front of the database's own reason.
+///
+/// A [`degenbot_db::DbError`] renders its source but never the file it was
+/// opening. The construction-DB boot holds the path it asked the database to
+/// open, and its refusal is read by an operator with one question — WHICH path
+/// refused — so the path rides the message.
+pub(crate) fn db_open_err_to_py(path: &std::path::Path, err: &degenbot_db::DbError) -> PyErr {
+    PyValueError::new_err(format!("cannot open database at {}: {err}", path.display()))
+}
+
 /// The `degenbot._ffi.db` Python submodule (declarative `#[pymodule]`),
 /// registering all ~45 `db_*` pyfunctions + ~11 pyclasses. The `db_` prefix
 /// is retained on the submodule names (unlike the math submodules which
