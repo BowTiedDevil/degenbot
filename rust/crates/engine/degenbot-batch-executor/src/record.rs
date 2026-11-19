@@ -49,18 +49,18 @@ pub enum AssemblyVerdict {
     SkipEmptyHops,
     /// The row's path did not resolve to a registered `PathInfo`.
     ///
-    /// Decision: the two consumers disagreed — the `PyO3` seam
-    /// raised `ValueError`, the settlement bot folded the miss into
-    /// `SkipEmptyHops`. Unified: a resolve miss is a TYPED SKIP + counted,
-    /// never an abort. It is not batch corruption: a path de-registered
-    /// between solve and dispatch is a normal race, and the row is otherwise
-    /// well-formed. The loud-abort rule is reserved for the two corruption
-    /// arms ([`AssemblyError`]): a row whose per-hop lengths disagree with the
-    /// RESOLVED path's hop count (raw arm — the batch and the registry
-    /// diverged), and a PAYLOAD-row resolve miss (`merge_payload_results` /
-    /// `assemble_batch`'s payload arm — a payload row is engine-born, so a
-    /// miss there evidences registry divergence). Both re-raise in the
-    /// driver's frame, for both consumers.
+    /// A resolve miss is a TYPED SKIP + counted, never an abort: a path
+    /// de-registered between solve and dispatch is a normal race, and the row is
+    /// otherwise well-formed — not batch corruption. The loud-abort rule
+    /// ([`AssemblyError`]) is reserved for corruption, in three cases: a row
+    /// whose per-hop lengths disagree with the RESOLVED path's hop count (raw
+    /// arm — the batch and the registry diverged), a PAYLOAD-row resolve miss
+    /// (`merge_payload_results` / `assemble_batch`'s payload arm — a payload row
+    /// is engine-born, so a miss there evidences registry divergence), and a
+    /// PROFITABLE payload row whose registered path resolves without hops
+    /// (`join_sim_result` — its pool-exclusion keys cannot be derived, so it can
+    /// never become a submittable row). Each re-raises in the driver's frame, for
+    /// both consumers.
     SkipResolveMiss,
     /// The engine already simulated this path inline; its record comes from
     /// the payload arm, not the FFI sim batch (the batch-local dedup).

@@ -75,8 +75,8 @@ mod stage;
 
 pub use assembly::{
     build_raw_candidate, classify_raw_row, derive_path_pools, join_sim_result,
-    merge_payload_results, AssemblyError, MergedPayloadOutcome, PathResolver, PayloadArm,
-    RawRowClass,
+    merge_payload_results, AssemblyError, JoinSimResultError, MergedPayloadOutcome, PathResolver,
+    PayloadArm, RawRowClass,
 };
 pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
 pub use probe::{ProbeConfig, ProbeError, ProbeExecutor, ProbeOutcome};

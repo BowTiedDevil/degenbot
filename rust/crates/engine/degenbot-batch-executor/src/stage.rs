@@ -39,7 +39,8 @@ use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
 use crate::assembly::{
-    assemble_batch, join_sim_result, AssembledBatch, AssemblyError, AssemblyInputs, PathResolver,
+    assemble_batch, join_sim_result, AssembledBatch, AssemblyError, AssemblyInputs,
+    JoinSimResultError, PathResolver,
 };
 use crate::executor::{BatchWork, ExecutorConfig};
 use crate::policy::{ExecutorPolicy, ProbeCapital};
@@ -412,52 +413,19 @@ impl SimStage {
             );
         }
 
-        let mut submit_candidates: Vec<degenbot_submission::SubmitCandidate> = Vec::new();
-        let empty_path = PathInfo::new(Vec::new());
-        for (candidate_id, target) in entered {
-            if retired.contains(&candidate_id) {
-                continue;
-            }
-            // The lookup always hits: the core only re-emits path ids it was
-            // handed (the join's `None`/empty fall-through keeps isolation —
-            // an empty mutual-exclusion set — without fabricating hops).
-            let path_info = batch.path_info_by_id.get(&candidate_id.path_id());
-            let simulate = if let Some(r) = profitable.get(&candidate_id) {
-                // The transaction's `to` is the DEPLOYMENT's target, so a
-                // heterogeneous fan-out routes each row to its own contract.
-                submit_candidates.push(join_sim_result(r, path_info, target));
-                Some(SimulateVerdict::Profitable(crate::record::SimReceipt {
-                    gross_profit: r.gross_profit,
-                    net_profit: r.net_profit,
-                    gas_used: r.gas_used,
-                    priority_fee: r.priority_fee,
-                }))
-            } else if let Some(r) = unprofitable.get(&candidate_id) {
-                Some(SimulateVerdict::GasUnprofitable(
-                    crate::record::SimReceipt {
-                        gross_profit: r.gross_profit,
-                        net_profit: r.net_profit,
-                        gas_used: r.gas_used,
-                        priority_fee: r.priority_fee,
-                    },
-                ))
-            } else if let Some(f) = failures.get(&candidate_id) {
-                Some(SimulateVerdict::Failed(Box::new(f.clone())))
-            } else {
-                // Accounted by neither bucket nor a failure record: the
-                // fan-out counted a per-path exception (its
-                // `return_exceptions=True` tolerance).
-                Some(SimulateVerdict::Exception)
-            };
-            batch.outcomes.push(BatchOutcome {
-                candidate_id,
-                block: work.current_block,
-                assembly: AssemblyVerdict::Assembled,
-                simulate,
-                submit: None,
-                path_info: crate::record::PathInfoView::from(path_info.unwrap_or(&empty_path)),
-            });
-        }
+        let (mut attributed, mut submit_candidates) = attribute_results(
+            &entered,
+            &retired,
+            &FanoutResults {
+                profitable,
+                unprofitable,
+                failures,
+            },
+            &batch.path_info_by_id,
+            work.current_block,
+        )
+        .map_err(|refusal| refusal.to_string())?;
+        batch.outcomes.append(&mut attributed);
 
         // The payload arm's profitable joins join the FFI survivors for the
         // single ordered submit (one lane, one nonce fetch per submit).
@@ -537,6 +505,125 @@ impl SimStage {
     }
 }
 
+/// The stage refused the WHOLE batch rather than emit records and rows it cannot
+/// join honestly.
+///
+/// A per-row skip would be wrong here. A submit row's mutual-exclusion pool keys
+/// derive from the candidate's own hops, and
+/// [`degenbot_submission::Dispatcher::is_path_blocked`] reads an EMPTY set as
+/// "touches no pool" — it can never block — so a row joined without its keys
+/// would be admitted beside a candidate trading the same pool. Both arms name the
+/// originating candidate so the refusal is attributable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SimStageRefusal {
+    /// The assembly's join map holds no path identity for this candidate.
+    MissingPathIdentity {
+        /// The candidate the fan-out re-emitted.
+        candidate_id: CandidateId,
+    },
+    /// The candidate's resolved path has no hops, so [`join_sim_result`]
+    /// refused its submit row.
+    Join(JoinSimResultError),
+}
+
+impl std::fmt::Display for SimStageRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingPathIdentity { candidate_id } => write!(
+                f,
+                "candidate {candidate_id} was simulated without a resolved path \
+                 identity: its pool-exclusion keys cannot be derived, so the batch \
+                 is refused"
+            ),
+            Self::Join(error) => write!(f, "the batch is refused: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SimStageRefusal {}
+
+/// The fan-out's per-candidate results, keyed by the identity the lane
+/// simulated.
+#[derive(Debug, Default)]
+struct FanoutResults {
+    profitable: HashMap<CandidateId, degenbot_arbitrage::SimResult>,
+    unprofitable: HashMap<CandidateId, degenbot_arbitrage::SimResult>,
+    failures: HashMap<CandidateId, degenbot_arbitrage::SimFailure>,
+}
+
+/// Stage 2's attribution: one record per entered candidate the selection policy
+/// examined, plus one joined submit row per profitable one.
+///
+/// Every joined row's pool-exclusion keys derive from the candidate's own
+/// resolved hops (see [`join_sim_result`]), so an entered candidate whose path
+/// identity the assembly's join map cannot produce — or whose resolved path has
+/// no hops for the join to key — proves the batch and the fan-out's results
+/// diverged: the WHOLE batch is refused ([`SimStageRefusal`]) rather than
+/// emitting a record with no display context and a submit row with no exclusion
+/// set.
+fn attribute_results(
+    entered: &[(CandidateId, alloy::primitives::Address)],
+    retired: &HashSet<CandidateId>,
+    results: &FanoutResults,
+    path_info_by_id: &HashMap<u64, PathInfo>,
+    current_block: u64,
+) -> Result<(Vec<BatchOutcome>, Vec<SubmitCandidate>), SimStageRefusal> {
+    let mut outcomes = Vec::with_capacity(entered.len());
+    let mut submit_candidates: Vec<degenbot_submission::SubmitCandidate> = Vec::new();
+    for (candidate_id, target) in entered {
+        if retired.contains(candidate_id) {
+            continue;
+        }
+        // The path identity is looked up, never assumed: the assembly resolves
+        // a path before it transports the candidate, so a miss here proves the
+        // batch and the fan-out's results diverged. Refuse the whole batch —
+        // the row's pool keys derive from these hops, and a submit row joined
+        // without them would bypass the pool mutual exclusion.
+        let Some(path_info) = path_info_by_id.get(&candidate_id.path_id()) else {
+            return Err(SimStageRefusal::MissingPathIdentity {
+                candidate_id: *candidate_id,
+            });
+        };
+        let simulate = if let Some(r) = results.profitable.get(candidate_id) {
+            // The transaction's `to` is the DEPLOYMENT's target, so a
+            // heterogeneous fan-out routes each row to its own contract.
+            let joined = join_sim_result(r, path_info, *target).map_err(SimStageRefusal::Join)?;
+            submit_candidates.push(joined);
+            Some(SimulateVerdict::Profitable(crate::record::SimReceipt {
+                gross_profit: r.gross_profit,
+                net_profit: r.net_profit,
+                gas_used: r.gas_used,
+                priority_fee: r.priority_fee,
+            }))
+        } else if let Some(r) = results.unprofitable.get(candidate_id) {
+            Some(SimulateVerdict::GasUnprofitable(
+                crate::record::SimReceipt {
+                    gross_profit: r.gross_profit,
+                    net_profit: r.net_profit,
+                    gas_used: r.gas_used,
+                    priority_fee: r.priority_fee,
+                },
+            ))
+        } else if let Some(f) = results.failures.get(candidate_id) {
+            Some(SimulateVerdict::Failed(Box::new(f.clone())))
+        } else {
+            // Accounted by neither bucket nor a failure record: the
+            // fan-out counted a per-path exception (its
+            // `return_exceptions=True` tolerance).
+            Some(SimulateVerdict::Exception)
+        };
+        outcomes.push(BatchOutcome {
+            candidate_id: *candidate_id,
+            block: current_block,
+            assembly: AssemblyVerdict::Assembled,
+            simulate,
+            submit: None,
+            path_info: crate::record::PathInfoView::from(path_info),
+        });
+    }
+    Ok((outcomes, submit_candidates))
+}
+
 /// The sim stage's product: the batch's records (stages 1-2 filled) + the
 /// joined submit rows for stage 3.
 ///
@@ -587,4 +674,141 @@ pub(crate) async fn arm_session_bal(
     degenbot_simulation::sim::evm2::bal_capability::probe_bal_capability(provider).await?;
     cache.read().arm_bal_heads(provider);
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "tests assert on known-valid fixtures and the refusal is the expected outcome"
+)]
+mod tests {
+    use super::*;
+
+    use alloy::primitives::{address, Address, Bytes, U256};
+    use degenbot_arbitrage::SimResult;
+    use degenbot_execution::{HopInfo, V2HopInfo};
+
+    const BLOCK: u64 = 100;
+    const PATH_ID: u64 = 7;
+    /// The lane's deployment `to`.
+    const TARGET: Address = address!("0x00000000000000000000000000000000000000a1");
+    /// The fixture path's one V2 pool.
+    const POOL: Address = address!("0x1111111111111111111111111111111111111111");
+
+    fn candidate_id() -> CandidateId {
+        CandidateId::new(PATH_ID, DeploymentId::new(1))
+    }
+
+    fn v2_path() -> PathInfo {
+        PathInfo::new(vec![HopInfo::V2(V2HopInfo {
+            pool_address: POOL,
+            token0_address: address!("0x2222222222222222222222222222222222222222"),
+            token1_address: address!("0x3333333333333333333333333333333333333333"),
+            fee: 30,
+            zfo: true,
+        })])
+    }
+
+    /// The gas-profitable result a lane re-emits for `candidate_id`.
+    fn profitable(candidate_id: CandidateId) -> SimResult {
+        SimResult {
+            candidate_id,
+            gross_profit: U256::from(6_000_000_000_u64),
+            net_profit: U256::from(5_000_000_000_u64),
+            gas_used: 300_000,
+            priority_fee: 1,
+            base_fee_next: 1_000_000_000,
+            passed: true,
+            execute_calldata: Bytes::from(vec![0xab, 0x58, 0x98, 0xe8]),
+            value: U256::ZERO,
+            access_list: None,
+            captured_swaps: Vec::new(),
+            hop_count: 1,
+        }
+    }
+
+    fn profitable_results(candidate_id: CandidateId) -> FanoutResults {
+        FanoutResults {
+            profitable: std::iter::once((candidate_id, profitable(candidate_id))).collect(),
+            ..FanoutResults::default()
+        }
+    }
+
+    /// A profitable result whose path identity the batch cannot recover is
+    /// refused outright — never joined as a submit row with no pool-exclusion
+    /// keys.
+    #[test]
+    fn a_profitable_result_without_its_path_identity_is_refused() {
+        let id = candidate_id();
+        let refusal = attribute_results(
+            &[(id, TARGET)],
+            &HashSet::new(),
+            &profitable_results(id),
+            &HashMap::new(),
+            BLOCK,
+        )
+        .expect_err("a profitable row cannot be joined without its path identity");
+        assert_eq!(
+            refusal,
+            SimStageRefusal::MissingPathIdentity { candidate_id: id }
+        );
+        assert!(
+            refusal.to_string().contains(&id.to_string()),
+            "the refusal names the originating candidate: {refusal}"
+        );
+    }
+
+    /// A registered path with no hops reaches the same refusal through the
+    /// stage: the join refuses the row, and the stage propagates that instead of
+    /// panicking or emitting a submit row with no exclusion set.
+    #[test]
+    fn a_profitable_result_whose_path_has_no_hops_is_refused() {
+        let id = candidate_id();
+        let path_info_by_id: HashMap<u64, PathInfo> =
+            std::iter::once((PATH_ID, PathInfo::new(Vec::new()))).collect();
+        let refusal = attribute_results(
+            &[(id, TARGET)],
+            &HashSet::new(),
+            &profitable_results(id),
+            &path_info_by_id,
+            BLOCK,
+        )
+        .expect_err("a hop-free path cannot yield a submit row");
+        assert!(
+            matches!(refusal, SimStageRefusal::Join(error) if error.candidate_id() == id),
+            "the join refusal reaches the stage: {refusal:?}"
+        );
+        assert!(
+            refusal.to_string().contains(&id.to_string()),
+            "the refusal names the originating candidate: {refusal}"
+        );
+    }
+
+    /// The same result joins its derived pool-exclusion set and its own lane
+    /// target when the assembly's join map holds the path identity.
+    #[test]
+    fn a_profitable_result_with_its_path_identity_joins_the_exclusion_set() {
+        let id = candidate_id();
+        let path_info_by_id: HashMap<u64, PathInfo> =
+            std::iter::once((PATH_ID, v2_path())).collect();
+        let (outcomes, submits) = attribute_results(
+            &[(id, TARGET)],
+            &HashSet::new(),
+            &profitable_results(id),
+            &path_info_by_id,
+            BLOCK,
+        )
+        .expect("the join map holds the entered candidate's path");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].candidate_id, id);
+        assert_eq!(outcomes[0].path_info.path_type, "V2");
+        assert_eq!(submits.len(), 1);
+        assert_eq!(submits[0].candidate_id, id);
+        assert_eq!(
+            submits[0].path_pools,
+            crate::assembly::derive_path_pools(&v2_path().hops)
+        );
+        assert!(!submits[0].path_pools.is_empty());
+        assert_eq!(submits[0].execution_target, TARGET);
+    }
 }

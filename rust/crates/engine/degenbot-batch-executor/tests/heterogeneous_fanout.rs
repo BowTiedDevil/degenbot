@@ -465,7 +465,8 @@ fn the_submit_plan_carries_each_targets_own_transaction() {
         for result in &lane.outcome.gas_profitable {
             planned.push((
                 lane.deployment_id,
-                join_sim_result(result, Some(&v2_path()), deployment.target()),
+                join_sim_result(result, &v2_path(), deployment.target())
+                    .expect("the fixture's single-hop path yields its pool keys"),
             ));
         }
     }

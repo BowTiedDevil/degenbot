@@ -122,8 +122,9 @@ pub trait PathResolver: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssemblyError {
     /// A row's per-hop lengths disagree with its resolved path's hop count, a
-    /// payload belongs to another deployment, or a payload's path is not
-    /// registered: the batch and the registry have diverged.
+    /// payload belongs to another deployment, a payload's path is not
+    /// registered, or a payload's registered path has no hops: the batch and the
+    /// registry have diverged, and the row's submit shape cannot be built.
     Corrupt {
         /// The offending row's path id.
         path_id: u64,
@@ -344,11 +345,11 @@ pub struct AssembledBatch {
 /// # Errors
 ///
 /// [`AssemblyError::Corrupt`] when a row's hop lengths disagree with its
-/// resolved path's hop count, or a payload names a foreign deployment or an
-/// unregistered path (batch corruption — the loud-abort rule), and
-/// [`AssemblyError::DuplicateCandidateId`] when the batch would simulate two raw
-/// rows for one candidate id, or attach two LIVE submit rows to one candidate
-/// id.
+/// resolved path's hop count, or a payload names a foreign deployment, an
+/// unregistered path, or a registered path with no hops (batch corruption — the
+/// loud-abort rule), and [`AssemblyError::DuplicateCandidateId`] when the batch
+/// would simulate two raw rows for one candidate id, or attach two LIVE submit
+/// rows to one candidate id.
 ///
 /// # Panics
 ///
@@ -526,9 +527,9 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
         if degenbot_arbitrage::is_gas_profitable(p.net_profit) {
             batch.payload_submits.push(join_sim_result(
                 &p.sim_result(),
-                Some(&path_info),
+                &path_info,
                 inputs.target,
-            ));
+            )?);
             batch.outcomes.push(BatchOutcome {
                 candidate_id: p.candidate_id,
                 block: inputs.current_block,
@@ -557,21 +558,30 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
 /// mutual-exclusion pool keys derive from the hops: V4 → the salted
 /// `pool_id_hex`, V2/V3 → the EIP-55 Display form — the one keying rule both
 /// entry arms share; the core owns the join and the `PyO3` seam drives it).
-/// `path_info` is `None` only for a path id the fan-out could not recover
-/// (an empty mutual-exclusion set — see the body).
-#[must_use]
+///
+/// The path identity is REQUIRED, and a resolved path with no hops is refused
+/// ([`JoinSimResultError`]). A row joined without its pool keys would carry an
+/// empty set, which [`degenbot_submission::Dispatcher::is_path_blocked`] reads as
+/// "touches no pool" — it can never block — so that row would be admitted beside
+/// a candidate trading the same pool. Nothing to derive is nothing to submit:
+/// the caller refuses the batch where the path is recovered instead of building
+/// a submit row without its exclusion set.
+///
+/// # Errors
+///
+/// [`JoinSimResultError`] when `path_info` has no hops, naming the candidate.
 pub fn join_sim_result(
     r: &degenbot_arbitrage::SimResult,
-    path_info: Option<&PathInfo>,
+    path_info: &PathInfo,
     target: alloy::primitives::Address,
-) -> SubmitCandidate {
-    // `None` = the originating path could not be recovered (the core only
-    // re-emits path ids it was handed) — a degenerate but safe fall-through:
-    // isolation falls back to no mutual-exclusion for that one path.
-    let path_pools: HashSet<PoolKey> = path_info
-        .map(|p| derive_path_pools(&p.hops))
-        .unwrap_or_default();
-    SubmitCandidate {
+) -> Result<SubmitCandidate, JoinSimResultError> {
+    let path_pools: HashSet<PoolKey> = derive_path_pools(&path_info.hops);
+    if path_pools.is_empty() {
+        return Err(JoinSimResultError {
+            candidate_id: r.candidate_id,
+        });
+    }
+    Ok(SubmitCandidate {
         candidate_id: r.candidate_id,
         gross_profit: r.gross_profit,
         net_profit: r.net_profit,
@@ -584,6 +594,47 @@ pub fn join_sim_result(
         execution_target: target,
         access_list: r.access_list.clone(),
         path_pools,
+    })
+}
+
+/// Why [`join_sim_result`] refused to build a submit row.
+///
+/// A submit row's mutual-exclusion pool keys derive from the candidate's own
+/// hops, and [`degenbot_submission::Dispatcher::is_path_blocked`] reads an EMPTY
+/// set as "touches no pool" — it can never block — so a path with no hops cannot
+/// become a submittable row. The refusal names the originating candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinSimResultError {
+    candidate_id: CandidateId,
+}
+
+impl JoinSimResultError {
+    /// The candidate whose join was refused.
+    #[must_use]
+    pub fn candidate_id(&self) -> CandidateId {
+        self.candidate_id
+    }
+}
+
+impl std::fmt::Display for JoinSimResultError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "candidate {} resolved a path with no hops: its pool-exclusion keys \
+             cannot be derived, so no submit row can be built",
+            self.candidate_id
+        )
+    }
+}
+
+impl std::error::Error for JoinSimResultError {}
+
+/// A refused join surfaces as batch corruption in either assembly arm: a payload
+/// row is engine-born, so a registered path with no hops means the row could
+/// never have been simulated into a submittable shape.
+impl From<JoinSimResultError> for AssemblyError {
+    fn from(error: JoinSimResultError) -> Self {
+        Self::corrupt(error.candidate_id.path_id(), error.to_string())
     }
 }
 
@@ -728,9 +779,10 @@ pub struct MergedPayloadOutcome {
 /// # Errors
 ///
 /// [`AssemblyError::Corrupt`] when a payload's `deployment_id` differs from
-/// `deployment_id`, or its `path_id` is not registered (the corruption arm
-/// above), and [`AssemblyError::DuplicateCandidateId`] when two payload rows
-/// would attach two LIVE submit rows to one candidate id — the join never
+/// `deployment_id`, its `path_id` is not registered (the corruption arm above),
+/// or a PROFITABLE row's path resolved without hops (so no submit row can name
+/// its pool keys), and [`AssemblyError::DuplicateCandidateId`] when two payload
+/// rows would attach two LIVE submit rows to one candidate id — the join never
 /// silently deduplicates and never leans on the submit lane's mutual exclusion.
 pub fn merge_payload_results(
     payloads: &[PayloadRow],
@@ -769,16 +821,19 @@ pub fn merge_payload_results(
             merged.failures.push((p.candidate_id, failure.clone()));
             continue;
         }
-        let joined = join_sim_result(&p.sim_result(), Some(&path_info), target);
-        if degenbot_arbitrage::is_gas_profitable(p.net_profit) {
-            merged.submits.push(joined);
-            merged.verdicts.push((p.candidate_id, PayloadArm::Submit));
-        } else {
+        // Only a row that becomes a submit row is joined: an unprofitable
+        // entry claims no submit slot, so it has no exclusion set to answer for.
+        if !degenbot_arbitrage::is_gas_profitable(p.net_profit) {
             merged.unprofitable_count += 1;
             merged
                 .verdicts
                 .push((p.candidate_id, PayloadArm::Unprofitable));
+            continue;
         }
+        merged
+            .submits
+            .push(join_sim_result(&p.sim_result(), &path_info, target)?);
+        merged.verdicts.push((p.candidate_id, PayloadArm::Submit));
     }
     Ok(merged)
 }
@@ -1741,6 +1796,30 @@ mod tests {
         ));
     }
 
+    /// The payload arm is engine-born: a profitable row whose registered path
+    /// resolved without hops cannot yield the submit-lane shape, so the batch
+    /// refuses rather than joining a row with no pool-exclusion set.
+    #[test]
+    fn payload_arm_refuses_a_profitable_row_whose_path_has_no_hops() {
+        let res = resolver_paths(&[(7, PathInfo::new(Vec::new()))]);
+        let p = Policy::fresh();
+        let payload = PayloadRow {
+            candidate_id: CandidateId::new(7, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(600_u64),
+            net_profit: alloy::primitives::U256::from(500_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        };
+        let err = assemble(&[], &[payload], &res, &p).unwrap_err();
+        assert_eq!(err.path_id(), 7);
+        assert!(err.to_string().contains("no hops"), "{err}");
+    }
+
     /// A payload FAILURE's detail carries the batch request's real figures
     /// (`optimal_input` + expected `hop_outputs`) and the payload's own captured
     /// swaps. Without the join the dump renders `optimal_input=0
@@ -1921,18 +2000,10 @@ mod tests {
         assert_eq!(only_v4, std::iter::once(v4_id.to_string()).collect());
     }
 
-    /// Join entry-point parity: a payload `SimResult` reassembled row and an
-    /// FFI survivor for the same path id pass through the SAME
-    /// [`join_sim_result`] — the `path_pools` sets are equal by construction.
-    #[test]
-    fn join_sim_result_sets_are_entry_independent() {
-        let v4_id = "0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7";
-        let path_info = PathInfo::new(vec![
-            v4_hop(v4_id),
-            v2_hop("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        ]);
-        let sim = degenbot_arbitrage::SimResult {
-            candidate_id: CandidateId::new(7, deployment_id()),
+    /// The one gas-profitable sim fixture, bound to `candidate_id`.
+    fn sim_result(candidate_id: CandidateId, hop_count: usize) -> degenbot_arbitrage::SimResult {
+        degenbot_arbitrage::SimResult {
+            candidate_id,
             gross_profit: alloy::primitives::U256::from(600_000_000_000_u64),
             net_profit: alloy::primitives::U256::from(500_000_000_000_u64),
             gas_used: 300_000,
@@ -1943,21 +2014,55 @@ mod tests {
             access_list: None,
             captured_swaps: Vec::new(),
             passed: true,
-            hop_count: 2,
-        };
+            hop_count,
+        }
+    }
+
+    /// A path with no hops has no pools to claim, so the join refuses the row
+    /// instead of returning one whose empty set reads as "touches no pool" at
+    /// the submit lane's exclusion check — for every caller of the public join,
+    /// not only the assembly arms that resolve hops first.
+    #[test]
+    fn join_sim_result_refuses_a_path_with_no_hops() {
+        let sim = sim_result(CandidateId::new(12, deployment_id()), 0);
         let executor = "0x690b9a9e9aa1c9db991c7721a92d351db4fac990"
             .parse()
             .unwrap();
-        // `None` (the unrecoverable-path fall-through) yields an empty set;
-        // `Some` yields the derived set — both arms call this one fn.
-        let degenerate = join_sim_result(&sim, None, executor);
-        assert!(degenerate.path_pools.is_empty());
-        let row = join_sim_result(&sim, Some(&path_info), executor);
-        assert!(row.path_pools.contains(&PoolKey::new(v4_id)));
-        assert!(row
-            .path_pools
-            .contains(&PoolKey::new("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")));
-        assert_eq!(row.path_pools.len(), 2);
+        let error = join_sim_result(&sim, &PathInfo::new(Vec::new()), executor)
+            .expect_err("a hop-free path cannot yield a submit row");
+        assert_eq!(error.candidate_id(), sim.candidate_id);
+        assert!(
+            error.to_string().contains(&sim.candidate_id.to_string()),
+            "the refusal names the originating candidate: {error}"
+        );
+    }
+
+    /// Join entry-point parity + keying identity: a payload `SimResult`
+    /// reassembled row and an FFI survivor for the same path id pass through the
+    /// SAME [`join_sim_result`], and the joined row carries exactly the path's
+    /// heterogeneous V4/V3/V2 keys — never an empty set, which the submit lane's
+    /// `is_path_blocked` would read as "touches no pool" and never block.
+    #[test]
+    fn join_sim_result_sets_are_entry_independent() {
+        let v4_id = "0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7";
+        let path_info = PathInfo::new(vec![
+            v4_hop(v4_id),
+            v3_hop("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            v2_hop("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+        ]);
+        let sim = sim_result(CandidateId::new(7, deployment_id()), 3);
+        let executor = "0x690b9a9e9aa1c9db991c7721a92d351db4fac990"
+            .parse()
+            .unwrap();
+        let row = join_sim_result(&sim, &path_info, executor).unwrap();
+        let expected: HashSet<PoolKey> = [
+            PoolKey::new(v4_id),
+            PoolKey::new("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            PoolKey::new("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(row.path_pools, expected, "the joined keys ARE the path's");
         assert_eq!(row.gross_profit, sim.gross_profit);
         assert_eq!(row.net_profit, sim.net_profit);
         assert_eq!(row.gas_used, sim.gas_used);
@@ -1965,6 +2070,23 @@ mod tests {
         assert_eq!(row.base_fee_next, sim.base_fee_next);
         assert_eq!(row.access_list, None);
         assert_eq!(row.execute_calldata, sim.execute_calldata);
+
+        // Two candidates trading one pool cannot both be admitted: the shared
+        // key rides both joined sets, so the lane's exclusion sees the overlap
+        // even though the two paths differ at every other hop.
+        let sibling_path = PathInfo::new(vec![
+            v2_hop("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+            v2_hop("0x6b175474e89094c44da98b954eedeac495271d0f"),
+        ]);
+        let sibling = sim_result(CandidateId::new(8, deployment_id()), 2);
+        let sibling_row = join_sim_result(&sibling, &sibling_path, executor).unwrap();
+        assert!(!row.path_pools.is_disjoint(&sibling_row.path_pools));
+        let mut dispatcher = degenbot_submission::Dispatcher::for_block(1);
+        dispatcher.reserve_pools(row.path_pools.iter().cloned());
+        assert!(
+            dispatcher.is_path_blocked(&sibling_row.path_pools, &HashSet::new()),
+            "the sibling's shared pool is already claimed by the first candidate"
+        );
     }
 
     /// The standalone payload merge: submit + unprofitable categorization and
@@ -2066,6 +2188,58 @@ mod tests {
         let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
         assert_eq!(err.path_id(), 11);
         assert!(err.to_string().contains("not registered in this engine"));
+    }
+
+    /// The merge refuses a PROFITABLE row whose registered path has no hops: the
+    /// submit row could never name its pool-exclusion set.
+    #[test]
+    fn merge_payload_refuses_a_profitable_row_whose_path_has_no_hops() {
+        let res = resolver_paths(&[(7, PathInfo::new(Vec::new()))]);
+        let payloads = [PayloadRow {
+            candidate_id: CandidateId::new(7, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(600_u64),
+            net_profit: alloy::primitives::U256::from(500_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        }];
+        let err = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap_err();
+        assert_eq!(err.path_id(), 7);
+        assert!(err.to_string().contains("no hops"), "{err}");
+    }
+
+    /// An UNPROFITABLE row never becomes a submit row, so a hop-free path there
+    /// costs its own verdict and refuses nothing.
+    #[test]
+    fn merge_payload_leaves_a_hop_free_unprofitable_row_alone() {
+        let res = resolver_paths(&[(8, PathInfo::new(Vec::new()))]);
+        let payloads = [PayloadRow {
+            candidate_id: CandidateId::new(8, deployment_id()),
+            gross_profit: alloy::primitives::U256::from(600_u64),
+            net_profit: alloy::primitives::U256::ZERO,
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 30,
+            execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
+            access_list: None,
+            failure: None,
+            captured_swaps: Vec::new(),
+        }];
+        let merged = merge_payload_results(&payloads, &res, EXECUTOR, deployment_id()).unwrap();
+        assert!(merged.submits.is_empty());
+        assert_eq!(merged.unprofitable_count, 1);
+        assert_eq!(
+            merged.verdicts,
+            vec![(
+                CandidateId::new(8, deployment_id()),
+                PayloadArm::Unprofitable
+            )]
+        );
+        assert_eq!(merged.path_infos.len(), 1);
     }
 
     /// The standalone merge refuses a row minted by another deployment BEFORE
