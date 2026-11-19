@@ -517,8 +517,11 @@ def test_typed_config_env_override_reaches_the_getter() -> None:
     assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "7"}) == 7
 
 
-def test_typed_config_is_positive_clamped() -> None:
-    assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"}) == 1
+def test_out_of_range_batch_size_refuses_at_the_load() -> None:
+    """The key's floor is one: a zero refuses at the load, it is not clamped."""
+
+    with pytest.raises(ValueError, match="pathfinding.discovery_batch_size"):
+        _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"})
 
 
 class _Context:
@@ -568,18 +571,3 @@ def test_crawl_config_carries_the_typed_batch_size(tmp_path: pathlib.Path) -> No
     assert config["path_cap"] is None
     assert config["pool_kinds"] == [PoolKind.V2]
     assert config["intake_window"] == 32
-
-
-def test_crawl_config_clamps_a_zero_batch(tmp_path: pathlib.Path) -> None:
-    """A zero batch never reaches the engine: it is clamped at the boundary."""
-    config = crawl_config(
-        context=_Context(tmp_path / "unused.db"),
-        engine_registry=_Registry(),
-        max_paths=25,
-        discovery_batch_size=0,
-        retry_policy=None,
-        pool_types=[PoolKind.V2],
-        pool_type_per_depth=None,
-    )
-    assert config["discovery_batch_size"] == 1
-    assert config["path_cap"] == 25

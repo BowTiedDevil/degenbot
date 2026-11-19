@@ -397,11 +397,11 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         kind: "tokio multi-thread runtime (inline-sim hook — payload sims; fleet-hosted SimDriver target, ADR-042)",
         count: workers,
         thread_name: "degenbot-inline-sim-{n}",
-        sizing: "leftover_worker_budget; override `solve.inline_sim_workers` (env DEGENBOT_INLINE_SIM_WORKERS), clamp 1..=32",
+        sizing: "leftover_worker_budget; override `solve.inline_sim_workers` (env DEGENBOT_INLINE_SIM_WORKERS), refused outside 1..=32 at the load",
         binding: "shared",
     });
     #[expect(clippy::expect_used)]
-    // unreachable in production: multi-thread Builder only fails on allocator OOM or invalid config (worker count is clamped 1..=32)
+    // unreachable in production: multi-thread Builder only fails on allocator OOM or invalid config (the load refuses a worker count outside 1..=32, so this is never 0)
     tokio::runtime::Builder::new_multi_thread()
         // Sizing: a 2-worker runtime queues the payload sims while ~50
         // bins/cycle arrive concurrently; sizing to the core count lets the
@@ -420,10 +420,9 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
 
 /// The inline-sim runtime's worker count: core-count by default (the payload
 /// sims are the per-path marginal cost of every solve cycle), overridable via
-/// the typed
-/// `solve.inline_sim_workers` key (env `DEGENBOT_INLINE_SIM_WORKERS`).
-/// Value parsing/validation is the loader's job (fail-closed at boot,
-/// fail-closed at boot); this layer just clamps to 1..=32.
+/// the typed `solve.inline_sim_workers` key (env `DEGENBOT_INLINE_SIM_WORKERS`).
+/// The load owns the range — it refuses a value outside 1..=32 and names the
+/// key — so this layer sizes the runtime with exactly the count that arrived.
 fn inline_sim_worker_count() -> usize {
     // Two-runtime sizing: the sim runtime follows the LEFTOVER
     // of the CPU budget after the solve bins (not raw available
@@ -431,9 +430,10 @@ fn inline_sim_worker_count() -> usize {
     // the quota.
     let default = degenbot_core::cpu_budget::leftover_worker_budget();
     // typed schema key `solve.inline_sim_workers`
-    // (`DEGENBOT_INLINE_SIM_WORKERS`); the loader owns the env read.
+    // (`DEGENBOT_INLINE_SIM_WORKERS`); the loader owns the env read and the
+    // range, so a declared value reaches the runtime as written.
     match ::degenbot_config::holder::config().solve.inline_sim_workers {
-        Some(n) => n.clamp(1, 32),
+        Some(n) => n,
         None => default,
     }
 }

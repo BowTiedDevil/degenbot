@@ -312,7 +312,7 @@ def crawl_config(  # ruff: ignore[too-many-arguments] - the resolved values of o
         ],
         "min_depth": MIN_DEPTH,
         "max_depth": MAX_DEPTH,
-        "discovery_batch_size": max(1, discovery_batch_size),
+        "discovery_batch_size": discovery_batch_size,
         "intake_window": REG_INTAKE_WINDOW,
         "path_cap": max_paths or None,
         "retry": _retry_policy_value(retry_policy),

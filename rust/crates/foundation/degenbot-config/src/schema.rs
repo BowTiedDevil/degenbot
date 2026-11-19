@@ -535,7 +535,7 @@ crate::config_schema! {
         solve_resolve_par [bool] = true, env = "DEGENBOT_SOLVE_RESOLVE_PAR", def = "true",
             doc = "Chunked parallel resolve stance; `0`/`off`/`false`/`disabled` disables.";
         inline_sim_workers [opt usize] = None, env = "DEGENBOT_INLINE_SIM_WORKERS", def = "(unset; derived from CPU budget)",
-            doc = "Inline-sim worker count (clamped 1..=32; unparsable falls back to derived default at the site).";
+            doc = "Inline-sim worker count (thread count of the payload-sim runtime). When set it must be within 1..=32: the load refuses a value outside that range, naming this key and the range, and the runtime is sized with exactly the count declared. Unset derives the count from the leftover CPU budget.";
         admission_shed [bool] = true, env = "DEGENBOT_SOLVE_ADMISSION", def = "true",
             doc = "QTZGFL capacity-modulated admission stance: unset/`1`/`true`/`on` (default) replaces the retired in-flight cap degrade with budget = max(0, admission_target_depth - in-flight) and SHEDS zero-budget cycles; `0`/`false`/`off` is the intentional take-all no-shed operator stance (A/B).";
         admission_target_depth [usize] = 8, env = "DEGENBOT_SOLVE_ADMISSION_TARGET_DEPTH", def = "8",
@@ -655,7 +655,7 @@ crate::config_schema! {
     // operator-settable without a code change.
     pathfinding PathfindingConfig {
         discovery_batch_size [usize] = 1000, env = "DEGENBOT_DISCOVERY_BATCH_SIZE", def = "1000",
-            doc = "Owner: the core's crawl controller. Discovery-sweep batch size: one discovery turn pulls at most this many candidates before the intake-window reap (the Python shell's startup sweep delivers the same count per async batch). The controller refuses 0 as a config error -- there is no <= 1 fallback to per-path delivery; the shell clamps to 1.";
+            doc = "Owner: the core's crawl controller, and the one owner of this value. Discovery-sweep batch size: one discovery turn pulls at most this many candidates before the intake-window reap (the Python shell's startup sweep delivers the same count per async batch). The floor is 1: the load refuses 0, naming this key and the floor, because there is no per-path fallback for a zero batch. 0 is not a second spelling of the default -- unset already takes it -- and no consumer re-shapes the resolved value.";
         max_registered_paths [usize] = 100_000, env = "DEGENBOT_MAX_PATHS", def = "100000",
             doc = "Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped.";
         reg_progress_secs [f64] = 30.0, env = "DEGENBOT_REG_PROGRESS_SECS", def = "30.0",
@@ -869,6 +869,8 @@ impl BotConfig {
             ));
         }
         validate_pump(&self.pump, &mut problems);
+        validate_pathfinding(&self.pathfinding, &mut problems);
+        validate_solve(&self.solve, &mut problems);
         for (path, env, hops) in [
             (
                 "strategy.mevblocker_backrun.cycle_max_hops",
@@ -966,6 +968,46 @@ fn validate_pump(pump: &PumpConfig, problems: &mut Vec<String>) {
         ));
     }
 }
+
+/// `pathfinding.discovery_batch_size` is a count of candidates one discovery
+/// turn pulls: the crawl controller has no per-path fallback for a zero batch,
+/// so the load refuses it here — naming the key, its env name, and the floor —
+/// rather than a consumer re-raising the value to 1. `0` is not a second
+/// spelling of the default; unset already takes the declared 1000.
+fn validate_pathfinding(pathfinding: &PathfindingConfig, problems: &mut Vec<String>) {
+    if pathfinding.discovery_batch_size == 0 {
+        problems.push(
+            "pathfinding.discovery_batch_size (DEGENBOT_DISCOVERY_BATCH_SIZE) is 0; one \
+             discovery turn pulls at least one candidate \u{2014} set it to 1 or more \
+             (unset takes the declared default)"
+                .to_string(),
+        );
+    }
+}
+
+/// `solve.inline_sim_workers` sizes a tokio runtime's worker threads: zero
+/// threads is no runtime, and a count past the ceiling is not a sizing decision
+/// the CPU budget can serve. When the operator set it, the load refuses a value
+/// outside 1..=32 here; unset stays valid, because the leftover CPU budget
+/// derives the count.
+fn validate_solve(solve: &SolveConfig, problems: &mut Vec<String>) {
+    let Some(workers) = solve.inline_sim_workers else {
+        return;
+    };
+    if !(1..=INLINE_SIM_WORKERS_MAX).contains(&workers) {
+        problems.push(format!(
+            "solve.inline_sim_workers (DEGENBOT_INLINE_SIM_WORKERS) is {workers}; the \
+             inline-sim runtime takes between 1 and {INLINE_SIM_WORKERS_MAX} worker \
+             threads \u{2014} set it inside that range, or unset it to derive the count \
+             from the CPU budget"
+        ));
+    }
+}
+
+/// The inline-sim runtime's worker ceiling: the widest thread count the
+/// payload-sim runtime is sized to, and the upper bound the load enforces on
+/// `solve.inline_sim_workers`.
+const INLINE_SIM_WORKERS_MAX: usize = 32;
 
 /// Which transport a `[nodes.*]` key declares, and therefore what one of its
 /// entry values must be able to serve. The transport is a property of the KEY:
@@ -2184,6 +2226,77 @@ mod tests {
             "strategy.mevblocker_backrun.cycle_max_hops",
         ] {
             assert!(message.contains(needle), "missing {needle}: {message}");
+        }
+    }
+
+    /// The discovery batch size is a count of candidates one discovery turn
+    /// pulls: the crawl controller has no per-path fallback, so `0` is a config
+    /// error refused here, with the key and its env name, rather than a value a
+    /// consumer silently re-raises to 1.
+    #[test]
+    fn discovery_batch_size_zero_is_refused_by_key_and_env_name() {
+        let mut config = BotConfig::default();
+        config
+            .assign("pathfinding", "discovery_batch_size", "0")
+            .expect("the raw value parses as usize");
+        let error = config.validate().expect_err("a zero batch must refuse");
+        let message = error.to_string();
+        assert!(
+            message.contains("pathfinding.discovery_batch_size")
+                && message.contains("DEGENBOT_DISCOVERY_BATCH_SIZE"),
+            "the refusal names the key and its env name: {message}"
+        );
+        assert!(
+            message.contains("1 or more"),
+            "the refusal names the accepted range: {message}"
+        );
+
+        let mut one = BotConfig::default();
+        one.assign("pathfinding", "discovery_batch_size", "1")
+            .expect("parses as usize");
+        one.validate().expect("a batch of one is a legal batch");
+    }
+
+    /// The inline-sim worker override is a thread count: `0` sizes no runtime
+    /// and a count past the ceiling is not a sizing decision. Both are refused
+    /// at the load, naming the key, the env name, the range, and how to return
+    /// to the derived count; unset stays valid.
+    #[test]
+    fn inline_sim_workers_out_of_range_is_refused_and_unset_stays_valid() {
+        BotConfig::default()
+            .validate()
+            .expect("unset derives the count from the CPU budget");
+
+        for bad in ["0", "33", "99999"] {
+            let mut config = BotConfig::default();
+            config
+                .assign("solve", "inline_sim_workers", bad)
+                .expect("the raw value parses as usize");
+            let error = config
+                .validate()
+                .expect_err("a worker count outside 1..=32 must refuse");
+            let message = error.to_string();
+            assert!(
+                message.contains("solve.inline_sim_workers")
+                    && message.contains("DEGENBOT_INLINE_SIM_WORKERS"),
+                "the refusal names the key and its env name: {message}"
+            );
+            assert!(
+                message.contains("1 and 32"),
+                "the refusal names the accepted range: {message}"
+            );
+            assert!(
+                message.contains("unset"),
+                "the refusal says how to return to the derived count: {message}"
+            );
+        }
+
+        for good in ["1", "32"] {
+            let mut config = BotConfig::default();
+            config
+                .assign("solve", "inline_sim_workers", good)
+                .expect("parses as usize");
+            config.validate().expect("the legal extremes are valid");
         }
     }
 

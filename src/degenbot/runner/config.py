@@ -396,10 +396,9 @@ class ArbitrageConfig:
             dry_run=not live,
             reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,
             max_registered_paths=resolved_values.pathfinding.max_registered_paths,
-            # The ONE clamp owner for the batch size: the shell getter's twin
-            # is gone, so a zero/garbage value degrades to the legacy
-            # per-path delivery exactly once, here.
-            discovery_batch_size=max(1, resolved_values.pathfinding.discovery_batch_size),
+            # The declared key verbatim: the schema owns the floor and the
+            # load refuses a zero batch, so no renderer re-shapes the value.
+            discovery_batch_size=resolved_values.pathfinding.discovery_batch_size,
             contracts_dir=resolved_values.dispatch.contracts_dir or "",
             sim_exit_on_fail=resolved_values.simulation.sim_exit_on_fail,
             sim_exit_ignore_buckets=resolved_values.simulation.exit_ignore_buckets,

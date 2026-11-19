@@ -143,16 +143,37 @@ def test_the_database_path_getter_agrees_with_the_cascade() -> None:
     assert verdict.declared_database_path == verdict.values.database.path
 
 
-def test_the_declared_batch_size_projects_by_name_and_clamps_once() -> None:
-    """The named projection exposes the declared key; the clamp has one owner.
+def test_the_declared_batch_size_projects_by_name() -> None:
+    """The named projection exposes the declared key, not a consumer's opinion of it.
 
-    The FFI getter used to carry its own ``max(1)`` twin of the config
-    factory's; the twin is deleted and the clamp lives only at the factory
-    that hands the value to the discovery pipeline.
+    ``pathfinding.discovery_batch_size`` reaches the driver exactly as the
+    cascade resolved it: the schema declares the key, the load refuses a value
+    below its floor, and no renderer re-raises the value on the way through.
     """
     assert isinstance(
         _read_named(resolved_config().values, "pathfinding.discovery_batch_size"), int
     )
+
+
+def test_out_of_range_config_refuses_at_the_load() -> None:
+    """The boundary refuses an out-of-range value instead of re-shaping it.
+
+    ``pathfinding.discovery_batch_size`` is a count of candidates per
+    discovery turn (floor 1) and ``solve.inline_sim_workers`` a thread count
+    (1..=32 when set): each refusal names its key so the operator learns which
+    knob to fix, and an unset optional key stays valid.
+    """
+    for name, raw in (
+        ("DEGENBOT_DISCOVERY_BATCH_SIZE", "0"),
+        ("DEGENBOT_INLINE_SIM_WORKERS", "0"),
+        ("DEGENBOT_INLINE_SIM_WORKERS", "99999"),
+    ):
+        with pytest.raises(ValueError, match=name):
+            resolve_hypothetical({name: raw}, None)
+
+    values = resolve_hypothetical({}, None).values
+    assert _read_named(values, "solve.inline_sim_workers") is None
+    assert _read_named(values, "pathfinding.discovery_batch_size") == 1000
 
 
 class TestHypotheticalResolution:

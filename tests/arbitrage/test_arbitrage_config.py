@@ -41,15 +41,23 @@ def test_fixed_only_mode_disables_startup_discovery() -> None:
     assert _cfg().registration_snapshot is True
 
 
-def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
-    """ONE clamp owner: the config factory.
+def test_out_of_range_discovery_batch_size_refuses_at_the_load() -> None:
+    """A zero batch is a config error, refused where the config is loaded.
 
-    A zero (or garbage) declared batch size degrades to the legacy per-path
-    delivery exactly once, here — the deleted FFI getter twin must not come
-    back as a second owner.
+    One discovery turn pulls `pathfinding.discovery_batch_size` candidates and
+    the crawl controller has no per-path fallback, so the declared key's floor
+    is 1: the load names the key and the range instead of a consumer silently
+    re-raising the value to 1. A negative or non-numeric value is already
+    refused by the key's own unsigned kind, also naming the key.
     """
-    cfg = probe.build_config(env={"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"})
-    assert cfg.discovery_batch_size == 1
+    with pytest.raises(ValueError, match="pathfinding.discovery_batch_size"):
+        probe.build_config(env={"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"})
+
+    for garbage in ("-1", "not-a-count"):
+        with pytest.raises(ValueError, match="pathfinding.discovery_batch_size"):
+            probe.build_config(env={"DEGENBOT_DISCOVERY_BATCH_SIZE": garbage})
+
+    assert probe.build_config(env={"DEGENBOT_DISCOVERY_BATCH_SIZE": "1"}).discovery_batch_size == 1
 
 
 def _cfg(
