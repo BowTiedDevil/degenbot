@@ -360,8 +360,19 @@ impl BlockPump {
         let mut armed_window: Option<(bool, Duration)> = None;
         let mut settle_sleep = Box::pin(tokio::time::sleep_until(tokio::time::Instant::now()));
 
-        // the current block's span, replaced by each accepted header.
+        // the current block's span, replaced by each accepted header. Kept for
+        // the epoch's own recording (`reorg.*` breadcrumbs) and its
+        // entry/instrument scope: those dispatch to the subscriber that minted
+        // the span and are inert on an unbacked handle, so keeping it is safe —
+        // only a `parent:` handoff can abort the pump.
         let mut block_span: Option<tracing::Span> = None;
+        // the validated parent handle for `block_span`
+        // (`telemetry::loop_parent`): `Some` only when the span's exporter
+        // context proves a registry backs it. Every child span that names this
+        // epoch as its parent uses THIS handle, so a subscriber installed after
+        // the span was created degrades the child to a trace root instead of
+        // panicking in `clone_span`.
+        let mut block_parent: Option<tracing::Span> = None;
 
         // Pre-solve gap decomposition (GC? tracking epilogue to the pump/`
         // solve-gap investigation): per-block marks so the gap between the
@@ -399,9 +410,11 @@ impl BlockPump {
         // Reorg-window telemetry state: the episode span + its
         // per-window counters live ACROSS loop iterations (EnterReorg →
         // CloseReorg). The window span is its own trace root (episodes cross
-        // block windows); the `restore` children are emitted by the
-        // coordinator with this span as their explicit parent.
+        // block windows); it is kept for the episode's own recording and entry,
+        // while `reorg_parent` is the validated parent the coordinator's
+        // `restore` children hang off.
         let mut reorg_span: Option<tracing::Span> = None;
+        let mut reorg_parent: Option<tracing::Span> = None;
         let mut reorg_pools_restored: u64 = 0;
         let mut reorg_idempotent_noops: u64 = 0;
         // the per-stage waterfall seam. The legacy
@@ -678,7 +691,7 @@ impl BlockPump {
                                 // that follow sit beside it under the same
                                 // epoch root.
                                 stage_tel.on_publish(
-                                    block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                                    block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                                     Epoch::with_generation(open, fsm.rewind_seq()),
                                 );
                                 // throttled per-block phase
@@ -775,11 +788,12 @@ impl BlockPump {
                     // this span becomes the loop's per-block context —
                     // subsequent iterations (logs, settle decisions) nest under it
                     // until the next header replaces it.
-                    // A span minted while no subscriber is installed carries
-                    // NoSubscriber's 0xDEAD sentinel id; keep it out of the loop
-                    // context so a subscriber installed mid-run cannot turn the
-                    // next `parent:` clone into a Registry::clone_span panic.
-                    block_span = crate::telemetry::subscriber_backed_span(&new_block_span);
+                    // The span itself is kept unconditionally; only the parent
+                    // handle is validated, so a subscriber installed after this
+                    // header cannot turn the next `parent:` handoff into a
+                    // Registry::clone_span panic.
+                    block_parent = crate::telemetry::loop_parent(&new_block_span);
+                    block_span = Some(new_block_span.clone());
                     // Pre-solve gap marks: this header is the clock anchor
                     // for the new block's gap decomposition.
                     let header_at = std::time::Instant::now();
@@ -1014,7 +1028,7 @@ impl BlockPump {
                         apply_started_at = Some(std::time::Instant::now());
                     }
                     stage_tel.on_first_log(
-                        block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                        block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                         Epoch::with_generation(log_block, fsm.rewind_seq()),
                     );
                     // FSM single-writer recovery discard. After an
@@ -1035,9 +1049,15 @@ impl BlockPump {
                         // child span so the window trace shows which replay
                         // events were discarded (outside a window it is
                         // routine resume noise; only the log line remains).
-                        if let Some(window) = reorg_span.as_ref() {
+                        if reorg_span.is_some() {
+                            // Parented through the validated handle; with no
+                            // validated ancestry the span is its own root rather
+                            // than a blind id clone.
+                            let parent = reorg_parent
+                                .as_ref()
+                                .map_or_else(tracing::Span::none, tracing::Span::clone);
                             drop(tracing::info_span!(
-                                parent: window.clone(),
+                                parent: parent,
                                 "degenbot.reorg.dropped_recovery",
                                 reorg.block = log_block,
                             ));
@@ -1118,7 +1138,7 @@ impl BlockPump {
                             // the Rewind stage opens (from ANY row —
                             // I6), counted for the A/B Rewind-frequency series.
                             stage_tel.on_enter_reorg(
-                                block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                                block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                                 Epoch::with_generation(log_block, fsm.rewind_seq()),
                                 prev_stage,
                             );
@@ -1155,13 +1175,14 @@ impl BlockPump {
                             if let Some(bs) = block_span.as_ref() {
                                 bs.record("reorg.entry_block", reorg_block);
                             }
-                            reorg_span = crate::telemetry::subscriber_backed_span(&window);
+                            reorg_parent = crate::telemetry::loop_parent(&window);
+                            reorg_span = Some(window.clone());
                             reorg_pools_restored = 0;
                             reorg_idempotent_noops = 0;
                             let outcome = {
                                 let _entered = reorg_span.as_ref().map(tracing::Span::enter);
                                 self.reorg_coordinator
-                                    .dispatch_reorg_log(&log, reorg_span.as_ref())
+                                    .dispatch_reorg_log(&log, reorg_parent.as_ref())
                             };
                             match outcome {
                                 Ok(crate::bot_core::reorg_coordinator::ReorgOutcome::Restored) => {
@@ -1206,7 +1227,7 @@ impl BlockPump {
                             let outcome = {
                                 let _entered = reorg_span.as_ref().map(tracing::Span::enter);
                                 self.reorg_coordinator
-                                    .dispatch_reorg_log(&log, reorg_span.as_ref())
+                                    .dispatch_reorg_log(&log, reorg_parent.as_ref())
                             };
                             match outcome {
                                 Ok(crate::bot_core::reorg_coordinator::ReorgOutcome::Restored) => {
@@ -1243,6 +1264,7 @@ impl BlockPump {
                             // Close the episode span with its
                             // counters + outcome, and leave a breadcrumb field
                             // on the current block window's span.
+                            reorg_parent = None;
                             if let Some(window) = reorg_span.take() {
                                 window.record("reorg.pools_restored", reorg_pools_restored);
                                 window.record("reorg.idempotent_noops", reorg_idempotent_noops);
@@ -1259,7 +1281,7 @@ impl BlockPump {
                             // histogram records) and the fresh epoch's cycle
                             // restarts at Streaming.
                             stage_tel.on_close_reorg(
-                                block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                                block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                                 Epoch::with_generation(new_head, fsm.rewind_seq()),
                             );
                             reorg_pools_restored = 0;
@@ -1329,7 +1351,7 @@ impl BlockPump {
                             // EPOCH `prev` (the machine's coordinate, stamped
                             // with the current rewind generation).
                             stage_tel.on_tombstone(
-                                block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                                block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                                 Epoch::with_generation(prev, fsm.rewind_seq()),
                             );
                             self.drive_finalize(&fsm, fsm.context_for(prev, prev_meta));
@@ -1414,7 +1436,7 @@ impl BlockPump {
                     // interval closes and the Quiesced (StreamingComplete)
                     // point span fires with the burst's log count.
                     stage_tel.on_quiesced(
-                        block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                        block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                         Epoch::with_generation(log_block, fsm.rewind_seq()),
                         pregap.logs,
                     );
@@ -1450,7 +1472,7 @@ impl BlockPump {
                                 // the same publish stage span as the timed
                                 // settle path.
                                 stage_tel.on_publish(
-                                    block_span.as_ref().unwrap_or(&tracing::Span::none()),
+                                    block_parent.as_ref().unwrap_or(&tracing::Span::none()),
                                     Epoch::with_generation(open, fsm.rewind_seq()),
                                 );
                                 self.drive_publish(

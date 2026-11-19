@@ -226,28 +226,50 @@ pub(crate) fn make_trace_root(span: &tracing::Span) {
 #[cfg(not(feature = "otel"))]
 pub(crate) fn make_trace_root(_span: &tracing::Span) {}
 
-/// `Some(span)` when a real subscriber backs `span`, `None` when the ambient
-/// dispatch is `tracing`'s no-op [`NoSubscriber`](tracing::subscriber::NoSubscriber).
+/// The loop-carried parent handle for an already-created pump span.
 ///
-/// `NoSubscriber::new_span` mints the sentinel id `0xDEAD` — neither
-/// `Span::make_with` nor the span macro's `always`-interest short-circuit
-/// consults the current dispatch's `enabled()` — so a span created while the
-/// no-op subscriber is ambient is an UNBACKED handle. Reusing it as an
-/// explicit `parent:` after a real subscriber arrives panics inside
-/// `Registry::clone_span` ("tried to clone Id(57005), but no span exists with
-/// that ID"): the sentinel exists in no real registry. Loop-carried spans (the
-/// pump's per-epoch block root and the reorg-window root outlive many blocks)
-/// must pass through here at CREATION time — the check is only meaningful
-/// against the dispatch that minted the span — so a subscriber installed
-/// mid-run degrades the parent to a root span instead of aborting the pump.
+/// The pump keeps one span per epoch (and one per reorg window) and parents
+/// every later child in that window to it, so the span outlives the subscriber
+/// state it was created under. A span created while no subscriber was
+/// installed is backed by no registry — `NoSubscriber::new_span` mints the
+/// `0xDEAD` sentinel id, reached without an `enabled()` check once the callsite
+/// interest is cached `always` — and handing that id to a registry that
+/// arrives later aborts the pump inside `Registry::clone_span` ("tried to
+/// clone Id(57005), but no span exists with that ID").
+///
+/// The validation is the span's OWN exporter context, never the ambient
+/// dispatch: a valid `OTel` `SpanContext` means the exporter layer built the
+/// span, so the registry that minted it resolves the parent id. Anything else
+/// — created before any subscriber, no `OTel` layer, a disabled span — carries
+/// no proof of backing, and the caller gets `None`: an intentional trace root
+/// instead of a blind clone of an id no registry owns. The span itself is
+/// still kept by the pump for recording and entry; both dispatch to the
+/// subscriber that minted it and are inert on an unbacked handle.
+///
+/// Residual: a valid context proves membership in the registry that minted the
+/// span, not in a REPLACEMENT registry. The pump's contract is one subscriber
+/// installed once into the process-wide global slot; running the pump across a
+/// subscriber swap is outside it.
+#[cfg(feature = "otel")]
 #[must_use]
-pub(crate) fn subscriber_backed_span(span: &tracing::Span) -> Option<tracing::Span> {
-    if tracing::dispatcher::get_default(|dispatch| {
-        dispatch.is::<tracing::subscriber::NoSubscriber>()
-    }) {
+pub(crate) fn loop_parent(span: &tracing::Span) -> Option<tracing::Span> {
+    use opentelemetry::trace::TraceContextExt as _;
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    if !span.context().span().span_context().is_valid() {
         return None;
     }
     Some(span.clone())
+}
+
+/// No-`otel`-feature twin: there is no exporter context to validate ancestry
+/// against, and a `tracing` id alone does not prove the ambient registry minted
+/// the span. Nothing is carried into a `parent:` slot, so children of a
+/// loop-carried span are intentional roots; the pump still keeps the span
+/// itself for recording and entry.
+#[cfg(not(feature = "otel"))]
+#[must_use]
+pub(crate) fn loop_parent(_span: &tracing::Span) -> Option<tracing::Span> {
+    None
 }
 
 /// No-op without the `otel` feature (nothing to flush).
@@ -567,40 +589,144 @@ pub fn flush_before_exit() {
     }
 }
 
-/// A long-lived process hits the same callsite before and after any subscriber
-/// exists; the guard is keyed on the dispatch, not on the span's id.
+/// A span no registry knows — the handle a long-lived process holds when it
+/// creates spans before any subscriber is installed. `new_span` mints the
+/// no-op subscriber's `0xDEAD` sentinel id, reached without an `enabled()`
+/// check once the callsite interest is cached `always`; the dispatching
+/// subscriber here is a real one so the mint does not hinge on an
+/// interest-cache state a test cannot force.
 #[cfg(test)]
 fn unbacked_span() -> tracing::Span {
-    tracing::info_span!("test.unbacked")
+    struct SentinelSubscriber;
+
+    impl tracing::Subscriber for SentinelSubscriber {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(0xDEAD)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, _event: &tracing::Event<'_>) {}
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    tracing::subscriber::with_default(SentinelSubscriber, || tracing::info_span!("test.unbacked"))
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used)] // the pins assert loudly
 mod span_backing_tests {
-    //! Pins the sentinel-id hazard behind [`super::subscriber_backed_span`].
+    //! Pins the loop-parent contract on [`super::loop_parent`]: ancestry rides
+    //! only when the span's OWN exporter context validates it, never the
+    //! ambient dispatch's identity.
 
     #[test]
-    fn no_subscriber_spans_are_unbacked_and_real_registry_spans_survive() {
-        // With the no-op subscriber ambient, a span is backed by no real
-        // registry: `NoSubscriber::new_span` returns the 0xDEAD sentinel (it is
-        // reached without an `enabled()` check — see `Span::make_with`), and a
-        // later `Registry::clone_span` of that id panics. The guard is the
-        // dispatch, so it drops the handle whatever the span's id looks like.
-        tracing::dispatcher::with_default(&tracing::Dispatch::none(), || {
-            assert!(
-                super::subscriber_backed_span(&super::unbacked_span()).is_none(),
-                "a NoSubscriber handle must never be kept as a parent"
-            );
-        });
-
-        // A real registry-backed handle survives, and parenting to it in its
-        // own registry is safe — the exact call shape that panicked while a
-        // sentinel handle survived to the publish stage.
+    fn unbacked_handle_is_never_carried_once_a_subscriber_arrives() {
+        // Minted while no subscriber was installed. Reusing the handle as a
+        // `parent:` after this point aborts inside `Registry::clone_span` —
+        // the sentinel exists in no registry — so the seam must refuse it.
+        let unbacked = super::unbacked_span();
         let subscriber = tracing_subscriber::registry();
         tracing::subscriber::with_default(subscriber, || {
-            let backed = tracing::info_span!("test.backed");
-            let kept = super::subscriber_backed_span(&backed).expect("registry-backed span");
-            drop(tracing::info_span!(parent: kept, "test.child"));
+            assert!(
+                super::loop_parent(&unbacked).is_none(),
+                "a handle no registry backs must never be carried as a parent"
+            );
+            // The caller's fallback is an intentional trace root: no clone of
+            // an id the ambient registry does not know.
+            drop(tracing::info_span!(
+                parent: tracing::Span::none(),
+                "test.root_child"
+            ));
+
+            // The registry DOES know this one, but a tracing id alone is not a
+            // validation the seam can carry across subscriber generations.
+            let backed = tracing::info_span!("test.registry_backed");
+            assert!(
+                super::loop_parent(&backed).is_none(),
+                "without an exporter context there is nothing to validate"
+            );
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "no span exists with that ID")]
+    fn the_unbacked_handle_would_panic_if_used_as_a_raw_parent() {
+        // Negative probe: proves the rejection above is load-bearing (the
+        // minted handle really is in no registry) and names the pump-abort
+        // this seam exists to prevent.
+        let unbacked = super::unbacked_span();
+        let subscriber = tracing_subscriber::registry();
+        tracing::subscriber::with_default(subscriber, || {
+            drop(tracing::info_span!(parent: unbacked, "test.panicking_child"));
+        });
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    #[expect(clippy::expect_used)] // the ancestry pins assert loudly
+    fn valid_exporter_context_is_kept_and_parents_a_deliberate_child() {
+        use crate::otel;
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(otel::layer(tracer));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let epoch = tracing::info_span!("test.epoch.run");
+            let kept = super::loop_parent(&epoch).expect("exporter-backed span is carried");
+            drop(tracing::info_span!(parent: &kept, "test.stage.first_log"));
+            drop(epoch);
+        });
+        provider.force_flush().expect("flush");
+
+        let spans = exporter.get_finished_spans().expect("spans");
+        let epoch = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "test.epoch.run")
+            .expect("epoch span exported");
+        let stage = spans
+            .iter()
+            .find(|span| span.name.as_ref() == "test.stage.first_log")
+            .expect("stage span exported");
+        assert_eq!(
+            stage.parent_span_id,
+            epoch.span_context.span_id(),
+            "validated ancestry: the stage span must hang off the epoch span"
+        );
+        assert_eq!(
+            stage.span_context.trace_id(),
+            epoch.span_context.trace_id(),
+            "parent and child must share one trace"
+        );
+    }
+
+    #[cfg(not(feature = "otel"))]
+    #[test]
+    fn no_carried_parent_without_an_exporter_to_validate_ancestry() {
+        // No `otel` feature: there is no exporter context to validate a parent
+        // against, so the loop carries none and its children are intentional
+        // roots. The registry-backed case pins that this is not a dispatch
+        // test: the span IS real here, and still nothing is carried.
+        let subscriber = tracing_subscriber::registry();
+        let kept = tracing::subscriber::with_default(subscriber, || {
+            super::loop_parent(&tracing::info_span!("test.registry_backed"))
+        });
+        assert!(kept.is_none(), "no exporter context, no carried parent");
+
+        assert!(
+            super::loop_parent(&super::unbacked_span()).is_none(),
+            "an unbacked handle must never be carried either"
+        );
     }
 }
