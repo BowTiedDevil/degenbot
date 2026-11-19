@@ -7,10 +7,6 @@ from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
     ExchangeRow,
-    PoolManagerRow,
-    db_apply_v3_liquidity_updates,
-    db_apply_v4_liquidity_updates,
-    db_fetch_pool_row,
     db_upsert_v2_pools,
     db_upsert_v3_pools,
     db_upsert_v4_pools,
@@ -18,17 +14,11 @@ from degenbot.db import (
 from degenbot.provider import AlloyProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.rpc_types import LogReceipt
-from degenbot.updater import (
-    LiquidityUpdateEvent,
-    V2PoolRowInput,
-    V3PoolRowInput,
-    V4PoolRowInput,
-)
+from degenbot.updater import V2PoolRowInput, V3PoolRowInput, V4PoolRowInput
 from degenbot.utils.bytes import to_0x_hex
 
-# V3 liquidity event topic0 hashes (Mint/Burn). The V3 decode shell
-# (`apply_v3_liquidity_updates`) recognizes the Burn signature and negates the
-# delta; the constants live beside the update configs that feed that shell.
+# V3 liquidity event topic0 hashes (Mint/Burn): the event vocabulary a V3 pool
+# update filter selects on.
 UNISWAP_V3_MINT_EVENT_HASH = bytes.fromhex(
     "7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
 )
@@ -293,103 +283,4 @@ def update_v4_pools(request: PoolUpdateRequest[V4PoolUpdateConfig]) -> None:
         pool_manager_address=get_checksum_address(request.exchange.factory),
         fee_denominator=request.config.fee_denominator,
         rows=rows,
-    )
-
-
-def apply_v3_liquidity_updates(
-    provider: AlloyProvider,
-    pool_address: str,
-    liquidity_events: list[LogReceipt],
-    exchanges_in_scope: set[ExchangeRow],
-    *,
-    database_path: str,
-) -> None:
-    """Apply the V3 liquidity updates to the provided pool."""
-    in_scope_exchange_ids = {exchange.id for exchange in exchanges_in_scope}
-    pool_row = db_fetch_pool_row(
-        database_path=database_path,
-        chain_id=provider.get_chain_id(),
-        address=pool_address,
-    )
-    if pool_row is None or pool_row.exchange_id not in in_scope_exchange_ids:
-        return
-
-    decoded_events: list[LiquidityUpdateEvent] = []
-    for liquidity_event in liquidity_events:
-        (tick_lower,) = abi_decode(["int24"], liquidity_event["topics"][2])
-        (tick_upper,) = abi_decode(["int24"], liquidity_event["topics"][3])
-
-        if liquidity_event["topics"][0] == UNISWAP_V3_BURN_EVENT_HASH:
-            amount, _, _ = abi_decode(
-                ["uint128", "uint256", "uint256"],
-                liquidity_event["data"],
-            )
-            amount = -amount
-        else:
-            _, amount, _, _ = abi_decode(
-                ["address", "uint128", "uint256", "uint256"],
-                liquidity_event["data"],
-            )
-
-        if amount == 0:
-            continue
-
-        decoded_events.append(
-            LiquidityUpdateEvent(
-                liquidity_event["blockNumber"],
-                liquidity_event["logIndex"],
-                tick_lower,
-                tick_upper,
-                amount,
-            )
-        )
-
-    db_apply_v3_liquidity_updates(
-        database_path=database_path,
-        chain_id=provider.get_chain_id(),
-        pool_address=pool_address,
-        events=decoded_events,
-    )
-
-
-def apply_v4_liquidity_updates(
-    pool_id: bytes,
-    liquidity_events: list[LogReceipt],
-    pool_manager: PoolManagerRow,
-    *,
-    database_path: str,
-) -> None:
-    """Apply the V4 liquidity updates to the provided pool.
-
-    V4 emits a single signed ``ModifyLiquidity`` event (no Burn/Mint split), so the decode unpacks
-    ``(tick_lower, tick_upper, liquidity_delta, _)`` straight from ``data``.
-
-    Assumes the liquidity updates are ordered by block number + log index,
-    ascending (the Rust apply enforces the ordering invariant).
-    """
-    decoded_events: list[LiquidityUpdateEvent] = []
-    for liquidity_event in liquidity_events:
-        tick_lower, tick_upper, liquidity_delta, _ = abi_decode(
-            types=["int24", "int24", "int256", "bytes32"],
-            data=liquidity_event["data"],
-        )
-
-        if liquidity_delta == 0:
-            continue
-
-        decoded_events.append(
-            LiquidityUpdateEvent(
-                liquidity_event["blockNumber"],
-                liquidity_event["logIndex"],
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-            )
-        )
-
-    db_apply_v4_liquidity_updates(
-        database_path=database_path,
-        pool_hash_hex=to_0x_hex(pool_id),
-        pool_manager_chain=pool_manager.chain,
-        events=decoded_events,
     )

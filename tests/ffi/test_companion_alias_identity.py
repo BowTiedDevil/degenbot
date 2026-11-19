@@ -109,7 +109,6 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_DISPATCH, "fetch_fee_history", _SUBMIT, "fetch_fee_history_py"),
     # degenbot.updater
     (_UPDATER, "CancelHandle", _CANCEL, "CancelHandle"),
-    (_UPDATER, "LiquidityUpdateEvent", _DB, "LiquidityUpdateEvent"),
     (_UPDATER, "V2PoolRowInput", _DB, "V2PoolRowInput"),
     (_UPDATER, "V3PoolRowInput", _DB, "V3PoolRowInput"),
     (_UPDATER, "V4PoolRowInput", _DB, "V4PoolRowInput"),

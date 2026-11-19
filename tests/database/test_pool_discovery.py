@@ -20,8 +20,6 @@ import pytest
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_apply_v3_liquidity_updates,
-    db_apply_v4_liquidity_updates,
     db_set_exchange_active,
     db_upgrade_database,
     db_upsert_exchange,
@@ -29,9 +27,14 @@ from degenbot.db import (
 )
 from degenbot.discovery import V4_POOL_ID_OFFSET, PoolRef, pools_for_tokens
 from degenbot.pathfinding import PoolKind
-from degenbot.updater import LiquidityUpdateEvent, V2PoolRowInput
+from degenbot.updater import V2PoolRowInput
 from tests.fakes.pools import FakeSessionPool
-from tests.helpers.database import seed_v2_topology, seed_v3_topology, seed_v4_topology
+from tests.helpers.database import (
+    seed_liquidity_positions,
+    seed_v2_topology,
+    seed_v3_topology,
+    seed_v4_topology,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -95,17 +98,21 @@ def seeded_db(tmp_path: pathlib.Path) -> pathlib.Path:
         pool_manager_address=POOL_MANAGER,
         chain_id=CHAIN_ID,
     )
-    db_apply_v3_liquidity_updates(
-        str(db_path),
-        CHAIN_ID,
-        POOL_V3,
-        [LiquidityUpdateEvent(SEED_BLOCK, 0, -120, 120, 10**18)],
+    # One in-range position per family (-120..120, 10**18) + the pool's update
+    # marker — the `update_block` kind param discovery reads.
+    seed_liquidity_positions(
+        db_path,
+        [(-120, 10**18, 10**18), (120, -(10**18), 10**18)],
+        chain_id=CHAIN_ID,
+        pool_address=POOL_V3,
+        stamp=(SEED_BLOCK, 0),
     )
-    db_apply_v4_liquidity_updates(
-        str(db_path),
-        V4_POOL_HASH,
-        CHAIN_ID,
-        [LiquidityUpdateEvent(SEED_BLOCK, 0, -120, 120, 10**18)],
+    seed_liquidity_positions(
+        db_path,
+        [(-120, 10**18, 10**18), (120, -(10**18), 10**18)],
+        chain_id=CHAIN_ID,
+        pool_hash=V4_POOL_HASH,
+        stamp=(SEED_BLOCK, 0),
     )
     return db_path
 

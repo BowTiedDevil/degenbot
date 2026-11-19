@@ -10,7 +10,7 @@
 //! - **Probe A (the coherence gate):** mutate ONE recorded verification
 //!   answer - a `ticks(int24)` liquidityGross word the gate reads back via
 //!   Multicall3/degraded direct calls - in the
-//!   `pool_verify_chunk_26102622-26102626` cassette. The replayed gated run
+//!   `pool_update_chunk_26102622-26102626` cassette. The replayed gated run
 //!   MUST fail with `RunError::Verification`, the chunk MUST roll back (no
 //!   pool rows, no liquidity rows), and `last_update_block` MUST stay
 //!   `UNadvanced`. A lying chain answer cannot reach the DB.
@@ -44,28 +44,23 @@ use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, Cass
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use tempfile::TempDir;
 
-/// The verification-surface capture (recorded by
-/// `record_updater_cassette --kind pool --verify`): the gated run's fetch
-/// surface PLUS the gate's tick/bitmap reads. The aggregate3 Multicall3
+/// The pool-chunk corpus (recorded by
+/// `record_updater_cassette --kind pool`): the run's fetch surface PLUS the
+/// pre-commit gate's tick/bitmap reads. The aggregate3 Multicall3
 /// attempt against this historical reth state reverted and the batch
 /// degraded to individual `ticks()`/`tickBitmap()` calls - all recorded, so
 /// the replay reproduces the exact read sequence the gate issued live.
-const VERIFY_CASSETTE_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../../tests/fixtures/cassettes/pool_verify_chunk_26102622-26102626.json"
-);
-
-/// The pool-chunk corpus + its committed SQL goldens (probe B/C's target).
 const POOL_CASSETTE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
 );
+
 const DUMP_GOLDEN_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/fixtures/sql_goldens/pool_update_chunk_26102622-26102626.db-dump.json"
 );
 
-/// The pinned span both cassettes cover.
+/// The pinned span the corpus covers.
 const SPAN_FROM: u64 = 26_102_622;
 const SPAN_TO: u64 = 26_102_626;
 
@@ -200,7 +195,7 @@ fn table_rows<'a>(
 
 #[test]
 fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
-    let bytes = std::fs::read(VERIFY_CASSETTE_PATH).expect("the committed cassette must exist");
+    let bytes = std::fs::read(POOL_CASSETTE_PATH).expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -252,8 +247,6 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        // THE GATE IS ON: the pre-commit on-chain-truth check.
-        true,
         None,
         false,
     )
@@ -342,7 +335,6 @@ fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        false,
         None,
         false,
     )
@@ -440,7 +432,6 @@ fn probe_c_mutated_apply_input_turns_the_dump_golden_red() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        false,
         None,
         false,
     )

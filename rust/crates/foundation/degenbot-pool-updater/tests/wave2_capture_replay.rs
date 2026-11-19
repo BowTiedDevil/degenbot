@@ -43,34 +43,28 @@ const WAVE2_FACTORY: &str = "0xbd770416a3345f91e4b34576cb804a576fa48eb1";
 struct Scenario {
     name: &'static str,
     chunks: &'static [(u64, u64)],
-    verify_chunk: bool,
 }
 
 const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "w2_concentrated_liquidity_cross_chunk_flip_flip_swap",
         chunks: &[(1000, 1001), (1002, 1003), (1004, 1004)],
-        verify_chunk: true,
     },
     Scenario {
         name: "w2_bitmap_5a17f7ce_early_termination",
         chunks: &[(1000, 1004)],
-        verify_chunk: true,
     },
     Scenario {
         name: "w2_short_hex_hand_rolled_logs",
         chunks: &[(1000, 1004)],
-        verify_chunk: false,
     },
     Scenario {
         name: "w2_drained_pool_zero_mint",
         chunks: &[(1000, 1001), (1002, 1003), (1004, 1004)],
-        verify_chunk: true,
     },
     Scenario {
         name: "w2_odd_spacing_negative_ticks_sign_extension",
         chunks: &[(1000, 1004)],
-        verify_chunk: true,
     },
 ];
 
@@ -158,7 +152,6 @@ fn replay_and_gate(scenario: &Scenario, chain_id: i64) -> std::path::PathBuf {
             provider.clone(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(NoProgress),
-            scenario.verify_chunk,
             None,
             false,
         )

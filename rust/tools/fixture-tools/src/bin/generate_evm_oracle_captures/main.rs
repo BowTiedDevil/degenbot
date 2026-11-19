@@ -153,7 +153,6 @@ struct Scenario {
     /// incrementally so each chunk's verification reads state AT its end
     /// block (the driver publishes snapshots per executed block).
     chunks: Vec<(u64, u64)>,
-    verify_chunk: bool,
     /// A generator-issued topic-less getLogs window recorded alongside the
     /// updater's own fetch surface (the raw emitter-log ride).
     raw_log_window: Option<(u64, u64)>,
@@ -251,7 +250,6 @@ fn scenarios() -> Vec<Scenario> {
             ],
             emitters: vec![],
             chunks: vec![(DEPLOY_BLOCK, 1001), (1002, 1003), (1004, 1004)],
-            verify_chunk: true,
             raw_log_window: None,
         },
         // (b) the 0x5a17f7ce-family (V3 `mint`) bitmap counterexample: three
@@ -284,7 +282,6 @@ fn scenarios() -> Vec<Scenario> {
             ],
             emitters: vec![],
             chunks: vec![(DEPLOY_BLOCK, 1004)],
-            verify_chunk: true,
             raw_log_window: None,
         },
         // (c) short-hex / non-minimal hex DATA fields (the cassette precision
@@ -330,7 +327,6 @@ fn scenarios() -> Vec<Scenario> {
                 },
             ],
             chunks: vec![(DEPLOY_BLOCK, 1004)],
-            verify_chunk: false,
             raw_log_window: Some((DEPLOY_BLOCK, 1002)),
         },
         // (d) the delta-persist branches (Perf B): a real zero-amount Mint
@@ -357,7 +353,6 @@ fn scenarios() -> Vec<Scenario> {
             ],
             emitters: vec![zero_mint_log_emitter(1002, 0x77, -100, 100, 0)],
             chunks: vec![(DEPLOY_BLOCK, 1001), (1002, 1003), (1004, 1004)],
-            verify_chunk: true,
             raw_log_window: None,
         },
         // (5, ergo body) negative/odd tick values through the ABI encoder: an
@@ -393,7 +388,6 @@ fn scenarios() -> Vec<Scenario> {
             ],
             emitters: vec![],
             chunks: vec![(DEPLOY_BLOCK, 1004)],
-            verify_chunk: true,
             raw_log_window: None,
         },
     ]
@@ -673,7 +667,6 @@ fn generate_scenario(
             provider.clone(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(NoProgress),
-            scenario.verify_chunk,
             None,
             false,
         )
@@ -732,7 +725,6 @@ fn generate_scenario(
             replay_provider.clone(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(NoProgress),
-            scenario.verify_chunk,
             None,
             false,
         )

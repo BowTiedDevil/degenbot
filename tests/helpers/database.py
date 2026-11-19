@@ -165,3 +165,78 @@ def seed_v4_topology(
             for pool_hash, currency0, currency1, hooks, fee in pools
         ],
     )
+
+
+def seed_liquidity_positions(
+    database_path: Path,
+    rows: Sequence[tuple[int, int, int]],
+    *,
+    chain_id: int = 1,
+    pool_address: str | None = None,
+    pool_hash: str | None = None,
+    stamp: tuple[int, int] | None = None,
+) -> None:
+    """Seed a pool's committed liquidity rows + update marker.
+
+    ``rows`` are ``(tick, liquidity_net, liquidity_gross)`` triples written
+
+    verbatim into the family's position table — the fixture states a KNOWN map,
+
+    it never re-derives one (the apply math is the core's, and a test that
+
+    feeds the core its own output proves nothing). ``stamp`` is the pool's
+
+    ``(liquidity_update_block, liquidity_update_log_index)`` marker, written
+
+    when given.
+
+    Exactly one of ``pool_address`` (V3) / ``pool_hash`` (V4) names the pool.
+
+    """
+
+    if (pool_address is None) == (pool_hash is None):
+        msg = "seed_liquidity_positions needs exactly one of pool_address / pool_hash"
+
+        raise ValueError(msg)
+
+    with sqlite_connection(database_path) as connection:
+        if pool_address is not None:
+            pool_id = connection.execute(
+                "SELECT id FROM pools WHERE address = ? AND chain = ?",
+                (pool_address, chain_id),
+            ).fetchone()[0]
+
+            table, id_column, subclass, subclass_column = (
+                "liquidity_positions",
+                "pool_id",
+                "uniswap_v3_pools",
+                "pool_id",
+            )
+
+        else:
+            pool_id = connection.execute(
+                "SELECT managed_pool_id FROM uniswap_v4_pools WHERE pool_hash = ?",
+                (pool_hash,),
+            ).fetchone()[0]
+
+            table, id_column, subclass, subclass_column = (
+                "managed_pool_liquidity_positions",
+                "managed_pool_id",
+                "uniswap_v4_pools",
+                "managed_pool_id",
+            )
+
+        connection.executemany(
+            f"INSERT INTO {table} ({id_column}, tick, liquidity_net, liquidity_gross) "
+            "VALUES (?, ?, ?, ?)",
+            [(pool_id, tick, str(net), str(gross)) for tick, net, gross in rows],
+        )
+
+        if stamp is not None:
+            block, log_index = stamp
+
+            connection.execute(
+                f"UPDATE {subclass} SET liquidity_update_block = ?, "
+                f"liquidity_update_log_index = ? WHERE {subclass_column} = ?",
+                (block, log_index, pool_id),
+            )

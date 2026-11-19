@@ -4,8 +4,9 @@
 //!
 //! - `pool update` — the chunk-loop hand-off to
 //!   [`run_pool_update`](degenbot_pool_updater::run_pool_update), with the
-//!   `--chunk` / `--to-block` / `--verify-chunk` / `--verify-all` /
-//!   `--verify-all-interval` flags 1:1. Progress stays a no-op sink here
+//!   `--chunk` / `--to-block` / `--verify-all` / `--verify-all-interval` flags
+//!   1:1. The per-chunk on-chain-truth gate is not a flag: every chunk is
+//!   verified before its persist commits. Progress stays a no-op sink here
 //!   (ADR-051 D9: the bin paints it); a cooperative cancel returns a friendly
 //!   cancelled report (exit 0), matching the Python `RuntimeError` guard.
 //! - `pool verify` — the read-only, ad-hoc sibling: fetch the COMMITTED
@@ -66,8 +67,6 @@ pub enum PoolCommand {
         max_block_range: u64,
         /// The raw `--to-block` identifier (tag / tag:offset / integer).
         to_block: String,
-        /// Run the pre-commit per-chunk on-chain-truth gate.
-        verify_chunk: bool,
         /// Run the pre-commit market-wide verification at the interval + completion.
         verify_all: bool,
         /// The block interval for the `--verify-all` gate.
@@ -117,7 +116,6 @@ pub(crate) fn execute(
             chunk_size,
             max_block_range,
             to_block,
-            verify_chunk,
             verify_all,
             verify_all_interval,
         } => update(
@@ -126,7 +124,6 @@ pub(crate) fn execute(
             *chunk_size,
             *max_block_range,
             to_block,
-            *verify_chunk,
             *verify_all,
             *verify_all_interval,
         ),
@@ -150,14 +147,12 @@ pub(crate) fn execute(
 }
 
 /// `pool update`.
-#[expect(clippy::too_many_arguments)]
 fn update(
     ctx: &CliContext<'_>,
     cancel: &CancelHandle,
     chunk_size: u64,
     max_block_range: u64,
     to_block: &str,
-    verify_chunk: bool,
     verify_all: bool,
     verify_all_interval: u64,
 ) -> Result<PoolReport, CliError> {
@@ -200,7 +195,6 @@ fn update(
             provider,
             cancel.flag(),
             Arc::new(NoProgress),
-            verify_chunk,
             interval,
             verify_all,
         ),

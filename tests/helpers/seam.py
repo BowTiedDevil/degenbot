@@ -128,7 +128,7 @@ from degenbot._ffi.concentrated_liquidity_math import (
 from degenbot._ffi.curve_dy import DyCalculationInputs, calculate_dy
 
 # db: the schema migration entry and the row inputs a writer test builds.
-from degenbot._ffi.db import LiquidityUpdateEvent, V3PoolRowInput, db_upgrade_database
+from degenbot._ffi.db import V3PoolRowInput, db_upgrade_database
 
 # deployments / dex_identity: the resolver statics and the identity record.
 from degenbot._ffi.deployments import (
@@ -211,7 +211,6 @@ __all__ = [
     "DyCalculationInputs",
     "Erc20TokenRow",
     "ExecutionProbeRequest",
-    "LiquidityUpdateEvent",
     "PathGraph",
     "PayloadAdapter",
     "Pool",

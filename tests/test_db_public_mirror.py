@@ -14,7 +14,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DB_STUB = REPO_ROOT / "src" / "degenbot" / "_ffi" / "db.pyi"
 ROOT_STUB = REPO_ROOT / "src" / "degenbot" / "_ffi" / "__init__.pyi"
 UPDATER_OWNED = frozenset({
-    "LiquidityUpdateEvent",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",

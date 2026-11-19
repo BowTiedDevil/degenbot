@@ -60,7 +60,7 @@ The command vocabulary is **Rust-owned**: [`degenbot-cli`](../../rust/crates/she
 Update pool metadata and liquidity positions for all activated exchanges.
 
 ```bash
-degenbot pool update [--chunk SIZE] [--max-block-range BLOCKS] [--to-block BLOCK] [--verify-chunk|--no-verify-chunk] [--verify-all|--no-verify-all] [--verify-all-interval BLOCKS]
+degenbot pool update [--chunk SIZE] [--max-block-range BLOCKS] [--to-block BLOCK] [--verify-all|--no-verify-all] [--verify-all-interval BLOCKS]
 ```
 
 #### Parameters

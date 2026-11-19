@@ -131,7 +131,6 @@ fn pool_update_defaults_and_gates() {
             chunk_size: DEFAULT_CHUNK_SIZE,
             max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             to_block: DEFAULT_TO_BLOCK.to_string(),
-            verify_chunk: true,
             verify_all: false,
             verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
         })
@@ -145,7 +144,6 @@ fn pool_update_defaults_and_gates() {
             "5",
             "--to-block",
             "1000",
-            "--no-verify-chunk",
             "--verify-all",
             "--verify-all-interval",
             "7"
@@ -154,9 +152,26 @@ fn pool_update_defaults_and_gates() {
             chunk_size: 5,
             max_block_range: DEFAULT_MAX_BLOCK_RANGE,
             to_block: "1000".to_string(),
-            verify_chunk: false,
             verify_all: true,
             verify_all_interval: 7,
+        })
+    );
+    // The market-wide gate's off switch still exists (it is an operator
+    // policy, not the per-chunk gate).
+    assert_eq!(
+        resolve(&[
+            "degenbot",
+            "pool",
+            "update",
+            "--verify-all",
+            "--no-verify-all"
+        ]),
+        Command::Pool(PoolCommand::Update {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            max_block_range: DEFAULT_MAX_BLOCK_RANGE,
+            to_block: DEFAULT_TO_BLOCK.to_string(),
+            verify_all: false,
+            verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
         })
     );
     // `--max-block-range` is the per-request RPC clamp, independent of
@@ -167,10 +182,39 @@ fn pool_update_defaults_and_gates() {
             chunk_size: DEFAULT_CHUNK_SIZE,
             max_block_range: 250,
             to_block: DEFAULT_TO_BLOCK.to_string(),
-            verify_chunk: true,
             verify_all: false,
             verify_all_interval: DEFAULT_VERIFY_ALL_INTERVAL,
         })
+    );
+}
+
+#[test]
+#[expect(
+    clippy::expect_used,
+    reason = "test fixture: the refusal must fail the test loudly"
+)]
+fn pool_update_refuses_the_retired_verify_chunk_flag() {
+    // The per-chunk gate has no off switch: the `--verify-chunk` /
+    // `--no-verify-chunk` spellings are unknown arguments at the boundary
+    // (clap's exit code 2), never silently accepted inputs. A driver that
+    // still sends one fails loud instead of running unverified.
+    for flag in ["--verify-chunk", "--no-verify-chunk"] {
+        let refused = Cli::try_parse_from(["degenbot", "pool", "update", flag]);
+        assert!(
+            refused.is_err(),
+            "flag {flag} must be refused, not silently accepted"
+        );
+        assert_eq!(
+            refused.expect_err("checked above").exit_code(),
+            2,
+            "flag {flag} must exit 2"
+        );
+    }
+    // The aave updater keeps its own per-chunk policy (out of this lane's
+    // scope): the same spelling still parses there.
+    assert!(
+        Cli::try_parse_from(["degenbot", "aave", "update", "--no-verify-chunk"]).is_ok(),
+        "the aave arm keeps its per-chunk verify flag"
     );
 }
 

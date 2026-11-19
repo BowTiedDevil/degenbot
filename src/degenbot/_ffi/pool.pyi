@@ -28,7 +28,6 @@ def run_pool_update(
     chunk_size: SupportsIndex,
     rpc_url: str,
     cancel_handle: CancelHandle,
-    verify_chunk: bool = False,
     *,
     verify_all_interval: SupportsIndex | None = None,
     verify_all_at_completion: bool = False,
@@ -114,9 +113,9 @@ def verify_liquidity_map(
     `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
     list (empty = GREEN — the DB matches the chain at `block_number`).
 
-    This is the ad-hoc / spot-check sibling of the pre-commit gate
-    (`run_pool_update(verify_chunk=True)`); the gate runs the SAME core verify
-    BEFORE the write commits, while this reads the already-committed state.
+    This is the ad-hoc / spot-check sibling of the pre-commit gate every
+    `run_pool_update` chunk runs; the gate runs the SAME core verify BEFORE the
+    write commits, while this reads the already-committed state.
 
     The GIL is released across the whole call (`py.detach`); the live
     `AlloyProvider` is built through [`crate::provider_seam`] and the call

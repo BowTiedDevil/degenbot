@@ -116,7 +116,6 @@ def test_db_row_types_report_the_db_submodule() -> None:
         "LiquidityPoolRow",
         "ExchangeRow",
         "PoolManagerRow",
-        "LiquidityUpdateEvent",
         "V2PoolRowInput",
         "V3PoolRowInput",
         "V4PoolRowInput",

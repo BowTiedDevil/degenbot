@@ -119,7 +119,6 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
     chunk_size,
     rpc_url,
     cancel_handle,
-    verify_chunk = false,
     *,
     verify_all_interval = None,
     verify_all_at_completion = false,
@@ -134,7 +133,6 @@ fn run_pool_update(
     chunk_size: u64,
     rpc_url: &str,
     cancel_handle: &CancelHandle,
-    verify_chunk: bool,
     verify_all_interval: Option<u64>,
     verify_all_at_completion: bool,
     max_block_range: u64,
@@ -162,7 +160,6 @@ fn run_pool_update(
                 max_block_range,
                 provider,
                 cancel,
-                verify_chunk,
                 verify_all_interval,
                 verify_all_at_completion,
             )
@@ -191,7 +188,6 @@ fn run_pool_update_injected(
     max_block_range: u64,
     provider: degenbot_rpc::provider::AlloyProvider,
     cancel: Arc<std::sync::atomic::AtomicBool>,
-    verify_chunk: bool,
     verify_all_interval: Option<u64>,
     verify_all_at_completion: bool,
 ) -> Result<UpdateReport, RunError> {
@@ -204,7 +200,6 @@ fn run_pool_update_injected(
         provider,
         cancel,
         Arc::new(NoProgress),
-        verify_chunk,
         verify_all_interval,
         verify_all_at_completion,
     )
@@ -292,9 +287,9 @@ fn parse_verify_identity(
 /// `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
 /// list (empty = GREEN — the DB matches the chain at `block_number`).
 ///
-/// This is the ad-hoc / spot-check sibling of the pre-commit gate
-/// (`run_pool_update(verify_chunk=True)`); the gate runs the SAME core verify
-/// BEFORE the write commits, while this reads the already-committed state.
+/// This is the ad-hoc / spot-check sibling of the pre-commit gate every
+/// `run_pool_update` chunk runs; the gate runs the SAME core verify BEFORE the
+/// write commits, while this reads the already-committed state.
 ///
 /// The GIL is released across the whole call (`py.detach`); the live
 /// `AlloyProvider` is built through [`crate::provider_seam`] and the call
@@ -665,10 +660,11 @@ mod tests {
 
     /// Independent literal: the exact number of ledger entries the replayed
     /// chunk serves per run — one `eth_getLogs` for the factory's
-    /// `PoolCreated` pass plus one whole-chain `eth_getLogs` for the V3
-    /// `Mint`/`Burn` scan (the run resolves its tip from the pinned span, so
-    /// no `eth_blockNumber`).
-    const EXPECTED_RPC_ROUND_TRIPS: u64 = 2;
+    /// `PoolCreated` pass, one whole-chain `eth_getLogs` for the V3
+    /// `Mint`/`Burn` scan, plus the pre-commit verification gate's per-pool
+    /// `ticks`/`tickBitmap` reads (the gate runs on every chunk; the run
+    /// resolves its tip from the pinned span, so no `eth_blockNumber`).
+    const EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
 
     /// A scratch database under the process temp dir, removed on drop so a
     /// failing assertion cannot leak it.
@@ -755,7 +751,6 @@ mod tests {
             10_000,
             provider,
             Arc::new(AtomicBool::new(false)),
-            false,
             None,
             false,
         )
@@ -824,7 +819,6 @@ mod tests {
             10_000,
             provider,
             Arc::new(AtomicBool::new(false)),
-            false,
             None,
             false,
         )

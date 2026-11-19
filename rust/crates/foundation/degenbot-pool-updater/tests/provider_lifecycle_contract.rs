@@ -190,9 +190,6 @@ fn injected_provider_serves_a_multi_chunk_run_and_a_no_work_run() {
         provider.clone(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        // The verification gate is ON — the lifecycle contract covers the
-        // gated path (the gate borrows the run's one injected transport).
-        true,
         None,
         false,
     )
@@ -215,7 +212,6 @@ fn injected_provider_serves_a_multi_chunk_run_and_a_no_work_run() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        true,
         None,
         false,
     )

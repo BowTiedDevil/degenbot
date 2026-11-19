@@ -7,14 +7,12 @@ from typing import get_type_hints
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.db import ExchangeRow, PoolManagerRow, db_upsert_exchange, db_upsert_pool_manager
+from degenbot.db import ExchangeRow, db_upsert_exchange, db_upsert_pool_manager
 from degenbot.updater.pool_updater_configs import (
     PoolUpdateRequest,
     V2PoolUpdateConfig,
     V3PoolUpdateConfig,
     V4PoolUpdateConfig,
-    apply_v3_liquidity_updates,
-    apply_v4_liquidity_updates,
 )
 
 
@@ -60,22 +58,7 @@ def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:
 
     assert request.exchange is exchange
     assert get_type_hints(PoolUpdateRequest)["exchange"] is ExchangeRow
-    assert get_type_hints(apply_v3_liquidity_updates)["exchanges_in_scope"] == set[ExchangeRow]
-    assert get_type_hints(apply_v4_liquidity_updates)["pool_manager"] is PoolManagerRow
-
-    apply_v3_liquidity_updates(
-        provider=_FakeProvider(),
-        pool_address=get_checksum_address("0x" + "1" * 40),
-        liquidity_events=[],
-        exchanges_in_scope={exchange},
-        database_path=str(tmp_path / "updater.db"),
-    )
-    apply_v4_liquidity_updates(
-        pool_id=bytes.fromhex("c" * 64),
-        liquidity_events=[],
-        pool_manager=manager,
-        database_path=str(tmp_path / "updater.db"),
-    )
+    assert manager.exchange_id == exchange.id
 
 
 class TestV2PoolUpdateConfig:

@@ -27,15 +27,12 @@ __all__ = [
     "DiscoveryPoolRow",
     "ExchangeRow",
     "LiquidityPoolRow",
-    "LiquidityUpdateEvent",
     "PoolManagerRow",
     "UserPositionSummary",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",
     "analyze_aave_user_position",
-    "db_apply_v3_liquidity_updates",
-    "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
     "db_fetch_discovery_rows",
@@ -354,38 +351,6 @@ class LiquidityPoolRow:
     def token1_id(self, /) -> int: ...
 
 @final
-class LiquidityUpdateEvent:
-    """
-    One decoded liquidity event the apply loop consumes ).
-
-    Mirrors [`degenbot_db::LiquidityUpdateEvent`]: the
-    `(block_number, log_index, tick_lower, tick_upper, liquidity_delta)`
-    tuple. The Python `cli/pool.py` apply shells decode the raw `LogReceipt`
-    (topics/data → tick bounds + signed delta, with V3 Burn negation) +
-    build these records; the Rust core applies them in order.
-
-    `liquidity_delta` is the SIGNED delta — the caller produces it (Burn
-    negated for V3; V4 Modify decoded signed). The block/log-index ordering
-    invariants (`block >= last; same-block log_index > last`) are enforced in
-    the Rust apply loop (panics on violation, matching the Python `assert`s).
-    """
-    def __new__(
-        cls,
-        /,
-        block_number: SupportsIndex,
-        log_index: SupportsIndex,
-        tick_lower: SupportsIndex,
-        tick_upper: SupportsIndex,
-        liquidity_delta: SupportsIndex,
-    ) -> LiquidityUpdateEvent:
-        """
-        Build a liquidity-update event record.
-
-        `liquidity_delta` must fit in i128 (the V3/V4 contract `int128` range);
-        raises `OverflowError` otherwise.
-        """
-
-@final
 class PoolManagerRow:
     """
     A `pool_managers` row (V4). The V4 builder resolves its pool manager by
@@ -590,41 +555,6 @@ def analyze_aave_user_position(
             balance computation overflow.
     """
 
-def db_apply_v3_liquidity_updates(
-    database_path: str,
-    chain_id: SupportsIndex,
-    pool_address: str,
-    events: SupportsGetItem[int, LiquidityUpdateEvent],
-) -> bool:
-    """
-    `degenbot._ffi.db.db_apply_v3_liquidity_updates(database_path, chain_id, pool_address, events) -> bool`
-
-    Apply a sequence of [`PyLiquidityUpdateEvent`]s to the V3 pool identified by
-    `(chain_id, pool_address)`: reconstitute the `LiquidityMap` from DB rows →
-    apply each event (`apply_liquidity_mapping_update`) → upsert live
-    positions/init-maps, delete stale, stamp `liquidity_update_block`/
-    `log_index` with the last event. Returns `False` if the pool row isn't found
-    (a missing pool row is a no-op); `True` after a
-    successful apply. The block/log-index ordering invariant is enforced
-    (panics on violation, matching the Python `assert`s).
-    """
-
-def db_apply_v4_liquidity_updates(
-    database_path: str,
-    pool_hash_hex: str,
-    pool_manager_chain: SupportsIndex,
-    events: SupportsGetItem[int, LiquidityUpdateEvent],
-) -> bool:
-    """
-    `degenbot._ffi.db.db_apply_v4_liquidity_updates(database_path, pool_hash_hex, pool_manager_chain, events) -> bool`
-
-    Apply a sequence of [`PyLiquidityUpdateEvent`]s to the V4 pool identified by
-    `(pool_hash, pool_manager_chain)`. Same semantics as
-    [`db_apply_v3_liquidity_updates`] (reconstitute → apply → persist → stamp);
-    differs only in the row lookups (`uniswap_v4_pools` × `managed_pools` ×
-    `pool_managers`) + the tables written (`managed_pool_*`).
-    """
-
 def db_backup_database(src: str, dst: str) -> None:
     """
     `degenbot._ffi.db.db_backup_database(src: str, dst: str) -> None`
@@ -699,11 +629,8 @@ def db_fetch_pool_row(
 ) -> LiquidityPoolRow | None:
     """
 
-    Module-level pool-row read by `(chain_id, address)` () — the V3
-    `apply_v3_liquidity_updates` shell uses this to fetch the pool's
-    `exchange_id` for the `exchanges_in_scope` precondition before delegating
-    the math+persist to [`super::liquidity_updater::db_apply_v3_liquidity_updates`].
-    Keeps the scope-check orchestration in Python + the apply core in Rust.
+    Module-level pool-row read by `(chain_id, address)` — the typed row a
+    driver keys its own scope decision on.
     """
 
 def db_heal_database(database_path: str) -> dict:
@@ -919,15 +846,12 @@ __all__ = [
     "DiscoveryPoolRow",
     "ExchangeRow",
     "LiquidityPoolRow",
-    "LiquidityUpdateEvent",
     "PoolManagerRow",
     "UserPositionSummary",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",
     "analyze_aave_user_position",
-    "db_apply_v3_liquidity_updates",
-    "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
     "db_fetch_discovery_rows",

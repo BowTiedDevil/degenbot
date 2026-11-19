@@ -178,9 +178,6 @@ fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        // The verification gate stays OFF (same posture as
-        // `cassette_replay_run.rs` — the corpus records the fetch surface).
-        false,
         None,
         false,
     )

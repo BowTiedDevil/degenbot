@@ -1,20 +1,28 @@
-//! V3/V4 DB-aware liquidity updater — the apply-and-persist core.
+//! V3/V4 DB-aware liquidity updater — the compute / persist seam.
 //!
-//! Ports `cli/pool.py::apply_v3_liquidity_updates` / `apply_v4_liquidity_updates`
-//! (read pool row + positions → apply concentrated liquidity `apply_liquidity_mapping_update` per
-//! event → upsert positions + init maps → stamp `liquidity_update_block`/
-//! `liquidity_update_log_index`) to a Rust core over [`DegenbotDb`] +
+//! The write path is two explicit halves: a **compute** (`compute_*_update`
+//! reconstitutes the pool's committed map and applies each
+//! [`LiquidityUpdateEvent`] via
+//! `apply_liquidity_mapping_update`, persisting NOTHING) and a **persist**
+//! (`persist_*` writes the survivors, deletes the drained ticks, and stamps
+//! `liquidity_update_block`/`liquidity_update_log_index`). Splitting them is
+//! what lets the caller run the on-chain-truth gate over the computed map
+//! BEFORE anything commits. There is deliberately no combined
+//! compute-then-persist entry point: a caller that skips the gate would have
+//! to spell the skip out.
+//!
+//! Over [`DegenbotDb`] +
 //! [`degenbot_math::concentrated_liquidity::liquidity_mapping::apply_liquidity_mapping_update`].
 //!
 //! # What this is (and isn't)
 //!
-//! This is the **apply-and-persist core** (`port-now`): a
-//! pure row→math→row transform over the DB substrate. RPC event fetch is
+//! This is the **liquidity write core**: a pure row→math→row transform over
+//! the DB substrate. RPC event fetch is
 //! Rust-owned (`degenbot-rpc::provider::LogFetcher::fetch_logs_chunked`);
 //! the retired Python fetch path (`provider/log_fetching.py`,
 //! `fetch_logs_retrying*`) is removed. The math itself lives in
 //! [`degenbot-concentrated-liquidity-math`] (sibling task). The standalone-Rust path this enables:
-//! `DB events → apply_v3/v4_liquidity_updates → upserted DB rows` without Python.
+//! `DB events → compute → verify → persist → upserted DB rows` without Python.
 //!
 //! # Decomposition across V3 + V4
 //!
@@ -173,9 +181,7 @@ const V4_TABLES: LiquidityTables = LiquidityTables {
 /// `apply_event_loop`, NO persist). The caller may run the on-chain-truth gate
 /// over `tick_data` at `chunk_end`; on GREEN it calls
 /// [`DegenbotDb::persist_v3_liquidity_update_on_conn`] /
-/// [`DegenbotDb::persist_v4_liquidity_update_on_conn`]. The combined
-/// `apply_*_on_conn` helpers keep the no-gate path (compute → persist) for
-/// backward compatibility.
+/// [`DegenbotDb::persist_v4_liquidity_update_on_conn`].
 #[derive(Debug, Clone)]
 pub struct ComputedLiquidityUpdate {
     /// V3: `pools.id`; V4: `managed_pools.id`.
@@ -472,49 +478,15 @@ impl DegenbotDb {
         Ok(tick_data)
     }
 
-    /// Apply a sequence of [`LiquidityUpdateEvent`]s to the V3 pool identified by
-    /// `(chain_id, pool_address)` — the core apply-and-persist port of the
-    /// Python `apply_v3_liquidity_updates`.
+    /// The **compute** half of the V3 update (the only way in): reconstitute
+    /// the pool's persisted base tick state, run `apply_event_loop`, and
+    /// return the in-memory result **without persisting** — the seam the
+    /// on-chain-truth verifier inspects *before* the commit. The caller runs
+    /// the gate over the returned `tick_data`, then calls
+    /// [`Self::persist_v3_liquidity_update_on_conn`] on GREEN (or drops the
+    /// chunk's transaction on RED, leaving the prior committed state intact).
     ///
-    /// Reads the pool row + its current tick map, loops the events calling
-    /// [`apply_liquidity_mapping_update`] (the per-event tick/bitmap mutation),
-    /// guarded by the block/log-index ordering invariants, then writes back:
-    /// delete stale positions/init-maps, upsert the live ones, + stamp the
-    /// pool row's `liquidity_update_block`/`liquidity_update_log_index` with the
-    /// LAST event's `(block, log_index)`.
-    ///
-    /// Returns `Ok(false)` if the pool row isn't found; `Ok(true)` after a
-    /// successful apply.
-    ///
-    /// # Panics (debug builds only)
-    ///
-    /// Panics if an event violates the block/log-index ordering invariant
-    /// (matches the Python `assert`s — stripped under `python -O` / `release`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on any query/upsert failure or
-    /// [`DbError::Decode`] on a malformed column.
-    pub fn apply_v3_liquidity_updates(
-        &self,
-        chain_id: i64,
-        pool_address: &str,
-        events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
-        let conn = self.lock();
-        Self::apply_v3_liquidity_updates_on_conn(&conn, chain_id, pool_address, events)
-    }
-
-    /// The **compute** half of [`Self::apply_v3_liquidity_updates_on_conn`]:
-    /// reconstitute the pool's persisted base tick state, run `apply_event_loop`,
-    /// and return the in-memory result **without persisting** — the seam the
-    /// on-chain-truth verifier inspects *before* the commit. The caller runs the
-    /// gate over the returned `tick_data`, then calls
-    /// [`Self::persist_v3_liquidity_update_on_conn`] on GREEN (or drops the chunk's
-    /// transaction on RED, leaving the prior committed state intact).
-    ///
-    /// Returns `Ok(None)` when the pool row is absent (no-op, mirrors the
-    /// combined helper's `Ok(false)`).
+    /// Returns `Ok(None)` when the pool row is absent (a no-op).
     ///
     /// # Errors
     ///
@@ -563,54 +535,8 @@ impl DegenbotDb {
         persist_v3(conn, pool_id, tick_data, last_event)
     }
 
-    /// The single-transaction-bound variant of [`Self::apply_v3_liquidity_updates`]
-    /// compute → persist with no on-chain gate (backward compat).
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` wrapper variant.
-    pub fn apply_v3_liquidity_updates_on_conn(
-        conn: &rusqlite::Connection,
-        chain_id: i64,
-        pool_address: &str,
-        events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
-        let Some(c) =
-            Self::compute_v3_liquidity_update_on_conn(conn, chain_id, pool_address, events)?
-        else {
-            return Ok(false);
-        };
-        let delta = derive_liquidity_delta_from_computed(&c, events);
-        Self::persist_v3_liquidity_delta_on_conn(conn, &delta)?;
-        Ok(true)
-    }
-
-    /// Apply a sequence of [`LiquidityUpdateEvent`]s to the V4 pool identified by
-    /// `(pool_hash, pool_manager_chain)` — the core apply-and-persist port of
-    /// the Python `apply_v4_liquidity_updates`.
-    ///
-    /// See [`Self::apply_v3_liquidity_updates`] for the loop semantics; V4
-    /// differs only in the row lookups + tables written.
-    ///
-    /// # Panics (debug builds only)
-    ///
-    /// Panics if an event violates the block/log-index ordering invariant.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on any query/upsert failure or
-    /// [`DbError::Decode`] on a malformed column.
-    pub fn apply_v4_liquidity_updates(
-        &self,
-        pool_hash: &str,
-        pool_manager_chain: i64,
-        events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
-        let conn = self.lock();
-        Self::apply_v4_liquidity_updates_on_conn(&conn, pool_hash, pool_manager_chain, events)
-    }
-
-    /// The **compute** half of [`Self::apply_v4_liquidity_updates_on_conn`] (V4
-    /// mirror of [`Self::compute_v3_liquidity_update_on_conn`]): reconstitute the
+    /// The **compute** half of the V4 update (V4 mirror of
+    /// [`Self::compute_v3_liquidity_update_on_conn`]): reconstitute the
     /// V4 pool's base tick state + run `apply_event_loop`, returning the
     /// in-memory map **without persisting** — the pre-commit verifier seam.
     ///
@@ -665,27 +591,6 @@ impl DegenbotDb {
         last_event: Option<BlockLog>,
     ) -> Result<(), DbError> {
         persist_v4(conn, managed_pool_id, tick_data, last_event)
-    }
-
-    /// The single-transaction-bound variant of [`Self::apply_v4_liquidity_updates`]
-    /// compute → persist with no on-chain gate (backward compat).
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` wrapper variant.
-    pub fn apply_v4_liquidity_updates_on_conn(
-        conn: &rusqlite::Connection,
-        pool_hash: &str,
-        pool_manager_chain: i64,
-        events: &[LiquidityUpdateEvent],
-    ) -> Result<bool, DbError> {
-        let Some(c) =
-            Self::compute_v4_liquidity_update_on_conn(conn, pool_hash, pool_manager_chain, events)?
-        else {
-            return Ok(false);
-        };
-        let delta = derive_liquidity_delta_from_computed(&c, events);
-        Self::persist_v4_liquidity_delta_on_conn(conn, &delta)?;
-        Ok(true)
     }
 
     /// The **dirty-key delta compute** (V3 — Perf B): read ONLY the rows the
@@ -1852,7 +1757,20 @@ mod tests {
                 liquidity_delta: pos(-250_000),
             },
         ];
-        db.apply_v3_liquidity_updates(1, &addr, &events).unwrap();
+        {
+            let conn = db.lock();
+            let computed =
+                DegenbotDb::compute_v3_liquidity_update_on_conn(&conn, 1, &addr, &events)
+                    .unwrap()
+                    .unwrap();
+            DegenbotDb::persist_v3_liquidity_update_on_conn(
+                &conn,
+                computed.pool_id,
+                &computed.tick_data,
+                computed.last_event,
+            )
+            .unwrap();
+        }
 
         assert_eq!(
             count_rows(&db, "liquidity_positions", "pool_id", pool_id),
@@ -2280,7 +2198,20 @@ mod tests {
                 liquidity_delta: pos(-250_000),
             },
         ];
-        db.apply_v4_liquidity_updates(&hash, 1, &events).unwrap();
+        {
+            let conn = db.lock();
+            let computed =
+                DegenbotDb::compute_v4_liquidity_update_on_conn(&conn, &hash, 1, &events)
+                    .unwrap()
+                    .unwrap();
+            DegenbotDb::persist_v4_liquidity_update_on_conn(
+                &conn,
+                computed.pool_id,
+                &computed.tick_data,
+                computed.last_event,
+            )
+            .unwrap();
+        }
 
         assert_eq!(
             count_rows(

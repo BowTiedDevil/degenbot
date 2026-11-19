@@ -45,18 +45,19 @@ const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
-/// chunk's fetch surface (one `eth_getLogs` for the factory's `PoolCreated`
-/// pass + one whole-chain `eth_getLogs` for the V3 `Mint`/`Burn` scan; the
-/// run resolves its tip from the pin, so no `eth_blockNumber`). The RPC
-/// counter drift gate: an added or removed fetch pass (batching, a new
-/// scan, a re-fetch) changes this and fails the plain `cargo test` run.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 2;
+/// run's full surface: one `eth_getLogs` for the factory's `PoolCreated`
+/// pass, one whole-chain `eth_getLogs` for the V3 `Mint`/`Burn` scan, and the
+/// pre-commit verification gate's per-pool `ticks`/`tickBitmap` reads (the
+/// gate runs on every chunk). The RPC counter drift gate: an added or
+/// removed pass (batching, a new scan, a re-fetch) changes this and fails
+/// the plain `cargo test` run.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 4289;
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 5510;
 
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`, so
 /// the run's fetch window is exactly the cassette's recorded span.
@@ -129,9 +130,6 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         provider.clone(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        // The verification gate stays OFF: the corpus records the fetch
-        // surface (getLogs + block tags), not the gate's per-pool tick reads.
-        false,
         None,
         false,
     )
@@ -198,7 +196,6 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         provider,
         Arc::new(AtomicBool::new(false)),
         Arc::new(NoProgress),
-        false,
         None,
         false,
     )

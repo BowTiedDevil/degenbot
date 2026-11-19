@@ -251,11 +251,8 @@ pub(crate) fn db_fetch_exchange_by_name(
     }
 }
 ///
-/// Module-level pool-row read by `(chain_id, address)` () — the V3
-/// `apply_v3_liquidity_updates` shell uses this to fetch the pool's
-/// `exchange_id` for the `exchanges_in_scope` precondition before delegating
-/// the math+persist to [`super::liquidity_updater::db_apply_v3_liquidity_updates`].
-/// Keeps the scope-check orchestration in Python + the apply core in Rust.
+/// Module-level pool-row read by `(chain_id, address)` — the typed row a
+/// driver keys its own scope decision on.
 #[pyfunction]
 pub(crate) fn db_fetch_pool_row(
     py: Python<'_>,

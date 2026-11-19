@@ -234,9 +234,10 @@ pub enum PoolSub {
         /// after the last 'safe' block.
         #[arg(long = "to-block", value_name = "BLOCK", default_value = DEFAULT_TO_BLOCK)]
         to_block: String,
-        /// The pre-commit verification gates.
+        /// The pre-commit market-wide verification policy. (The per-chunk
+        /// on-chain-truth gate has no flag: every chunk is verified.)
         #[command(flatten)]
-        verify: VerifyFlags,
+        verify: MarketVerifyFlags,
         /// Block interval for the `--verify-all` full-verification gate. A chunk
         /// that crosses or lands-on a multiple of this interval triggers a
         /// pre-commit market-wide verify. Ignored unless `--verify-all` is set.
@@ -283,7 +284,32 @@ pub enum PoolSub {
     },
 }
 
-/// The `--verify-chunk` / `--verify-all` gate pairs shared by both updaters.
+/// The `--verify-all` / `--no-verify-all` pair — the market-wide policy the
+/// pool updater exposes. The pool updater's per-chunk on-chain-truth gate is
+/// unconditional (the chunk's coherence mechanism, not an option), so this
+/// group has no `--verify-chunk` spelling: passing one is an unknown-argument
+/// error at the boundary.
+#[derive(Debug, Clone, Args)]
+pub struct MarketVerifyFlags {
+    /// Run a pre-commit FULL verification at the block boundary set by
+    /// `--verify-all-interval` AND when the run completes its last block. Off
+    /// by default (operator opt-in).
+    #[arg(long = "verify-all", action = ArgAction::SetTrue, overrides_with = "no_verify_all")]
+    pub verify_all: bool,
+    /// Disable the market-wide `--verify-all` gate.
+    #[arg(long = "no-verify-all", action = ArgAction::SetTrue, overrides_with = "verify_all")]
+    pub no_verify_all: bool,
+}
+
+impl MarketVerifyFlags {
+    /// The market-wide gate value: default OFF, `--verify-all` turns it on.
+    #[must_use]
+    pub const fn all_gate(&self) -> bool {
+        self.verify_all && !self.no_verify_all
+    }
+}
+
+/// The `--verify-chunk` / `--verify-all` gate pairs the AAVE updater exposes.
 #[derive(Debug, Clone, Args)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -811,7 +837,6 @@ fn pool(command: &PoolSub) -> PoolCommand {
             chunk_size: *chunk_size,
             max_block_range: *max_block_range,
             to_block: to_block.clone(),
-            verify_chunk: verify.chunk_gate(),
             verify_all: verify.all_gate(),
             verify_all_interval: *verify_all_interval,
         },

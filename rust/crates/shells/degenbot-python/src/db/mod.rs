@@ -14,7 +14,6 @@ pub mod aave;
 pub mod aave_analysis;
 pub mod discovery;
 pub mod discovery_read;
-pub mod liquidity_updater;
 pub mod pool_read;
 pub mod read_seams;
 pub mod snapshot;
@@ -28,7 +27,6 @@ use pyo3::types::PyDict;
 pub use aave::PyDatabasePositionQuery;
 use degenbot_db::ops::{self, UpgradeOutcome};
 use degenbot_db::schema::RUST_SCHEMA_VERSION;
-pub use liquidity_updater::PyLiquidityUpdateEvent;
 pub use pool_read::{PyExchangeRow, PyLiquidityPoolRow, PyPoolManagerRow};
 pub use snapshot::PyDatabaseSnapshot;
 
@@ -224,12 +222,6 @@ pub mod db {
     use super::{
         db_backup_database, db_compact_database, db_heal_database, db_inspect_schema_state,
         db_schema_version, db_upgrade_database,
-    };
-
-    // Liquidity-updater write path.
-    #[pymodule_export]
-    use super::liquidity_updater::{
-        db_apply_v3_liquidity_updates, db_apply_v4_liquidity_updates, PyLiquidityUpdateEvent,
     };
 
     // Pool/exchange read rows.

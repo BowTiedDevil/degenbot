@@ -34,7 +34,7 @@
 //!
 //!     cargo run --locked --manifest-path rust/Cargo.toml \
 //!         -p degenbot-fixture-tools --bin record_updater_cassette \
-//!         -- --kind pool --family v3 \
+//!         -- --kind pool \
 //!         --factory 0x1F98431c8aD98523631AE4a59f267346ea31F984 \
 //!         --from 26102622 --to 26102626 \
 //!         --out tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json
@@ -42,14 +42,13 @@
 //!     ... --kind aave --pool 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 \
 //!         --from 26130440 --to 26130445 --out tests/fixtures/cassettes/…
 //!
-//! Two extended capture modes (the replay-suite chunk):
+//! The `--kind pool` capture is the REAL `run_pool_update` chunk loop over a
+//! freshly seeded temp DB, so the cassette holds everything the run asks: the
+//! fetch surface PLUS the pre-commit gate's tick/bitmap reads at the chunk end
+//! (the gate runs on every chunk). Those gate entries are what the negative
+//! probes mutate.
 //!
-//! - `--kind pool … --verify` records the verification surface: instead of the
-//!   bare fetch passes, the REAL `run_pool_update` chunk loop runs with the
-//!   pre-commit verification gate ON (`verify_chunk = true`) over a freshly
-//!   seeded temp DB, and the cassette captures everything the run asks — the
-//!   fetch surface PLUS the gate's Multicall3 aggregate3 tick/bitmap reads at
-//!   the chunk end. Those gate entries are what the negative probes mutate.
+//! Extended capture modes (the replay-suite chunk):
 //!
 //! - `--kind aave-run` records the full Aave chunk loop: the market is seeded
 //!   via the real `activate_aave_market` plus the loop's warm-boot substrate
@@ -79,9 +78,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use degenbot_aave::updater::aave_fetch::fetch_pool_logs;
 use degenbot_aave::updater::{activate_aave_market, run_aave_update, RunSpec, VerifyPolicy};
 use degenbot_db::DegenbotDb;
-use degenbot_pool_updater::fetch::{
-    fetch_pool_created_logs, fetch_v3_liquidity_logs_grouped, PoolFamily,
-};
 use degenbot_pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
 use degenbot_rpc::cassette::{
     rfc3339_utc, verify_cassette_bytes, CassetteProvenance, CassetteSpan, RecordingTransport,
@@ -98,12 +94,10 @@ const AAVE_SEED_TOKEN_REVISION: i64 = 1;
 #[derive(Default)]
 struct RecordArgs {
     kind_raw: String,
-    family_raw: String,
     factory_raw: String,
     pool_raw: String,
     address_provider_raw: String,
     gho_raw: String,
-    verify: bool,
     from_block: Option<u64>,
     to_block: Option<u64>,
     out: Option<PathBuf>,
@@ -121,11 +115,6 @@ struct RecordSpec {
 enum Kind {
     Pool {
         factory: alloy::primitives::Address,
-        family: PoolFamily,
-        /// `--verify`: record the verification surface — the REAL
-        /// `run_pool_update` chunk loop with the pre-commit gate ON over a
-        /// seeded temp DB (the negative-probe corpus).
-        verify: bool,
     },
     Aave {
         pool: alloy::primitives::Address,
@@ -143,18 +132,6 @@ fn parse_addr(label: &str, raw: &str) -> Result<alloy::primitives::Address, Stri
         .map_err(|e| format!("{label} {raw:?} is not an address: {e}"))
 }
 
-fn parse_family(raw: &str) -> Result<PoolFamily, String> {
-    match raw {
-        "v2" => Ok(PoolFamily::V2),
-        "aerodrome-v2" => Ok(PoolFamily::AerodromeV2),
-        "v3" => Ok(PoolFamily::V3),
-        "v4" => Ok(PoolFamily::V4),
-        other => Err(format!(
-            "--family {other:?} (expected v2 | aerodrome-v2 | v3 | v4)"
-        )),
-    }
-}
-
 fn parse_block(label: &str, raw: &str) -> Result<u64, String> {
     raw.parse::<u64>()
         .map_err(|e| format!("{label} {raw:?} is not a decimal block number: {e}"))
@@ -162,8 +139,8 @@ fn parse_block(label: &str, raw: &str) -> Result<u64, String> {
 
 fn usage() -> String {
     "usage: record_updater_cassette --check <cassette.json>...\n \
-       or:  record_updater_cassette --kind pool --family v2|aerodrome-v2|v3|v4 \
-       --factory <addr> --from <n> --to <n> --out <path>\n \
+       or:  record_updater_cassette --kind pool --factory <addr> \
+       --from <n> --to <n> --out <path>\n \
        or:  record_updater_cassette --kind aave --pool <addr> \
        --from <n> --to <n> --out <path>\n \
        or:  record_updater_cassette --kind aave-run --address-provider <addr> \
@@ -183,14 +160,12 @@ fn parse_args() -> Result<Either, String> {
         match arg.as_str() {
             "--check" => check_files.push(PathBuf::from(value("--check")?)),
             "--kind" => args.kind_raw = value("--kind")?,
-            "--family" => args.family_raw = value("--family")?,
             "--factory" => args.factory_raw = value("--factory")?,
             "--pool" => args.pool_raw = value("--pool")?,
             "--from" => args.from_block = Some(parse_block("--from", &value("--from")?)?),
             "--to" => args.to_block = Some(parse_block("--to", &value("--to")?)?),
             "--out" => args.out = Some(PathBuf::from(value("--out")?)),
             "--node" => args.node = Some(value("--node")?),
-            "--verify" => args.verify = true,
             "--address-provider" => {
                 args.address_provider_raw = value("--address-provider")?;
             }
@@ -221,8 +196,6 @@ fn parse_args() -> Result<Either, String> {
     let kind = match args.kind_raw.as_str() {
         "pool" => Kind::Pool {
             factory: parse_addr("--factory", &args.factory_raw)?,
-            family: parse_family(&args.family_raw)?,
-            verify: args.verify,
         },
         "aave" => Kind::Aave {
             pool: parse_addr("--pool", &args.pool_raw)?,
@@ -334,7 +307,6 @@ fn run_pool_update_off_runtime(
     to_block: u64,
     chunk_size: u64,
     provider: AlloyProvider,
-    verify_chunk: bool,
 ) -> Result<degenbot_pool_updater::UpdateReport, String> {
     std::thread::spawn(move || {
         run_pool_update(
@@ -346,7 +318,6 @@ fn run_pool_update_off_runtime(
             provider,
             Arc::new(AtomicBool::new(false)),
             Arc::new(PoolNoProgress),
-            verify_chunk,
             None,
             false,
         )
@@ -755,49 +726,15 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
 
     let fetcher = LogFetcher::new(Arc::new(provider), 2000);
     let decoded = match &args.kind {
-        Kind::Pool {
-            factory,
-            family,
-            verify: false,
-        } => {
-            let events = fetch_pool_created_logs(
-                &fetcher,
-                args.from_block,
-                args.to_block,
-                *factory,
-                *family,
-            )
-            .await
-            .map_err(|e| format!("fetch_pool_created_logs: {e}"))?;
-            // The chunk loop's OTHER fetch surface: the whole-chain V3
-            // Mint/Burn liquidity scan over the same span (run_pool_update
-            // issues it unconditionally per chunk). Recording it here is what
-            // makes the committed corpus cover the run's full fetch surface
-            // for an offline replay.
-            let v3_liquidity = fetch_v3_liquidity_logs_grouped(
-                &fetcher,
-                args.from_block,
-                args.to_block,
-                None, // whole-chain (the run's V3 scan is unfiltered)
-            )
-            .await
-            .map_err(|e| format!("fetch_v3_liquidity_logs_grouped: {e}"))?;
-            let liquidity_events: usize = v3_liquidity.values().map(Vec::len).sum();
-            events.len() + liquidity_events
-        }
-        Kind::Pool {
-            factory,
-            family: _,
-            verify: true,
-        } => {
-            // The verification-surface capture: seed the pool-update harness
-            // DB (one ACTIVE uniswap_v3 exchange stamped at from-1 - the same
-            // rows the replay suites seed) and run the REAL chunk loop with
-            // the pre-commit verification gate ON. Everything the run asks -
-            // the fetch passes PLUS the gate Multicall3 tick/bitmap reads -
-            // lands in the recording ledger.
+        Kind::Pool { factory } => {
+            // The pool capture: seed the pool-update harness DB (one ACTIVE
+            // uniswap_v3 exchange stamped at from-1 - the same rows the replay
+            // suites seed) and run the REAL chunk loop. Everything the run
+            // asks lands in the recording ledger: the fetch passes PLUS the
+            // pre-commit verification gate's per-pool tick/bitmap reads (the
+            // gate runs on every chunk - it is not an option).
             let dir = tempfile::TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
-            let db_path = dir.path().join("pool-verify.db");
+            let db_path = dir.path().join("pool-update.db");
             seed_pool_update_db(&db_path, chain_id_i64, *factory, args.from_block)?;
             let report = run_pool_update_off_runtime(
                 db_path,
@@ -805,7 +742,6 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
                 args.to_block,
                 args.to_block - args.from_block + 1,
                 recorder.as_alloy_provider(),
-                true,
             )?;
             report.total_pools_written + report.total_liquidity_applies
         }

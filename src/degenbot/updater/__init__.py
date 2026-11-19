@@ -7,7 +7,6 @@ Everything a driver needs from the Rust pool-updater machinery:
   against on-chain truth (keyed by ``family`` + the pool's address / hub id)
 - :class:`V2PoolRowInput` / :class:`V3PoolRowInput` / :class:`V4PoolRowInput`
   — pool registration inputs
-- :class:`LiquidityUpdateEvent` — a decoded V3/V4 liquidity update (Mint/Burn delta)
 - :class:`CancelHandle` — an async cancellation token for ``run_pool_update`` /
   ``run_aave_update``
 
@@ -19,17 +18,11 @@ the row-input/event types.
 """
 
 from degenbot._ffi.cancel import CancelHandle
-from degenbot._ffi.db import (
-    LiquidityUpdateEvent,
-    V2PoolRowInput,
-    V3PoolRowInput,
-    V4PoolRowInput,
-)
+from degenbot._ffi.db import V2PoolRowInput, V3PoolRowInput, V4PoolRowInput
 from degenbot._ffi.pool import run_pool_update, verify_liquidity_map
 
 __all__ = [
     "CancelHandle",
-    "LiquidityUpdateEvent",
     "V2PoolRowInput",
     "V3PoolRowInput",
     "V4PoolRowInput",

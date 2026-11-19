@@ -31,6 +31,13 @@
 //!   `last_update_block`, so a restarted run resumes exactly where it left
 //!   off (no double-processing of committed chunks).
 //!
+//! # The pre-commit gate is unconditional
+//!
+//! Every chunk's planned maps are compared against on-chain truth BEFORE its
+//! `Transaction` opens - there is no switch that skips it. `verify_all_*`
+//! (the market-wide interval/completion policies) are ADDITIONAL checks over
+//! the whole in-scope market, never a substitute for the per-chunk gate.
+//!
 //! # Perf A: the transaction boundary (hoisted read pass + verify)
 //!
 //! Since Perf A, the per-pool O(map) compute and the pre-commit verify RPC
@@ -265,14 +272,9 @@ pub struct ChunkInputs {
 /// byte-equal by construction (same empty base, same events, same spacing).
 #[derive(Debug, Clone)]
 pub struct PlannedLiquidityMap {
-    /// The computed map. When full maps were required (ANY verification
-    /// armed — the per-pool gate or a market-wide gate), this is the FULL
-    /// post-apply map the on-chain-truth gate consumes. Otherwise it is the
-    /// DIRTY-KEY OVERLAY (the post-apply state of the event-touched keys
-    /// only) — never hand an ungated plan's `computed` to the verifier: the
-    /// verifier's contract is a complete map, and the read pass only builds
-    /// one when a gate will run (the driver passes
-    /// `verify_chunk || run_full`).
+    /// The FULL post-apply map the on-chain-truth gate consumes — the
+    /// verifier's input contract is a complete map, and every plan is
+    /// verified before its chunk commits.
     pub computed: ComputedLiquidityUpdate,
     /// The event-touched write set the apply persists (Perf B): dirty
     /// survivors + drained keys, O(events) — the full map is verification
@@ -285,9 +287,9 @@ pub struct PlannedLiquidityMap {
 /// The read pass's output: per-pool planned maps for the chunk's in-scope
 /// liquidity applies, computed BEFORE the chunk `Transaction` opens - the
 /// O(map) full-map SELECTs leave the write lock (survey finding 1, Perf A).
-/// When the gate is on, the maps are also verified against on-chain truth
-/// pre-transaction (no lock held across the RPC), and the apply persists
-/// only verified maps; a RED never opens the transaction.
+/// The maps are then verified against on-chain truth pre-transaction (no lock
+/// held across the RPC), and the apply persists only verified maps; a RED
+/// never opens the transaction.
 #[derive(Debug, Default, Clone)]
 pub struct PreVerifiedLiquidity {
     /// V3 planned maps by pool address.
@@ -306,8 +308,7 @@ pub struct ChunkWriteReport {
     /// Wall time of the per-pool full-map read + compute spans
     /// (`compute_v3/v4_liquidity_update_on_conn`).
     pub decode_compute_time: Duration,
-    /// Wall time of the per-pool on-chain verification spans (zero when the
-    /// gate is off).
+    /// Wall time of the per-pool on-chain verification spans.
     pub verify_time: Duration,
     /// Wall time of the remaining SQL apply (the fn's total span minus the
     /// compute + verify spans).
@@ -521,9 +522,9 @@ pub fn apply_chunk_writes_on_conn(
             // in-transaction fetch (the fetch moved pre-`BEGIN`).
             continue;
         }
-        // The fused in-transaction path (chunk-new pools, and ungated
-        // creations): the row exists - the upsert above created it - so
-        // re-derive the map from the committed base and persist.
+        // The fused in-transaction path (chunk-new pools): the row exists -
+        // the upsert above created it - so re-derive the map from the
+        // committed base and persist.
         let pool = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?;
         let in_scope = pool
             .as_ref()
@@ -819,33 +820,25 @@ fn in_scope_v4_creation_tick_spacing(
 /// write lock - and the plans come back owned by the caller, so the verify
 /// RPC and the apply's persists run with the write lock free.
 ///
-/// **Perf B: the map read is O(dirty) unless a gate needs the full map.**
-/// With NO verification armed (`full_maps_required = false`), each existing
-/// in-scope pool's read fetches ONLY the event-touched keys' rows + their
-/// bitmap words (`compute_v3/v4_liquidity_delta_on_conn`) and the plan's
-/// `delta` is the whole write set. When ANY verification is armed (the
-/// per-pool gate, a market-wide interval/completion gate), the read pass
-/// builds the FULL map exactly as pre-Perf-B did — the gate's contract is a
-/// complete map vs chain, and that contract is preserved byte-for-byte — and
-/// the delta is derived from it in memory (the projection is lossless: the
-/// apply loop only ever mutates the event-touched keys).
+/// **The map read is the FULL map.** The per-chunk gate's contract is a
+/// complete map vs chain, so every existing in-scope pool's read is the
+/// full-map reconstitution + apply (`compute_v3/v4_liquidity_update_on_conn`)
+/// and the delta is derived from it in memory (the projection is lossless:
+/// the apply loop only ever mutates the event-touched keys).
 ///
 /// Per V3 pool (address-sorted): a chunk-new pool (this chunk's creations
-/// upsert it) has no committed base - under the per-pool gate its planned map
-/// (empty base + events) feeds the pre-transaction verify; ungated, no entry
-/// is stored (the apply's fused path re-derives it in-transaction from the
-/// just-upserted row). An existing in-scope pool is scope-fetched + computed
-/// exactly as the in-transaction path did - same SELECTs, moved out of the
-/// lock. Unknown/out-of-scope pools are dropped here (the apply skips them
-/// without re-fetching).
-#[expect(clippy::too_many_lines)]
+/// upsert it) has no committed base, so its planned map (empty base + events)
+/// is what feeds the pre-transaction verify - the apply's fused path
+/// re-derives the byte-equal map in-transaction from the just-upserted row.
+/// An existing in-scope pool is scope-fetched + computed exactly as the
+/// in-transaction path did - same SELECTs, moved out of the lock.
+/// Unknown/out-of-scope pools are dropped here (the apply skips them without
+/// re-fetching).
 fn compute_preverified_liquidity(
     db: &DegenbotDb,
     chain_id: i64,
     chunk_specs: &[ExchangeSpec],
     inputs: &ChunkInputs,
-    verify_chunk: bool,
-    full_maps_required: bool,
 ) -> Result<PreVerifiedLiquidity, degenbot_db::DbError> {
     let mut preverified = PreVerifiedLiquidity::default();
     let guard = db.lock();
@@ -858,34 +851,31 @@ fn compute_preverified_liquidity(
         if let Some(tick_spacing) =
             in_scope_v3_creation_tick_spacing(pool_address, chunk_specs, &inputs.pool_creations)
         {
-            // Chunk-new pool: no committed base to read. Under the gate the
-            // planned map (empty base + events, sentinel `pool_id`) is what
-            // the pre-transaction verify RPC checks; the apply's fused path
+            // Chunk-new pool: no committed base to read. The planned map
+            // (empty base + events, sentinel `pool_id`) is what the
+            // pre-transaction verify RPC checks; the apply's fused path
             // re-derives the byte-equal map in-transaction.
-            if verify_chunk {
-                // The creation row carries the event's tick spacing (i64); the
-                // map math is i32-keyed. A spacing outside i32 is a decode-
-                // level impossibility - fail loud, never clamp.
-                let spacing = i32::try_from(tick_spacing).map_err(|e| {
-                    degenbot_db::DbError::Decode(format!(
-                        "pool {pool_address} creation tick_spacing {tick_spacing} out of i32: {e}"
-                    ))
-                })?;
-                let computed =
-                    DegenbotDb::compute_v3_liquidity_update_for_new_pool(spacing, events);
-                // The new-pool plan is never persisted (the apply's fused path
-                // re-derives it in-transaction); the delta rides along for
-                // shape parity with the existing-pool plans.
-                let delta = derive_liquidity_delta_from_computed(&computed, events);
-                preverified.v3.insert(
-                    *pool_address,
-                    PlannedLiquidityMap {
-                        computed,
-                        delta,
-                        is_new_pool: true,
-                    },
-                );
-            }
+            // The creation row carries the event's tick spacing (i64); the
+            // map math is i32-keyed. A spacing outside i32 is a decode-
+            // level impossibility - fail loud, never clamp.
+            let spacing = i32::try_from(tick_spacing).map_err(|e| {
+                degenbot_db::DbError::Decode(format!(
+                    "pool {pool_address} creation tick_spacing {tick_spacing} out of i32: {e}"
+                ))
+            })?;
+            let computed = DegenbotDb::compute_v3_liquidity_update_for_new_pool(spacing, events);
+            // The new-pool plan is never persisted (the apply's fused path
+            // re-derives it in-transaction); the delta rides along for
+            // shape parity with the existing-pool plans.
+            let delta = derive_liquidity_delta_from_computed(&computed, events);
+            preverified.v3.insert(
+                *pool_address,
+                PlannedLiquidityMap {
+                    computed,
+                    delta,
+                    is_new_pool: true,
+                },
+            );
             continue;
         }
         let Some(pool) = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?
@@ -895,52 +885,26 @@ fn compute_preverified_liquidity(
         if !chunk_specs.iter().any(|s| s.id == pool.exchange_id) {
             continue; // out-of-scope - the apply skips it too
         }
-        let plan = if full_maps_required {
-            // A gate will consume the FULL map: the exact pre-Perf-B read +
-            // compute (the gate's input contract, preserved byte-for-byte),
-            // with the delta derived from it in memory.
-            let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
-                conn,
-                chain_id,
-                &pool_address.to_checksum(None),
-                events,
-            )?
-            else {
-                continue;
-            };
-            let delta = derive_liquidity_delta_from_computed(&c, events);
+        // The gate consumes the FULL map: the full-map read + compute, with
+        // the delta derived from it in memory.
+        let Some(c) = DegenbotDb::compute_v3_liquidity_update_on_conn(
+            conn,
+            chain_id,
+            &pool_address.to_checksum(None),
+            events,
+        )?
+        else {
+            continue;
+        };
+        let delta = derive_liquidity_delta_from_computed(&c, events);
+        preverified.v3.insert(
+            *pool_address,
             PlannedLiquidityMap {
                 computed: c,
                 delta,
                 is_new_pool: false,
-            }
-        } else {
-            // No gate: the O(dirty) read — ONLY the event-touched keys' rows
-            // + their words. The plan's `computed` is the dirty overlay (the
-            // post-apply state of the touched keys); the `delta` is the write
-            // set.
-            let Some(delta) = DegenbotDb::compute_v3_liquidity_delta_on_conn(
-                conn,
-                chain_id,
-                &pool_address.to_checksum(None),
-                events,
-            )?
-            else {
-                continue;
-            };
-            let computed = ComputedLiquidityUpdate {
-                pool_id: delta.pool_id,
-                tick_spacing: delta.tick_spacing,
-                tick_data: delta.tick_data.clone(),
-                last_event: delta.last_event,
-            };
-            PlannedLiquidityMap {
-                computed,
-                delta,
-                is_new_pool: false,
-            }
-        };
-        preverified.v3.insert(*pool_address, plan);
+            },
+        );
     }
 
     let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
@@ -950,65 +914,41 @@ fn compute_preverified_liquidity(
         if let Some(tick_spacing) =
             in_scope_v4_creation_tick_spacing(pool_hash, chunk_specs, &inputs.pool_creations)
         {
-            if verify_chunk {
-                let spacing = i32::try_from(tick_spacing).map_err(|e| {
-                    degenbot_db::DbError::Decode(format!(
-                        "pool_hash {pool_hash} creation tick_spacing {tick_spacing} out of i32: {e}"
-                    ))
-                })?;
-                let computed =
-                    DegenbotDb::compute_v4_liquidity_update_for_new_pool(spacing, events);
-                let delta = derive_liquidity_delta_from_computed(&computed, events);
-                preverified.v4.insert(
-                    (*pool_hash).clone(),
-                    PlannedLiquidityMap {
-                        computed,
-                        delta,
-                        is_new_pool: true,
-                    },
-                );
-            }
+            let spacing = i32::try_from(tick_spacing).map_err(|e| {
+                degenbot_db::DbError::Decode(format!(
+                    "pool_hash {pool_hash} creation tick_spacing {tick_spacing} out of i32: {e}"
+                ))
+            })?;
+            let computed = DegenbotDb::compute_v4_liquidity_update_for_new_pool(spacing, events);
+            let delta = derive_liquidity_delta_from_computed(&computed, events);
+            preverified.v4.insert(
+                (*pool_hash).clone(),
+                PlannedLiquidityMap {
+                    computed,
+                    delta,
+                    is_new_pool: true,
+                },
+            );
             continue;
         }
-        let plan = if full_maps_required {
-            let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
-                conn,
-                pool_hash,
-                inputs.pool_manager_chain,
-                events,
-            )?
-            else {
-                continue; // unknown managed pool - the apply skips it too
-            };
-            let delta = derive_liquidity_delta_from_computed(&c, events);
+        let Some(c) = DegenbotDb::compute_v4_liquidity_update_on_conn(
+            conn,
+            pool_hash,
+            inputs.pool_manager_chain,
+            events,
+        )?
+        else {
+            continue; // unknown managed pool - the apply skips it too
+        };
+        let delta = derive_liquidity_delta_from_computed(&c, events);
+        preverified.v4.insert(
+            (*pool_hash).clone(),
             PlannedLiquidityMap {
                 computed: c,
                 delta,
                 is_new_pool: false,
-            }
-        } else {
-            let Some(delta) = DegenbotDb::compute_v4_liquidity_delta_on_conn(
-                conn,
-                pool_hash,
-                inputs.pool_manager_chain,
-                events,
-            )?
-            else {
-                continue; // unknown managed pool - the apply skips it too
-            };
-            let computed = ComputedLiquidityUpdate {
-                pool_id: delta.pool_id,
-                tick_spacing: delta.tick_spacing,
-                tick_data: delta.tick_data.clone(),
-                last_event: delta.last_event,
-            };
-            PlannedLiquidityMap {
-                computed,
-                delta,
-                is_new_pool: false,
-            }
-        };
-        preverified.v4.insert((*pool_hash).clone(), plan);
+            },
+        );
     }
 
     Ok(preverified)
@@ -1174,10 +1114,10 @@ pub enum RunError {
 ///   thin wrapper; an offline replay constructs a cassette provider instead.
 /// - `cancel` — set to `true` to cooperatively stop at the next chunk boundary.
 /// - `progress` — the per-chunk progress sink (use [`NoProgress`] for silent).
-/// - `verify` — when `true`, run the pre-commit on-chain-truth gate (Full
-///   per-pool per-chunk verification) before each chunk's persist commits; a
-///   divergence rolls back the chunk + surfaces [`RunError::Verification`].
-///   `false` = the no-gate backward-compat path (fused compute→persist).
+///
+/// Every run verifies: the pre-commit on-chain-truth gate runs over each
+/// chunk's planned maps before its persist commits, and a divergence rolls
+/// back the chunk + surfaces [`RunError::Verification`].
 ///
 /// # Errors
 ///
@@ -1194,11 +1134,11 @@ pub fn run_pool_update(
     provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
-    verify_chunk: bool,
     // When `Some(n)`, run a pre-commit FULL (market-wide, all in-scope
     // pools) verification when a chunk crosses/lands-on a multiple of `n`
     // blocks. A divergence rolls back the chunk + does NOT advance
-    // `last_update_block`. `None` = no interval gate.
+    // `last_update_block`. `None` = no interval gate. This is an ADDITIONAL
+    // market-wide policy; the per-chunk gate always runs.
     verify_all_interval: Option<u64>,
     // When `true`, run a pre-commit FULL verification on the run's final
     // chunk (`working_end_block >= last_block`). A divergence rolls back
@@ -1225,7 +1165,6 @@ pub fn run_pool_update(
         provider,
         cancel,
         progress,
-        verify_chunk,
         verify_all_interval,
         verify_all_at_completion,
     )
@@ -1255,11 +1194,11 @@ pub fn run_pool_update_on_db(
     provider: AlloyProvider,
     cancel: Arc<AtomicBool>,
     progress: Arc<dyn ProgressSink>,
-    verify_chunk: bool,
     // When `Some(n)`, run a pre-commit FULL (market-wide, all in-scope
     // pools) verification when a chunk crosses/lands-on a multiple of `n`
     // blocks. A divergence rolls back the chunk + does NOT advance
-    // `last_update_block`. `None` = no interval gate.
+    // `last_update_block`. `None` = no interval gate. This is an ADDITIONAL
+    // market-wide policy; the per-chunk gate always runs.
     verify_all_interval: Option<u64>,
     // When `true`, run a pre-commit FULL verification on the run's final
     // chunk (`working_end_block >= last_block`). A divergence rolls back
@@ -1531,9 +1470,9 @@ pub fn run_pool_update_on_db(
 
         // Perf A: the read pass computes every in-scope pool's post-chunk
         // state BEFORE the transaction opens - the per-pool map SELECTs leave
-        // the write lock (survey finding 1). Perf B: the read is O(dirty)
-        // unless a gate needs the full map (the gate's input contract is
-        // preserved byte-for-byte — see `compute_preverified_liquidity`). The
+        // the write lock (survey finding 1). The per-chunk gate consumes the
+        // FULL maps, so the read pass always builds them (the gate's input
+        // contract is exact — see `compute_preverified_liquidity`). The
         // returned plans own the maps + deltas; the guard they used drops
         // inside.
         // The compute stage span wraps the read pass — the same boundary
@@ -1542,14 +1481,7 @@ pub fn run_pool_update_on_db(
         let compute_span = tracing::info_span!("degenbot.updater.pool.compute");
         let compute_guard = compute_span.enter();
         let read_pass_started = Instant::now();
-        let preverified = compute_preverified_liquidity(
-            db,
-            chain_id,
-            &chunk_specs,
-            &inputs,
-            verify_chunk,
-            verify_chunk || run_full,
-        )?;
+        let preverified = compute_preverified_liquidity(db, chain_id, &chunk_specs, &inputs)?;
         let read_pass_time = read_pass_started.elapsed();
         drop(compute_guard);
 
@@ -1559,7 +1491,7 @@ pub fn run_pool_update_on_db(
         // held - a divergence means the transaction NEVER OPENS, so the
         // observable RED contract is unchanged (`RunError::Verification`, zero
         // rows written, the stamp unadvanced) while the RPC leaves the lock.
-        if verify_chunk {
+        {
             let verify_span = tracing::info_span!(
                 "degenbot.updater.pool.verify",
                 verify.kind = "chunk",

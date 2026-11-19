@@ -7,11 +7,12 @@
 //! seeded with a pool row + a pre-existing `LiquidityMap`, including a STALE
 //! tick that no event touches so the `delete_stale_*_positions` path is
 //! exercised). Copies each to a tmp path (the apply mutates the DB), applies the
-//! SAME event sequence as the Python blueprint through the Rust
-//! [`DegenbotDb::apply_v3_liquidity_updates`] /
-//! [`DegenbotDb::apply_v4_liquidity_updates`], + asserts the resulting rows +
-//! `liquidity_update_block`/`log_index` marker match the JSON oracle dumped by
-//! the Python path against the SAME fixture.
+//! SAME event sequence through the Rust compute + persist pair (the V3
+//! `compute_v3_liquidity_update_on_conn` →
+//! `persist_v3_liquidity_update_on_conn`, the V4 mirror for V4), + asserts the
+//! resulting rows + `liquidity_update_block`/`log_index` marker match the
+//! frozen JSON oracle. The oracle is the state this sequence produced once; it
+//! is never re-derived from the code under test.
 //!
 //! To regenerate the fixtures:
 //!   `uv run python rust/crates/foundation/degenbot-db/tests/fixtures/generate_liquidity_updater_parity.py`
@@ -101,6 +102,57 @@ fn to_event(packed: (u64, u64, i32, i32, I256)) -> degenbot_db::LiquidityUpdateE
     }
 }
 
+/// Apply the fixture's V3 event sequence through the sanctioned pair
+/// (compute → persist), leaving the post-apply state in the DB.
+///
+/// The relabelled-fork fixture is why this is separate from [`apply_v3`]: the
+/// dump half names the Uniswap subclass table, while the apply itself resolves
+/// the pool's family from `pools.kind`.
+fn apply_v3_events(db: &DegenbotDb, chain_id: i64, pool_address: &str) {
+    let events: Vec<_> = v3_events().into_iter().map(to_event).collect();
+    let conn = db.lock();
+    let computed =
+        DegenbotDb::compute_v3_liquidity_update_on_conn(&conn, chain_id, pool_address, &events)
+            .unwrap()
+            .unwrap();
+    DegenbotDb::persist_v3_liquidity_update_on_conn(
+        &conn,
+        computed.pool_id,
+        &computed.tick_data,
+        computed.last_event,
+    )
+    .unwrap();
+}
+
+/// [`apply_v3_events`] + the post-apply dump (the Uniswap-family fixture).
+fn apply_v3(db: &DegenbotDb, chain_id: i64, pool_address: &str) -> Dbdump {
+    apply_v3_events(db, chain_id, pool_address);
+    dump_v3(db)
+}
+
+/// The V4 mirror of [`apply_v3`].
+fn apply_v4(db: &DegenbotDb, pool_hash: &str, pool_manager_chain: i64) -> Dbdump {
+    let events: Vec<_> = v4_events().into_iter().map(to_event).collect();
+    let conn = db.lock();
+    let computed = DegenbotDb::compute_v4_liquidity_update_on_conn(
+        &conn,
+        pool_hash,
+        pool_manager_chain,
+        &events,
+    )
+    .unwrap()
+    .unwrap();
+    DegenbotDb::persist_v4_liquidity_update_on_conn(
+        &conn,
+        computed.pool_id,
+        &computed.tick_data,
+        computed.last_event,
+    )
+    .unwrap();
+    drop(conn);
+    dump_v4(db)
+}
+
 /// The post-apply dump: `(pool_id, positions, marker_block, marker_log_idx)`.
 type Dbdump = (i64, Vec<(i32, String, String)>, Option<i64>, Option<i64>);
 
@@ -188,14 +240,7 @@ fn v3_apply_matches_python_oracle() {
         "fixture pre-apply marker must be None"
     );
 
-    db.apply_v3_liquidity_updates(
-        exp.chain_id,
-        &exp.pool_address,
-        &v3_events().into_iter().map(to_event).collect::<Vec<_>>(),
-    )
-    .unwrap();
-
-    let (_pool_id, positions, block, log_idx) = dump_v3(&db);
+    let (_pool_id, positions, block, log_idx) = apply_v3(&db, exp.chain_id, &exp.pool_address);
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
@@ -234,14 +279,8 @@ fn v4_apply_matches_python_oracle() {
         "fixture pre-apply marker must be None"
     );
 
-    db.apply_v4_liquidity_updates(
-        &exp.pool_hash,
-        exp.pool_manager_chain,
-        &v4_events().into_iter().map(to_event).collect::<Vec<_>>(),
-    )
-    .unwrap();
-
-    let (_managed_pool_id, positions, block, log_idx) = dump_v4(&db);
+    let (_managed_pool_id, positions, block, log_idx) =
+        apply_v4(&db, &exp.pool_hash, exp.pool_manager_chain);
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
@@ -364,18 +403,11 @@ fn v3_fork_pool_apply_matches_oracle() {
     assert_eq!(cake_row, (None, None), "pre-apply fork marker must be None");
     drop(conn);
 
-    let applied = db
-        .apply_v3_liquidity_updates(
-            exp.chain_id,
-            &exp.pool_address,
-            &v3_events().into_iter().map(to_event).collect::<Vec<_>>(),
-        )
-        .unwrap();
-
-    assert!(
-        applied,
-        "apply_v3_liquidity_updates must return true for a pancakeswap_v3 pool"
-    );
+    // The pair resolves the pool kind from `pools.kind` at compute time, so the
+    // relabelled fork row is the one both halves read/write. The dump half is
+    // skipped here: it names the Uniswap subclass table, which this fixture
+    // deliberately no longer has a row in.
+    apply_v3_events(&db, exp.chain_id, &exp.pool_address);
 
     let conn = db.lock();
     // Positions + init-maps are kind-agnostic (keyed by pool_id).
@@ -413,6 +445,17 @@ fn v3_fork_pool_apply_matches_oracle() {
         uni_marker,
         (None, None),
         "no marker on uniswap_v3_pools for a pancakeswap_v3 pool"
+    );
+    let uni_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM uniswap_v3_pools WHERE pool_id = ?1",
+            rusqlite::params![pool_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        uni_rows, 0,
+        "the apply must not resurrect a row in the Uniswap subclass table"
     );
 }
 

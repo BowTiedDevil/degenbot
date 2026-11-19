@@ -22,13 +22,13 @@ import pytest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.db import (
-    db_apply_v3_liquidity_updates,
     db_set_exchange_last_update_block,
     db_upsert_exchange,
     db_upsert_v3_pools,
 )
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot, UniswapV3LiquiditySnapshot
-from tests.helpers.seam import LiquidityUpdateEvent, V3PoolRowInput
+from tests.helpers.database import seed_liquidity_positions
+from tests.helpers.seam import V3PoolRowInput
 
 CHAIN_ID = 8453
 POOL_ADDRESS = get_checksum_address("0xe13514aacc27a3dfd2ae0db6ada4ef7658c1e435")
@@ -55,11 +55,14 @@ def _seed_pool(database_path: Path, exchange_id: int) -> None:
         10000,
         [V3PoolRowInput(POOL_ADDRESS, TOKEN0_ADDRESS, TOKEN1_ADDRESS, 3000, 60)],
     )
-    db_apply_v3_liquidity_updates(
-        str(database_path),
-        CHAIN_ID,
-        POOL_ADDRESS,
-        [LiquidityUpdateEvent(SEED_BLOCK, 0, -120, 120, 10**18)],
+    # One in-range position (-120..120, 10**18): the two boundary ticks the
+    # seeded map carries (gross = the position's liquidity, net = the signed
+    # delta at each boundary).
+    seed_liquidity_positions(
+        database_path,
+        [(-120, 10**18, 10**18), (120, -(10**18), 10**18)],
+        chain_id=CHAIN_ID,
+        pool_address=POOL_ADDRESS,
     )
 
 
