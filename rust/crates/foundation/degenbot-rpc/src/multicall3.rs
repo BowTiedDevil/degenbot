@@ -5,9 +5,11 @@
 //! minutes-long tail of `aave update`. This module folds a batch of
 //! `(target, calldata)` calls into a single Multicall3 `aggregate3` `eth_call`
 //! (canonical deployed address `0xcA11bde05977b3631167028862bE2a173976CA11`),
-//! with `allowFailure = true` so a reverted sub-call surfaces as
-//! `success = false` + empty `returnData` instead of reverting the whole
-//! batch — preserving the existing "revert ⇒ actual == zero" verify semantics.
+//! with `allowFailure = true` so a reverted sub-call is a per-call
+//! [`MulticallOutcome::Reverted`] instead of a batch-wide revert — preserving
+//! the existing "revert ⇒ actual == zero" verify semantics. A transport fault
+//! is not an outcome: it propagates as a [`ProviderError`], so a sustained
+//! outage can never be read as a fan of sub-call reverts.
 //!
 //! Pure encode/decode (no RPC) so the ABI path is fixture-testable against an
 //! independent ABI encoder (`eth_abi`/`eth_utils` reference vectors). The RPC
@@ -42,14 +44,47 @@ pub const MULTICALL3_BATCH_SIZE: usize = 1024;
 /// selector before giving up on batching.
 pub const TRY_AGGREGATE_SELECTOR: [u8; 4] = [0xbc, 0xe3, 0x8b, 0xd7];
 
-/// One Multicall3 `Result`: `(bool success, bytes returnData)`.
+/// One Multicall3 item as the ABI reports it: `(bool success, bytes returnData)`.
+///
+/// The wire row of a decoded batch return — a decode artifact, not a semantic
+/// class. [`MulticallOutcome`] is the class a read consumer names, and
+/// [`multicall3_batch`] produces it; this row survives only for callers that
+/// re-serve or inspect a batch's own ABI payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MulticallResult {
-    /// `false` means the sub-call reverted (with `allowFailure = true` the
-    /// batch itself still succeeded).
+    /// The ABI tuple's success flag.
     pub success: bool,
-    /// The raw sub-call return data (empty on revert).
+    /// The ABI tuple's return data (a revert's payload when `success` is
+    /// `false`).
     pub return_data: Bytes,
+}
+
+/// One read's outcome at the Multicall3 boundary.
+///
+/// No variant can hold a transport fault: [`multicall3_batch`] propagates those
+/// as [`ProviderError`], so a reader matching on this type names both states and
+/// can never mistake an outage for a sub-call revert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MulticallOutcome {
+    /// The sub-call returned this payload.
+    Returned(Bytes),
+    /// The sub-call reverted, carrying the payload the wire exposed. Empty when
+    /// the revert arrived as a provider error rather than as an `allowFailure`
+    /// item: a JSON-RPC revert carries its reason in the error message, not as
+    /// return data.
+    Reverted(Bytes),
+}
+
+impl From<MulticallResult> for MulticallOutcome {
+    /// Classify one decoded wire row. Only ever called on a batch return that
+    /// is itself a success, so `success = false` is a sub-call revert.
+    fn from(row: MulticallResult) -> Self {
+        if row.success {
+            Self::Returned(row.return_data)
+        } else {
+            Self::Reverted(row.return_data)
+        }
+    }
 }
 
 /// Encode `aggregate3((bool,address,bytes)[])` calldata for `calls`, with
@@ -109,9 +144,10 @@ pub fn encode_try_aggregate(calls: &[(Address, Bytes)]) -> ProviderResult<Bytes>
 /// sequential per-call `eth_call`, so a malformed or miscounting Multicall3
 /// return never silently masks positions — it degrades to the exact
 /// pre-multicall behavior). A short array is never padded with all-reverted
-/// rows, and a long one is never truncated to the first `n`. A sub-call that
-/// reverted is `success = false` with empty `return_data` (NOT a decode
-/// error — verified by the `allowFailure = true` batch itself succeeding).
+/// rows, and a long one is never truncated to the first `n`. A reverted
+/// sub-call is `success = false` (NOT a decode error — the `allowFailure =
+/// true` batch itself succeeded) and keeps whatever payload the batch put in
+/// `returnData`.
 /// For `n == 0` the payload is not consulted and the result is empty.
 ///
 /// # Errors
@@ -170,38 +206,39 @@ pub fn decode_aggregate3_results(data: &Bytes, n: usize) -> ProviderResult<Vec<M
 }
 
 /// Run a batch of read-only calls through one Multicall3 `aggregate3`
-/// `eth_call` (chunked into `MULTICALL3_BATCH_SIZE`-sized batches). Returns
-/// one [`MulticallResult`] per input call, in order. A reverted sub-call is
-/// `success = false` with empty `return_data` (it is NOT an error — the caller
-/// decides how to treat a revert; the Aave verify path treats revert ⇒
-/// actual == zero, the V3/V4 liquidity verifier treats it as a hard RPC
-/// error).
+/// `eth_call` (chunked into [`MULTICALL3_BATCH_SIZE`]-sized batches). Returns
+/// one [`MulticallOutcome`] per input call, in order. A reverted sub-call is
+/// [`MulticallOutcome::Reverted`] — an outcome, not an error: the caller
+/// decides what a revert means (the Aave verify path reads revert ⇒ actual ==
+/// zero, the V3/V4 liquidity verifier treats it as a hard read error). A
+/// transport fault is never an outcome: it propagates, so "the node did not
+/// answer" and "the contract reverted" stay distinguishable to every caller.
 ///
 /// `block_number` matches [`ContractRead::call`]'s shape: `Some(b)` calls at
 /// block `b`; `None` calls at the transport's own latest.
 ///
-/// If the Multicall3 `eth_call` itself errors (e.g. Multicall3 is not deployed
-/// on the chain — never expected for Aave V3 chains) the batch falls back to
-/// one sequential `eth_call` per call, preserving the exact pre-multicall
-/// behavior.
+/// If the Multicall3 `eth_call` itself errors (Multicall3 is not deployed on
+/// the chain, a transport fault, a malformed return) the batch falls back to
+/// one sequential `eth_call` per call — the exact pre-multicall request shape —
+/// and those sub-calls classify the same way.
 ///
 /// # Errors
 ///
-/// Returns [`ProviderError`] only if BOTH the Multicall3 batch and the
-/// sequential fallback `eth_call` for the same batch fail.
+/// Returns [`ProviderError`] when the batch leg could not answer AND a fallback
+/// sub-call failed for any reason other than an EVM revert (a timeout, a
+/// dropped connection, an exhausted retry budget). A revert never surfaces
+/// here.
 pub async fn multicall3_batch(
     transport: &impl ContractRead,
     calls: &[(Address, Bytes)],
     block_number: Option<u64>,
-) -> ProviderResult<Vec<MulticallResult>> {
+) -> ProviderResult<Vec<MulticallOutcome>> {
     let mut results = Vec::with_capacity(calls.len());
     for chunk in calls.chunks(MULTICALL3_BATCH_SIZE) {
-        // Encode + dispatch the batch. Treat the batch as successful only if
-        // BOTH the `eth_call` succeeds AND the return decodes cleanly;
-        // otherwise fall back to sequential per-call `eth_call`. This makes
-        // Multicall3 a pure optimization: any surprise (chain without
-        // Multicall3 deployed, a malformed return, a transport error) degrades
-        // to the prior one-call-per-position path with no semantics change.
+        // Encode + dispatch the batch. The batch is a pure optimization: a
+        // chain without Multicall3 deployed, a malformed return, or a failing
+        // batch call degrades to the pre-multicall one-call-per-sub-call path,
+        // which classifies its own results.
         match async {
             let calldata = encode_aggregate3(chunk)?;
             let data = transport
@@ -211,28 +248,37 @@ pub async fn multicall3_batch(
         }
         .await
         {
-            Ok(batch) => results.extend(batch),
+            Ok(rows) => results.extend(rows.into_iter().map(MulticallOutcome::from)),
             Err(_) => {
-                // Fallback: Multicall3 not deployed / unreachable / returned
-                // a malformed payload. Revert to sequential per-call eth_call
-                // so verify keeps working (preserves the pre-multicall
-                // per-call behavior).
-                for (target, data) in chunk {
-                    match transport.call(*target, data.clone(), block_number).await {
-                        Ok(return_data) => results.push(MulticallResult {
-                            success: true,
-                            return_data,
-                        }),
-                        Err(_) => results.push(MulticallResult {
-                            success: false,
-                            return_data: Bytes::new(),
-                        }),
-                    }
+                for (target, calldata) in chunk {
+                    results.push(classify_sub_call(
+                        transport
+                            .call(*target, calldata.clone(), block_number)
+                            .await,
+                    )?);
                 }
             }
         }
     }
     Ok(results)
+}
+
+/// Name one sequential sub-call's result: a revert is
+/// [`MulticallOutcome::Reverted`] (payload empty — a provider revert carries its
+/// reason in the error message, not as return data), and every other failure
+/// propagates as the transport fault it is.
+///
+/// This classification is the module's whole point: with it deleted, an
+/// exhausted retry budget or a dropped connection reads exactly like a revert,
+/// and every consumer downstream reconciles an outage as chain state.
+fn classify_sub_call(result: ProviderResult<Bytes>) -> ProviderResult<MulticallOutcome> {
+    match result {
+        Ok(return_data) => Ok(MulticallOutcome::Returned(return_data)),
+        Err(ProviderError::ExecutionReverted { .. }) => {
+            Ok(MulticallOutcome::Reverted(Bytes::new()))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
@@ -366,6 +412,182 @@ mod tests {
         assert!(
             result.is_err(),
             "a long result array must surface as a decode error"
+        );
+    }
+
+    // ── the batch boundary's outcome classification ───────────────────────
+
+    /// One scripted `eth_call` transport: the Multicall3 batch address answers
+    /// `batch`, every other address answers from `answers`. Failing the batch
+    /// leg alone is what makes the sequential fallback's classification
+    /// observable.
+    struct Scripted {
+        batch: ProviderResult<Bytes>,
+        answers: Vec<(Address, ProviderResult<Bytes>)>,
+    }
+
+    impl Scripted {
+        fn answer(&self, to: Address) -> ProviderResult<Bytes> {
+            if to == MULTICALL3_ADDRESS {
+                return self.batch.clone();
+            }
+            match self.answers.iter().find(|(address, _)| *address == to) {
+                Some((_, answer)) => answer.clone(),
+                None => Err(ProviderError::ConnectionFailed {
+                    message: format!("no scripted answer for {to}"),
+                }),
+            }
+        }
+    }
+
+    impl ContractRead for Scripted {
+        fn call(
+            &self,
+            to: Address,
+            _data: Bytes,
+            _block: Option<u64>,
+        ) -> impl std::future::Future<Output = ProviderResult<Bytes>> + Send {
+            std::future::ready(self.answer(to))
+        }
+    }
+
+    fn outage() -> ProviderError {
+        ProviderError::Timeout {
+            message: "the node stopped answering".into(),
+        }
+    }
+
+    fn sub_call(tag: u8) -> (Address, Bytes) {
+        (
+            Address::repeat_byte(tag),
+            Bytes::from(vec![tag, tag, tag, tag]),
+        )
+    }
+
+    fn aggregate3_return(items: &[(bool, Vec<u8>)]) -> Bytes {
+        let values: Vec<DynSolValue> = items
+            .iter()
+            .map(|(success, data)| {
+                DynSolValue::Tuple(vec![
+                    DynSolValue::Bool(*success),
+                    DynSolValue::Bytes(data.clone()),
+                ])
+            })
+            .collect();
+        Bytes::from(DynSolValue::Array(values).abi_encode())
+    }
+
+    /// A transport failing every call is an ERROR, not a fan of reverted rows:
+    /// "the node is gone" must never read as "every sub-call reverted".
+    #[tokio::test]
+    async fn a_dead_transport_is_an_error_never_a_revert_row() {
+        let calls = vec![sub_call(0x11), sub_call(0x22)];
+        let transport = Scripted {
+            batch: Err(outage()),
+            answers: vec![(calls[0].0, Err(outage())), (calls[1].0, Err(outage()))],
+        };
+
+        let outcome = multicall3_batch(&transport, &calls, Some(7)).await;
+
+        assert!(
+            matches!(
+                &outcome,
+                Err(ProviderError::Timeout { message }) if message.contains("stopped answering")
+            ),
+            "an outage must propagate as the transport fault it is, got {outcome:?}"
+        );
+    }
+
+    /// With only the batch leg failing, a reverting sub-call and a returning
+    /// one are named separately — the fallback leg needs no `success` flag to
+    /// tell them apart.
+    #[tokio::test]
+    async fn a_fallback_leg_names_a_revert_and_a_return_separately() {
+        let (reverting, reverting_data) = sub_call(0x33);
+        let (live, live_data) = sub_call(0x44);
+        let calls = vec![(reverting, reverting_data), (live, live_data)];
+        let transport = Scripted {
+            // No `aggregate3` at the batch address: the fallback leg runs.
+            batch: Err(ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "no aggregate3 here".into(),
+            }),
+            answers: vec![
+                (
+                    reverting,
+                    Err(ProviderError::ExecutionReverted {
+                        code: -32000,
+                        message: "execution reverted: pool dead".into(),
+                    }),
+                ),
+                (live, Ok(Bytes::from(vec![0x2a]))),
+            ],
+        };
+
+        let rows = multicall3_batch(&transport, &calls, None).await.unwrap();
+
+        assert_eq!(
+            rows,
+            vec![
+                MulticallOutcome::Reverted(Bytes::new()),
+                MulticallOutcome::Returned(Bytes::from(vec![0x2a])),
+            ]
+        );
+    }
+
+    /// The same fallback leg with one unreachable sub-call propagates that
+    /// fault: a reverting sibling never turns it into a revert row.
+    #[tokio::test]
+    async fn a_fallback_leg_transport_fault_is_never_a_revert_row() {
+        let (reverting, reverting_data) = sub_call(0x55);
+        let (dead, dead_data) = sub_call(0x66);
+        let calls = vec![(reverting, reverting_data), (dead, dead_data)];
+        let transport = Scripted {
+            batch: Err(ProviderError::ConnectionFailed {
+                message: "no route to the batch address".into(),
+            }),
+            answers: vec![
+                (
+                    reverting,
+                    Err(ProviderError::ExecutionReverted {
+                        code: -32000,
+                        message: "execution reverted".into(),
+                    }),
+                ),
+                (dead, Err(outage())),
+            ],
+        };
+
+        let outcome = multicall3_batch(&transport, &calls, None).await;
+
+        assert!(
+            matches!(&outcome, Err(ProviderError::Timeout { .. })),
+            "a fallback transport fault must stay a fault, got {outcome:?}"
+        );
+    }
+
+    /// A batched revert keeps the payload the wire reported, so both legs name
+    /// the same class and differ only in the payload the transport exposed.
+    #[tokio::test]
+    async fn a_batched_revert_carries_its_payload() {
+        let calls = vec![sub_call(0x77), sub_call(0x88)];
+        let revert_payload = vec![0x08, 0xc3, 0x79, 0xa0];
+        let transport = Scripted {
+            batch: Ok(aggregate3_return(&[
+                (true, vec![0x2a]),
+                (false, revert_payload.clone()),
+            ])),
+            answers: Vec::new(),
+        };
+
+        let rows = multicall3_batch(&transport, &calls, Some(9)).await.unwrap();
+
+        assert_eq!(
+            rows,
+            vec![
+                MulticallOutcome::Returned(Bytes::from(vec![0x2a])),
+                MulticallOutcome::Reverted(Bytes::from(revert_payload)),
+            ]
         );
     }
 }

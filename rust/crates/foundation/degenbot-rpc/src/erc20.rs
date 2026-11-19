@@ -51,7 +51,7 @@ use alloy::sol_types::SolCall;
 
 use crate::abi::{selector, ContractRead, IERC20};
 use crate::multicall3::{
-    decode_aggregate3_results, encode_aggregate3, multicall3_batch, MulticallResult,
+    decode_aggregate3_results, encode_aggregate3, multicall3_batch, MulticallOutcome,
     MULTICALL3_ADDRESS,
 };
 
@@ -147,10 +147,9 @@ pub async fn read(
 ///   them; a recorder sees the batched shape whole. When the eager batch
 ///   itself cannot answer, the shape's own degradation applies:
 ///   [`MetadataShape::LowerOnly`] degrades to per-token [`read`] calls (the
-///   exact pre-batch request shape);
-///   [`MetadataShape::LowerUpperStopOnCallError`] degrades to sequential
-///   per-sub-call `eth_call`s through [`multicall3_batch`], keeping the whole
-///   eager request set.
+///   exact pre-batch request shape), and so does
+///   [`MetadataShape::LowerUpperStopOnCallError`] — a batch that cannot answer
+///   at all falls back to the sequence it replaced.
 ///
 /// - [`MetadataShape::LowerUpperFallThrough`] has no eager request set: its
 ///   batched form is exactly the per-token [`read`] sequence (fallback legs
@@ -177,16 +176,20 @@ pub async fn read_batch(
             // ONE `aggregate3` for the whole list (the construction batch's
             // wire shape — no chunking), consumed only if BOTH the call and
             // the return decode cleanly; otherwise the pre-batch per-token
-            // reads keep the exact sequential behavior.
+            // reads keep the exact sequential behavior. The eager call is made
+            // here rather than through `multicall3_batch` because the chunked
+            // form would split the recorded request set.
             let batch = async {
                 let calldata = encode_aggregate3(&calls)?;
                 let data = transport.call(MULTICALL3_ADDRESS, calldata, block).await?;
                 decode_aggregate3_results(&data, calls.len())
             }
             .await;
-            let Ok(results) = batch else {
+            let Ok(rows) = batch else {
                 return read_each(transport, tokens, shape, block).await;
             };
+            let results: Vec<MulticallOutcome> =
+                rows.into_iter().map(MulticallOutcome::from).collect();
             decode_lower_only_batch(&results)
         }
         MetadataShape::LowerUpperStopOnCallError => {
@@ -206,20 +209,12 @@ pub async fn read_batch(
                     )
                 })
                 .collect();
-            // `multicall3_batch` degrades a failed/malformed batch to
-            // sequential per-call `eth_call`s mapped to per-item `success`
-            // flags; an `Err` can only mean its own encode step failed
-            // (defensively unreachable) — mirror it as all-failed results,
-            // which the per-field decisions turn into absent fields.
-            let results = match multicall3_batch(transport, &calls, block).await {
-                Ok(results) => results,
-                Err(_) => calls
-                    .iter()
-                    .map(|_| MulticallResult {
-                        success: false,
-                        return_data: Bytes::new(),
-                    })
-                    .collect(),
+            // A batch that could not answer at all degrades to the exact
+            // pre-batch request set: one [`read`] per token, whose own
+            // per-field rules are the sequential contract. Absence is decided
+            // per field there, never synthesized from a whole-batch outcome.
+            let Ok(results) = multicall3_batch(transport, &calls, block).await else {
+                return read_each(transport, tokens, shape, block).await;
             };
             decode_stop_on_call_error_batch(&results)
         }
@@ -442,7 +437,7 @@ fn sub_calls(token: Address, sigs: &[&[u8]]) -> Vec<(Address, Bytes)> {
 /// order (the strict batch decode refuses any other result count) — under
 /// the per-field rule: a failed sub-call is absence, a decoded answer is the
 /// value.
-fn decode_lower_only_batch(results: &[MulticallResult]) -> Vec<TokenMetadata> {
+fn decode_lower_only_batch(results: &[MulticallOutcome]) -> Vec<TokenMetadata> {
     results
         .as_chunks::<3>()
         .0
@@ -460,7 +455,7 @@ fn decode_lower_only_batch(results: &[MulticallResult]) -> Vec<TokenMetadata> {
 /// order — under the shape's per-field decision, the exact sequential order
 /// (which failure ends the field, and when the fallback spelling is
 /// consulted, is the shape's contract).
-fn decode_stop_on_call_error_batch(results: &[MulticallResult]) -> Vec<TokenMetadata> {
+fn decode_stop_on_call_error_batch(results: &[MulticallOutcome]) -> Vec<TokenMetadata> {
     results
         .as_chunks::<6>()
         .0
@@ -473,52 +468,38 @@ fn decode_stop_on_call_error_batch(results: &[MulticallResult]) -> Vec<TokenMeta
         .collect()
 }
 
-/// One eager sub-call's answer under the lower-only rule: a failed sub-call
-/// is absence, a decoded answer is the value.
-fn single_text(res: &MulticallResult, decode: fn(&[u8]) -> Option<String>) -> Option<String> {
-    if res.success {
-        decode(&res.return_data)
-    } else {
-        None
+/// One eager sub-call's payload: the bytes a [`MulticallOutcome::Returned`]
+/// sub-call answered with, or `None` for a revert (the per-field rules below
+/// treat a revert as absence).
+fn returned(outcome: &MulticallOutcome) -> Option<&[u8]> {
+    match outcome {
+        MulticallOutcome::Returned(data) => Some(data),
+        MulticallOutcome::Reverted(_) => None,
     }
 }
 
+/// One eager sub-call's answer under the lower-only rule: a failed sub-call
+/// is absence, a decoded answer is the value.
+fn single_text(res: &MulticallOutcome, decode: fn(&[u8]) -> Option<String>) -> Option<String> {
+    decode(returned(res)?)
+}
+
 /// [`single_text`]'s decimals twin.
-fn single_uint(res: &MulticallResult, decode: fn(&[u8]) -> Option<u64>) -> Option<u64> {
-    if res.success {
-        decode(&res.return_data)
-    } else {
-        None
-    }
+fn single_uint(res: &MulticallOutcome, decode: fn(&[u8]) -> Option<u64>) -> Option<u64> {
+    decode(returned(res)?)
 }
 
 /// The stop-on-call-error pair decision — the exact sequential order: a
 /// failed lower result returns absence WITHOUT consulting the upper spelling
 /// (the sequential call-error early return); a succeeded-but-undecodable
 /// lower return falls through to the upper spelling.
-fn stop_on_call_error_text(lower: &MulticallResult, upper: &MulticallResult) -> Option<String> {
-    if !lower.success {
-        return None;
-    }
-    decode_string_return(&lower.return_data).or_else(|| {
-        if !upper.success {
-            return None;
-        }
-        decode_string_return(&upper.return_data)
-    })
+fn stop_on_call_error_text(lower: &MulticallOutcome, upper: &MulticallOutcome) -> Option<String> {
+    decode_string_return(returned(lower)?).or_else(|| decode_string_return(returned(upper)?))
 }
 
 /// [`stop_on_call_error_text`]'s decimals twin.
-fn stop_on_call_error_uint(lower: &MulticallResult, upper: &MulticallResult) -> Option<u64> {
-    if !lower.success {
-        return None;
-    }
-    decode_uint_word(&lower.return_data).or_else(|| {
-        if !upper.success {
-            return None;
-        }
-        decode_uint_word(&upper.return_data)
-    })
+fn stop_on_call_error_uint(lower: &MulticallOutcome, upper: &MulticallOutcome) -> Option<u64> {
+    decode_uint_word(returned(lower)?).or_else(|| decode_uint_word(returned(upper)?))
 }
 
 // ── Account reads: balanceOf / allowance / totalSupply ─────────────────────
@@ -533,8 +514,10 @@ fn stop_on_call_error_uint(lower: &MulticallResult, upper: &MulticallResult) -> 
 /// as a codeless coin — so this type names the failure without deciding it.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AccountReadError {
-    /// The `eth_call` itself failed: a revert, or a transport fault. The
-    /// provider's own typed reason is kept verbatim.
+    /// The call itself failed: a revert, or a transport fault. A per-call
+    /// read keeps the provider's typed reason verbatim; a batched sub-call
+    /// revert has no JSON-RPC body to keep, so its class (an
+    /// `ExecutionReverted`) is named from the batch's own report.
     #[error(transparent)]
     Call(#[from] ProviderError),
 
@@ -578,27 +561,30 @@ pub async fn balance_of(
 }
 
 /// Read many accounts' `balanceOf(account)` over ONE `aggregate3`: one
-/// result per account, in input order, each entry's failure typed on its own
-/// (a failed or malformed sub-call is that entry's [`AccountReadError`], never
-/// a batch abort). The wire shape per sub-call is exactly [`balance_of`]'s —
-/// this is the batch call shape over the same family.
+/// result per account, in input order, each entry's own failure typed (a
+/// reverted or malformed sub-call is that entry's [`AccountReadError`]). The
+/// wire shape per sub-call is exactly [`balance_of`]'s — this is the batch call
+/// shape over the same family.
 ///
 /// When the batch itself cannot answer, the Multicall3 step degrades to the
-/// per-call reads with per-item `success` flags (its own contract), so every
-/// entry still resolves independently.
+/// per-call reads (its own contract), so every entry still resolves
+/// independently.
 ///
 /// # Errors
 ///
-/// Per account: [`AccountReadError::Call`] for a failed sub-call or
-/// transport fault, [`AccountReadError::NotUint256`] for a malformed return.
+/// The batch's own [`ProviderError`] when the chain could not be read at all: a
+/// transport fault has no per-account meaning, so it never becomes N fabricated
+/// per-entry failures. Inside the `Ok`, per account:
+/// [`AccountReadError::Call`] for a reverted sub-call,
+/// [`AccountReadError::NotUint256`] for a malformed return.
 pub async fn balance_of_batch(
     transport: &impl ContractRead,
     token: Address,
     accounts: &[Address],
     block: Option<u64>,
-) -> Vec<Result<U256, AccountReadError>> {
+) -> Result<Vec<Result<U256, AccountReadError>>, ProviderError> {
     if accounts.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let calls: Vec<(Address, Bytes)> = accounts
         .iter()
@@ -609,35 +595,26 @@ pub async fn balance_of_batch(
             )
         })
         .collect();
-    // `multicall3_batch` degrades a failed/malformed batch to sequential
-    // per-call `eth_call`s mapped to per-item `success` flags; an `Err` can
-    // only be its own encode step (defensively unreachable) — mirror it as
-    // all-failed items, which the per-entry decision below turns into typed
-    // failures.
-    let results = multicall3_batch(transport, &calls, block)
-        .await
-        .unwrap_or_else(|_| {
-            calls
-                .iter()
-                .map(|_| MulticallResult {
-                    success: false,
-                    return_data: Bytes::new(),
-                })
-                .collect()
-        });
-    results
+    let results = multicall3_batch(transport, &calls, block).await?;
+
+    Ok(results
         .into_iter()
         .zip(accounts)
-        .map(|(res, account)| {
-            if !res.success {
-                return Err(AccountReadError::Call(ProviderError::ExecutionReverted {
+        .map(|(outcome, account)| match outcome {
+            MulticallOutcome::Returned(data) => decode_account_word("balanceOf", token, &data),
+            // A reverted sub-call is this entry's own condition. The batch
+            // reports it as an `allowFailure` item, so no JSON-RPC error body
+            // exists to keep verbatim: the class is the revert itself, and the
+            // conventional Geth revert code stands in for the code the batch
+            // never carried.
+            MulticallOutcome::Reverted(_) => {
+                Err(AccountReadError::Call(ProviderError::ExecutionReverted {
                     code: -32000,
-                    message: format!("balanceOf({account}) batched sub-call failed"),
-                }));
+                    message: format!("balanceOf({account}) reverted in a Multicall3 batch"),
+                }))
             }
-            decode_account_word("balanceOf", token, &res.return_data)
         })
-        .collect()
+        .collect())
 }
 
 /// Read `allowance(owner, spender)`: the amount `spender` may move on
@@ -1463,6 +1440,62 @@ mod tests {
                 (TOKEN_B, selector(b"decimals()")),
                 (TOKEN_B, selector(b"DECIMALS()")),
             ]
+        );
+    }
+
+    /// Parity: the batched read answers exactly what the per-token sequential
+    /// reads answer, and the batch's own degradation path lands on the same
+    /// values — the batch is a wire optimization, never a second metadata
+    /// contract.
+    #[tokio::test]
+    async fn batched_metadata_matches_the_sequential_reads() {
+        let chain = || {
+            Chain::new()
+                .answer(TOKEN_A, b"name()", str_ret("Alpha"))
+                .answer(TOKEN_A, b"symbol()", str_ret("ALPHA"))
+                .answer(TOKEN_A, b"decimals()", word_ret(6))
+                .answer(TOKEN_B, b"symbol()", vec![0u8; 32])
+                .answer(TOKEN_B, b"SYMBOL()", str_ret("BETA"))
+                .answer(TOKEN_B, b"decimals()", word_ret(18))
+        };
+        let tokens = [TOKEN_A, TOKEN_B];
+        let sequential_chain = chain();
+        let sequential = read_each(
+            &sequential_chain,
+            &tokens,
+            MetadataShape::LowerUpperStopOnCallError,
+            PIN,
+        )
+        .await;
+
+        let healthy = chain();
+        let batched = read_batch(
+            &healthy,
+            &tokens,
+            MetadataShape::LowerUpperStopOnCallError,
+            PIN,
+        )
+        .await;
+        assert_eq!(
+            batched, sequential,
+            "a healthy batch answers the sequential reads' values"
+        );
+        assert_eq!(
+            wire(&healthy),
+            vec![(MULTICALL3_ADDRESS, AGGREGATE3_SELECTOR, PIN)]
+        );
+
+        let degraded = chain().failing_batch();
+        let fallback = read_batch(
+            &degraded,
+            &tokens,
+            MetadataShape::LowerUpperStopOnCallError,
+            PIN,
+        )
+        .await;
+        assert_eq!(
+            fallback, sequential,
+            "a batch that cannot answer degrades to the sequence it replaced"
         );
     }
 

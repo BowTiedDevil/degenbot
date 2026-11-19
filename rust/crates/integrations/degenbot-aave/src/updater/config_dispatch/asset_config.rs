@@ -450,13 +450,14 @@ type MetadataTriple = [MetadataFields; 3];
 
 /// Fold the metadata burst's per-token rows — one [`MetadataFields`] per
 /// input address — into the [`MetadataTriple`] the dispatch consumes.
-/// `erc20::read_batch` contracts one row per input address; any other count
-/// is an explicit [`ConfigDispatchError`], never three null records over the
-/// token rows.
+/// `erc20::read_batch` contracts one row per input address; any other count is
+/// an explicit [`ConfigDispatchError`], and so is a triple whose every field is
+/// absent — never three null records over the token rows.
 fn fold_metadata_rows(
     rows: Vec<erc20::TokenMetadata>,
 ) -> Result<MetadataTriple, ConfigDispatchError> {
-    rows.into_iter()
+    let folded: MetadataTriple = rows
+        .into_iter()
         .map(|meta| (meta.name, meta.symbol, meta.decimals.map(u64::cast_signed)))
         .collect::<Vec<_>>()
         .try_into()
@@ -464,7 +465,24 @@ fn fold_metadata_rows(
             ConfigDispatchError::DecodeShape(
                 "ReserveInitialized: expected exactly three metadata rows".to_string(),
             )
-        })
+        })?;
+
+    // A triple carrying no field at all is an outage, not token identity. The
+    // row-count guard above cannot see it, and the null cells it would persist
+    // are only ever backfilled by a LATER dispatch of the same event — which a
+    // healthy re-run of the same chunk never issues, since the chunk committed.
+    if folded
+        .iter()
+        .all(|(name, symbol, decimals)| name.is_none() && symbol.is_none() && decimals.is_none())
+    {
+        return Err(ConfigDispatchError::DecodeShape(
+            "ReserveInitialized: every token metadata read came back empty (no name, symbol or \
+             decimals for the underlying, aToken and vToken)"
+                .to_string(),
+        ));
+    }
+
+    Ok(folded)
 }
 
 /// Read the EIP-1967 implementation slot for `proxy` at `block_number` +
@@ -482,7 +500,7 @@ async fn read_implementation_slot(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -511,5 +529,19 @@ mod tests {
         assert!(fold_metadata_rows(Vec::new()).is_err());
         assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 2]).is_err());
         assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 4]).is_err());
+    }
+
+    /// A triple whose every field is absent is an outage, not token identity:
+    /// the count guard passes it, so without this refusal the dispatch
+    /// persists NULL name/symbol/decimals for the underlying, aToken and
+    /// vToken rows that never fill in later.
+    #[test]
+    fn fold_metadata_rows_rejects_an_all_absent_triple() {
+        let error = fold_metadata_rows(vec![erc20::TokenMetadata::default(); 3])
+            .expect_err("an all-absent metadata triple must not reach the token rows");
+        assert!(
+            matches!(error, ConfigDispatchError::DecodeShape(ref reason) if reason.contains("metadata")),
+            "expected the fold's shape error, got {error:?}"
+        );
     }
 }

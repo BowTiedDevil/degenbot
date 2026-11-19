@@ -16,7 +16,7 @@ use hashbrown::{HashMap, HashSet};
 use alloy::sol_types::SolCall;
 
 use crate::abi::{IUniswapV3Pool, TickLiquidity};
-use crate::multicall3::{multicall3_batch, MulticallResult};
+use crate::multicall3::{multicall3_batch, MulticallOutcome};
 use crate::provider::AlloyProvider;
 
 /// The contract identity targeted by a full-map verification.
@@ -450,33 +450,38 @@ fn bitmap_ticks(
     Ok(ticks)
 }
 
+/// One sub-call's payload, or the map verifier's read failure for a revert —
+/// this target has no "revert ⇒ zero" policy, so a reverted row cannot be
+/// compared against the stored map at all.
+fn returned_data<'a>(
+    outcome: &'a MulticallOutcome,
+    read: &str,
+) -> Result<&'a [u8], LiquidityMapVerifyError> {
+    match outcome {
+        MulticallOutcome::Returned(data) => Ok(data),
+        MulticallOutcome::Reverted(_) => Err(LiquidityMapVerifyError::Read {
+            reason: format!("{read} reverted"),
+        }),
+    }
+}
+
 fn decode_v3_result(
-    result: &MulticallResult,
+    result: &MulticallOutcome,
     tick: i32,
 ) -> Result<(U128, i128), LiquidityMapVerifyError> {
-    if !result.success {
-        return Err(LiquidityMapVerifyError::Read {
-            reason: format!("V3 ticks({tick}) reverted"),
-        });
-    }
-    let liquidity = TickLiquidity::decode(&result.return_data).map_err(|e| {
-        LiquidityMapVerifyError::Decode {
-            reason: format!("V3 ticks({tick}): {e}"),
-        }
+    let data = returned_data(result, &format!("V3 ticks({tick})"))?;
+    let liquidity = TickLiquidity::decode(data).map_err(|e| LiquidityMapVerifyError::Decode {
+        reason: format!("V3 ticks({tick}): {e}"),
     })?;
     Ok((liquidity.gross, liquidity.net))
 }
 
 fn decode_v3_bitmap_result(
-    result: &MulticallResult,
+    result: &MulticallOutcome,
     word: i32,
 ) -> Result<U256, LiquidityMapVerifyError> {
-    if !result.success {
-        return Err(LiquidityMapVerifyError::Read {
-            reason: format!("V3 tickBitmap({word}) reverted"),
-        });
-    }
-    IUniswapV3Pool::tickBitmapCall::abi_decode_returns_validate(&result.return_data).map_err(|e| {
+    let data = returned_data(result, &format!("V3 tickBitmap({word})"))?;
+    IUniswapV3Pool::tickBitmapCall::abi_decode_returns_validate(data).map_err(|e| {
         LiquidityMapVerifyError::Decode {
             reason: format!("V3 tickBitmap({word}): {e}"),
         }
@@ -899,6 +904,35 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, LiquidityMapVerifyError::Read { .. }));
+    }
+
+    /// A dead transport is not a reverted tick: the batch propagates the
+    /// provider's own fault and the verifier reports a read failure whose
+    /// reason never claims a sub-call revert.
+    #[tokio::test]
+    async fn v3_dead_transport_is_a_read_failure_naming_the_rpc_fault() {
+        let pool = address!("0000000000000000000000000000000000000001");
+        // A recorded chain with no recorded calls: every eth_call misses.
+        let json = serde_json::json!({
+            "chain_id": 1,
+            "block_number": 42,
+            "timestamp": 0,
+            "calls": {},
+            "code": {}
+        });
+        let provider = crate::offline::OfflineProvider::from_json_str(&json.to_string())
+            .unwrap()
+            .as_alloy_provider();
+
+        let error =
+            verify_liquidity_map(&provider, LiquidityMapTarget::V3(pool), &v3_map(), Some(42))
+                .await
+                .unwrap_err();
+
+        assert!(
+            matches!(&error, LiquidityMapVerifyError::Read { reason } if !reason.contains("reverted")),
+            "an outage must surface as a read failure that does not claim a revert, got {error:?}"
+        );
     }
 
     #[tokio::test]

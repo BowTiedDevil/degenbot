@@ -69,7 +69,7 @@ use crate::run::AaveChunkEvent;
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
-use degenbot_rpc::multicall3::multicall3_batch;
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -420,20 +420,21 @@ fn pad_address(addr: &Address) -> alloy::primitives::B256 {
 ///
 /// The batch rides [`degenbot_rpc::multicall3::multicall3_batch`]
 /// (`aggregate3`, `allowFailure = true` — the liquidity verifier's idiom). A
-/// failed sub-call is a HARD error here, never a silent default: the
+/// reverted sub-call is a HARD error here, never a silent default: the
 /// sequential reads this replaces propagate an `eth_call` failure as
-/// [`ConfigDispatchError::Rpc`] (the chunk rolls back), and the batch
-/// preserves that contract — only the failure payload is coarser (Multicall3
-/// reports revert/no-answer as `success = false` with empty return data; the
-/// provider's per-call error body is not recoverable through the batch). A
-/// batch of one degrades to the direct call so a single-call dispatch keeps
-/// its exact wire shape — a 1-call `aggregate3` wrapper would change the
-/// recorded request set for no round-trip gain.
+/// [`ConfigDispatchError::Rpc`] (the chunk rolls back), and the batch preserves
+/// that contract. The classification is the batch's own — a revert arrives as a
+/// typed sub-call outcome (Multicall3 has no JSON-RPC error body for one) while
+/// the batch's transport faults propagate verbatim, so an outage reads as the
+/// provider error it is instead of as a fan of reverts. A batch of one degrades
+/// to the direct call so a single-call dispatch keeps its exact wire shape — a
+/// 1-call `aggregate3` wrapper would change the recorded request set for no
+/// round-trip gain.
 ///
 /// # Errors
 ///
-/// Propagates the direct `eth_call`'s error (the 1-call shape) or fails on
-/// any batch sub-call that reverted or went unanswered.
+/// Propagates the direct `eth_call`'s error (the 1-call shape), the batch's own
+/// transport error, or fails on any sub-call that reverted.
 async fn eth_calls_batched_or_direct(
     provider: &AlloyProvider,
     calls: &[(Address, Bytes)],
@@ -450,20 +451,22 @@ async fn eth_calls_batched_or_direct(
         many => {
             let results = multicall3_batch(provider, many, Some(block_number)).await?;
             let mut out = Vec::with_capacity(results.len());
-            for (i, r) in results.into_iter().enumerate() {
-                if !r.success {
-                    return Err(ConfigDispatchError::Rpc(
-                        degenbot_core::errors::ProviderError::RpcError {
-                            code: -32000,
-                            message: format!(
-                                "multicall3 sub-call {i} of {} reverted or went unanswered                                  (target {}); the sequential reads would have failed the chunk                                  the same way",
-                                many.len(),
-                                checksum(&many[i].0)
-                            ),
-                        },
-                    ));
+            for (i, outcome) in results.into_iter().enumerate() {
+                match outcome {
+                    MulticallOutcome::Returned(ret) => out.push(ret),
+                    MulticallOutcome::Reverted(_) => {
+                        return Err(ConfigDispatchError::Rpc(
+                            degenbot_core::errors::ProviderError::RpcError {
+                                code: -32000,
+                                message: format!(
+                                    "multicall3 sub-call {i} of {} reverted (target {}); the sequential reads would have failed the chunk the same way",
+                                    many.len(),
+                                    checksum(&many[i].0)
+                                ),
+                            },
+                        ));
+                    }
                 }
-                out.push(r.return_data);
             }
             Ok(out)
         }
@@ -2467,14 +2470,14 @@ mod tests {
     }
 
     /// The committed config-era corpus carries NO metadata entries for these
-    /// tokens. The resolver still runs: each field's reads miss the ledger and
-    /// degrade to `None`, so the rows are created with null metadata — the
-    /// state the golden dump pins.
+    /// tokens, so every metadata read misses the ledger. That is an outage, not
+    /// token identity: the dispatch aborts before it can persist three
+    /// null-metadata rows that nothing would ever backfill (the chunk rolls
+    /// back rather than writing nulls forever).
     #[test]
-    fn reserve_initialized_unrecorded_metadata_reads_leave_the_cells_null() {
+    fn reserve_initialized_all_absent_metadata_aborts_the_dispatch() {
         let (db, _) = db_seeded();
         let conn = db.lock();
-        let t = reserve_init_tokens();
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(false)));
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ChunkContext::for_chunk(
@@ -2488,16 +2491,18 @@ mod tests {
             &mut substrate,
         );
         ctx.begin_transaction(100);
-        let ev = degenbot_core::runtime::get_runtime()
-            .block_on(resolve_reserve_initialized(
-                &mut ctx,
-                &reserve_initialized_event(),
-                reserve_init_oracle(),
-            ))
-            .unwrap();
-        let ids = reserve_init_ids(&ev);
-        assert_erc20_row(&conn, ids.0, &t[0].0, None, None, None);
-        assert_erc20_row(&conn, ids.1, &t[1].0, None, None, None);
-        assert_erc20_row(&conn, ids.2, &t[2].0, None, None, None);
+        let result = degenbot_core::runtime::get_runtime().block_on(resolve_reserve_initialized(
+            &mut ctx,
+            &reserve_initialized_event(),
+            reserve_init_oracle(),
+        ));
+        match result {
+            Err(ConfigDispatchError::DecodeShape(reason)) => assert!(
+                reason.contains("metadata"),
+                "the abort must name the metadata burst, got: {reason}"
+            ),
+            Err(other) => panic!("expected the metadata shape error, got {other:?}"),
+            Ok(_) => panic!("an all-absent metadata burst must abort the dispatch"),
+        }
     }
 }

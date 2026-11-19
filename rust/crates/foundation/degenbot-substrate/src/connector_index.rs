@@ -19,12 +19,13 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use async_trait::async_trait;
+use degenbot_core::errors::ProviderResult;
 use degenbot_core::fee::V2FeePair;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_uniswap::deployments::{layout_verdict, LayoutVerdict};
 use parking_lot::RwLock;
@@ -114,13 +115,16 @@ pub struct RankCandidate {
 /// startup so truncation keeps the deepest pools, not the oldest rows.
 #[async_trait]
 pub trait ConnectorLiquidityRanker: Send + Sync {
-    /// Depth per candidate; unprobed/failed pools score 0 (the stable sort
-    /// keeps DB row order as the tiebreak).
-    async fn rank(&self, candidates: &[RankCandidate]) -> Vec<(u64, u128)>;
+    /// Depth per candidate. A pool whose own probe reverted or answered short
+    /// scores 0 (the stable sort keeps DB row order as the tiebreak); an
+    /// `Err` says the whole fan could not be read, which is the caller's cue to
+    /// serve row order for this frame and rank again next time rather than
+    /// memoize a degenerate order.
+    async fn rank(&self, candidates: &[RankCandidate]) -> ProviderResult<Vec<(u64, u128)>>;
 }
 
 /// Multicall3 depth probe: V2 pairs score their quote-side `getReserves`
-/// reserve; V3 pools score their in-range `liquidity()`. Failed or short
+/// reserve; V3 pools score their in-range `liquidity()`. Reverted or short
 /// sub-calls score 0 (sort last) — one dead pool never zeroes the fan.
 pub struct OnChainLiquidityRanker {
     provider: Arc<AlloyProvider>,
@@ -138,15 +142,26 @@ impl OnChainLiquidityRanker {
         Self { provider }
     }
 
+    /// A probe's payload, or `None` for a revert (which scores 0).
+    fn returned(outcome: &MulticallOutcome) -> Option<&Bytes> {
+        match outcome {
+            MulticallOutcome::Returned(data) => Some(data),
+            MulticallOutcome::Reverted(_) => None,
+        }
+    }
+
     /// V2 depth: the quote-side reserve (reserves return in PAIR token
     /// order). A reverted/short probe scores 0.
     #[must_use]
-    pub fn v2_score(result: &MulticallResult, quote_is_token0: bool) -> u128 {
-        if !result.success || result.return_data.len() < 64 {
+    pub fn v2_score(result: &MulticallOutcome, quote_is_token0: bool) -> u128 {
+        let Some(return_data) = Self::returned(result) else {
+            return 0;
+        };
+        if return_data.len() < 64 {
             return 0;
         }
-        let r0 = U256::from_be_slice(&result.return_data[..32]);
-        let r1 = U256::from_be_slice(&result.return_data[32..64]);
+        let r0 = U256::from_be_slice(&return_data[..32]);
+        let r1 = U256::from_be_slice(&return_data[32..64]);
         let quote = if quote_is_token0 { r0 } else { r1 };
         u128::try_from(quote).unwrap_or(u128::MAX)
     }
@@ -154,18 +169,21 @@ impl OnChainLiquidityRanker {
     /// V3 depth: the in-range `liquidity()` (uint128). A reverted probe
     /// scores 0.
     #[must_use]
-    pub fn v3_score(result: &MulticallResult) -> u128 {
-        if !result.success || result.return_data.len() < 32 {
+    pub fn v3_score(result: &MulticallOutcome) -> u128 {
+        let Some(return_data) = Self::returned(result) else {
+            return 0;
+        };
+        if return_data.len() < 32 {
             return 0;
         }
-        let liq = U256::from_be_slice(&result.return_data[..32]);
+        let liq = U256::from_be_slice(&return_data[..32]);
         u128::try_from(liq).unwrap_or(u128::MAX)
     }
 }
 
 #[async_trait]
 impl ConnectorLiquidityRanker for OnChainLiquidityRanker {
-    async fn rank(&self, candidates: &[RankCandidate]) -> Vec<(u64, u128)> {
+    async fn rank(&self, candidates: &[RankCandidate]) -> ProviderResult<Vec<(u64, u128)>> {
         let calls: Vec<(Address, Bytes)> = candidates
             .iter()
             .map(|c| {
@@ -178,13 +196,8 @@ impl ConnectorLiquidityRanker for OnChainLiquidityRanker {
                 (c.address, Bytes::copy_from_slice(selector))
             })
             .collect();
-        let Ok(results) = multicall3_batch(&self.provider, &calls, None).await else {
-            // Whole-batch transport failure: every pool scores 0 and the
-            // ranking degenerates to row order for this pair (re-ranked on
-            // the next first-touch — the memo was never written).
-            return candidates.iter().map(|c| (c.pool_id, 0)).collect();
-        };
-        candidates
+        let results = multicall3_batch(&self.provider, &calls, None).await?;
+        Ok(candidates
             .iter()
             .zip(results)
             .map(|(c, result)| {
@@ -194,7 +207,7 @@ impl ConnectorLiquidityRanker for OnChainLiquidityRanker {
                 };
                 (c.pool_id, score)
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -452,6 +465,10 @@ impl V2ConnectorIndex {
     /// One ranked edge order per `(token, quote)` pair: memo hit answers with
     /// zero reads; a miss ranks ONCE (all candidates, unbounded — the memo
     /// then serves any per-frame cap) and stores the descending-depth order.
+    ///
+    /// A failed rank is never memoized: this frame serves DB row order, and the
+    /// pair is ranked again on its next first-touch, so an outage cannot pin a
+    /// degenerate order for the process lifetime.
     async fn ranked_order(
         ranker: Option<&Arc<dyn ConnectorLiquidityRanker>>,
         memo: &RwLock<RankedEdgeOrder>,
@@ -461,21 +478,27 @@ impl V2ConnectorIndex {
         if let Some(order) = memo.read().get(&key).cloned() {
             return order;
         }
-        let order = Arc::new(match ranker {
-            None => candidates.iter().map(|(i, _)| *i).collect(),
-            Some(ranker) => {
-                let descs: Vec<RankCandidate> = candidates.iter().map(|(_, c)| *c).collect();
-                let by_pool: HashMap<u64, u128> = ranker.rank(&descs).await.into_iter().collect();
-                let mut scored: Vec<(usize, u128)> = candidates
-                    .iter()
-                    .map(|(i, c)| (*i, by_pool.get(&c.pool_id).copied().unwrap_or(0)))
-                    .collect();
-                // Descending depth; the stable sort keeps DB row order as
-                // the tiebreak (and the no-ranker ordering degenerate).
-                scored.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
-                scored.into_iter().map(|(i, _)| i).collect()
-            }
-        });
+        let row_order = || -> Vec<usize> { candidates.iter().map(|(i, _)| *i).collect() };
+        let Some(ranker) = ranker else {
+            let order = Arc::new(row_order());
+            memo.write().insert(key, Arc::clone(&order));
+            return order;
+        };
+        let descs: Vec<RankCandidate> = candidates.iter().map(|(_, c)| *c).collect();
+        // A failed rank is not an order: serve row order for this frame and
+        // leave the memo untouched, so the next first-touch ranks again.
+        let Ok(scores) = ranker.rank(&descs).await else {
+            return Arc::new(row_order());
+        };
+        let by_pool: HashMap<u64, u128> = scores.into_iter().collect();
+        let mut weights: Vec<(usize, u128)> = candidates
+            .iter()
+            .map(|(i, c)| (*i, by_pool.get(&c.pool_id).copied().unwrap_or(0)))
+            .collect();
+        // Descending depth; the stable sort keeps DB row order as the
+        // tiebreak.
+        weights.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+        let order = Arc::new(weights.into_iter().map(|(i, _)| i).collect());
         memo.write().insert(key, Arc::clone(&order));
         order
     }
@@ -1620,6 +1643,7 @@ mod tests {
 mod ranking_tests {
     use super::*;
     use alloy::primitives::keccak256;
+    use degenbot_core::errors::ProviderError;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Synthetic depth ranker: scores come from a fixed table (an independent
@@ -1628,16 +1652,22 @@ mod ranking_tests {
     struct TableRanker {
         scores: HashMap<u64, u128>,
         reads: AtomicUsize,
+        dead: bool,
     }
 
     #[async_trait]
     impl ConnectorLiquidityRanker for TableRanker {
-        async fn rank(&self, candidates: &[RankCandidate]) -> Vec<(u64, u128)> {
+        async fn rank(&self, candidates: &[RankCandidate]) -> ProviderResult<Vec<(u64, u128)>> {
             self.reads.fetch_add(1, Ordering::SeqCst);
-            candidates
+            if self.dead {
+                return Err(ProviderError::Timeout {
+                    message: "the ranker's transport is down".into(),
+                });
+            }
+            Ok(candidates
                 .iter()
                 .map(|c| (c.pool_id, self.scores.get(&c.pool_id).copied().unwrap_or(0)))
-                .collect()
+                .collect())
         }
     }
 
@@ -1645,6 +1675,16 @@ mod ranking_tests {
         Arc::new(TableRanker {
             scores: scores.iter().copied().collect(),
             reads: AtomicUsize::new(0),
+            dead: false,
+        })
+    }
+
+    /// The same table behind a transport that fails every rank request.
+    fn dead_ranker() -> Arc<TableRanker> {
+        Arc::new(TableRanker {
+            scores: HashMap::new(),
+            reads: AtomicUsize::new(0),
+            dead: true,
         })
     }
 
@@ -1729,6 +1769,28 @@ mod ranking_tests {
         assert_eq!(first[0].0.pool_id, second[0].0.pool_id);
     }
 
+    /// A failed rank is served as DB row order for that frame and never
+    /// memoized: the pair ranks again on its next first-touch, so an outage
+    /// cannot pin a degenerate order for the process lifetime.
+    #[tokio::test]
+    async fn a_failed_rank_is_never_memoized() {
+        let mut ix = V2ConnectorIndex::default();
+        ix.push_edge(edge(1, 20, 10));
+        ix.push_edge(edge(2, 20, 10));
+        let ranker = dead_ranker();
+        ix.set_ranker(Arc::clone(&ranker) as Arc<dyn ConnectorLiquidityRanker>);
+
+        let first = ix.connectors(20, 10, 0, 8).await;
+        let second = ix.connectors(20, 10, 0, 8).await;
+        assert_eq!(
+            ranker.reads.load(Ordering::SeqCst),
+            2,
+            "a failed rank must re-rank on the next first-touch instead of memoizing row order"
+        );
+        assert_eq!(first[0].0.pool_id, 1, "the degraded order is DB row order");
+        assert_eq!(second[0].0.pool_id, 1);
+    }
+
     #[tokio::test]
     async fn no_ranker_falls_back_to_row_order() {
         // Offline construction (no live chain) keeps the pre-ranking
@@ -1754,28 +1816,19 @@ mod ranking_tests {
         let mut ret = Vec::new();
         ret.extend_from_slice(&U256::from(111_u128).to_be_bytes::<32>());
         ret.extend_from_slice(&U256::from(999_u128).to_be_bytes::<32>());
-        let ok = MulticallResult {
-            success: true,
-            return_data: Bytes::from(ret),
-        };
+        let ok = MulticallOutcome::Returned(Bytes::from(ret));
         assert_eq!(OnChainLiquidityRanker::v2_score(&ok, true), 111);
         assert_eq!(OnChainLiquidityRanker::v2_score(&ok, false), 999);
 
         // V3 probes score in-range liquidity alone.
         let mut liq_ret = Vec::new();
         liq_ret.extend_from_slice(&U256::from(42_u128).to_be_bytes::<32>());
-        let ok_liq = MulticallResult {
-            success: true,
-            return_data: Bytes::from(liq_ret),
-        };
+        let ok_liq = MulticallOutcome::Returned(Bytes::from(liq_ret));
         assert_eq!(OnChainLiquidityRanker::v3_score(&ok_liq), 42);
 
         // A reverted probe scores 0 (sorts last) instead of aborting the
         // batch.
-        let failed = MulticallResult {
-            success: false,
-            return_data: Bytes::new(),
-        };
+        let failed = MulticallOutcome::Reverted(Bytes::new());
         assert_eq!(OnChainLiquidityRanker::v2_score(&failed, false), 0);
         assert_eq!(OnChainLiquidityRanker::v3_score(&failed), 0);
     }

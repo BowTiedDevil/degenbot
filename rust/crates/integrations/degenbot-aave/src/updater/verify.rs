@@ -24,7 +24,7 @@ use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
 use crate::RunError;
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
+use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
 
 /// The aToken / vToken scaled-token position kind (collateral / debt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,10 +232,10 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 /// equality.
 ///
 /// Per-position `eth_call`s are batched through Multicall3 `aggregate3`
-/// (with `allowFailure = true` — a reverted sub-call surfaces as
-/// `success = false` + empty return, treated as `actual == 0`, preserving
-/// the prior per-call revert semantics). The market-wide `--verify-all` path
-/// is the win; the per-chunk touched-set path is a wash but harmless.
+/// (with `allowFailure = true` — a reverted sub-call is a typed
+/// [`MulticallOutcome::Reverted`], treated as `actual == 0`, preserving the
+/// prior per-call revert semantics). The market-wide `--verify-all` path is the
+/// win; the per-chunk touched-set path is a wash but harmless.
 ///
 /// Returns the divergence list (empty = GREEN). Each row carries the
 /// human-readable fields needed by the drive harness to emit a NAMED,
@@ -244,9 +244,10 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] on a DB or RPC failure that prevents verification
-/// (a single position's revert-on-call is treated as `actual == 0` and
-/// surfaced as a divergence if the DB expected non-zero).
+/// Returns [`RunError`] on a DB or RPC failure that prevents verification: a
+/// single position's revert-on-call is treated as `actual == 0` and surfaced as
+/// a divergence if the DB expected non-zero, while a transport fault aborts the
+/// verification instead of reporting every position as diverged.
 pub async fn verify_touched_positions_on_conn(
     conn: &Connection,
     provider: &AlloyProvider,
@@ -281,8 +282,8 @@ pub async fn verify_touched_positions_on_conn(
             ));
         }
         let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
-        // degenbot-aave divergence check: a short final pair carries the
-        // failed multicall's trailing data; the zip drops it by design.
+        // The batch yields exactly one outcome per call, so pairing the
+        // stride is exact and the remainder is structurally empty.
         let (result_pairs, _remainder) = results.as_chunks::<2>();
         for (row, chunk) in rows.iter().zip(result_pairs) {
             let actual_balance = result_to_u256(&chunk[0]);
@@ -318,19 +319,24 @@ pub async fn verify_touched_positions_on_conn(
     Ok(divergences)
 }
 
-/// Map a Multicall3 sub-call result to a U256: a successful call with a
-/// 32-byte return decodes to its big-endian word; anything else (revert,
-/// short return) is `U256::ZERO` — matching the prior per-call
-/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics. The read is a
-/// caller-declared `uint256` word rather than a named getter's answer: Aave's
-/// `scaledBalanceOf` / `getPreviousIndex` / `balanceOf` returns are all generic
-/// `uint256` words, so no getter's return type describes them.
-fn result_to_u256(result: &MulticallResult) -> U256 {
-    let bytes = &result.return_data;
-    if !result.success || bytes.len() < 32 {
-        return U256::ZERO;
+/// Map one sub-call outcome to a U256: a returned payload of at least 32 bytes
+/// decodes to its big-endian word, while a revert or a short return is
+/// `U256::ZERO` — this verifier's policy that there is nothing to compare
+/// against, matching the prior per-call
+/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics.
+///
+/// A transport fault never reaches here: it has no per-position meaning, so the
+/// batch propagates it and the verification aborts, instead of reading every
+/// position as zero and reporting that the DB disagrees with chain on
+/// everything. The read is a caller-declared `uint256` word rather than a named
+/// getter's answer: Aave's `scaledBalanceOf` / `getPreviousIndex` /
+/// `balanceOf` returns are all generic `uint256` words, so no getter's return
+/// type describes them.
+fn result_to_u256(result: &MulticallOutcome) -> U256 {
+    match result {
+        MulticallOutcome::Returned(bytes) if bytes.len() >= 32 => U256::from_be_slice(&bytes[..32]),
+        MulticallOutcome::Returned(_) | MulticallOutcome::Reverted(_) => U256::ZERO,
     }
-    U256::from_be_slice(&bytes[..32])
 }
 
 // ── stkAAVE balance + GHO discount verification ─────────────────────────
@@ -459,11 +465,13 @@ pub async fn verify_stk_aave_balances_on_conn(
             &accounts,
             Some(block_number),
         )
-        .await;
+        .await?;
         for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
             // The verification policy is preserved: an unreadable balance
-            // reconciles as ZERO (the same absence semantics the batched read's
-            // `result_to_u256` gave), so any tracked non-zero row diverges.
+            // (a revert, a malformed return) reconciles as ZERO, so any tracked
+            // non-zero row diverges. A transport fault is not an unreadable
+            // balance — it aborted the batch above with the provider's own
+            // error.
             let actual = result.as_ref().copied().unwrap_or(U256::ZERO);
             if actual != *expected {
                 divergences.push(VerificationDivergence::StkAaveBalance {
@@ -809,6 +817,40 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(rows[0].token_address, token_addr);
+    }
+
+    /// A dead transport aborts the verification with the provider's own error:
+    /// it must never read every position as zero and report that the DB
+    /// disagrees with chain on every stored row.
+    #[test]
+    fn dead_transport_aborts_verification_instead_of_fabricating_divergences() {
+        let conn = seed_with_position(
+            "0x1111111111111111111111111111111111111111",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "123456789",
+            Some("1000000000000000000000000000"),
+        );
+        // A recorded chain with no recorded calls: every eth_call misses, which
+        // the provider surfaces as a non-revert RPC error.
+        let json = serde_json::json!({
+            "chain_id": 1,
+            "block_number": 100,
+            "timestamp": 0,
+            "calls": {},
+            "code": {}
+        });
+        let provider = degenbot_rpc::offline::OfflineProvider::from_json_str(&json.to_string())
+            .unwrap()
+            .as_alloy_provider();
+
+        let result = degenbot_core::runtime::get_runtime().block_on(
+            verify_touched_positions_on_conn(&conn, &provider, 1, 100, None),
+        );
+
+        assert!(
+            matches!(result, Err(RunError::Provider(_))),
+            "an outage must abort verification instead of fabricating divergences, got {result:?}"
+        );
     }
 
     /// The user-address filter narrows the loaded rows to the specified set.

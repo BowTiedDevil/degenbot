@@ -39,7 +39,33 @@ from tests.helpers.aave_logs import (
     USER_ADDRESS,
     V_TOKEN_ADDRESS,
     _hex,
+    _u256,
 )
+
+
+def _abi_string(text: str) -> str:
+    """Pack `text` as an ABI dynamic-`string` return (offset word, length word, padded data)."""
+    raw = text.encode()
+    padded = raw.ljust(len(raw) + (32 - len(raw) % 32) % 32, b"\x00")
+    return "0x" + ((32).to_bytes(32, "big") + len(raw).to_bytes(32, "big") + padded).hex()
+
+
+#: `name()` / `symbol()` / `decimals()` for a reserve's underlying / aToken /
+#: vToken rows, plus the upper-case spellings the `LowerUpperStopOnCallError`
+#: metadata read issues alongside them. The dispatch refuses an all-absent
+#: metadata triple (an outage is not token identity), so every fixture that
+#: dispatches a `ReserveInitialized` answers them. The mock dispatches
+#: `eth_call` by selector alone, so one plausible WETH triple serves all three
+#: token rows; the parity assertions are about positions, balances and
+#: verification, never token metadata.
+ERC20_METADATA_SELECTORS: dict[str, str] = {
+    "0x06fdde03": _abi_string("Wrapped Ether"),  # name()
+    "0xa3f4df7e": _abi_string("Wrapped Ether"),  # NAME()
+    "0x95d89b41": _abi_string("WETH"),  # symbol()
+    "0xf76f8d78": _abi_string("WETH"),  # SYMBOL()
+    "0x313ce567": _u256(18),  # decimals()
+    "0x2e0f2625": _u256(18),  # DECIMALS()
+}
 
 
 def seed_gho_asset(
@@ -129,7 +155,7 @@ class MockRpcRegistry:
     by the requested `address` + `topics[0]` group. `block_number` is the tip
     served for `eth_blockNumber`. `eth_call_responses` maps a calldata selector
     (the first 4 bytes, e.g. `"0xc44b11f7"` for `getConfiguration(address)`)
-    to the canned 32-byte return value — the server dispatches `eth_call`s by
+    to the canned ABI return value — the server dispatches `eth_call`s by
     selector.
     """
 
@@ -234,13 +260,15 @@ def mock_rpc_server(
     """Start a local mock JSON-RPC server; yield its URL.
 
     `eth_call_responses` maps a calldata selector (e.g.
-    `GET_CONFIGURATION_SELECTOR`) to the canned 32-byte return value — the
-    server dispatches `eth_call`s by selector.
+    `GET_CONFIGURATION_SELECTOR`) to the canned ABI return value — the server
+    dispatches `eth_call`s by selector. `ERC20_METADATA_SELECTORS` is answered
+    underneath every fixture (a `ReserveInitialized` dispatch reads it), and a
+    caller's own responses win on conflict.
     """
     _MockRpcHandler.registry = MockRpcRegistry(
         block_number=block_number,
         logs=logs,
-        eth_call_responses=eth_call_responses or {},
+        eth_call_responses={**ERC20_METADATA_SELECTORS, **(eth_call_responses or {})},
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MockRpcHandler)
     port = server.server_address[1]
