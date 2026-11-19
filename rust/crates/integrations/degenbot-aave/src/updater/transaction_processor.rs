@@ -2,27 +2,17 @@
 //! substrate [`AaveChunkEvent`] variants the orchestrator batches +
 //! `apply_aave_chunk_writes_on_conn` stamps.
 //!
-//! # The plumbing-equivalence caveat (Finding 1 — the parity-drift canary)
+//! # One rounding precedence
 //!
-//! The Python pipeline is two stages: (1) `ScaledEventEnricher.enrich` —
-//! extract `raw_amount` from the Operation's Pool event + compute
-//! `scaled_amount = ray_div(raw_amount, index, strategy)`;
-//! (2) `UnifiedCollateralProcessor.process_mint_event(event_data,
-//! scaled_delta=enriched.scaled_amount)` — use the pre-calculated delta
-//! directly. [`ScaledTokenProcessor`] in SCALEAPPLY already subsumes stage 2
-//! (it takes `ScaledTokenEventData.scaled_amount: Option<U256>` + uses it
-//! directly when `Some`).
-//!
-//! **CANNOT pass `scaled_amount: None`** — the processor's None path
-//! computes `ray_div(value - balance_increase, index, strategy)` (it
-//! subtracts the accrued interest before scaling), which DIVERGES from the
-//! Python `scaled_amount = ray_div(raw_amount, index, strategy)` whenever
-//! `balance_increase > 0` (the Python enricher's `raw_amount` is the Pool
-//! event's amount, NOT `value - balance_increase`). So C's enricher MUST
-//! extract `raw_amount` from the Operation's Pool event + compute
-//! `scaled_amount = ray_div(raw_amount, index, strategy)` + pass it as
-//! `Some(...)`. This is the plumbing-equivalence caveat materialized; the
-//! The parity-gate cross-check is the final arbiter.
+//! The scaled-token pipeline has exactly one rounding source: the enrich stage
+//! reads the Pool event's `raw_amount` and divides it through the token
+//! revision's on-chain `TokenMath` row (`enricher_collateral_mint` /
+//! `enricher_debt_mint` / `enricher_collateral_burn` / `enricher_debt_burn`),
+//! handing the result to the processors as
+//! `ScaledTokenEventData.scaled_amount`. A [`ScaledTokenProcessor`] entry point
+//! stamps the delta's sign and passes the index through; it never divides, so
+//! no dispatch path can re-round an amount on its way to the position row. The
+//! parity-gate cross-check is the final arbiter.
 //!
 //! # Scope (incremental)
 //!
@@ -557,22 +547,16 @@ fn build_scaled_event_chunk_event(
         "AAVE-EVTRACE"
     );
 
-    // The `ScaledTokenProcessor` constructed below carries its OWN
-    // `RoundingStrategy` (the post-decode None fallback path) — this is
-    // a SEPARATE concern from the enricher math, which `build_scaled_event_chunk_event`
-    // resolves directly via `enricher_collateral_mint` / `enricher_debt_mint`
-    // / `enricher_collateral_burn` / `enricher_debt_burn` further down (mirrors
-    // `token_math.py:TokenMathFactory`, NOT `strategies.py:COLLATERAL_STRATEGIES`).
+    // The processor only stamps the delta's sign — the rounding arrives in the
+    // enriched `scaled_amount` each arm below computes from the token
+    // revision's TokenMath row — so the side is the whole difference.
     let (position, processor) = if token_type == "a_token" {
         (
             ScaledTokenPosition::Collateral,
-            ScaledTokenProcessor::collateral(asset.a_token_revision),
+            ScaledTokenProcessor::collateral(),
         )
     } else {
-        (
-            ScaledTokenPosition::Debt,
-            ScaledTokenProcessor::debt(asset.v_token_revision),
-        )
+        (ScaledTokenPosition::Debt, ScaledTokenProcessor::debt())
     };
 
     match ev.event_type {
@@ -590,14 +574,14 @@ fn build_scaled_event_chunk_event(
             // pool event, computes `actual_scaled_burn =
             // get_debt_burn_scaled_amount(repayAmount, index)` (= `ray_div_floor`
             // for V4/V5), and dispatches a `DebtBurnEvent(value=actual_scaled_burn,
-            // scaled_amount=actual_scaled_burn)`. Routing through
-            // `process_debt_mint`'s else arm instead recomputes
-            // `balance_increase - event.value` (= 9_999_999 for the
-            // `repayAmount=10M, balance_increase=461M, value=451M` case at
-            // block 23_093_579), which floor-divides to 8_437_165 — diverging by 1 wei
-            // from the pool-word floor division to 8_437_166. A one-wei
-            // divergence per repay accumulates until the final full repay
-            // underflows the uint128 balance guard.
+            // scaled_amount=actual_scaled_burn)`. The Pool word is the amount
+            // that couples to chain, because the event's own `value` is rounded
+            // relative to `balance_increase - repayAmount` by ±1 wei — at block
+            // 23_093_579 (`repayAmount = 10_000_000`, `balance_increase =
+            // 461_000_000`, Mint `value = 451_000_001`) `balance_increase -
+            // value` floor-divides to 8_437_165 where the Pool word floor-divides
+            // to 8_437_166; one wei per repay accumulates until the final full
+            // repay underflows the scaled balance.
             let is_debt_repay_mint_edge = token_type == "v_token"
                 && matches!(ev.event_type, ScaledTokenEventType::DebtMint)
                 && matches!(
@@ -617,34 +601,26 @@ fn build_scaled_event_chunk_event(
                 OperationType::Withdraw | OperationType::RepayWithAtokens
             ) && ev.amount < balance_increase;
             if is_debt_repay_mint_edge {
-                // Treat the Mint as a DebtBurn: dispatch `process_debt_burn`
-                // with the enriched `scaled_amount = ray_div(raw_amount, index,
-                // BURN strategy)` (= `ray_div_floor(repayAmount, index)` for
-                // V4/V5) — mirrors Python's
+                // Treat the Mint as a DebtBurn, sized by the Pool word: the
+                // enriched `scaled_amount = ray_div(raw_amount, index, FLOOR)` —
+                // mirrors Python's
                 // `DebtBurnEvent(value=actual_scaled_burn, scaled_amount=actual_scaled_burn)`.
-                // Pass it as the `scaled_delta` arg so `process_debt_burn`
-                // short-circuits to it (NOT its `value + balance_increase`
-                // fallback, which diverges by ±1 wei for the same reason as the
-                // standard non-GHO debt burn path).
                 //
-                // `enricher_debt_burn(v_token_revision)` mirrors Python's
-                // `ExplicitRoundingMath.get_debt_burn_scaled_amount = ray_div_floor`
-                // (rev ≥4); for rev ≤3 it's `HalfUpRoundingMath`. Distinct from
-                // `strategy_mode.burn` (the processor-fallback `RoundingStrategy`)
-                // they happen to agree for debt burn, but the enricher is the
-                // on-chain TokenMath contract here, not the post-decode fallback.
+                // `enricher_debt_burn(v_token_revision)` is the on-chain
+                // TokenMath row for the burn leg (`ray_div_floor` at rev ≥ 4);
+                // rev ≤ 3 divides `HALF_UP` (`HalfUpRoundingMath`).
                 let scaled_amount = ray_div(
                     raw_amount,
                     index,
                     enricher_debt_burn(asset.v_token_revision).into(),
                 )?;
                 let event_data = ScaledTokenEventData {
-                    value: scaled_amount,
+                    value: ev.amount,
                     balance_increase,
                     index,
                     scaled_amount: Some(scaled_amount),
                 };
-                let result = processor.process_debt_burn(&event_data, Some(scaled_amount))?;
+                let result = processor.process_debt_burn(&event_data, None)?;
                 let position_id = resolve_position_id(
                     conn,
                     market_id,
@@ -661,14 +637,13 @@ fn build_scaled_event_chunk_event(
                     new_index: result.new_index,
                 })
             } else if is_collateral_interest_exceeds_edge {
-                // Treat the Mint as a Burn: compute the scaled delta from
-                // `raw_amount` using the COLLATERAL BURN enricher math (the Python
-                // enricher still uses the raw_amount from the pool_event for the
-                // scaled_amount; the processor's None path for burn uses
-                // `value + balance_increase`, so we MUST pass the enriched
-                // scaled_amount as `Some`). `enricher_collateral_burn` mirrors
+                // Treat the Mint as a Burn, sized by the Pool word through the
+                // COLLATERAL BURN TokenMath row (`enricher_collateral_burn` =
                 // `ExplicitRoundingMath.get_collateral_burn_scaled_amount =
-                // ray_div_ceil` (rev ≥4).
+                // ray_div_ceil`, rev ≥ 4). The enriched amount rides the event
+                // datum, which is the burn path's precedence too: this route and
+                // the `CollateralBurn` route below compute the identical delta,
+                // so the `scaled_delta` argument stays `None` here.
                 let scaled_amount = ray_div(
                     raw_amount,
                     index,
@@ -697,21 +672,15 @@ fn build_scaled_event_chunk_event(
                     new_index: result.new_index,
                 })
             } else {
-                // Standard mint path. Dispatch to the correct processor
-                // method based on token_type — aToken uses
-                // `process_collateral_mint`, vToken uses `process_debt_mint`.
-                // (A previous `.or_else` fallback called the wrong method for
-                // vToken events — fixed per C2 review.)
+                // Standard mint path: aToken → `process_collateral_mint`,
+                // vToken → `process_debt_mint`.
                 //
-                // ENRICHER math (NOT processor-fallback `strategy_mode.mint`) —
-                // the two DISAGREE for rev ≥4 collateral mint: `strategy_mode.mint`
-                // = `RayDivMode::HalfUp` (port of `COLLATERAL_STRATEGIES[4].mint_rounding`),
-                // while the on-chain Pool rev_9 `getATokenMintScaledAmount =
-                // rayDivFloor` (FLOOR). Python keeps them apart via
-                // `token_math.py:TokenMathFactory`; Rust mirrors that here via
-                // `enricher_collateral_mint` / `enricher_debt_mint`. Reusing
-                // `strategy_mode.mint` for the enriched collateral mint was the
-                // root cause of the pos-173339 +1 wei divergence @ block 23_089_231.
+                // The rounding is the token revision's on-chain TokenMath row.
+                // The collateral-mint row is FLOOR at rev ≥ 4 (Pool rev_9
+                // `getATokenMintScaledAmount = rayDivFloor`), so a shared
+                // mint/burn `HALF_UP` division lands +1 wei above chain whenever
+                // `(raw_amount * RAY) % index > index // 2` — the pos-173339
+                // divergence at block 23_089_231.
                 let enricher_mode = if token_type == "v_token" {
                     enricher_debt_mint(asset.v_token_revision)
                 } else {
@@ -749,19 +718,11 @@ fn build_scaled_event_chunk_event(
         ScaledTokenEventType::CollateralBurn
         | ScaledTokenEventType::DebtBurn
         | ScaledTokenEventType::GhoDebtBurn => {
-            // For a vToken DebtBurn, dispatch to `process_debt_burn` (not
-            // `process_collateral_burn` — the branch logic + ZERO-delta edge
-            // differ). Whether the enriched `scaled_amount` is passed as the
-            // processor's `scaled_delta` arg depends on the dispatch path,
-            // mirroring Python's split between the standard `DebtBurnEvent`
-            // arm and the liquidation `_process_debt_burn_with_match` path.
-            //
-            // ENRICHER math (NOT processor-fallback `strategy_mode.burn`): the
-            // two agree for rev ≥4 collateral debt burn (both FLOOR for debt,
-            // CEIL for collateral), so the swap is order-preserving — but keep
-            // them separate here too, mirroring `enricher_*_mint` above, so the
-            // on-chain TokenMath table remains the only source of truth used by
-            // the enricher.
+            // Each side negates the enriched amount, so the arm only selects
+            // which TokenMath row computed it: the debt-burn row divides FLOOR
+            // (`get_debt_burn_scaled_amount`) and the collateral-burn row CEIL
+            // (`get_collateral_burn_scaled_amount`) at rev ≥ 4; both divide
+            // `HALF_UP` below that.
             let enricher_mode = if token_type == "v_token" {
                 enricher_debt_burn(asset.v_token_revision)
             } else {
@@ -775,60 +736,17 @@ fn build_scaled_event_chunk_event(
                 scaled_amount: Some(scaled_amount),
             };
             let result = if token_type == "v_token" {
-                // Pass the enriched `scaled_amount` as `scaled_delta` for the
-                // standard AND non-bad-debt liquidation debt-burn paths.
-                //
-                // Standard `Repay`/`RepayWithAtokens`: mirrors Python's
-                // `scaled_delta=event.scaled_amount` at `token_processor.py`
-                // :151 (the `DebtBurnEvent` arm). The `None` fallback
-                // recomputes `value + balance_increase` via `ray_div`, which
-                // diverges by ±1 wei from the enriched pool-word value whenever
-                // on-chain rounding makes the repay `word0` differ from `value
-                // + balance_increase` (root cause of the 438 non-GHO debt
-                // divergences @23.1M).
-                //
-                // `Liquidation`/`GhoLiquidation` (non-bad-debt): mirrors
-                // Python's `_process_debt_burn_with_match` SINGLE/SEPARATE_BURNS
-                // arms, which use `scaled_amount =
-                // get_debt_burn_scaled_amount(debtToCover, index)` =
-                // `ray_div_floor(debtToCover, index)` — i.e. exactly this
-                // enriched `scaled_amount` (the enrichment's `raw_amount` is
-                // the `LiquidationCall` word0 = `debtToCover`). The `None`
-                // fallback (`value + balance_increase`) diverges by ±1 wei from
-                // this for these positions (root cause of the residual 8).
-                //
-                // Bad-debt liquidation debt burns NEVER reach this arm —
-                // `dispatch_liquidation` and `dispatch_gho_liquidation` reset
-                // them to zero (`DebtPositionReset`, mirroring Python's
-                // `_is_bad_debt_liquidation` DEFICIT_CREATED zeroing) BEFORE
-                // calling `build_scaled_event_chunk_event`. So every
-                // liquidation debt burn that reaches here is non-bad-debt, and
-                // passing `Some` is safe (no catastrophic `debtToCover`-sentinel
-                // over-burn — that was the GhoLiquidation crash, now guarded at
-                // the dispatch seam).
-                //
-                // `None` is retained for the non-pool-word paths
-                // (`DeficitCoverage`/balance-transfer/interest-accrual/unknown)
-                // whose `raw_amount` semantics differ; the `None` recompute
-                // matches Python for those (currently 0 divergences).
-                let scaled_delta = if matches!(
-                    op.operation_type,
-                    OperationType::Repay
-                        | OperationType::RepayWithAtokens
-                        | OperationType::Liquidation
-                        | OperationType::GhoLiquidation
-                ) {
-                    Some(scaled_amount)
-                } else {
-                    None
-                };
-                processor.process_debt_burn(&event_data, scaled_delta)
+                // The enriched amount is the Pool word — `debtToCover` for a
+                // `LiquidationCall`, `repayAmount` for a `Repay` — divided by the
+                // debt-burn row, the same column Python's
+                // `_process_debt_burn_with_match` reads
+                // (`get_debt_burn_scaled_amount(...)`). It rides the event, so
+                // every dispatch path (standard repay, non-bad-debt liquidation,
+                // deficit coverage, balance transfer, interest accrual) reaches
+                // the processor with one precedence, and no operation type can
+                // route an event to a `value + balance_increase` recompute.
+                processor.process_debt_burn(&event_data, None)
             } else {
-                // aToken collateral burn: `process_collateral_burn` honors
-                // `event.scaled_amount` when `scaled_delta` is `None`, so
-                // passing `None` here is exact (mirrors Python's enriched
-                // value via the event-data fallback). Collateral is GREEN at
-                // scale under `None`.
                 processor.process_collateral_burn(&event_data, None)
             }?;
             let position_id = resolve_position_id(
@@ -1096,12 +1014,10 @@ fn dispatch_interest_accrual(
             scaled_amount: Some(U256::ZERO), // interest-only → delta 0
         };
         let (position, result) = if token_type == "a_token" {
-            let proc = ScaledTokenProcessor::collateral(asset.a_token_revision);
-            let r = proc.process_collateral_mint(&event_data)?;
+            let r = ScaledTokenProcessor::collateral().process_collateral_mint(&event_data)?;
             (ScaledTokenPosition::Collateral, r)
         } else {
-            let proc = ScaledTokenProcessor::debt(asset.v_token_revision);
-            let r = proc.process_debt_mint(&event_data)?;
+            let r = ScaledTokenProcessor::debt().process_debt_mint(&event_data)?;
             (ScaledTokenPosition::Debt, r)
         };
         let position_id = resolve_position_id(
@@ -1944,7 +1860,7 @@ pub(crate) fn dispatch_mint_to_treasury(
         } else {
             ray_div(minted_amount, index, Some(crate::RayRounding::HalfUp))?
         };
-        let processor = ScaledTokenProcessor::collateral(asset.a_token_revision);
+        let processor = ScaledTokenProcessor::collateral();
         let event_data = ScaledTokenEventData {
             value: ev.amount,
             balance_increase,
@@ -3444,6 +3360,161 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenMint { position, .. } if *position == ScaledTokenPosition::Debt)),
             "the liquidation DebtMint must NOT be dispatched as a borrow-mint (ScaledTokenMint)",
+        );
+    }
+
+    // ── The aToken interest-exceeds edge (Mint dispatched as a Burn) ───────
+
+    /// A `Withdraw` whose aToken `Mint` carries `amount < balance_increase` is
+    /// a net burn, sized by the enriched Pool word (the `withdrawAmount`)
+    /// through the collateral-burn `TokenMath` row — never by a
+    /// `value + balance_increase` recompute, which the fixture makes differ by
+    /// several orders of magnitude. The delta is the same whether the enriched
+    /// amount arrives through the event datum (as this dispatch hands it over)
+    /// or through the `scaled_delta` override.
+    #[test]
+    fn dispatch_withdraw_interest_exceeds_edge_sizes_the_burn_from_the_pool_word() {
+        use alloy::primitives::I256;
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use degenbot_decoders::aave_event_decoder::{AAVE_MINT_TOPIC, AAVE_WITHDRAW_TOPIC};
+        use rusqlite::params;
+
+        let db = fresh_db_with_asset();
+        let a_token = Address::from([0x98; 20]);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 2",
+                params![address_to_checksum_string(&a_token)],
+            )
+            .unwrap();
+            // Rev 4: the collateral-burn TokenMath row divides CEIL.
+            conn.execute(
+                "UPDATE aave_v3_assets SET a_token_revision = 4 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+
+        let user = Address::from([0x53; 20]);
+        let index = U256::from(1_113_456_789_000_000_000_000_000_000u128);
+        let withdraw_amount = U256::from(1_000_000u64);
+        let value = U256::from(100u64);
+        let balance_increase = U256::from(5_000_000u64);
+
+        // The Pool's `Withdraw` log: data word 0 = the withdrawn amount (the
+        // enricher's `raw_amount` for a Withdraw op).
+        let pool_event = Box::leak(Box::new(make_log(
+            10,
+            Address::from([0x99; 20]),
+            vec![
+                AAVE_WITHDRAW_TOPIC,
+                B256::left_padding_from(Address::ZERO.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::from({
+                let mut d = vec![0u8; 64];
+                withdraw_amount
+                    .to_be_bytes::<32>()
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, b)| d[i] = *b);
+                d
+            }),
+        )));
+
+        // The aToken `Mint` whose interest exceeds the withdrawn amount.
+        let mint_log = Box::leak(Box::new(make_log(
+            11,
+            a_token,
+            vec![
+                AAVE_MINT_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        )));
+        let mint_ev = ScaledTokenEvent {
+            log: mint_log,
+            decoded: crate::operations::ScaledTokenEventData::Mint {
+                caller: user,
+                on_behalf_of: user,
+                value,
+                balance_increase,
+                index,
+            },
+            event_type: ScaledTokenEventType::CollateralMint,
+            token_address: a_token,
+            user_address: user,
+            caller_address: Some(user),
+            from_address: None,
+            target_address: None,
+            amount: value,
+            balance_increase: Some(balance_increase),
+            index: Some(index),
+            log_index: 11,
+        };
+
+        let op = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Withdraw,
+            pool_revision: 9,
+            pool_event: Some(pool_event),
+            scaled_events: vec![mint_ev],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: None,
+            validation_errors: Vec::new(),
+        };
+
+        let enriched = crate::ray_div_ceil(withdraw_amount, index).unwrap();
+        let recompute = crate::ray_div(
+            value + balance_increase,
+            index,
+            Some(crate::RayRounding::Ceil),
+        )
+        .unwrap();
+        assert_ne!(
+            enriched, recompute,
+            "fixture: the Pool word and the value + balance_increase recompute disagree"
+        );
+        let expected = -I256::try_from(enriched).unwrap();
+
+        let conn = db.lock();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        dispatch_standard(&op, 1, &conn, &mut events, &mut ChunkSubstrate::lazy(1))
+            .expect("dispatch");
+        assert_eq!(events.len(), 1, "the single Mint must emit one chunk event");
+        match &events[0] {
+            AaveChunkEvent::ScaledTokenBurn {
+                balance_delta,
+                new_index,
+                ..
+            } => {
+                assert_eq!(
+                    *balance_delta, expected,
+                    "the burn is sized by the enriched Pool word, not the recompute"
+                );
+                assert_eq!(*new_index, index);
+            }
+            other => panic!("expected ScaledTokenBurn, got {other:?}"),
+        }
+
+        // The override route is the same precedence.
+        let event_data = ScaledTokenEventData {
+            value,
+            balance_increase,
+            index,
+            scaled_amount: Some(enriched),
+        };
+        assert_eq!(
+            ScaledTokenProcessor::collateral()
+                .process_collateral_burn(&event_data, Some(enriched))
+                .unwrap()
+                .balance_delta,
+            expected,
+            "the scaled_delta route and the event datum compute the identical delta"
         );
     }
 }

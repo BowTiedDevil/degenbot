@@ -1,46 +1,45 @@
-//! Aave V3 scaled-token processors — the revision-aware `balance_delta`
-//! computation for aToken/vToken Mint/Burn events.
+//! Aave V3 scaled-token processors — the signed `balance_delta` for an aToken
+//! or vToken `Mint`/`Burn` event.
 //!
-//! Two processors live here: `UnifiedCollateralProcessor` +
-//! `UnifiedDebtProcessor`, each selecting its rounding through the
-//! `RoundingStrategy` struct + the per-revision `COLLATERAL_STRATEGIES` /
-//! `DEBT_STRATEGIES` tables. The GHO processor (`UnifiedGhoProcessor`) is NOT
-//! here.
+//! # One rounding precedence
 //!
-//! # The two-layer split
+//! The scaled amount is computed once, outside this module: the call site takes
+//! the Pool event's raw amount and divides it through the token revision's
+//! on-chain `TokenMath` row ([`enricher_collateral_mint`],
+//! [`enricher_collateral_burn`], [`enricher_debt_mint`],
+//! [`enricher_debt_burn`]), then hands the result in as
+//! [`ScaledTokenEventData::scaled_amount`]. A processor stamps the delta's sign
+//! from the event's `value` against its `balance_increase`, and passes the
+//! event's index through as the new index. Nothing here divides.
 //!
-//! This module is the processor: pure CPU, no I/O. It takes the event's
-//! decoded fields (`value`, `balance_increase`, `index`, `scaled_amount`)
-//! and the position's `previous_balance`/`previous_index` (the Python passes
-//! these but the current processors don't read them — kept for protocol
-//! parity) plus the token's revision (selects the rounding strategy) and
-//! returns [`ScaledTokenMintResult`] / [`ScaledTokenBurnResult`] carrying the
-//! signed `balance_delta` and the `new_index` (the event's index, applied to
-//! the position's `last_index` via the max-with-prev reconciliation in
-//! [`crate::run::apply_aave_chunk_writes_on_conn`]'s apply fn dispatch).
+//! The split is what keeps the port exact. A processor that re-derives the
+//! scaled amount from `value ± balance_increase` is a *second* rounding source:
+//! it disagrees with the Pool's own word by ±1 wei whenever the two round
+//! differently — the emitted `value` is not `balance_increase ± raw_amount` to
+//! the wei — and one wei per event accumulates until a final full repay
+//! underflows the position's scaled balance. An event that reaches a processor
+//! with no enriched amount is a caller contract violation and is refused
+//! ([`ProcessorError::MissingScaledAmount`]), never re-derived.
 //!
-//! The apply fn (`DegenbotDb::apply_scaled_token_mint_on_conn` in
-//! `degenbot-db/src/write.rs`) is the pure substrate that mutates the position
-//! row's `balance` and `last_index` columns, taking the pre-computed
-//! `balance_delta` from this processor.
+//! # The pieces
 //!
-//! # Revision strategies (`docs/architecture/parity-gate.md`)
+//! [`ScaledTokenProcessor`] carries the four entry points (collateral/debt ×
+//! mint/burn); [`RayDivMode`] is the `TokenMath` vocabulary the enricher
+//! functions answer in. The results ([`ScaledTokenMintResult`] /
+//! [`ScaledTokenBurnResult`]) carry the delta plus the event's index, which the
+//! apply fn reconciles against the position's `last_index` by max-with-prev
+//! ([`crate::run::apply_aave_chunk_writes_on_conn`]).
 //!
-//! The revision-strategy tables and the `process_mint_event` /
-//! `process_burn_event` branch logic follow the deployed token revisions: which
-//! way an aToken/vToken rounds its scaled amounts, and which direction its
-//! balance delta moves, is a property of that token's revision rather than a
-//! tunable. The parity-gate cross-check compares Rust-written rows against the
-//! recorded fixture rows, so any deviation bites there. The ray-math primitives
-//! (`ray_div` with floor/ceil/half-up) come from `crate::wad_ray_math`.
+//! The GHO vToken is not here: [`crate::gho_processor::UnifiedGhoProcessor`]
+//! owns the discount surface plus the per-revision rounding pair it shares with
+//! this module as [`RoundingStrategy`].
 
 #![expect(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
 
-use crate::{RayRounding, WadRayError};
+use crate::RayRounding;
 use alloy::primitives::{I256, U256};
-use core::cmp::Ordering;
 
-// ── the revision strategies (ports `processors/strategies.py`) ────────────
+// ── the TokenMath rounding vocabulary ─────────────────────────────────────
 
 /// The rounding mode for a `ray_div` op. Mirrors `RoundingMode` (`HALF_UP` /
 /// FLOOR / CEIL).
@@ -64,85 +63,33 @@ impl From<RayDivMode> for Option<RayRounding> {
     }
 }
 
-/// The per-revision rounding strategy for a token (collateral or debt).
-/// Mirrors `RoundingStrategy` (`mint_rounding` + `burn_rounding`).
+/// A per-revision `(mint, burn)` `ray_div` rounding pair.
+///
+/// The shape a token's rounding is named in: the vToken `TokenMath` row
+/// ([`debt_strategy`]) and the GHO vToken's own table
+/// ([`crate::gho_processor::gho_strategy`], deliberately distinct at V4). The
+/// processors never consult a pair — their rounding arrives inside the
+/// enriched [`ScaledTokenEventData::scaled_amount`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoundingStrategy {
-    /// The `ray_div` rounding for `process_mint_event`'s fallback path.
+    /// The `ray_div` rounding for the mint leg.
     pub mint: RayDivMode,
-    /// The `ray_div` rounding for `process_burn_event`'s fallback path.
+    /// The `ray_div` rounding for the burn leg.
     pub burn: RayDivMode,
-}
-
-/// The collateral (aToken) rounding strategy per revision. Port of
-/// `COLLATERAL_STRATEGIES` — V1/V3: `HALF_UP` for all ops; V4/V5: `HALF_UP` mint,
-/// CEIL burn (the V4 burn-rounding-up change is the bit that's bitten ports
-/// before; the parity-gate cross-check will catch a missed branch).
-#[must_use]
-pub const fn collateral_strategy(revision: u32) -> RoundingStrategy {
-    match revision {
-        // V4/V5: HALF_UP mint, CEIL burn.
-        4 | 5 => RoundingStrategy {
-            mint: RayDivMode::HalfUp,
-            burn: RayDivMode::Ceil,
-        },
-        // V1/V2/V3 and unknown: HALF_UP for all ops.
-        _ => RoundingStrategy {
-            mint: RayDivMode::HalfUp,
-            burn: RayDivMode::HalfUp,
-        },
-    }
-}
-
-/// The debt (vToken) rounding strategy per revision. Port of
-/// `DEBT_STRATEGIES` — V1/V3: `HALF_UP` for all ops; V4/V5: CEIL mint, FLOOR
-/// burn.
-#[must_use]
-pub const fn debt_strategy(revision: u32) -> RoundingStrategy {
-    match revision {
-        // V4/V5: CEIL mint, FLOOR burn.
-        4 | 5 => RoundingStrategy {
-            mint: RayDivMode::Ceil,
-            burn: RayDivMode::Floor,
-        },
-        // V1/V2/V3 and unknown: HALF_UP for all ops.
-        _ => RoundingStrategy {
-            mint: RayDivMode::HalfUp,
-            burn: RayDivMode::HalfUp,
-        },
-    }
 }
 
 // ── the enricher math (ports `libraries/token_math.py`) ────────────────────
 //
-// These four functions mirror `TokenMathFactory.get_token_math_for_token_revision`
-// (`libraries/token_math.py:267-285`) — NOT the `RoundingStrategy` above. The
-// Python codebase keeps two separate sources for, in principle, the same
-// decision, and they **disagree on collateral mint for rev ≥4**:
-//
-//   - `strategies.py:COLLATERAL_STRATEGIES[4].mint_rounding = HALF_UP`
-//   - `token_math.py:ExplicitRoundingMath.get_collateral_mint_scaled_amount`
-//     returns `ray_div_floor` (FLOOR)
-//
-// The disagreement is invisible in Python because the processor's `None`
-// fallback (which uses `RoundingStrategy`) is dead code in practice: the
-// enricher always supplies `ScaledTokenEventData.scaled_amount`, routing
-// through `ScaledAmountCalculator` → `TokenMathFactory.get_token_math_for_token_revision`
-// (`enrichment/context.py:225-241` → `calculator.py:21,58`). Python's enricher
-// therefore computes the chain-side `rayDivFloor` for rev ≥4 collateral
-// mints, matching `Pool/rev_9.sol:executeSupply:9312`:
-//
-//   `scaledAmount = params.amount.getATokenMintScaledAmount(index) = rayDivFloor`
-//
-// The Rust port originally collapsed both sources into `collateral_strategy`/
-// `debt_strategy`, and the `build_scaled_event_chunk_event` enricher hooked
-// `strategy_mode.{mint,burn}` — i.e. the **processor-fallback** table. That yields
-// `ray_div_half_up(raw_amount, index)` for rev_4 collateral mints, which is
-// +1 wei above chain whenever `(raw_amount * RAY) % index > index // 2`
-// (root cause of the pos-173339 divergence @ block 23_089_231).
-//
-// The fix surfaces the `token_math.py` table as first-class in Rust so the
-// enricher can no longer accidentally reuse the processor fallback.
+// These four functions are the on-chain rounding the Pool applies to compute a
+// scaled amount — `TokenMathFactory.get_token_math_for_token_revision`
+// (`libraries/token_math.py:267-285`), `ExplicitRoundingMath` for rev ≥ 4 and
+// `HalfUpRoundingMath` for rev ≤ 3. They are the only rounding source the
+// scaled-token paths consult, and the rev-4 collateral-mint row (FLOOR) is the
+// one that a naive "same rounding for both legs" table gets wrong: the Pool's
+// `AToken` rev 9 uses `getATokenMintScaledAmount = rayDivFloor`
+// (`contract_reference/aave/Pool/rev_9.sol:executeSupply:9312`), so a HALF_UP
+// division there lands +1 wei above chain whenever
+// `(raw_amount * RAY) % index > index // 2`.
 
 /// Enricher rounding for a collateral `mint` (= the **supplied** side), by
 /// **`token_revision`** of the aToken. Port of
@@ -186,13 +133,25 @@ pub const fn enricher_debt_burn(token_revision: u32) -> RayDivMode {
     }
 }
 
+/// The vToken's `TokenMath` row as a `(mint, burn)` pair — the same ceiling the
+/// per-leg enrichers answer, named once so the GHO vToken's distinct V4 row
+/// ([`crate::gho_processor::gho_strategy`]) has something to be compared
+/// against.
+#[must_use]
+pub const fn debt_strategy(revision: u32) -> RoundingStrategy {
+    RoundingStrategy {
+        mint: enricher_debt_mint(revision),
+        burn: enricher_debt_burn(revision),
+    }
+}
+
 // ── the event data (ports `processors/base.py` event dataclasses) ──────────
 
 /// The decoded fields of a collateral (aToken) or debt (vToken) `Mint`/`Burn`
 /// event. The Pool contract emits these with `value` (the user-facing amount)
 /// + `balance_increase` (the interest accrued since the last event) + `index`
 /// (the asset's current `liquidity_index` for collateral / `borrow_index` for
-/// debt) + an optional `scaled_amount` (a pre-calculated delta the Pool
+/// debt) + an optional `scaled_amount` (the pre-calculated delta the Pool
 /// contract handed the token contract for V4+ revisions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScaledTokenEventData {
@@ -204,8 +163,13 @@ pub struct ScaledTokenEventData {
     /// The asset's current index (collateral: `liquidity_index`; debt:
     /// `borrow_index`).
     pub index: U256,
-    /// Optional pre-calculated scaled amount from the Pool contract (V4+).
-    /// When `Some`, the processor uses it directly (no `ray_div`).
+    /// The enriched scaled amount — `raw_amount` divided by `index` at this
+    /// token revision's `TokenMath` rounding ([`enricher_collateral_mint`] and
+    /// its siblings). It is the delta's only rounding source, so the
+    /// processors refuse an event that leaves it `None`
+    /// ([`ProcessorError::MissingScaledAmount`]). `Option` because the type is
+    /// shared with the GHO processor's own enrichment
+    /// ([`crate::gho_processor::UnifiedGhoProcessor`]).
     pub scaled_amount: Option<U256>,
 }
 
@@ -246,9 +210,13 @@ pub struct ScaledTokenBurnResult {
 /// Errors from the scaled-token processors.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ProcessorError {
-    /// A ray-math overflow or division by zero (from this crate's `wad_ray_math`).
-    #[error("ray-math error: {0}")]
-    RayMath(#[from] WadRayError),
+    /// The event carries no enriched scaled amount. The processors never
+    /// re-derive one: a `value ± balance_increase` division is a second
+    /// rounding source that diverges from the Pool's own word by ±1 wei.
+    #[error(
+        "event carries no enriched scaled amount — the TokenMath value is the only rounding source"
+    )]
+    MissingScaledAmount,
     /// The computed `balance_delta` doesn't fit in `I256` (overflow). This
     /// surfaces only on pathological inputs; the apply layer clips to
     /// `I256::MAX`/`MIN` instead (the position-balance never legitimately
@@ -257,121 +225,61 @@ pub enum ProcessorError {
     DeltaOverflow(String),
 }
 
-/// A collateral (aToken) or debt (vToken) processor — the strategy-bound
-/// `process_mint_event` / `process_burn_event` pair. Stateless (mirrors the
-/// Python `UnifiedCollateralProcessor` / `UnifiedDebtProcessor` which are
-/// constructed per-revision but hold no mutable state).
+/// The aToken/vToken processor pair — the four `Mint`/`Burn` delta entry
+/// points. Stateless: the enriched scaled amount carries the rounding, so no
+/// token revision or rounding table survives in the type. Mirrors the Python
+/// `UnifiedCollateralProcessor` / `UnifiedDebtProcessor`, whose only remaining
+/// difference is which leg a call site names.
 #[derive(Debug, Clone, Copy)]
-pub struct ScaledTokenProcessor {
-    strategy: RoundingStrategy,
-}
+pub struct ScaledTokenProcessor;
 
 impl ScaledTokenProcessor {
-    /// Construct a processor for an aToken (collateral) at `revision`.
-    /// Mirrors `TokenProcessorFactory::get_collateral_processor`.
+    /// The aToken (collateral) processor.
     #[must_use]
-    pub fn collateral(revision: u32) -> Self {
-        Self {
-            strategy: collateral_strategy(revision),
-        }
+    pub const fn collateral() -> Self {
+        Self
     }
 
-    /// Construct a processor for a vToken (debt) at `revision`.
-    /// Mirrors `TokenProcessorFactory::get_debt_processor`.
+    /// The vToken (debt) processor.
     #[must_use]
-    pub fn debt(revision: u32) -> Self {
-        Self {
-            strategy: debt_strategy(revision),
-        }
+    pub const fn debt() -> Self {
+        Self
     }
 
     /// Process a collateral (aToken) `Mint` event. Port of
     /// `UnifiedCollateralProcessor::process_mint_event`.
     ///
-    /// `value` against `balance_increase` is the entire classification, and
-    /// each comparison outcome owns exactly one arm:
+    /// `value` against `balance_increase` is the entire classification:
     ///
-    /// - `value < balance_increase` ([`Ordering::Less`]) — the interest accrued
-    ///   since the last event exceeds the event's amount: the aToken contract
-    ///   mints the interest first and the transaction burns the rest, so a
-    ///   `WITHDRAW` / `REPAY_WITH_ATOKENS` Mint nets out to a *burn* of
-    ///   `balance_increase - value` at `HALF_UP`, flagged `is_repay`.
-    /// - `value > balance_increase` ([`Ordering::Greater`]) — the ordinary
-    ///   supply path (`_mintScaled`): a deposit of `value - balance_increase`,
-    ///   taken verbatim from the Pool-supplied `scaled_amount` when the
-    ///   enricher provided one and from a `ray_div` at the revision's mint
-    ///   rounding otherwise.
-    /// - `value == balance_increase` ([`Ordering::Equal`]) — the event carries
-    ///   no principal beyond its own interest: a **matched deposit** when the
-    ///   paired SUPPLY event supplied a `scaled_amount` (used verbatim), else
-    ///   **pure interest accrual**. The delta is the literal zero — accrual only
-    ///   advances the index — so this arm divides nothing and needs no usable
-    ///   `index`.
+    /// - `value < balance_increase` — the interest accrued since the last
+    ///   event exceeds the event's amount: the aToken contract mints the
+    ///   interest first and the transaction burns the rest, so the net delta is
+    ///   a burn of the enriched amount, flagged `is_repay`.
+    /// - `value >= balance_increase` — the deposit side (`_mintScaled`), or a
+    ///   matched deposit whose `value` equals its own interest: a mint of the
+    ///   enriched amount.
     ///
-    /// Every arm reports the event's index as `new_index`; only the
-    /// withdrawal-interest arm sets `is_repay`.
+    /// The magnitude is the enriched amount in both arms; every arm reports the
+    /// event's index as `new_index`.
     ///
     /// # Errors
     ///
-    /// Returns [`ProcessorError::RayMath`] on a `ray_div` overflow/div-zero,
-    /// or [`ProcessorError::DeltaOverflow`] if the computed delta doesn't
-    /// fit in `I256`.
+    /// [`ProcessorError::MissingScaledAmount`] if the event carries no enriched
+    /// amount, or [`ProcessorError::DeltaOverflow`] if it exceeds `I256::MAX`.
     pub fn process_collateral_mint(
         &self,
         event: &ScaledTokenEventData,
     ) -> Result<ScaledTokenMintResult, ProcessorError> {
-        match event.value.cmp(&event.balance_increase) {
-            Ordering::Less => {
-                // Interest accrual exceeds the event's amount — emitted during
-                // a withdrawal (the aToken contract mints the interest first,
-                // then burns the withdrawal). Net effect: a burn of
-                // (balance_increase - value).
-                let requested_amount = event.balance_increase - event.value;
-                // Withdrawal-interest path uses HALF_UP (same for all revisions).
-                let raw = crate::ray_div(requested_amount, event.index, Some(RayRounding::HalfUp))?;
-                Ok(ScaledTokenMintResult {
-                    balance_delta: negate_to_i256(raw)?,
-                    new_index: event.index,
-                    is_repay: true,
-                })
-            }
-            Ordering::Greater => {
-                // Standard deposit — emitted in `_mintScaled` during supply.
-                let balance_delta = if let Some(scaled) = event.scaled_amount {
-                    // Use pre-calculated scaled amount from Pool contract (V4+).
-                    to_i256(scaled)?
-                } else {
-                    let requested_amount = event.value - event.balance_increase;
-                    let raw =
-                        crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
-                    to_i256(raw)?
-                };
-                Ok(ScaledTokenMintResult {
-                    balance_delta,
-                    new_index: event.index,
-                    is_repay: false,
-                })
-            }
-            Ordering::Equal => {
-                let balance_delta = match event.scaled_amount {
-                    // A matched deposit: use the Pool-supplied amount verbatim.
-                    Some(scaled) => to_i256(scaled)?,
-                    // Pure interest accrual: no balance moves, only the index.
-                    None => I256::ZERO,
-                };
-                Ok(ScaledTokenMintResult {
-                    balance_delta,
-                    new_index: event.index,
-                    is_repay: false,
-                })
-            }
-        }
+        mint_delta(event)
     }
 
     /// Process a collateral (aToken) `Burn` event. Port of
-    /// `UnifiedCollateralProcessor::process_burn_event`. Three arms: a
-    /// pre-calculated `scaled_delta` (use directly), a pre-calculated
-    /// `scaled_amount` (use directly), or the fallback `ray_div` path.
+    /// `UnifiedCollateralProcessor::process_burn_event`.
+    ///
+    /// The delta is the negated enriched amount: `scaled_delta` when the caller
+    /// already holds it (the withdraw-with-Mint-event amount), else the event's
+    /// `scaled_amount`. Both routes are the same precedence, so which one a
+    /// dispatch path uses cannot change the delta.
     ///
     /// # Errors
     ///
@@ -381,35 +289,17 @@ impl ScaledTokenProcessor {
         event: &ScaledTokenEventData,
         scaled_delta: Option<U256>,
     ) -> Result<ScaledTokenBurnResult, ProcessorError> {
-        if let Some(scaled) = scaled_delta {
-            // Pre-calculated scaled amount from the withdraw amount (critical
-            // for WITHDRAW with Mint event when interest > withdrawal).
-            return Ok(ScaledTokenBurnResult {
-                balance_delta: negate_to_i256(scaled)?,
-                new_index: event.index,
-            });
-        }
-        if let Some(scaled) = event.scaled_amount {
-            // Pre-calculated scaled amount from Pool contract.
-            return Ok(ScaledTokenBurnResult {
-                balance_delta: negate_to_i256(scaled)?,
-                new_index: event.index,
-            });
-        }
-        // Fallback: calculate from event data. `amountToBurn = amount +
-        // balanceIncrease`; `amountScaled = amountToBurn.rayDiv(index)`.
-        let requested_amount = event.value + event.balance_increase;
-        let raw = crate::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
-        Ok(ScaledTokenBurnResult {
-            balance_delta: negate_to_i256(raw)?,
-            new_index: event.index,
-        })
+        burn_delta(event, scaled_delta)
     }
 
     /// Process a debt (vToken) `Mint` event. Port of
-    /// `UnifiedDebtProcessor::process_mint_event`. Two arms: `value >=
-    /// balance_increase` (BORROW path) or `value < balance_increase` (REPAY
-    /// path — the Mint is emitted when interest > repayment).
+    /// `UnifiedDebtProcessor::process_mint_event`.
+    ///
+    /// - `value >= balance_increase` — the BORROW path (`_mintScaled`): a mint
+    ///   of the enriched amount.
+    /// - `value < balance_increase` — the REPAY path: the Mint fires when
+    ///   interest exceeds the repayment, and its net effect is burning the
+    ///   scaled repayment amount, flagged `is_repay`.
     ///
     /// # Errors
     ///
@@ -418,38 +308,14 @@ impl ScaledTokenProcessor {
         &self,
         event: &ScaledTokenEventData,
     ) -> Result<ScaledTokenMintResult, ProcessorError> {
-        if event.value >= event.balance_increase {
-            // BORROW path: emitted in `_mintScaled`.
-            let balance_delta = if let Some(scaled) = event.scaled_amount {
-                to_i256(scaled)?
-            } else {
-                // Solidity: amountToMint = amount - balanceIncrease.
-                let requested_amount = event.value - event.balance_increase;
-                let raw = crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
-                to_i256(raw)?
-            };
-            Ok(ScaledTokenMintResult {
-                balance_delta,
-                new_index: event.index,
-                is_repay: false,
-            })
-        } else {
-            // REPAY path: emitted in `_burnScaled`. The Mint event fires when
-            // interest > repayment amount; the net balance change is burning
-            // the scaled repayment amount. `amount = balanceIncrease - value`.
-            let amount_repaid = event.balance_increase - event.value;
-            let raw = crate::ray_div(amount_repaid, event.index, self.strategy.burn.into())?;
-            Ok(ScaledTokenMintResult {
-                balance_delta: negate_to_i256(raw)?,
-                new_index: event.index,
-                is_repay: true,
-            })
-        }
+        mint_delta(event)
     }
 
     /// Process a debt (vToken) `Burn` event. Port of
-    /// `UnifiedDebtProcessor::process_burn_event`. Two arms: a pre-calculated
-    /// `scaled_delta` (use directly) or the fallback `ray_div` path.
+    /// `UnifiedDebtProcessor::process_burn_event`.
+    ///
+    /// Same contract as [`Self::process_collateral_burn`]: the negated enriched
+    /// amount, `scaled_delta` first, the event's `scaled_amount` otherwise.
     ///
     /// # Errors
     ///
@@ -459,23 +325,52 @@ impl ScaledTokenProcessor {
         event: &ScaledTokenEventData,
         scaled_delta: Option<U256>,
     ) -> Result<ScaledTokenBurnResult, ProcessorError> {
-        if let Some(scaled) = scaled_delta {
-            return Ok(ScaledTokenBurnResult {
-                balance_delta: negate_to_i256(scaled)?,
-                new_index: event.index,
-            });
-        }
-        // Fallback: `amountToBurn = amount + balanceIncrease`.
-        let requested_amount = event.value + event.balance_increase;
-        let raw = crate::ray_div(requested_amount, event.index, self.strategy.burn.into())?;
-        Ok(ScaledTokenBurnResult {
-            balance_delta: negate_to_i256(raw)?,
-            new_index: event.index,
-        })
+        burn_delta(event, scaled_delta)
     }
 }
 
-// ── U256 → I256 conversion helpers (thesigned-delta bridge) ──────────────
+/// The one rounding precedence: an explicit `scaled_delta` override, else the
+/// event's enriched `scaled_amount`. A caller that supplies neither gets an
+/// error — the processor has no rounding table to fall back to.
+fn enriched_scaled_amount(
+    event: &ScaledTokenEventData,
+    scaled_delta: Option<U256>,
+) -> Result<U256, ProcessorError> {
+    scaled_delta
+        .or(event.scaled_amount)
+        .ok_or(ProcessorError::MissingScaledAmount)
+}
+
+/// The shared `Mint` delta: the sign follows `value` against
+/// `balance_increase`, the magnitude is the enriched amount.
+fn mint_delta(event: &ScaledTokenEventData) -> Result<ScaledTokenMintResult, ProcessorError> {
+    let scaled = enriched_scaled_amount(event, None)?;
+    let is_repay = event.value < event.balance_increase;
+    Ok(ScaledTokenMintResult {
+        balance_delta: if is_repay {
+            negate_to_i256(scaled)?
+        } else {
+            to_i256(scaled)?
+        },
+        new_index: event.index,
+        is_repay,
+    })
+}
+
+/// The shared `Burn` delta: always negative, the magnitude is the enriched
+/// amount.
+fn burn_delta(
+    event: &ScaledTokenEventData,
+    scaled_delta: Option<U256>,
+) -> Result<ScaledTokenBurnResult, ProcessorError> {
+    let scaled = enriched_scaled_amount(event, scaled_delta)?;
+    Ok(ScaledTokenBurnResult {
+        balance_delta: negate_to_i256(scaled)?,
+        new_index: event.index,
+    })
+}
+
+// ── U256 → I256 conversion helpers (the signed-delta bridge) ──────────────
 
 /// Convert a `U256` to a non-negative `I256`. Every value fits `I256`, so the
 /// only refusal is a magnitude past `I256::MAX`. Returns
@@ -500,157 +395,8 @@ mod tests {
     use super::*;
     use crate::RAY;
 
-    /// V1 collateral mint, standard deposit: value=2 RAY, `balance_increase=0`,
-    /// index=1 RAY → `balance_delta` = ray_div(2-0, 1, `HalfUp`) = 2 RAY.
-    #[test]
-    fn collateral_mint_standard_deposit() {
-        let proc = ScaledTokenProcessor::collateral(1);
-        let event = ScaledTokenEventData {
-            value: U256::from(2u8) * RAY,
-            balance_increase: U256::ZERO,
-            index: RAY,
-            scaled_amount: None,
-        };
-        let result = proc.process_collateral_mint(&event).unwrap();
-        assert_eq!(
-            result.balance_delta,
-            I256::try_from(U256::from(2u8) * RAY).unwrap()
-        );
-        assert!(!result.is_repay);
-        assert_eq!(result.new_index, RAY);
-    }
-
-    /// V4 collateral burn (CEIL rounding): value=10 RAY, `balance_increase=0`,
-    /// index=3 RAY. Fallback path: amountToBurn = 10; `ray_div(10`, 3, Ceil) =
-    /// 4 RAY (because 10*RAY*RAY % 3 != 0 → bump); negative delta.
-    #[test]
-    fn collateral_burn_v4_ceil_rounding() {
-        let proc = ScaledTokenProcessor::collateral(4);
-        let event = ScaledTokenEventData {
-            value: U256::from(10u8) * RAY,
-            balance_increase: U256::ZERO,
-            index: U256::from(3u8) * RAY,
-            scaled_amount: None,
-        };
-        let result = proc.process_collateral_burn(&event, None).unwrap();
-        // ray_div_ceil(10*RAY, 3*RAY) — let me compute via the primitives.
-        let expected_raw =
-            crate::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
-        assert_eq!(
-            result.balance_delta,
-            -I256::try_from(expected_raw).unwrap(),
-            "V4 collateral burn uses CEIL rounding"
-        );
-    }
-
-    /// V1 vs V4 collateral burn differ on rounding (`HALF_UP` vs CEIL).
-    #[test]
-    fn collateral_burn_v1_halfup_vs_v4_ceil() {
-        let event = ScaledTokenEventData {
-            value: U256::from(10u8) * RAY,
-            balance_increase: U256::ZERO,
-            index: U256::from(3u8) * RAY,
-            scaled_amount: None,
-        };
-        let v1 = ScaledTokenProcessor::collateral(1)
-            .process_collateral_burn(&event, None)
-            .unwrap();
-        let v4 = ScaledTokenProcessor::collateral(4)
-            .process_collateral_burn(&event, None)
-            .unwrap();
-        assert_ne!(
-            v1.balance_delta, v4.balance_delta,
-            "V1 (HALF_UP) ≠ V4 (CEIL)"
-        );
-    }
-
-    /// Collateral mint with interest exceeding deposit (effective burn):
-    /// value=1 RAY, `balance_increase=3` RAY, index=1 RAY → delta =
-    /// -ray_div(3-1, 1, `HalfUp`) = -2 RAY.
-    #[test]
-    fn collateral_mint_interest_exceeds_deposit() {
-        let proc = ScaledTokenProcessor::collateral(1);
-        let event = ScaledTokenEventData {
-            value: RAY,
-            balance_increase: U256::from(3u8) * RAY,
-            index: RAY,
-            scaled_amount: None,
-        };
-        let result = proc.process_collateral_mint(&event).unwrap();
-        assert_eq!(
-            result.balance_delta,
-            -I256::try_from(U256::from(2u8) * RAY).unwrap()
-        );
-        assert!(
-            result.is_repay,
-            "interest-exceeds-deposit is the repay path"
-        );
-    }
-
-    /// Debt mint (BORROW path) V4 uses CEIL rounding.
-    #[test]
-    fn debt_mint_v4_ceil() {
-        let proc = ScaledTokenProcessor::debt(4);
-        let event = ScaledTokenEventData {
-            value: U256::from(10u8) * RAY,
-            balance_increase: U256::ZERO,
-            index: U256::from(3u8) * RAY,
-            scaled_amount: None,
-        };
-        let result = proc.process_debt_mint(&event).unwrap();
-        let expected_raw =
-            crate::ray_div_ceil(U256::from(10u8) * RAY, U256::from(3u8) * RAY).unwrap();
-        assert_eq!(result.balance_delta, I256::try_from(expected_raw).unwrap());
-        assert!(!result.is_repay);
-    }
-
-    /// Debt mint (REPAY path): value < `balance_increase` → negative delta.
-    #[test]
-    fn debt_mint_repay_path() {
-        let proc = ScaledTokenProcessor::debt(1);
-        let event = ScaledTokenEventData {
-            value: RAY,
-            balance_increase: U256::from(3u8) * RAY,
-            index: RAY,
-            scaled_amount: None,
-        };
-        let result = proc.process_debt_mint(&event).unwrap();
-        // amount_repaid = 3-1 = 2 RAY; ray_div(2, 1, HalfUp) = 2 RAY; negative.
-        assert_eq!(
-            result.balance_delta,
-            -I256::try_from(U256::from(2u8) * RAY).unwrap()
-        );
-        assert!(result.is_repay);
-    }
-
-    /// Pre-calculated `scaled_amount` short-circuits the `ray_div`.
-    #[test]
-    fn scaled_amount_short_circuits() {
-        let proc = ScaledTokenProcessor::collateral(1);
-        let event = ScaledTokenEventData {
-            value: U256::from(10u8) * RAY,
-            balance_increase: U256::ZERO,
-            index: U256::from(3u8) * RAY,
-            scaled_amount: Some(U256::from(999u16)), // arbitrary pre-computed value
-        };
-        let result = proc.process_collateral_mint(&event).unwrap();
-        assert_eq!(
-            result.balance_delta,
-            I256::try_from(U256::from(999u16)).unwrap()
-        );
-    }
-
-    /// Unknown revision defaults to V1/V3 (`HALF_UP` for all).
-    #[test]
-    fn unknown_revision_defaults_to_halfup() {
-        let s = collateral_strategy(99);
-        assert_eq!(s.mint, RayDivMode::HalfUp);
-        assert_eq!(s.burn, RayDivMode::HalfUp);
-    }
-
-    /// Build a collateral Mint event whose four decoded fields are set
-    /// independently, so a test can say which side of the comparison it means.
-    fn collateral_mint_event(
+    /// Build a scaled-token event with every field set independently.
+    fn scaled_event(
         value: U256,
         balance_increase: U256,
         index: U256,
@@ -664,156 +410,348 @@ mod tests {
         }
     }
 
-    /// `value` against `balance_increase` is the whole classification: the
-    /// delta flips sign with the comparison and `is_repay` flips with it, so
-    /// one wei either side of equality brackets the zero-delta outcome.
+    /// The `TokenMath` table the enricher consults — the only rounding source
+    /// left standing: rev ≤ 3 divides `HALF_UP` on both legs, rev ≥ 4 is the
+    /// `ExplicitRoundingMath` row (collateral mint FLOOR, collateral burn CEIL,
+    /// debt mint CEIL, debt burn FLOOR).
     #[test]
-    fn collateral_mint_comparison_outcomes_are_total() {
-        let proc = ScaledTokenProcessor::collateral(4);
-        let index = RAY;
-        let interest = U256::from(5u8) * RAY;
+    fn enricher_table_rounds_by_token_revision() {
+        for revision in 0..=3u32 {
+            assert_eq!(
+                enricher_collateral_mint(revision),
+                RayDivMode::HalfUp,
+                "rev {revision} collateral mint"
+            );
+            assert_eq!(
+                enricher_collateral_burn(revision),
+                RayDivMode::HalfUp,
+                "rev {revision} collateral burn"
+            );
+            assert_eq!(
+                enricher_debt_mint(revision),
+                RayDivMode::HalfUp,
+                "rev {revision} debt mint"
+            );
+            assert_eq!(
+                enricher_debt_burn(revision),
+                RayDivMode::HalfUp,
+                "rev {revision} debt burn"
+            );
+        }
+        for revision in [4u32, 5, 9, 99] {
+            assert_eq!(
+                enricher_collateral_mint(revision),
+                RayDivMode::Floor,
+                "rev {revision} collateral mint divides FLOOR"
+            );
+            assert_eq!(
+                enricher_collateral_burn(revision),
+                RayDivMode::Ceil,
+                "rev {revision} collateral burn divides CEIL"
+            );
+            assert_eq!(
+                enricher_debt_mint(revision),
+                RayDivMode::Ceil,
+                "rev {revision} debt mint divides CEIL"
+            );
+            assert_eq!(
+                enricher_debt_burn(revision),
+                RayDivMode::Floor,
+                "rev {revision} debt burn divides FLOOR"
+            );
+        }
+    }
+
+    /// All four entry points take the same precedence: the enriched amount is
+    /// the delta's magnitude, whichever leg and whatever `value`,
+    /// `balance_increase`, or `index` the event carries. The magnitude (999) is
+    /// deliberately unreachable by a division of the event's own fields
+    /// (`ray_div(10 RAY, 3 RAY) = 3.33 RAY` on the mint side,
+    /// `ray_div(9 RAY, 3 RAY) = 3 RAY` on the burn side).
+    #[test]
+    fn every_processor_method_takes_the_enriched_scaled_amount() {
+        let index = U256::from(3u8) * RAY;
+        let enriched = U256::from(999u64);
+        let enriched_i = I256::try_from(enriched).unwrap();
+        let mint_side = scaled_event(U256::from(10u8) * RAY, U256::ZERO, index, Some(enriched));
+        let burn_side = scaled_event(
+            U256::from(7u8) * RAY,
+            U256::from(2u8) * RAY,
+            index,
+            Some(enriched),
+        );
         let cases = [
-            (interest - U256::from(1u8), -I256::ONE, true),
-            (interest, I256::ZERO, false),
-            (interest + U256::from(1u8), I256::ONE, false),
+            (
+                "collateral mint",
+                ScaledTokenProcessor::collateral()
+                    .process_collateral_mint(&mint_side)
+                    .unwrap()
+                    .balance_delta,
+                enriched_i,
+            ),
+            (
+                "debt mint",
+                ScaledTokenProcessor::debt()
+                    .process_debt_mint(&mint_side)
+                    .unwrap()
+                    .balance_delta,
+                enriched_i,
+            ),
+            (
+                "collateral burn",
+                ScaledTokenProcessor::collateral()
+                    .process_collateral_burn(&burn_side, None)
+                    .unwrap()
+                    .balance_delta,
+                -enriched_i,
+            ),
+            (
+                "debt burn",
+                ScaledTokenProcessor::debt()
+                    .process_debt_burn(&burn_side, None)
+                    .unwrap()
+                    .balance_delta,
+                -enriched_i,
+            ),
         ];
-        for (value, expected_delta, expected_repay) in cases {
-            let event = collateral_mint_event(value, interest, index, None);
-            let result = proc.process_collateral_mint(&event).unwrap();
-            assert_eq!(result.balance_delta, expected_delta, "value = {value}");
-            assert_eq!(result.is_repay, expected_repay, "value = {value}");
-            assert_eq!(result.new_index, index, "value = {value}");
+        for (leg, actual, expected) in cases {
+            assert_eq!(actual, expected, "{leg}");
         }
     }
 
-    /// Equality with no `scaled_amount` is pure interest accrual: the delta is
-    /// the literal zero rather than a division result, at every revision.
+    /// The debt burn's delta is the enriched Pool word, never
+    /// `value + balance_increase`: at the repay-with-Mint shape of block
+    /// `23_093_579` (`repayAmount = 10_000_000`, `balance_increase =
+    /// 461_000_000`, Mint `value` one wei above `balance_increase -
+    /// repayAmount`) the enriched word floor-divides to `8_437_166` while the
+    /// recompute (`912_000_001`) floor-divides to `769_469_578`.
     #[test]
-    fn collateral_mint_equal_without_scaled_amount_is_pure_accrual() {
-        for revision in [1u32, 3, 4, 5, 99] {
-            let proc = ScaledTokenProcessor::collateral(revision);
-            let interest = U256::from(5u8) * RAY;
-            let event = collateral_mint_event(interest, interest, RAY, None);
-            let result = proc.process_collateral_mint(&event).unwrap();
-            assert_eq!(
-                result.balance_delta,
-                I256::ZERO,
-                "revision {revision}: accrual moves no balance"
-            );
-            assert!(
-                !result.is_repay,
-                "revision {revision}: accrual is not a repay"
-            );
-            assert_eq!(
-                result.new_index, RAY,
-                "revision {revision}: index still applies"
-            );
-        }
+    fn debt_burn_takes_the_enriched_scaled_amount() {
+        let index = U256::from(1_185_232_043_555_857_500_018_371_098u128);
+        let enriched = U256::from(8_437_166u64);
+        let event = scaled_event(
+            U256::from(451_000_001u64),
+            U256::from(461_000_000u64),
+            index,
+            Some(enriched),
+        );
+        let recompute = crate::ray_div(
+            event.value + event.balance_increase,
+            index,
+            Some(RayRounding::Floor),
+        )
+        .unwrap();
+        assert_eq!(
+            recompute,
+            U256::from(769_469_578u64),
+            "fixture: the value + balance_increase recompute"
+        );
+        let result = ScaledTokenProcessor::debt()
+            .process_debt_burn(&event, None)
+            .unwrap();
+        assert_eq!(
+            result.balance_delta,
+            -I256::try_from(enriched).unwrap(),
+            "the enriched scaled amount wins over the recompute"
+        );
+        assert_eq!(result.new_index, index);
     }
 
-    /// Pure accrual never divides, so it cannot fail on an unusable index: an
-    /// event whose `index` field did not decode (zero) still yields a zero
-    /// delta and passes the index through.
+    /// The Mint side of the same repay: `balance_increase - value` is
+    /// `9_999_999` (one wei short of the Pool word), and floor-dividing it lands
+    /// one scaled wei below the Pool word's `8_437_166` — the divergence that
+    /// accumulates until the final full repay underflows the scaled balance.
     #[test]
-    fn collateral_mint_equal_accrual_is_index_independent() {
-        let proc = ScaledTokenProcessor::collateral(1);
-        let interest = U256::from(7u8) * RAY;
-        let event = collateral_mint_event(interest, interest, U256::ZERO, None);
-        let result = proc.process_collateral_mint(&event).unwrap();
+    fn debt_mint_repay_takes_the_enriched_scaled_amount() {
+        let index = U256::from(1_185_232_043_555_857_500_018_371_098u128);
+        let enriched = U256::from(8_437_166u64);
+        let recompute = crate::ray_div(
+            U256::from(10_000_000u64 - 1),
+            index,
+            Some(RayRounding::Floor),
+        )
+        .unwrap();
+        assert_eq!(
+            recompute,
+            enriched - U256::ONE,
+            "fixture: the balance_increase - value recompute lands one wei short"
+        );
+        let event = scaled_event(
+            U256::from(451_000_001u64),
+            U256::from(461_000_000u64),
+            index,
+            Some(enriched),
+        );
+        let result = ScaledTokenProcessor::debt()
+            .process_debt_mint(&event)
+            .unwrap();
+        assert_eq!(
+            result.balance_delta,
+            -I256::try_from(enriched).unwrap(),
+            "the enriched scaled amount wins over the recompute"
+        );
+        assert!(result.is_repay, "interest exceeds the repayment");
+    }
+
+    /// The collateral mint at position 173339 (block `23_089_231`): one wei of
+    /// underlying at a 1.0483-ray liquidity index. The rev-4 `TokenMath` row
+    /// floors it to 0 scaled wei; a `HALF_UP` division carries it to 1, which
+    /// is the +1 wei of the documented divergence.
+    #[test]
+    fn collateral_mint_takes_the_floored_enriched_scaled_amount() {
+        let index = U256::from(1_048_300_000_000_000_000_000_000_000u128);
+        let raw = U256::ONE;
+        let enriched = crate::ray_div(raw, index, Some(RayRounding::Floor)).unwrap();
+        assert_eq!(enriched, U256::ZERO, "fixture: the FLOOR value is 0");
+        assert_eq!(
+            crate::ray_div(raw, index, Some(RayRounding::HalfUp)).unwrap(),
+            U256::ONE,
+            "fixture: a HALF_UP division carries the wei"
+        );
+        let event = scaled_event(raw, U256::ZERO, index, Some(enriched));
+        let result = ScaledTokenProcessor::collateral()
+            .process_collateral_mint(&event)
+            .unwrap();
         assert_eq!(result.balance_delta, I256::ZERO);
         assert!(!result.is_repay);
-        assert_eq!(result.new_index, U256::ZERO);
     }
 
-    /// Equality with a `scaled_amount` is a matched deposit: the pre-computed
-    /// amount is used verbatim (no `ray_div`), never the accrual zero.
+    /// The two ways to hand a burn its enriched amount — the `scaled_delta`
+    /// override and the event's `scaled_amount` — are one precedence, so a
+    /// dispatch path that passes `None` and one that passes the same value
+    /// compute the identical delta. This is what makes either route exact.
     #[test]
-    fn collateral_mint_equal_with_scaled_amount_is_matched_deposit() {
-        let interest = U256::from(5u8) * RAY;
-        let matched = U256::from(3u8) * RAY + U256::from(1u8);
-        for revision in [1u32, 4, 5] {
-            let proc = ScaledTokenProcessor::collateral(revision);
-            let event = collateral_mint_event(interest, interest, RAY, Some(matched));
-            let result = proc.process_collateral_mint(&event).unwrap();
-            assert_eq!(
-                result.balance_delta,
-                I256::try_from(matched).unwrap(),
-                "revision {revision}: matched deposit uses the supplied scaled amount"
-            );
-            assert!(!result.is_repay, "revision {revision}");
-            assert_eq!(result.new_index, RAY, "revision {revision}");
-        }
-    }
-
-    /// One wei greater than the accrual is the deposit path: `value -
-    /// balance_increase` is divided, so the delta carries the mint rounding.
-    #[test]
-    fn collateral_mint_one_wei_greater_is_deposit() {
-        let proc = ScaledTokenProcessor::collateral(4);
-        let interest = U256::from(2u8) * RAY;
-        let event = collateral_mint_event(interest + U256::from(1u8), interest, RAY, None);
-        let result = proc.process_collateral_mint(&event).unwrap();
-        assert_eq!(result.balance_delta, I256::ONE);
-        assert!(!result.is_repay);
-    }
-
-    /// One wei LESS than the accrual is the withdrawal-interest path at every
-    /// revision: the same `HALF_UP` division, negated, flagged as a repay — and
-    /// it ignores `scaled_amount`, which belongs to the deposit side.
-    #[test]
-    fn collateral_mint_one_wei_less_is_withdrawal_interest() {
-        let interest = U256::from(2u8) * RAY;
-        let value = interest - U256::from(1u8);
-        for revision in [1u32, 3, 4, 5] {
-            let proc = ScaledTokenProcessor::collateral(revision);
-            let plain = proc
-                .process_collateral_mint(&collateral_mint_event(value, interest, RAY, None))
-                .unwrap();
-            assert_eq!(
-                plain.balance_delta,
-                -I256::ONE,
-                "revision {revision}: withdrawal interest is a one-wei burn"
-            );
-            assert!(plain.is_repay, "revision {revision}");
-            let with_scaled = proc
-                .process_collateral_mint(&collateral_mint_event(
-                    value,
-                    interest,
-                    RAY,
-                    Some(U256::from(9u8) * RAY),
-                ))
-                .unwrap();
-            assert_eq!(
-                with_scaled.balance_delta, plain.balance_delta,
-                "revision {revision}: the withdrawal-interest arm owes nothing to `scaled_amount`"
-            );
-        }
-    }
-
-    /// Collateral mint rounding is `HALF_UP` at every revision (the V4/V5 change
-    /// is on the burn side): 2 wei over a 3-ray index lands on 1 scaled wei,
-    /// where FLOOR would land on 0.
-    #[test]
-    fn collateral_mint_delta_rounding_is_half_up_at_every_revision() {
-        let index = U256::from(3u8) * RAY;
-        let requested = U256::from(2u8);
-        let floor = crate::ray_div(requested, index, Some(RayRounding::Floor)).unwrap();
-        let half_up = crate::ray_div(requested, index, Some(RayRounding::HalfUp)).unwrap();
-        assert_eq!(
-            floor,
-            U256::ZERO,
-            "floor leaves the 2 wei below one scaled unit"
+    fn burn_delta_is_identical_via_the_override_and_the_event() {
+        let index = U256::from(1_059_681_714_000_000_000_000_000_000u128);
+        let enriched = U256::from(1_234_567u64);
+        let event = scaled_event(
+            U256::from(9u8) * RAY,
+            U256::from(4u8) * RAY,
+            index,
+            Some(enriched),
         );
-        assert_eq!(half_up, U256::ONE, "half-up carries it");
-        for revision in [1u32, 3, 4, 5, 99] {
-            let proc = ScaledTokenProcessor::collateral(revision);
-            let event = collateral_mint_event(requested, U256::ZERO, index, None);
-            let result = proc.process_collateral_mint(&event).unwrap();
+        let expected = -I256::try_from(enriched).unwrap();
+        for (route, override_arg) in [("override", Some(enriched)), ("event", None)] {
             assert_eq!(
-                result.balance_delta,
-                I256::ONE,
-                "revision {revision}: collateral mint divides HALF_UP"
+                ScaledTokenProcessor::collateral()
+                    .process_collateral_burn(&event, override_arg)
+                    .unwrap()
+                    .balance_delta,
+                expected,
+                "collateral burn via {route}"
+            );
+            assert_eq!(
+                ScaledTokenProcessor::debt()
+                    .process_debt_burn(&event, override_arg)
+                    .unwrap()
+                    .balance_delta,
+                expected,
+                "debt burn via {route}"
             );
         }
+    }
+
+    /// An event with no enriched amount is refused by every entry point — the
+    /// processors have no rounding table to fall back to, and a fallback is
+    /// exactly the ±1 wei divergence. An explicit `scaled_delta` is enough on
+    /// its own.
+    #[test]
+    fn a_missing_enriched_scaled_amount_is_refused() {
+        let event = scaled_event(U256::from(5u8) * RAY, U256::ZERO, RAY, None);
+        assert!(matches!(
+            ScaledTokenProcessor::collateral().process_collateral_mint(&event),
+            Err(ProcessorError::MissingScaledAmount)
+        ));
+        assert!(matches!(
+            ScaledTokenProcessor::debt().process_debt_mint(&event),
+            Err(ProcessorError::MissingScaledAmount)
+        ));
+        assert!(matches!(
+            ScaledTokenProcessor::collateral().process_collateral_burn(&event, None),
+            Err(ProcessorError::MissingScaledAmount)
+        ));
+        assert!(matches!(
+            ScaledTokenProcessor::debt().process_debt_burn(&event, None),
+            Err(ProcessorError::MissingScaledAmount)
+        ));
+        let expected = -I256::try_from(U256::from(77u64)).unwrap();
+        assert_eq!(
+            ScaledTokenProcessor::debt()
+                .process_debt_burn(&event, Some(U256::from(77u64)))
+                .unwrap()
+                .balance_delta,
+            expected,
+            "the override alone supplies the enriched amount"
+        );
+    }
+
+    /// `value` against `balance_increase` decides the sign and `is_repay` and
+    /// nothing else: one wei either side of equality brackets the flip, and the
+    /// magnitude stays the enriched amount on both sides.
+    #[test]
+    fn mint_sign_follows_the_interest_comparison() {
+        let index = U256::from(3u8) * RAY;
+        let interest = U256::from(5u8) * RAY;
+        let enriched = U256::from(42u64);
+        let magnitude = I256::try_from(enriched).unwrap();
+        let cases = [
+            (interest - U256::ONE, -magnitude, true),
+            (interest, magnitude, false),
+            (interest + U256::ONE, magnitude, false),
+        ];
+        for (value, expected_delta, expected_repay) in cases {
+            let event = scaled_event(value, interest, index, Some(enriched));
+            for (leg, result) in [
+                (
+                    "collateral",
+                    ScaledTokenProcessor::collateral()
+                        .process_collateral_mint(&event)
+                        .unwrap(),
+                ),
+                (
+                    "debt",
+                    ScaledTokenProcessor::debt()
+                        .process_debt_mint(&event)
+                        .unwrap(),
+                ),
+            ] {
+                assert_eq!(
+                    result.balance_delta, expected_delta,
+                    "{leg} value = {value}"
+                );
+                assert_eq!(result.is_repay, expected_repay, "{leg} value = {value}");
+                assert_eq!(result.new_index, index, "{leg} value = {value}");
+            }
+        }
+    }
+
+    /// A pure accrual (`value == balance_increase`, enriched `0`) needs no
+    /// usable index: nothing divides, so a zero index still passes through.
+    #[test]
+    fn accrual_needs_no_usable_index() {
+        let interest = U256::from(7u8) * RAY;
+        let event = scaled_event(interest, interest, U256::ZERO, Some(U256::ZERO));
+        let collateral = ScaledTokenProcessor::collateral()
+            .process_collateral_mint(&event)
+            .unwrap();
+        assert_eq!(collateral.balance_delta, I256::ZERO);
+        assert!(!collateral.is_repay);
+        assert_eq!(collateral.new_index, U256::ZERO);
+        let debt = ScaledTokenProcessor::debt()
+            .process_debt_mint(&event)
+            .unwrap();
+        assert_eq!(debt.balance_delta, I256::ZERO);
+        assert!(!debt.is_repay);
+    }
+
+    /// An enriched amount past `I256::MAX` is a delta overflow, not a wrapped
+    /// negative balance.
+    #[test]
+    fn oversized_enriched_amount_overflows() {
+        let event = scaled_event(U256::ZERO, U256::ZERO, RAY, Some(U256::MAX));
+        assert!(matches!(
+            ScaledTokenProcessor::debt().process_debt_burn(&event, None),
+            Err(ProcessorError::DeltaOverflow(_))
+        ));
     }
 }
