@@ -76,8 +76,16 @@ pub enum ProfitCapture {
     BalancerVault,
 }
 
-/// Whether and how the stream pays a **builder bribe** (ADR-029 Q3 — a **live**
-/// axis distinct from profit capture). `None` = no bribe (the default today).
+/// Whether and how the stream pays a **builder bribe** (ADR-029 Q3 — a live
+/// economic axis distinct from profit capture).
+///
+/// The bribe is not a stream byte: it rides the `execute()` config word
+/// ([`crate::composers::config_for_options`] →
+/// [`crate::config::pack_config`], bits 8–23 `bips`, bits 24–31
+/// `recipient_idx`), which the contract applies to the measured gross profit.
+/// `bips = 0` requests a zero share and packs the same word as [`Self::None`];
+/// `bips > 10_000` and `recipient_idx >= MAX_INDEXED_ADDRESSES` are refused at
+/// pack time with a typed [`crate::config::ConfigError`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Bribe {
     #[default]
@@ -109,7 +117,8 @@ pub enum Axis {
     /// `ProfitCapture` branches the
     /// stream (V4 `MINT`/`WETH_WITHDRAW` terminal capture).
     Capture,
-    /// `Bribe` branches the stream. Never — bribes ride `pack_config`.
+    /// `Bribe` branches the stream. Never — a bribe rides the `execute()`
+    /// config word (`pack_config`), not the bytes.
     Bribe,
 }
 
@@ -127,7 +136,8 @@ pub struct AxisSupport {
     pub funding: bool,
     /// The capture axis branches this family's stream (V4 terminal capture).
     pub capture: bool,
-    /// The bribe axis branches this family's stream (always false today).
+    /// The bribe axis branches this family's stream — never: bribes ride the
+    /// `execute()` config word, not the bytes.
     pub bribe: bool,
 }
 

@@ -206,8 +206,9 @@ pub(crate) fn emit_currency_bridge(
 /// `capture` is branched only by the pure-V4 families `v4_v4` / `v4_v4_v4`
 /// (their rows declare `{capture}`); V2/V3-only and V4-involving-but-not-
 /// pure-V4 streams reach `capture` only via the on-chain `profit_mode` config
-/// (a different seam), NOT the stream bytes. `bribe` is branched by no family
-/// (it rides `pack_config`, never the stream). Spreading an axis across more
+/// (a different seam), NOT the stream bytes. `bribe` is branched by no family —
+/// it rides the `execute()` config word ([`config_for_options`] →
+/// [`crate::config::pack_config`]), never the stream. Spreading an axis across more
 /// families is separate follow-up work, not this surface's claim.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
@@ -251,15 +252,28 @@ pub struct EncodeOptions {
     /// `Erc6909` uses `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` on pure-V4
     /// paths (saves ~20K gas; needs `profit_mode=2`).
     pub capture: crate::grammar_ledger::ProfitCapture,
-    /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
-    /// the encoder; wiring lands in a subsequent increment.
+    /// Whether/how a builder bribe is paid (ADR-029 D1/Q3).
+    ///
+    /// A **config-seam** axis that never reaches the command stream:
+    /// [`config_for_options`] packs it into the `execute()` config word
+    /// (`bribe_bips` bits 8–23, `bribe_recipient_idx` bits 24–31), which the
+    /// contract applies to the measured gross profit, so every family's stream
+    /// is byte-identical across bribe values. `recipient_idx = 0` pays
+    /// `block.coinbase`; `1..=31` indexes the address table. `bips = 0` requests
+    /// a zero share — the same packed word as
+    /// [`Bribe::None`](crate::grammar_ledger::Bribe::None) — and out-of-range
+    /// values (`bips > 10_000`, `recipient_idx >= 32`) are refused with a typed
+    /// [`ConfigError`](crate::config::ConfigError) rather than packed.
     pub bribe: crate::grammar_ledger::Bribe,
 }
 
 /// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`].
 ///
-/// `funding` and `bribe` are passed through unchanged (the encoder does not yet
-/// read them; they are carried for subsequent increments).
+/// Every axis passes through unchanged. Resolution is not where the axes are
+/// consumed: a family's stream axes are read off its declaration
+/// ([`crate::grammar_shape::family_axis_support`]), while the config seam reads
+/// `capture`/`bribe` through [`config_for_options`] — `bribe` rides the
+/// `execute()` config word and never a stream byte.
 #[must_use]
 pub fn resolve_axes(
     opts: EncodeOptions,

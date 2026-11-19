@@ -373,8 +373,9 @@ pub fn enc_set_addresses(address_table: &AddressTable) -> Vec<u8> {
 /// Encode the full preprocessing section + separator: `[SET_ADDRESS commands][0xFF]`.
 ///
 /// The stream starts directly with `SET_ADDRESS` commands — no `0xFE` prefix.
-/// Profit check and bribes are NO LONGER encoded in the stream — both are
-/// packed into the `config` ABI parameter of `execute()` (see [`pack_config`]).
+/// Neither the profit check nor a bribe is a stream command: both ride the
+/// `config` ABI parameter of `execute()` (see
+/// [`crate::config::pack_config`]).
 #[must_use]
 pub fn enc_preamble(address_table: &AddressTable) -> Vec<u8> {
     let mut out = enc_set_addresses(address_table);
