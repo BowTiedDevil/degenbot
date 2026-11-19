@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use alloy::{
-    node_bindings::{Anvil, NodeError},
+    node_bindings::{Anvil, AnvilInstance, NodeError},
     primitives::{Address, Bytes, U256},
     providers::{ext::AnvilApi, DynProvider},
     rpc::types::anvil::{Forking, NodeInfo},
@@ -195,6 +195,23 @@ impl ForkError {
     }
 }
 
+/// Spawn the node program and wait for readiness under `deadline_ms`, then
+/// classify any startup failure into the cause an operator acts on.
+///
+/// The budget is applied here to both halves of one fact: it bounds the wait,
+/// and it is the number the failure reports — a diagnostic can never name a
+/// deadline the wait did not run under.
+fn spawn_node(
+    anvil: Anvil,
+    fork_target: ForkTarget,
+    deadline_ms: u64,
+) -> Result<AnvilInstance, ForkError> {
+    anvil
+        .timeout(deadline_ms)
+        .try_spawn()
+        .map_err(|source| ForkError::spawn_failure(source, fork_target, deadline_ms))
+}
+
 impl From<alloy::transports::TransportError> for ForkError {
     fn from(err: alloy::transports::TransportError) -> Self {
         Self::Rpc(err.to_string())
@@ -249,12 +266,8 @@ pub struct AnvilForkBuilder {
     code_overrides: Vec<(Address, Bytes)>,
     nonce_overrides: Vec<(Address, u64)>,
     storage_overrides: Vec<(Address, U256, U256)>,
-    /// Node program to spawn, overriding `anvil` in `$PATH` (test-only).
-    #[cfg(test)]
-    anvil_program: Option<PathBuf>,
-    /// Readiness deadline in milliseconds (test-only).
-    #[cfg(test)]
-    spawn_deadline_override: Option<u64>,
+    /// Node program to spawn instead of `anvil` from `$PATH`.
+    program: Option<PathBuf>,
 }
 
 impl Default for AnvilForkBuilder {
@@ -280,10 +293,7 @@ impl Default for AnvilForkBuilder {
             code_overrides: Vec::new(),
             nonce_overrides: Vec::new(),
             storage_overrides: Vec::new(),
-            #[cfg(test)]
-            anvil_program: None,
-            #[cfg(test)]
-            spawn_deadline_override: None,
+            program: None,
         }
     }
 }
@@ -456,9 +466,7 @@ impl AnvilForkBuilder {
             .map_or_else(default_ipc_path, |p| p.to_string_lossy().into_owned());
 
         let anvil = self.build_anvil(&ipc_path);
-        let instance = anvil.try_spawn().map_err(|source| {
-            ForkError::spawn_failure(source, self.fork_target(), self.readiness_deadline_ms())
-        })?;
+        let instance = spawn_node(anvil, self.fork_target(), self.readiness_deadline_ms())?;
 
         // Use the instance's resolved ipc_path (may differ from the requested
         // default if anvil picked its own).
@@ -534,11 +542,6 @@ impl AnvilForkBuilder {
     /// ([`alloy::node_bindings::NODE_STARTUP_TIMEOUT`]), so its behavior is
     /// unchanged.
     fn readiness_deadline_ms(&self) -> u64 {
-        #[cfg(test)]
-        if let Some(deadline_ms) = self.spawn_deadline_override {
-            return deadline_ms;
-        }
-
         if self.fork_url.is_some() {
             Self::FORK_SPAWN_TIMEOUT_MS
         } else {
@@ -554,22 +557,14 @@ impl AnvilForkBuilder {
             .map_or(ForkTarget::InMemory, ForkTarget::Upstream)
     }
 
-    /// Spawn `program` instead of `anvil` from `$PATH` (test-only).
+    /// Spawn `program` instead of `anvil` from `$PATH`.
     ///
-    /// The readiness diagnostics are proven against scripted children through
-    /// this, so they do not depend on a real binary's startup behavior.
-    #[cfg(test)]
+    /// For a pinned build (`~/.foundry/bin/anvil`), a wrapper, or the committed
+    /// stand-in programs the readiness diagnostics are proven against. A spawn
+    /// failure names the program it could not run, whatever it is.
     #[must_use]
-    pub fn anvil_program(mut self, program: impl Into<PathBuf>) -> Self {
-        self.anvil_program = Some(program.into());
-        self
-    }
-
-    /// Override the readiness deadline in milliseconds (test-only).
-    #[cfg(test)]
-    #[must_use]
-    pub const fn spawn_deadline_ms(mut self, deadline_ms: u64) -> Self {
-        self.spawn_deadline_override = Some(deadline_ms);
+    pub fn program(mut self, program: impl Into<PathBuf>) -> Self {
+        self.program = Some(program.into());
         self
     }
 
@@ -589,21 +584,15 @@ impl AnvilForkBuilder {
     /// Build the `alloy::node_bindings::Anvil` builder from the configured
     /// params.
     fn build_anvil(&self, ipc_path: &str) -> Anvil {
-        #[cfg(test)]
-        let program = self.anvil_program.as_ref();
-        #[cfg(not(test))]
-        let program: Option<&PathBuf> = None;
-
-        let mut anvil = program
+        let mut anvil = self
+            .program
+            .as_ref()
             .map_or_else(Anvil::new, Anvil::at)
             // Python default args:
             .arg("--auto-impersonate")
             .host(self.host.clone())
             .mnemonic(self.mnemonic.clone())
-            .ipc_path(ipc_path.to_string())
-            // The deadline is a property of the spawn shape, and the failure
-            // diagnostic reports the deadline the wait actually ran under.
-            .timeout(self.readiness_deadline_ms());
+            .ipc_path(ipc_path.to_string());
 
         if let Some(port) = self.port {
             anvil = anvil.port(port);
@@ -1491,49 +1480,14 @@ mod tests {
         const { assert!(AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS < 300_000) };
     }
 
-    /// Write an executable `#!/bin/sh` program standing in for the node binary.
+    /// A committed stand-in node program (`tests/fixtures`, exec bit tracked).
     ///
-    /// The body is written by a CHILD, not by this process. `execve` refuses a
-    /// program any process holds open for writing (`ETXTBSY`), and a sibling
-    /// test's concurrent `fork` captures this thread's in-flight descriptor
-    /// until its own exec — a window no write-then-exec inside this process can
-    /// close. A descriptor the child owns dies with the child, which is reaped
-    /// here before the script is ever spawned.
-    fn scripted_node(body: &str) -> std::path::PathBuf {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-        use std::process::{Command, Stdio};
-
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "degenbot-fork-scripted-node-{}-{n}.sh",
-            std::process::id()
-        ));
-
-        let mut writer = Command::new("sh")
-            .arg("-c")
-            .arg("cat > \"$1\"")
-            .arg("sh")
-            .arg(&path)
-            .stdin(Stdio::piped())
-            .spawn()
-            .expect("start the scripted node's writer");
-        writer
-            .stdin
-            .take()
-            .expect("the writer's stdin is piped")
-            .write_all(body.as_bytes())
-            .expect("hand the script body to the writer");
-        assert!(
-            writer.wait().expect("reap the writer").success(),
-            "the writer must land the script at {}",
-            path.display()
-        );
-
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("make scripted node executable");
-        path
+    /// Nothing ever opens a fixture for writing, so no process can hold a
+    /// write descriptor on it — the `ETXTBSY` class of failure cannot exist.
+    fn fixture_program(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
     }
 
     #[tokio::test]
@@ -1544,7 +1498,7 @@ mod tests {
         let started = Instant::now();
         let Err(err) = AnvilForkBuilder::new()
             .ipc_path(test_ipc_path())
-            .anvil_program(&missing)
+            .program(&missing)
             .try_spawn()
             .await
         else {
@@ -1569,25 +1523,20 @@ mod tests {
         // exit status, while the child's own reason goes to the stderr it
         // inherits — so the classification must not depend on reading that
         // sentence.
-        let script = scripted_node(
-            "#!/bin/sh\n\
-             echo 'Error: server returned an error response: error code 429' >&2\n\
-             exit 1\n",
-        );
+        let script = fixture_program("node-exits-before-ready.sh");
 
         let started = Instant::now();
         let Err(err) = AnvilForkBuilder::new()
             .ipc_path(test_ipc_path())
             // The forked shape: this child owns the full fork deadline.
             .fork_url(FORK_URL)
-            .anvil_program(&script)
+            .program(&script)
             .try_spawn()
             .await
         else {
             panic!("a child that exits during startup cannot spawn");
         };
         let elapsed = started.elapsed();
-        let _ = std::fs::remove_file(&script);
 
         let ForkError::ChildExit {
             fork_target,
@@ -1609,30 +1558,26 @@ mod tests {
         assert!(!rendered.contains("timed out"), "{rendered}");
     }
 
-    #[tokio::test]
-    async fn child_that_never_reports_readiness_hits_the_deadline() {
+    #[test]
+    fn child_that_never_reports_readiness_hits_the_deadline() {
         // The child must keep emitting complete stdout lines: the binding
         // checks its deadline between lines, so a child that prints nothing
         // blocks the wait instead of letting the deadline fire.
-        let script = scripted_node("#!/bin/sh\nwhile true; do echo .; sleep 0.05; done\n");
+        let budget_ms = 200;
 
         let started = Instant::now();
-        let Err(err) = AnvilForkBuilder::new()
-            .ipc_path(test_ipc_path())
-            .anvil_program(&script)
-            .spawn_deadline_ms(1_000)
-            .try_spawn()
-            .await
-        else {
-            panic!("a child that never reports readiness cannot spawn");
-        };
+        let err = spawn_node(
+            Anvil::at(fixture_program("node-never-ready.sh")),
+            ForkTarget::InMemory,
+            budget_ms,
+        )
+        .expect_err("a child that never reports readiness cannot spawn");
         let elapsed = started.elapsed();
-        let _ = std::fs::remove_file(&script);
 
         let ForkError::SpawnTimeout { deadline_ms, .. } = &err else {
             panic!("the readiness deadline must map to ForkError::SpawnTimeout, got {err:?}");
         };
-        assert_eq!(*deadline_ms, 1_000);
+        assert_eq!(*deadline_ms, budget_ms);
         assert!(
             elapsed < Duration::from_secs(10),
             "the deadline must bound the wait (took {elapsed:?})"
