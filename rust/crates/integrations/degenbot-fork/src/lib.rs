@@ -24,4 +24,4 @@
 pub mod node;
 mod transport;
 
-pub use node::{AnvilFork, AnvilForkBuilder, ForkError, MiningMode};
+pub use node::{AnvilFork, AnvilForkBuilder, ForkError, MiningMode, ReadinessCause};

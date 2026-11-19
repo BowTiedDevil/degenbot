@@ -62,17 +62,19 @@ pub enum ForkError {
 
     /// The child process exited before it reported readiness.
     ///
-    /// A forked child whose upstream refuses the fork's genesis fetch (a hosted
-    /// endpoint answering HTTP 429, for instance) fails this way. The child's
-    /// own reason is on the stderr it inherits, which the node-binding does not
-    /// capture into this error.
+    /// The binding detects it as stdout EOF and reaps the exit status; a forked
+    /// child whose upstream refuses the genesis fetch (a hosted endpoint
+    /// answering HTTP 429, for instance) fails exactly this way. The child's own
+    /// reason is on the stderr it inherits, which the binding does not capture
+    /// into this error.
     #[error("{detail} ({fork_target}); the child's own reason is on the stderr above")]
     ChildExit {
         fork_target: ForkTarget,
         detail: String,
     },
 
-    /// The readiness deadline expired while the child was still alive.
+    /// The readiness deadline expired while the child was still alive — the
+    /// binding kills it on the way out.
     #[error("anvil did not report readiness within {deadline_ms}ms ({fork_target})")]
     SpawnTimeout {
         fork_target: ForkTarget,
@@ -80,13 +82,15 @@ pub enum ForkError {
     },
 
     /// The readiness wait failed for a reason that is neither the child exiting
-    /// nor the deadline expiring: a stdout read error, a missing stdout pipe,
-    /// an unparsable startup line.
-    #[error("anvil readiness failed ({fork_target}): {source}")]
+    /// nor the deadline expiring: one named [`ReadinessCause`] each, from a
+    /// missing stdout pipe to a banner the classification could not read. The
+    /// binding's own text rides `source`.
+    #[error("anvil readiness failed ({fork_target}): {cause}: {source}")]
     Readiness {
         fork_target: ForkTarget,
+        cause: ReadinessCause,
         #[source]
-        source: NodeError,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// The fork's dedicated transport runtime could not be built.
@@ -109,16 +113,53 @@ pub enum ForkError {
     Rpc(String),
 }
 
+/// The readiness-wait failure class, named for the operator response it needs.
+///
+/// The classification's own vocabulary: the node-binding's failure shapes are
+/// converted into these at the spawn seam and never forwarded, so this enum —
+/// not the binding's — is what a caller matches on and a diagnostic renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadinessCause {
+    /// The program ran but produced no stdout for the readiness wait to watch.
+    NoStdout,
+    /// A read from the node's stdout failed mid-wait.
+    StdoutRead,
+    /// The node died, and its exit status could not be reaped.
+    ExitReap,
+    /// The node's startup banner could not be parsed into its account list.
+    BannerParse,
+    /// A binding shape this classification does not know — reported loudly,
+    /// never folded into another cause's operator response.
+    Unrecognized,
+}
+
+impl std::fmt::Display for ReadinessCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoStdout => f.write_str("the node program produced no stdout to watch"),
+            Self::StdoutRead => f.write_str("the node's stdout failed mid-wait"),
+            Self::ExitReap => f.write_str("the node died and its exit status could not be reaped"),
+            Self::BannerParse => f.write_str("the node's startup banner could not be parsed"),
+            Self::Unrecognized => f.write_str(
+                "an unclassified node-binding failure (not a shape the anvil spawn path produces; report it)",
+            ),
+        }
+    }
+}
+
 impl ForkError {
     /// Classify a node-binding startup failure into the cause an operator acts on.
     ///
-    /// The locked binding already separates the causes: `SpawnError` means the
-    /// program never ran, `Fatal` means the child exited before readiness (the
-    /// binding detects stdout EOF and waits for the child to reap its status),
-    /// and `Timeout` means the deadline passed with the child alive. Wrapping
-    /// those types and forwarding their own text preserves each cause; what the
-    /// binding cannot see — which fork target the child was fetching from, and
-    /// the deadline it was given — is carried here.
+    /// The binding separates the first three shapes — `SpawnError` means the
+    /// program never ran, `Fatal` means the child exited before readiness (it
+    /// sees stdout EOF and reaps the status), `Timeout` means the deadline
+    /// passed with the child alive — and the readiness remainder is classified
+    /// here into one named [`ReadinessCause`]. What the binding cannot see —
+    /// which fork target the child was fetching from, and the deadline it was
+    /// given — is carried by the variants. A shape this function does not know
+    /// classifies as [`ReadinessCause::Unrecognized`] with the binding's own
+    /// text preserved, so an upstream change reads as a report request rather
+    /// than another cause's operator response.
     fn spawn_failure(source: NodeError, fork_target: ForkTarget, deadline_ms: u64) -> Self {
         match source {
             NodeError::SpawnError(source) => Self::Spawn {
@@ -133,10 +174,23 @@ impl ForkError {
                 fork_target,
                 deadline_ms,
             },
-            source => Self::Readiness {
-                fork_target,
-                source,
-            },
+            source => {
+                use ReadinessCause as R;
+                let cause = match source {
+                    NodeError::NoStdout => R::NoStdout,
+                    NodeError::ReadLineError(_) => R::StdoutRead,
+                    NodeError::WaitError(_) => R::ExitReap,
+                    NodeError::ParsePrivateKeyError
+                    | NodeError::DeserializePrivateKeyError
+                    | NodeError::FromHexError(_) => R::BannerParse,
+                    _ => R::Unrecognized,
+                };
+                Self::Readiness {
+                    fork_target,
+                    cause,
+                    source: Box::new(source),
+                }
+            }
         }
     }
 }
@@ -1213,49 +1267,194 @@ mod tests {
         ForkTarget::Upstream(FORK_URL.to_string())
     }
 
+    /// What a shape must classify to.
+    enum Expect {
+        Spawn(std::io::ErrorKind),
+        ChildExit,
+        SpawnTimeout,
+        Readiness(ReadinessCause),
+    }
+
+    /// One classification case: the shape, and the cause it must land on.
+    type Case = (&'static str, fn() -> NodeError, Expect);
+
+    /// Every shape the locked binding's anvil spawn path produces
+    /// (`nodes/anvil.rs`), plus the shapes only the geth bindings (or no code
+    /// at all) produce — loud, never folded into another cause's response.
+    fn node_shape_cases() -> Vec<Case> {
+        use ReadinessCause as R;
+        vec![
+            // The anvil spawn path's nine shapes, each its own operator response.
+            (
+                "a program that cannot run",
+                || NodeError::SpawnError(std::io::Error::from(std::io::ErrorKind::NotFound)),
+                Expect::Spawn(std::io::ErrorKind::NotFound),
+            ),
+            (
+                "a child that exits before readiness",
+                || {
+                    NodeError::Fatal(
+                        "anvil exited before it was ready (exit status: 1)".to_string(),
+                    )
+                },
+                Expect::ChildExit,
+            ),
+            (
+                "a deadline that expires with the child alive",
+                || NodeError::Timeout,
+                Expect::SpawnTimeout,
+            ),
+            (
+                "a missing stdout pipe",
+                || NodeError::NoStdout,
+                Expect::Readiness(R::NoStdout),
+            ),
+            (
+                "a stdout read that breaks mid-wait",
+                || NodeError::ReadLineError(std::io::Error::other("pipe closed mid-line")),
+                Expect::Readiness(R::StdoutRead),
+            ),
+            (
+                "a dead child that cannot be reaped",
+                || NodeError::WaitError(std::io::Error::other("wait failed")),
+                Expect::Readiness(R::ExitReap),
+            ),
+            (
+                "an account line that cannot be parsed",
+                || NodeError::ParsePrivateKeyError,
+                Expect::Readiness(R::BannerParse),
+            ),
+            (
+                "an account line that cannot be deserialized",
+                || NodeError::DeserializePrivateKeyError,
+                Expect::Readiness(R::BannerParse),
+            ),
+            (
+                "an account line that cannot be decoded",
+                || NodeError::from(alloy::primitives::hex::FromHexError::OddLength),
+                Expect::Readiness(R::BannerParse),
+            ),
+            // Shapes this builder cannot reach. Loud, never re-bucketed.
+            (
+                "a genesis failure (a geth-binding shape)",
+                || NodeError::GenesisError("genesis error occurred: 429".to_string()),
+                Expect::Readiness(R::Unrecognized),
+            ),
+            (
+                "a no-keys verdict (no binding constructs it)",
+                || NodeError::NoKeysAvailable,
+                Expect::Readiness(R::Unrecognized),
+            ),
+        ]
+    }
+
+    /// The classification is total and cause-named over every shape the binding
+    /// can produce: one cause per operator response, and an unclassified shape
+    /// reported as one.
     #[test]
-    fn process_spawn_failure_is_a_typed_spawn_not_a_timeout() {
+    fn every_node_shape_classifies_to_the_cause_it_needs() {
+        for (name, source, expect) in node_shape_cases() {
+            let err = ForkError::spawn_failure(
+                source(),
+                upstream_target(),
+                AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+            );
+            match expect {
+                Expect::Spawn(kind) => {
+                    let ForkError::Spawn {
+                        fork_target,
+                        source,
+                    } = &err
+                    else {
+                        panic!("{name}: a program that never ran must stay ForkError::Spawn, got {err:?}");
+                    };
+                    assert_eq!(source.kind(), kind, "{name}");
+                    assert_eq!(fork_target, &upstream_target(), "{name}");
+                }
+                Expect::ChildExit => {
+                    let ForkError::ChildExit {
+                        fork_target,
+                        detail,
+                    } = &err
+                    else {
+                        panic!(
+                            "{name}: a dead child must map to ForkError::ChildExit, got {err:?}"
+                        );
+                    };
+                    assert!(detail.contains("exit status"), "{name}: {detail}");
+                    assert_eq!(fork_target, &upstream_target(), "{name}");
+                }
+                Expect::SpawnTimeout => {
+                    let ForkError::SpawnTimeout {
+                        fork_target,
+                        deadline_ms,
+                    } = &err
+                    else {
+                        panic!("{name}: an expired deadline must map to ForkError::SpawnTimeout, got {err:?}");
+                    };
+                    assert_eq!(
+                        *deadline_ms,
+                        AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+                        "{name}"
+                    );
+                    assert_eq!(fork_target, &upstream_target(), "{name}");
+                }
+                Expect::Readiness(cause) => {
+                    let ForkError::Readiness {
+                        fork_target,
+                        cause: got,
+                        ..
+                    } = &err
+                    else {
+                        panic!("{name}: a readiness failure must carry its cause, got {err:?}");
+                    };
+                    assert_eq!(*got, cause, "{name}");
+                    assert_eq!(fork_target, &upstream_target(), "{name}");
+                    assert!(std::error::Error::source(&err).is_some(), "{name}");
+                }
+            }
+        }
+    }
+
+    /// An unclassified shape is reported as one — loud, by name, with the
+    /// binding's own text preserved — so an upstream change surfaces as a
+    /// sentence asking for a report, never as another cause's response.
+    #[test]
+    fn an_unclassified_node_shape_is_reported_loudly_by_name() {
         let err = ForkError::spawn_failure(
+            NodeError::GenesisError("genesis error occurred: 429".to_string()),
+            upstream_target(),
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+        );
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("unclassified"), "{rendered}");
+        assert!(
+            rendered.contains("genesis error occurred: 429"),
+            "{rendered}"
+        );
+    }
+
+    /// Each cause reads as its own operator sentence: what to fix, and never
+    /// a hint belonging to a different cause.
+    #[test]
+    fn each_cause_reads_as_its_own_operator_sentence() {
+        let spawn = ForkError::spawn_failure(
             NodeError::SpawnError(std::io::Error::from(std::io::ErrorKind::NotFound)),
             upstream_target(),
             AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
         );
-
-        let ForkError::Spawn {
-            fork_target,
-            source,
-        } = &err
-        else {
-            panic!("a spawn failure must stay ForkError::Spawn, got {err:?}");
-        };
-        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
-        assert_eq!(fork_target, &upstream_target());
-
-        let rendered = err.to_string();
+        let rendered = spawn.to_string();
         assert!(rendered.contains("anvil spawn failed"), "{rendered}");
         assert!(rendered.contains(FORK_URL), "{rendered}");
         assert!(!rendered.contains("timed out"), "{rendered}");
-    }
 
-    #[test]
-    fn child_exit_before_readiness_is_neither_missing_binary_nor_timeout() {
-        let err = ForkError::spawn_failure(
+        let exit = ForkError::spawn_failure(
             NodeError::Fatal("anvil exited before it was ready (exit status: 1)".to_string()),
             upstream_target(),
             AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
         );
-
-        let ForkError::ChildExit {
-            fork_target,
-            detail,
-        } = &err
-        else {
-            panic!("a dead child must map to ForkError::ChildExit, got {err:?}");
-        };
-        assert_eq!(fork_target, &upstream_target());
-        assert!(detail.contains("exit status: 1"), "{detail}");
-
-        let rendered = err.to_string();
+        let rendered = exit.to_string();
         assert!(
             rendered.contains("exited before it was ready"),
             "{rendered}"
@@ -1263,48 +1462,13 @@ mod tests {
         assert!(rendered.contains("stderr"), "{rendered}");
         assert!(!rendered.contains("timed out"), "{rendered}");
         assert!(!rendered.contains("binary installed"), "{rendered}");
-    }
 
-    #[test]
-    fn readiness_deadline_is_a_typed_spawn_timeout() {
-        let err = ForkError::spawn_failure(
+        let timeout = ForkError::spawn_failure(
             NodeError::Timeout,
             upstream_target(),
             AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
         );
-
-        let ForkError::SpawnTimeout {
-            fork_target,
-            deadline_ms,
-        } = &err
-        else {
-            panic!("the readiness deadline must map to ForkError::SpawnTimeout, got {err:?}");
-        };
-        assert_eq!(fork_target, &upstream_target());
-        assert_eq!(*deadline_ms, AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS);
-        assert!(err.to_string().contains("180000ms"), "{err}");
-    }
-
-    #[test]
-    fn readiness_read_failure_keeps_the_alloy_source() {
-        let err = ForkError::spawn_failure(
-            NodeError::ReadLineError(std::io::Error::other("pipe closed mid-line")),
-            ForkTarget::InMemory,
-            u64::try_from(alloy::node_bindings::NODE_STARTUP_TIMEOUT.as_millis())
-                .expect("alloy's default startup deadline fits in u64"),
-        );
-
-        let ForkError::Readiness {
-            fork_target,
-            source,
-        } = &err
-        else {
-            panic!("a readiness I/O failure must map to ForkError::Readiness, got {err:?}");
-        };
-        assert_eq!(fork_target, &ForkTarget::InMemory);
-        assert!(matches!(source, NodeError::ReadLineError(_)), "{source:?}");
-        assert!(std::error::Error::source(&err).is_some(), "{err:?}");
-        assert!(err.to_string().contains("pipe closed mid-line"), "{err}");
+        assert!(timeout.to_string().contains("180000ms"), "{timeout}");
     }
 
     #[test]
