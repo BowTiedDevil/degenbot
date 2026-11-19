@@ -143,6 +143,18 @@ pub enum CensusEvent {
     /// adds its pre-filter batch size; the inline/streaming arm adds one per
     /// candidate at the inline-sim seam).
     CandidatesEntered { n: u64, arm: &'static str },
+    /// One inline-sim degrade: the installed hook produced NO payload for a
+    /// clamp-admitted candidate, so the path left the inline arm un-simulated.
+    /// `reason` is the closed class the engine seam can name — see
+    /// [`SimDegradeReason`](crate::arb_engine::SimDegradeReason).
+    ///
+    /// This is the counterpart of [`CensusEvent::CandidatesEntered`] on the
+    /// inline arm, not a `SimulateVerdict`: a sim that never ran HAS no verdict,
+    /// so without this event the only trace of a degrade is the arithmetic
+    /// difference between the candidate count and the verdict counter.
+    InlineSimDegraded {
+        reason: crate::arb_engine::SimDegradeReason,
+    },
     /// One solver concentrated-liquidity-hop correction (input/forward clamp
     /// or output align).
     SolverClampApplied,

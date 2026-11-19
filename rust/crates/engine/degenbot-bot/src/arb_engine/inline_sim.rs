@@ -23,7 +23,7 @@
 //! `degenbot_batch_executor::assembly::join_sim_result` →
 //! `SubmitCandidate`:
 //!
-//! | SimResult / SubmitCandidate | SimulatedPathResult |
+//! | `SimResult` / `SubmitCandidate` | `SimulatedPathResult` |
 //! |---|---|
 //! | `path_id` | `path_id` |
 //! | `gross_profit` | `gross_profit` |
@@ -36,12 +36,30 @@
 //! | `captured_swaps` (`Vec<CapturedSwap>`) | `captured_swaps: Vec<CapturedSwapRow>` |
 //! | `hop_count` | `hop_count` |
 //! | — (dispatch failures only) | `failure: Option<InlineSimFailure>` |
+//!
+//! ## The two sim arms, and why they can legitimately disagree
+//!
+//! Both arms simulate the same clamped path, but against DIFFERENT state
+//! anchors — a contract, not folklore:
+//!
+//! | | inline arm (this seam) | FFI fan-out arm |
+//! |---|---|---|
+//! | state snapshot | `SimAnchorState` taken during the solve bin, at the block the solve priced | `SimAnchorState` taken LATER, on the fan-out's spawned task, at the dispatch block |
+//! | block priority fees | `block_priority_fees: None` — the inline sim prices no market percentile | the dispatcher's `eth_feeHistory` ring, read at p10/p50 |
+//! | anchor owner | the solve worker, before the bin hands off | `degenbot-batch-executor`'s session, after assembly |
+//!
+//! So a candidate the inline arm prices may meet a pool state that advanced
+//! (or a fee the ring has since learned) by the time the fan-out would have
+//! simulated it. Neither is wrong; they answer different questions. A degrade
+//! is not one of these differences, though: [`run_inline_sim`] counts it by
+//! class ([`SimDegradeReason`]) and stamps the span verdict, so an
+//! un-simulated candidate is a named outcome on whichever arm it landed.
 #[cfg(test)]
 use crate::arb_engine::ArbitrageEngine;
 #[cfg(test)]
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::{Address, I256, U256};
-use degenbot_pools::solve::{MixedPoolRef, SolvePathResult};
+use degenbot_pools::solve::{HopType, MixedPoolRef, SolvePathResult};
 // the pipelined sim scheduler moved here beside `PendingSim` /
 // `SimulatedPathResult`; it takes the cycle context from `solve_cycle` and
 // owns the once-per-process boot-refusal latch ).
@@ -277,12 +295,92 @@ pub(crate) fn build_inline_sim_request(
     }
 }
 
+/// Why the inline arm produced no payload for a clamp-admitted path — the
+/// closed class behind `degenbot_sim_degrades_total{reason}`.
+///
+/// [`InlineSimulator::simulate_path`] returns a bare `Option`, so this seam
+/// sees only the request's hop families and the absence of a payload. The
+/// vocabulary therefore splits by what the ENGINE can know, and says so
+/// instead of guessing: a family with no command-stream encoder arm can NEVER
+/// produce a payload (permanent for the path while the encoder roster stays
+/// V2/V3/V4), and any other `None` is the hook's own refusal — an unregistered
+/// pool between solve and dispatch, or the u128 projection overflow. Splitting
+/// that last class needs the hook to return a typed reason (the trait
+/// widening is the extension point, not a guess at this seam).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimDegradeReason {
+    /// A hop family with no command-stream encoder arm (Solidly / Balancer /
+    /// Curve — ADR-059 D5): the projection answers `UnsupportedHopType`, so
+    /// the path is solved every cycle and can never be assembled.
+    NoEncoderArm,
+    /// The hook produced no payload for a path every hop of which HAS an
+    /// encoder arm: the pool de-registered between solve and dispatch, or the
+    /// u128 projection overflow.
+    HookRefused,
+}
+
+impl SimDegradeReason {
+    /// The closed metric value (`degenbot_sim_degrades_total{reason}`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoEncoderArm => "no_encoder_arm",
+            Self::HookRefused => "hook_refused",
+        }
+    }
+
+    /// Classify a request's hop families: the encoder roster is the authority
+    /// (`degenbot_pools::ENCODER_FAMILIES`, the ADR-059 D5 declaration), so a
+    /// family whose settlement row declares no `compose` tier can never
+    /// produce a payload.
+    #[must_use]
+    pub fn of_hops(hops: &[MixedPoolRef]) -> Self {
+        use degenbot_pools::{capabilities, Arm};
+
+        let unencodable = hops.iter().any(|hop| {
+            capabilities(Arm::Settlement, family_of(hop.hop_type)).is_none_or(|caps| !caps.compose)
+        });
+        if unencodable {
+            Self::NoEncoderArm
+        } else {
+            Self::HookRefused
+        }
+    }
+}
+
+/// The capability family a solver hop type belongs to.
+///
+/// Exhaustive on purpose: the mixed solver's `HopType` and the capability
+/// table's `Family` are two vocabularies over the same families, so a new hop
+/// type fails this match until its family row is named here.
+#[must_use]
+const fn family_of(hop_type: HopType) -> degenbot_pools::Family {
+    use degenbot_pools::Family;
+
+    match hop_type {
+        HopType::V2 => Family::V2,
+        HopType::V3 => Family::V3,
+        HopType::V4 => Family::V4,
+        HopType::SolidlyStable => Family::SolidlyStable,
+        HopType::BalancerWeighted => Family::BalancerWeighted,
+        HopType::BalancerStable => Family::BalancerStable,
+        HopType::CurveStableswap => Family::CurveStableswap,
+    }
+}
+
+/// The `simulate.verdict` a DEGRADED sim records — never left empty, so a
+/// degraded trace is distinguishable without arithmetic between two counters.
+const DEGRADED_VERDICT: &str = "degraded";
+
 /// Run one clamp-admitted path's sim under the ONE worker-inline span
 /// (`degenbot.bundle.simulate`, explicitly parented — TLS re-entry
 /// alone forked orphan roots on worker threads). The verdict records live here
 /// (SIMSPANDUP): failure classification arrives via the seam's
-/// `SimSpanVerdict` Drop; this function only stamps the successful arm plus
-/// `expected_profit`. `None` = hook failure with no payload.
+/// `SimSpanVerdict` Drop; this function stamps the successful arm plus
+/// `expected_profit`, and — since a `None` payload would otherwise leave BOTH
+/// verdict fields empty — the degrade arm with [`DEGRADED_VERDICT`] plus its
+/// [`SimDegradeReason`] class, counted once at the census door. `None` = hook
+/// failure with no payload.
 pub(crate) fn run_inline_sim(
     sim: &std::sync::Arc<dyn InlineSimulator>,
     request: InlineSimRequest,
@@ -308,9 +406,25 @@ pub(crate) fn run_inline_sim(
         n: 1,
         arm: "inline",
     });
+    // The degrade class is decided BEFORE the hook runs (the request moves into
+    // it): the engine can name a family with no encoder arm up front, so a `None`
+    // lands on its honest class instead of an unlabelled drop.
+    let degrade_reason = SimDegradeReason::of_hops(&request.hops);
     let payload = sim.simulate_path(request);
-    if payload.as_ref().is_some_and(|p| p.failure.is_none()) {
-        span.record("simulate.verdict", "profitable");
+    match &payload {
+        Some(p) if p.failure.is_none() => {
+            span.record("simulate.verdict", "profitable");
+        }
+        // A failed payload is a sim that RAN: its classification rides the
+        // payload into the batch record's `SimulateVerdict`.
+        Some(_) => {}
+        None => {
+            span.record("simulate.verdict", DEGRADED_VERDICT);
+            span.record("simulate.error_reason", degrade_reason.as_str());
+            crate::instruments::record(crate::instruments::CensusEvent::InlineSimDegraded {
+                reason: degrade_reason,
+            });
+        }
     }
     span.record(
         "simulate.expected_profit",
@@ -928,6 +1042,159 @@ mod inline_sim_tests {
                 )
                 .is_none(),
             "unknown path → None (no request built)"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // THE DEGRADE CENSUS: a hook that produces no payload is a NAMED
+    // outcome, never the silent gap between `candidates_found{arm="inline"}`
+    // and the verdict counters.
+    // ------------------------------------------------------------------
+
+    /// The degenerate hook the degrade contract needs a producer for: it
+    /// refuses every request.
+    struct DegradingSim;
+
+    impl InlineSimulator for DegradingSim {
+        fn simulate_path(&self, _request: InlineSimRequest) -> Option<SimulatedPathResult> {
+            None
+        }
+    }
+
+    fn mixed_hop(hop_type: HopType) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type,
+            pool_key: 1,
+            zero_for_one: true,
+        }
+    }
+
+    /// One clamp-admitted request over the given hop families.
+    fn request_over(hops: Vec<MixedPoolRef>) -> InlineSimRequest {
+        InlineSimRequest {
+            path_id: 7,
+            hops,
+            optimal_input: U256::from(1_000u64),
+            consumed_inputs: vec![U256::from(1_000u64)],
+            hop_outputs: vec![U256::from(1_010u64)],
+            state_nonces: vec![0],
+            sim_block: 100,
+            block_timestamp: 1,
+            parent_base_fee: 1,
+            parent_gas_used: 0,
+            parent_gas_limit: 30_000_000,
+        }
+    }
+
+    /// The class vocabulary splits by what THIS seam can know: a family the
+    /// encoder roster has no arm for can never produce a payload, and every
+    /// other `None` is the hook's own refusal.
+    #[test]
+    fn a_degrade_class_follows_the_encoder_roster() {
+        for family in [HopType::V2, HopType::V3, HopType::V4] {
+            assert_eq!(
+                SimDegradeReason::of_hops(&[mixed_hop(family)]),
+                SimDegradeReason::HookRefused,
+                "{family:?} has an encoder arm, so a `None` is the hook's refusal"
+            );
+        }
+        for family in [
+            HopType::SolidlyStable,
+            HopType::BalancerWeighted,
+            HopType::BalancerStable,
+            HopType::CurveStableswap,
+        ] {
+            assert_eq!(
+                SimDegradeReason::of_hops(&[mixed_hop(HopType::V2), mixed_hop(family)]),
+                SimDegradeReason::NoEncoderArm,
+                "{family:?} has no command-stream encoder arm: no arm can ever assemble the path"
+            );
+        }
+    }
+
+    /// A hook that returns no payload moves the degrade census under its class
+    /// — the counter an operator reads instead of subtracting the verdict
+    /// counters from the candidate count.
+    #[test]
+    fn a_degraded_sim_counts_its_class() {
+        // The probe is thread-local and per-test: clear anything an earlier
+        // observation on this thread left behind.
+        let _ = crate::census::test_probe::take();
+        let sim: Arc<dyn InlineSimulator> = Arc::new(DegradingSim);
+
+        let payload = run_inline_sim(
+            &sim,
+            request_over(vec![
+                mixed_hop(HopType::V2),
+                mixed_hop(HopType::SolidlyStable),
+            ]),
+            U256::from(1_000u64),
+            tracing::Span::none(),
+        );
+
+        assert!(payload.is_none(), "the refusing hook produces no payload");
+        let classed: Vec<SimDegradeReason> = crate::census::test_probe::take()
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::instruments::CensusEvent::InlineSimDegraded { reason } => Some(reason),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            classed,
+            vec![SimDegradeReason::NoEncoderArm],
+            "one degrade, classed by the encoder roster"
+        );
+    }
+
+    /// The degraded span is self-describing: the verdict says `degraded` and
+    /// the reason names the class, so one trace answers it without comparing
+    /// two counters.
+    #[cfg(feature = "otel")]
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn a_degraded_sim_stamps_the_span_verdict() {
+        use opentelemetry_sdk::trace::InMemorySpanExporter;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemorySpanExporter::default();
+        let (provider, tracer) = crate::otel::provider_with_exporter(exporter.clone());
+        let subscriber = tracing_subscriber::registry().with(crate::otel::layer(tracer));
+        let sim: Arc<dyn InlineSimulator> = Arc::new(DegradingSim);
+
+        let payload = tracing::subscriber::with_default(subscriber, || {
+            run_inline_sim(
+                &sim,
+                request_over(vec![mixed_hop(HopType::SolidlyStable)]),
+                U256::from(1_000u64),
+                tracing::Span::none(),
+            )
+        });
+
+        assert!(payload.is_none(), "the refusing hook produces no payload");
+        provider.force_flush().expect("flush");
+
+        let spans = exporter.get_finished_spans().expect("spans");
+        let span = spans
+            .iter()
+            .find(|sp| sp.name.as_ref() == "degenbot.bundle.simulate")
+            .expect("the worker-inline sim span exported");
+        let attr = |key: &'static str| {
+            span.attributes
+                .iter()
+                .find(|kv| kv.key == opentelemetry::Key::from_static_str(key))
+                .map(|kv| kv.value.to_string())
+        };
+        assert_eq!(
+            attr("simulate.verdict").as_deref(),
+            Some("degraded"),
+            "a degraded sim records a verdict; attrs: {:?}",
+            span.attributes
+        );
+        assert_eq!(
+            attr("simulate.error_reason").as_deref(),
+            Some("no_encoder_arm"),
+            "the span names the degrade class"
         );
     }
 }

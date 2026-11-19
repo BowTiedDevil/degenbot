@@ -38,21 +38,25 @@ pub(super) fn deliver_merged_result(
     // block trace with 90-300 microsecond lookalikes. The span name now
     // belongs to simulation work only (worker seam + the FFI seam in
     // degenbot-arbitrage/simulator.rs).
-    if let Some(p) = &payload {
-        let verdict = if p.failure.is_some() {
-            "not_profitable"
-        } else {
-            "profitable"
-        };
-        // DEBUG-gated: this event duplicates the
-        // `[path] profitable solve` event above (same path.id/profit) and
-        // the Python-side `[sim]` summary; the settle verdict is also
-        // observable as an event on the enclosing `degenbot.arb.merge`
-        // OTel span. Re-enable with `RUST_LOG=degenbot_bot=debug`.
-        diag!(domain = solver, { path.id = pid, verdict, expected_profit = %result.profit, sim.seam = "inline_payload_store" },
-            "inline payload settle"
-        );
-    }
+    // The settle verdict for BOTH payload arms: a `None` payload (no sim landed
+    // this cycle — stance off, the admission floor, or an inline degrade) is the
+    // same diagnosis problem as a failed one, so it is named here rather than
+    // read off the absence of a payload.
+    let verdict = match &payload {
+        None => "no_payload",
+        Some(p) if p.failure.is_some() => "not_profitable",
+        Some(_) => "profitable",
+    };
+    // DEBUG-gated: on the settled arms this event duplicates the
+    // `[path] profitable solve` event above (same path.id/profit) and the
+    // Python-side `[sim]` summary; the settle verdict is also observable as an
+    // event on the enclosing `degenbot.arb.merge` OTel span. Re-enable with
+    // `RUST_LOG=degenbot_bot=debug`. The `no_payload` arm has no other line at
+    // this seam — the entry is dropped from the payload store here, so this is
+    // where an un-simulated candidate is named.
+    diag!(domain = solver, { path.id = pid, verdict, expected_profit = %result.profit, sim.seam = "inline_payload_store" },
+        "inline payload settle"
+    );
     hotpath::measure_block!("merge.payload_store", {
         match payload {
             Some(p) => {

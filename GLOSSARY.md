@@ -1663,6 +1663,20 @@ envelope stamp — into the solve result pipe. Distinct from the fleet's **Lane*
 ownership).
 _Avoid_: "dispatch" (the retired grab file), "run_bin".
 
+**Inline-sim degrade**:
+
+The inline sim arm's NAMED no-payload outcome: `simulate_path` returned `None`, so the
+candidate left that arm un-simulated. Its span carries `simulate.verdict=degraded` plus
+the class (`SimDegradeReason`): `no_encoder_arm` (a hop family with no command-stream
+encoder arm can never be assembled) or `hook_refused` (the hook produced nothing: an
+unregistered pool, or the u128 projection overflow). Counted once per degrade at
+`degenbot_sim_degrades_total{reason}`.
+
+_Avoid_: "sim failure" (a sim that RAN and reverted), "sim skip" (an assembly-stage
+verdict about a row, never a sim outcome).
+
+
+
 **Path registry**:
 The solve engine's identity module: path/pool relations, the reverse index, signature
 dedup, and the path cap. Deliberately shallow — no resolve, no solve.

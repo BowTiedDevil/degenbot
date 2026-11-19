@@ -181,6 +181,12 @@ pub struct PipelineInstruments {
     /// at the inline-sim seam, so the total candidate rate no longer
     /// under-reports by the inline arm's share.
     candidates_found: Counter<u64>,
+    /// Inline-arm candidates the hook could not simulate, by closed `reason`
+    /// class (`no_encoder_arm` | `hook_refused`). The pairing with
+    /// [`Self::candidates_found`] is what an operator reads: candidates that
+    /// entered the inline arm but produced no payload land HERE instead of
+    /// vanishing between the candidate count and the verdict counter.
+    inline_sim_degrades: Counter<u64>,
     /// Solver concentrated-liquidity-hop self-corrections (input/forward clamp + output align).
     clamps_applied: Counter<u64>,
     /// Distinct failures surfaced through [`crate::telemetry::record_exception`],
@@ -598,6 +604,10 @@ impl PipelineInstruments {
             candidates_found: meter
                 .u64_counter("degenbot.candidates.found")
                 .with_description("Candidates entering a simulation arm by arm")
+                .build(),
+            inline_sim_degrades: meter
+                .u64_counter("degenbot.sim.degrades")
+                .with_description("Inline-sim candidates left un-simulated by closed reason class")
                 .build(),
             clamps_applied: meter
                 .u64_counter("degenbot.solver.clamps")
@@ -1182,6 +1192,12 @@ impl PipelineInstruments {
         self.candidates_found.add(n, &[KeyValue::new("arm", arm)]);
     }
 
+    /// One inline-sim degrade, by its closed reason class.
+    pub fn count_inline_sim_degrade(&self, reason: &str) {
+        self.inline_sim_degrades
+            .add(1, &[KeyValue::new("reason", reason.to_owned())]);
+    }
+
     /// One dispatch fan-out's storage selection: `mode` is the representation it
     /// read candidates through (`delta` | `legacy`), and `reason` the closed-set
     /// cold reason when the delta opt-in's head did not settle ready. A lane
@@ -1610,6 +1626,9 @@ impl PipelineInstruments {
                 });
             }
             CensusEvent::CandidatesEntered { n, arm } => self.count_candidates_found(arm, n),
+            CensusEvent::InlineSimDegraded { reason } => {
+                self.count_inline_sim_degrade(reason.as_str());
+            }
             CensusEvent::SolverClampApplied => self.count_clamp(),
             CensusEvent::EngineError { kind } => self.count_error(kind),
             CensusEvent::PathSimulated { secs } => self.observe_simulate_duration(secs),

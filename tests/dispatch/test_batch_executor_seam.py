@@ -41,6 +41,7 @@ from degenbot.dispatch import (
     TxSigner,
     typed_submit_record,
 )
+from degenbot.logging import logger as bot_logger
 from degenbot.runner._render import MergedOutcome
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, build_batch_executor_py
 from tests.helpers.sim_records import inline_sim_payload
@@ -341,3 +342,64 @@ class TestSimFailureDetail:
         assert record["optimal_input"] == 2_000
         assert record["hop_outputs"] == [2_100, 2_000]
         assert record["captured_swaps"] == []
+
+
+class TestSolvedButUnencodable:
+    """A solved path the assembler cannot encode leaves a NAMED outcome.
+
+    The row is a real solver result for a path the resolver holds no ``PathInfo``
+    for — the shape a family with no command-stream encoder arm produces
+    (Solidly / Balancer / Curve), since no encoder arm can ever carry it, and
+    the shape a path de-registered between solve and dispatch produces. Assembly
+    types both as ``SkipResolveMiss``, and the render fold names that verdict on
+    its own ``[sim-none]`` line beside the ``SkipEmptyHops`` sibling.
+    """
+
+    async def test_a_resolve_miss_renders_its_class_and_path_id(
+        self, nxm2bf_v2_engine_and_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+        executor = _executor(engine)
+        unencodable = 9_999
+        consumer = SessionConsumer.scripted(
+            executor,
+            [
+                _block_event(100),
+                _batch_event(
+                    100,
+                    rows=[
+                        _solver_row(
+                            unencodable,
+                            optimal_input=1_000,
+                            hop_outputs=(1_100, 1_000),
+                            consumed_inputs=(1_000, 1_100),
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        await consumer.run()
+
+        batch = await executor.next_outcome()
+        assert batch is not None
+        assert [rec.assembly for rec in batch.records] == [AssemblyVerdict.SkipResolveMiss]
+
+        bot_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level("DEBUG", logger="degenbot"):
+                outcome = MergedOutcome.from_records(batch.records)
+        finally:
+            bot_logger.removeHandler(caplog.handler)
+
+        assert not outcome, "a skipped row contributes nothing to the render counters"
+        lines = [
+            record.message for record in caplog.records if record.message.startswith("[sim-none]")
+        ]
+        assert len(lines) == 1, f"one diagnostic line per resolve miss, got {lines}"
+        assert lines[0].startswith(f"[sim-none] path={unencodable}: skip-resolve-miss"), (
+            f"the line must name the path and the class, got {lines[0]}"
+        )
+        assert "encoder arm" in lines[0], (
+            f"the line must name the unencodable class, got {lines[0]}"
+        )

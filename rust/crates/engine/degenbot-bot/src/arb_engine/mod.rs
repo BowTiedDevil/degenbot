@@ -227,7 +227,7 @@ pub use hooked_leg_requote::{
 };
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
-    InlineSwapFamily, SimulatedPathResult,
+    InlineSwapFamily, SimDegradeReason, SimulatedPathResult,
 };
 /// Path registration's rejection vocabulary — the typed refusal the drivers
 /// map onto their own error surfaces.

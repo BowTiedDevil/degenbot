@@ -147,8 +147,8 @@ class MergedOutcome:
         failure rows and ``path_infos`` decode through the seam's one
         serializers (``FailureDetail.record()`` / ``path_info_dict()``), so the
         pool-key derivation and threshold categorization the renderers display
-        are Rust-owned end to end. The pre-assembly skip verdicts carry their
-        display-only ``[sim-none]`` log here.
+        are Rust-owned end to end. The pre-assembly skip verdicts that name
+        themselves carry their display-only ``[sim-none]`` log here.
 
         Args:
             records: The batch's Batch outcome records.
@@ -172,9 +172,24 @@ class MergedOutcome:
                         f"[sim-none] path={rec.candidate_id.path_id}: empty hop_outputs"
                     )
                     continue
+                case AssemblyVerdict.SkipResolveMiss:
+                    # A solved path the assembler could not encode leaves the
+                    # batch here: either a hop family with no command-stream
+                    # encoder arm (Solidly/Balancer/Curve can never be
+                    # assembled) or a pool de-registered between solve and
+                    # dispatch. The record's own label names the class and the
+                    # path id names the victim, so a family no encoder arm can
+                    # carry leaves a rendered outcome instead of dropping out of
+                    # the batch fold.
+                    bot_logger.debug(
+                        f"[sim-none] path={rec.candidate_id.path_id}: "
+                        f"{rec.assembly_label} (no path_info — a hop family with "
+                        "no command-stream encoder arm, or a pool de-registered "
+                        "between solve and dispatch)"
+                    )
+                    continue
                 case (
-                    AssemblyVerdict.SkipResolveMiss
-                    | AssemblyVerdict.SkipPayloadServed
+                    AssemblyVerdict.SkipPayloadServed
                     | AssemblyVerdict.SkipThinMargin
                     | AssemblyVerdict.SkipDivergentPool
                     | AssemblyVerdict.SkipFeeOnTransfer
