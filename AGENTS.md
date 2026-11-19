@@ -10,7 +10,7 @@
 
 Check for other agents working concurrently before you begin work and any time you notice edits, files, or tree changes unrelated to your work. Do not revert or overwrite them.
 
-pi-fabric announces peer root sessions via `<fabric-peers>` notices. Inside `fabric_exec`: `agents.peers()` / `agents.sessions()` (discover), `agents.steer({id, message})` / `agents.followUp({id, message})` (message now / after settle), `decisions.raise` + `decisions.wait` (blocking questions, answerable via `/fabric decisions`), `mesh.put` / `mesh.get` (compare-and-swap claims when two sessions must not touch the same files).
+pi-fabric announces peer root sessions via `<fabric-peers>` notices. Inside `fabric_exec`: `agents.peers()` / `agents.sessions()` (discover), `agents.steer({id, message, triggerTurn})` / `agents.followUp({id, message, triggerTurn})` (deliver now / children: after settle; peers: hidden steering at the next turn boundary), `decisions.raise` + `decisions.wait` (blocking questions, answerable via `/fabric decisions`), `mesh.put` / `mesh.get` (compare-and-swap claims when two sessions must not touch the same files). Peer messages are passive by default: they never resume an idle peer, only wait in its context. Pass `triggerTurn: true` (`True` in Python) whenever the peer must act, leave it off for informational updates, and never send acknowledgement-only replies.
 
 ## Build and test through `just`
 
