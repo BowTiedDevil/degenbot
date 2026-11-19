@@ -187,6 +187,10 @@ mod solve_cycle;
 // stage row (`bot_core::AffectedPaths`) carries it from the draw to the epoch,
 // so the stage machine can name its payload without reaching into the module.
 pub(crate) use solve_cycle::CycleTicket;
+// The clamp's ONE product and its verification status: the engine HOLDS one
+// report per path, so `EngineStages::latest_results` hands these out and the
+// status that produced a path's figures can never be dropped on the way out.
+pub use solve_cycle::{ClampReport, ClampStatus};
 // the executor A/B probe fixtures (heavy-concentrated-liquidity corpus loader, shared
 // solve-cycle fixture, production LPT bin packer) live test-only beside their
 // consumers; `#[cfg(all(test, feature = "executor-ab-probe"))]` so the fixtures

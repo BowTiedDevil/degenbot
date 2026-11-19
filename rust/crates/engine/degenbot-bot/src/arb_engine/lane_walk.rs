@@ -20,7 +20,7 @@ use super::hooked_leg_requote::{
 use super::solve_cycle::clamp_result_with_state;
 use super::solve_cycle::SolveCycleShared;
 use super::{BlockMetadata, HashMap};
-use crate::arb_engine::executor::{SolveLane, SolveOutcome};
+use crate::arb_engine::executor::{SolveClamp, SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_pools::solve::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::diag;
@@ -33,20 +33,21 @@ use degenbot_core::diag;
 /// result is clamp-committed BEFORE the streaming handoff (the T1/T3 seam
 /// simulates on a payload whose `consumed_inputs` are the merge-committed
 /// values with no engine-lock round-trip). Stance-gated: with
-/// `DEGENBOT_SOLVE_INLINE_SIM` unset the merge-site clamp runs exactly as
-/// before (this fn is a no-op returning 0).
-/// Invariant: twins > 0 ⟺ the clamp mutated the result (every clamp path
-/// runs its twin first) — the merge site treats twins > 0 as
-/// already-clamped and never re-clamps (a second pass would re-apply the
-/// margin and corrupt the committed inputs).
+/// `DEGENBOT_SOLVE_INLINE_SIM` unset the result rides UNFINALIZED and the
+/// merge runs that one finalization itself.
+///
+/// `None` is the clamp's refusal (a hooked leg the plan could not price
+/// exactly): the candidate has no executable figures, so the walk records it
+/// as one Suppressed outcome and the merge never sees it.
 pub(crate) fn clamp_result_in_worker(
     ctx: &SolveCycleShared,
     idx: usize,
     pid: u64,
-    result: &mut SolvePathResult,
-) -> u64 {
+    result: SolvePathResult,
+) -> Option<SolveClamp> {
     if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
-        return 0;
+        // No worker clamp for this bin: the merge finalizes exactly once.
+        return Some(SolveClamp::Unfinalized(result));
     }
     let pools = &ctx.pool_refs[idx].pools;
     // ADR-090: the hooked-leg facts come off ONE short guard, the re-quote
@@ -69,6 +70,7 @@ pub(crate) fn clamp_result_in_worker(
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     clamp_result_with_state(&core, pid, pools, ctx.clamp_margin, &plan, result)
+        .map(SolveClamp::Finalized)
 }
 /// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
 /// from the clamp-committed result on the SAME worker context the T2 clamp
@@ -308,15 +310,14 @@ pub(crate) fn drive_lane_walk(
     let mut suppressed_but_unsent: Vec<u64> = Vec::new();
     for &i in &bin_plan.indices {
         let (pid, resolved) = &bin_plan.items[i];
-        let outcome =
-            solve_one_path(shared, solve_span, *pid, resolved).map(|(pid, mut result)| {
-                // SIMPIPE2 T2: clamp in the worker (stance-gated) BEFORE
-                // the profitless filter — the clamp recompute can zero a
-                // candidate, and the filter must see the commit-ready
-                // values.
-                let twins = clamp_result_in_worker(shared, i, pid, &mut result);
-                (pid, result, twins)
-            });
+        let outcome = solve_one_path(shared, solve_span, *pid, resolved).and_then(|(pid, r)| {
+            // SIMPIPE2 T2: clamp in the worker (stance-gated) BEFORE the
+            // profitless filter — the clamp recompute can zero a candidate,
+            // and the filter must see the commit-ready values. `None` here is
+            // the clamp's refusal: the candidate dies with the `None` arm
+            // below (one Suppressed outcome).
+            clamp_result_in_worker(shared, i, pid, r).map(|clamp| (pid, clamp))
+        });
         {
             // The profitless filter runs BEFORE the sim is scheduled —
             // a clamp-zeroed candidate never needs its payload.
@@ -326,7 +327,8 @@ pub(crate) fn drive_lane_walk(
             // suppressed post-solve `None` arms). Both reductions
             // converge at the same exact delivery contract: exactly one
             // outcome per submitted pid.
-            if let Some((pid, result, twins)) = outcome {
+            if let Some((pid, clamp)) = outcome {
+                let result = clamp.result();
                 if result.optimal_input.is_zero() || result.profit.is_zero() {
                     if !result.solver_pool_states.is_empty() {
                         diag!(
@@ -342,13 +344,10 @@ pub(crate) fn drive_lane_walk(
                     lane.suppressed(pid);
                     continue;
                 }
-                if !pending.schedule_one(shared, i, pid, &result, solve_span) {
+                if !pending.schedule_one(shared, i, pid, result, solve_span) {
                     // No sim rides this item (no hook / clamp
                     // off) — flush immediately.
-                    held.push((
-                        pid,
-                        Some(stamp_outcome(pid, result, twins, None, policy, ws_ctx)),
-                    ));
+                    held.push((pid, Some(stamp_outcome(pid, clamp, None, policy, ws_ctx))));
                     flush_solved_item(&mut held, &mut |o| lane.solved(o), pid, None);
                     continue;
                 }
@@ -359,10 +358,7 @@ pub(crate) fn drive_lane_walk(
                         result.solver_pool_states.join(";")
                     );
                 }
-                held.push((
-                    pid,
-                    Some(stamp_outcome(pid, result, twins, None, policy, ws_ctx)),
-                ));
+                held.push((pid, Some(stamp_outcome(pid, clamp, None, policy, ws_ctx))));
                 // Fan while walking: send every sim that landed
                 // during this iteration's solve.
                 for (done_pid, payload) in pending.drain_ready() {
@@ -436,16 +432,14 @@ pub(crate) struct LaneWalkReads {
 /// values its drain never reads (unchanged semantics).
 fn stamp_outcome(
     pid: u64,
-    result: SolvePathResult,
-    worker_clamp_twins: u64,
+    clamp: SolveClamp,
     payload: Option<SimulatedPathResult>,
     policy: &LaneArmPolicy,
     ws_ctx: &WalkSubmitCtx,
 ) -> SolveOutcome {
     SolveOutcome {
         pid,
-        result,
-        worker_clamp_twins,
+        clamp,
         payload,
         solve_block: policy.solve_block,
         metadata: policy.metadata,

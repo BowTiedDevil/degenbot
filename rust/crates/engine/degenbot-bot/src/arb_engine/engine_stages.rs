@@ -74,7 +74,8 @@ use super::probe_quote::{ExactInputQuote, ExactInputQuoteError, ProbeQuoteTransp
 use super::DiagnosticPathState;
 #[cfg(test)]
 use super::ResultBatch;
-use ::degenbot_pools::solve::{MixedPoolRef, PoolHop, SolvePathResult};
+use crate::arb_engine::solve_cycle::ClampReport;
+use ::degenbot_pools::solve::{MixedPoolRef, PoolHop};
 use degenbot_execution::PathInfo;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use hashbrown::HashMap;
@@ -337,7 +338,7 @@ impl EngineStages {
 
     /// Read the last solved results + block.
     #[must_use]
-    pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
+    pub fn latest_results(&self) -> (HashMap<u64, ClampReport>, u64) {
         latest_results(&self.engine.lock())
     }
 

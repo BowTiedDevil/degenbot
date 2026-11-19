@@ -1215,8 +1215,9 @@ mod tests {
             // typed instead of silently vanishing with sender-drop.
             let arm: SolveOutcome = SolveOutcome {
                 pid: 10,
-                result: SolvePathResult::default(),
-                worker_clamp_twins: 0,
+                clamp: crate::arb_engine::executor::SolveClamp::finalized_for_test(
+                    SolvePathResult::default(),
+                ),
                 payload: None,
                 cycle_seq: 0, // inert on the in-cycle arm: the drain claims its cycle's own seq
                 solve_block: 0,
@@ -1301,8 +1302,9 @@ mod tests {
         // sends, nothing). 32/33/34 are still owed.
         lane.solved(SolveOutcome {
             pid: 30,
-            result: SolvePathResult::default(),
-            worker_clamp_twins: 0,
+            clamp: crate::arb_engine::executor::SolveClamp::finalized_for_test(
+                SolvePathResult::default(),
+            ),
             payload: None,
             cycle_seq: 0,
             solve_block: 0,
@@ -1438,8 +1440,9 @@ mod tests {
                         }
                         lane.solved(SolveOutcome {
                             pid: base + 1,
-                            result: SolvePathResult::default(),
-                            worker_clamp_twins: 0,
+                            clamp: crate::arb_engine::executor::SolveClamp::finalized_for_test(
+                                SolvePathResult::default(),
+                            ),
                             payload: None,
                             cycle_seq: 0,
                             solve_block: 0,

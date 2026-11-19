@@ -872,7 +872,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
     // reported for the un-clamped forward.
     let x0 = U256::from(1_000_000_000u64);
     let committed_forward = U256::from(5_000_000_000u64);
-    let mut result = SolvePathResult {
+    let result = SolvePathResult {
         optimal_input: x0,
         profit: U256::from(1_000u64),
         hop_outputs: vec![committed_forward, U256::from(9_999_999u64)],
@@ -881,9 +881,16 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
         solver_pool_states: Vec::new(),
         ..Default::default()
     };
-    engine
+    let report = engine
         .cycle
-        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, result, &engine.registry)
+        .expect("the clamp commits");
+    assert_eq!(
+        report.status,
+        crate::arb_engine::solve_cycle::ClampStatus::Adjusted,
+        "a forward clamp moved an executable amount"
+    );
+    let result = report.result;
     // Test premise: the forward into the V2 hop was actually clamped.
     let clamped = result.consumed_inputs[1];
     assert!(
@@ -1010,7 +1017,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
     // Over-feed the V4 hop with an absurdly large committed input far
     // beyond the pool's capacity.
     let huge = U256::from(1u128) << 120;
-    let mut result = SolvePathResult {
+    let result = SolvePathResult {
         optimal_input: huge,
         profit: U256::ONE,
         hop_outputs: vec![huge, U256::ONE],
@@ -1019,9 +1026,16 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         solver_pool_states: Vec::new(),
         ..Default::default()
     };
-    engine
+    let report = engine
         .cycle
-        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, result, &engine.registry)
+        .expect("the clamp commits");
+    assert_eq!(
+        report.status,
+        crate::arb_engine::solve_cycle::ClampStatus::Adjusted,
+        "the empty-march input clamp moved an executable amount"
+    );
+    let result = report.result;
     // Compute the pools twin's input_consumed at the requested input to
     // assert the clamped value equals `input_consumed - 1` exactly.
     let input_consumed = {
@@ -1176,7 +1190,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
     )
     .unwrap();
     let huge = U256::from(1u128) << 120;
-    let mut result = SolvePathResult {
+    let result = SolvePathResult {
         optimal_input: huge,
         profit: U256::ONE,
         hop_outputs: vec![U256::ONE, U256::ONE],
@@ -1185,9 +1199,16 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
         solver_pool_states: Vec::new(),
         ..Default::default()
     };
-    engine
+    let report = engine
         .cycle
-        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, result, &engine.registry)
+        .expect("the clamp commits");
+    assert_eq!(
+        report.status,
+        crate::arb_engine::solve_cycle::ClampStatus::Adjusted,
+        "the reported outputs were realigned to the twin"
+    );
+    let result = report.result;
     // Compute the V4 twin's amount1 (zfo=true → output = amount1) at the
     // requested input — the byte-exact value hop_outputs[0] must align to.
     let twin_out = {
@@ -1297,7 +1318,7 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
     .unwrap();
     // A tiny in-capacity input — the pool fully converts it, no clamp.
     let small = U256::from(1u128);
-    let mut result = SolvePathResult {
+    let result = SolvePathResult {
         optimal_input: small,
         profit: U256::ONE,
         hop_outputs: vec![U256::ONE, U256::ONE],
@@ -1306,9 +1327,11 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
         solver_pool_states: Vec::new(),
         ..Default::default()
     };
-    engine
+    let report = engine
         .cycle
-        .clamp_concentrated_liquidity_hop_capacity(path_id, &mut result, &engine.registry);
+        .clamp_concentrated_liquidity_hop_capacity(path_id, result, &engine.registry)
+        .expect("the clamp commits");
+    let result = report.result;
     assert_eq!(
         result.consumed_inputs[0], small,
         "in-capacity input must be left untouched by the clamp"
@@ -1442,11 +1465,11 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     };
     assert_eq!(facts.len(), 1, "one hooked leg on the path");
 
-    // ── TIER ABSENT: the white-box twin stands, the caveat stays ─────────
-    let mut approximate = staged.clone();
+    // ── TIER ABSENT: the candidate is REFUSED — no executable figure ─────
+    let approximate = staged.clone();
     let absent = HookedLegPlan::requote(facts.clone(), anchor, None);
     assert_eq!(absent.stage(0), Some(HookedLegStage::Approximate));
-    {
+    let refused_report = {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
@@ -1457,26 +1480,16 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
             &path.pools,
             U256::from(1u128),
             &absent,
-            &mut approximate,
-        );
-    }
-    let white_box_out = approximate.hop_outputs[0];
+            approximate,
+        )
+    };
     assert!(
-        approximate.caveats.contains(Caveats::HOOKED_POOL),
-        "an approximate hooked leg keeps the caveat"
-    );
-    assert!(
-        approximate.profit.is_zero(),
-        "an approximate hooked leg is not executable"
-    );
-    assert_eq!(
-        approximate.gas_hops,
-        vec![HopGasProfile::V4 { census: None }, HopGasProfile::V2],
-        "a leg with no exact quote keeps its hookless row on the floor"
+        refused_report.is_none(),
+        "an unpriceable hooked leg is refused: no report, nothing to commit"
     );
 
     // ── TIER PRESENT: the exact figure commits, the caveat lifts ─────────
-    let mut exact = staged.clone();
+    let exact = staged.clone();
     let present = HookedLegPlan::requote(facts.clone(), anchor, Some(&tier));
     assert_eq!(
         present.stage(0),
@@ -1488,7 +1501,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     );
     assert_eq!(present.measured_gas(0), Some(QUOTE_GAS));
     assert!(present.lifts_caveat());
-    {
+    let exact = {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
@@ -1499,17 +1512,15 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
             &path.pools,
             U256::from(1u128),
             &present,
-            &mut exact,
-        );
-    }
+            exact,
+        )
+        .expect("the exact re-quote commits")
+        .result
+    };
     assert_eq!(
         exact.hop_outputs[0],
         small + U256::from(7_777u64),
         "the black-box figure replaces the white-box twin"
-    );
-    assert_ne!(
-        exact.hop_outputs[0], white_box_out,
-        "the exact quote corrects the approximation"
     );
     assert!(
         !exact.caveats.contains(Caveats::HOOKED_POOL),
@@ -1530,7 +1541,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
 
     // A chain refusal is an execution fact, not a pricing fallback. The
     // current candidate must die before its inline simulation or delivery.
-    let mut refused_result = staged;
+    let refused_result = staged;
     let refused = HookedLegPlan::requote(
         facts,
         anchor,
@@ -1538,7 +1549,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
             reading: degenbot_pools::HookFeeReading::Refused,
         }),
     );
-    let refused_twins = {
+    let refused_report = {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
@@ -1549,11 +1560,13 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
             &path.pools,
             U256::from(1u128),
             &refused,
-            &mut refused_result,
+            refused_result,
         )
     };
-    assert!(refused_result.profit.is_zero());
-    assert_eq!(refused_twins, 1, "the refusal is already clamp-committed");
+    assert!(
+        refused_report.is_none(),
+        "a chain refusal is a refusal: the candidate dies with no report"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

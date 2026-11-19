@@ -45,13 +45,12 @@ fn merged_ledger_rejects_same_seq_pid_replay() {
     let item = crate::arb_engine::executor::LaneOutcome::Solved(
         crate::arb_engine::executor::SolveOutcome {
             payload: None,
-            worker_clamp_twins: 0,
+            clamp: crate::arb_engine::executor::SolveClamp::Finalized(fresh_result),
             cycle_seq: engine.cycle.detached_cycle.issued_seq(), // the merged cycle's seq
             solve_block: 100,
             metadata: BlockMetadata::default(),
             pid,
             update_stamp: fresh_stamp,
-            result: fresh_result,
             solve_span: tracing::Span::none(),
         },
     );
@@ -111,13 +110,12 @@ fn merged_ledger_prunes_only_past_ledger_age() {
         let item = crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
-                worker_clamp_twins: 0,
+                clamp: crate::arb_engine::executor::SolveClamp::Finalized(result),
                 cycle_seq: seq,
                 solve_block: 100,
                 metadata: BlockMetadata::default(),
                 pid,
                 update_stamp: fresh_stamp,
-                result,
                 solve_span: tracing::Span::none(),
             },
         );

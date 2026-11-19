@@ -124,17 +124,18 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
     let stale_result = engine.cycle.results.get(&stale_pid).unwrap().clone();
     let fresh_stamp = engine.cycle.resolved_update_snapshot[&fresh_pid].clone();
     let fresh_result = engine.cycle.results.get(&fresh_pid).unwrap().clone();
-    let item = |result: SolvePathResult, stamp: Vec<u64>, pid: u64| {
+    let item = |result: crate::arb_engine::solve_cycle::ClampReport, stamp: Vec<u64>, pid: u64| {
         crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
-                worker_clamp_twins: 0,
+                // The straggler carries the store's OWN row: still finalized,
+                // status included.
+                clamp: crate::arb_engine::executor::SolveClamp::Finalized(result),
                 cycle_seq: STRAGGLER_SEQ,
                 solve_block: 100,
                 metadata: BlockMetadata::default(),
                 pid,
                 update_stamp: stamp,
-                result,
                 solve_span: tracing::Span::none(),
             },
         )
@@ -211,17 +212,16 @@ fn detached_duplicate_straggler_trips_the_exactness_fuse() {
         .load(std::sync::atomic::Ordering::Relaxed);
     let fresh_stamp = engine.cycle.resolved_update_snapshot[&pid].clone();
     let fresh_result = engine.cycle.results.get(&pid).unwrap().clone();
-    let item = |result: SolvePathResult| {
+    let item = |result: crate::arb_engine::solve_cycle::ClampReport| {
         crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
-                worker_clamp_twins: 0,
+                clamp: crate::arb_engine::executor::SolveClamp::Finalized(result),
                 cycle_seq: STRAGGLER_SEQ,
                 solve_block: 100,
                 metadata: BlockMetadata::default(),
                 pid,
                 update_stamp: fresh_stamp.clone(),
-                result,
                 solve_span: tracing::Span::none(),
             },
         )
@@ -297,13 +297,12 @@ fn detached_straggler_after_deregister_is_dropped() {
         crate::arb_engine::executor::LaneOutcome::Solved(
             crate::arb_engine::executor::SolveOutcome {
                 payload: None,
-                worker_clamp_twins: 0,
+                clamp: crate::arb_engine::executor::SolveClamp::Finalized(fresh_result),
                 cycle_seq: 1,
                 solve_block: 100,
                 metadata: BlockMetadata::default(),
                 pid,
                 update_stamp: fresh_stamp,
-                result: fresh_result,
                 solve_span: tracing::Span::none(),
             },
         ),
@@ -361,21 +360,22 @@ fn detached_merge_event_parents_under_the_carried_solve_span() {
             tx.send(LaneOutcome::Solved(
                 crate::arb_engine::executor::SolveOutcome {
                     payload: None,
-                    worker_clamp_twins: 0,
+                    clamp: crate::arb_engine::executor::SolveClamp::finalized_for_test(
+                        SolvePathResult {
+                            optimal_input: U256::ZERO,
+                            profit: U256::ZERO,
+                            hop_outputs: Vec::new(),
+                            consumed_inputs: Vec::new(),
+                            state_nonces: Vec::new(),
+                            solver_pool_states: Vec::new(),
+                            ..Default::default()
+                        },
+                    ),
                     cycle_seq: 1,
                     solve_block: 42,
                     metadata: BlockMetadata::default(),
                     pid: 0xDEAD,
                     update_stamp: Vec::new(),
-                    result: SolvePathResult {
-                        optimal_input: U256::ZERO,
-                        profit: U256::ZERO,
-                        hop_outputs: Vec::new(),
-                        consumed_inputs: Vec::new(),
-                        state_nonces: Vec::new(),
-                        solver_pool_states: Vec::new(),
-                        ..Default::default()
-                    },
                     solve_span: tracing::Span::current(),
                 },
             ))

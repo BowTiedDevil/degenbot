@@ -124,13 +124,15 @@ mod resolve;
 mod shed;
 mod solve;
 
-/// The clamp/merge bodies live in `merge.rs` (ADR-076 D1). The clamp body is
-/// production-reachable through this re-export (the SIMPIPE2 worker and
-/// `solve_all`); the two test-only doors are re-exported under `cfg(test)` so a
-/// non-test build carries no unreachable import.
+/// The clamp/merge bodies live in `merge.rs` (ADR-076 D1). The clamp body and
+/// the report it produces are production-reachable through these re-exports
+/// (the SIMPIPE2 worker, the merge finalizer, and `solve_all`); the two
+/// test-only doors are re-exported under `cfg(test)` so a non-test build
+/// carries no unreachable import.
 pub(crate) use merge::clamp_result_with_state;
 #[cfg(test)]
 pub(crate) use merge::{clamp_skip_kind, recompute_clamped_profit};
+pub use merge::{ClampReport, ClampStatus};
 
 /// The solve-cycle block scope: the ONE owner of the block boundary.
 ///
@@ -447,12 +449,15 @@ pub(crate) struct SolveCycle {
     /// read a latch or the carry.
     pub(crate) transients: CycleTransients,
     // --- Solve output -------------------------------------------------
-    /// Last solved results, keyed by path ID for O(1) updates.
+    /// Last solved results, keyed by path ID for O(1) updates. Each row is the
+    /// clamp's report, so the figures and the verification status that
+    /// produced them always travel together (the report derefs to its
+    /// `SolvePathResult` for the field readers).
     ///
     /// Engine-shard T1: sharded into a `DashMap` so Python
     /// `latest_results` reads never park behind the drain-lock held engine
     /// `Mutex`.
-    pub(crate) results: DashMap<u64, SolvePathResult>,
+    pub(crate) results: DashMap<u64, ClampReport>,
     /// SIMPIPE2 T3: the per-path inline payloads resolved in the solve
     /// workers (SIMPIPE2 T2's off-lock seam). Keyed by path id.
     pub(crate) inline_payloads: DashMap<u64, SimulatedPathResult>,
@@ -589,8 +594,9 @@ pub(crate) struct EpochContext<'a> {
     /// Fused hop-projection memo switch (resolved ONCE at construction).
     pub(crate) concentrated_liquidity_projection_memo: bool,
     // --- results/config cluster ------------------------------------------
-    /// Last solved results, keyed by path ID.
-    pub(crate) results: &'a DashMap<u64, SolvePathResult>,
+    /// Last solved results, keyed by path ID — the fused figures + status the
+    /// merge stores.
+    pub(crate) results: &'a DashMap<u64, ClampReport>,
     /// Config (immutable after construction) and the instance solver runtime
     /// stance threaded down from it.
     pub(crate) cfg: &'a Arc<::degenbot_config::BotConfig>,
@@ -882,6 +888,7 @@ impl SolveCycle {
     /// The merge of ONE solved result (ADR-076 D1): the body lives in
     /// `merge.rs`. The sidecar reaches the body through `merge_detached_item`;
     /// this door serves the clamp/merge tests that merge one result directly.
+    /// `None` = the clamp refused the candidate (nothing merged).
     #[cfg(test)]
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn merge_one_result(
@@ -889,20 +896,18 @@ impl SolveCycle {
         solve_block: u64,
         metadata: &BlockMetadata,
         pid: u64,
-        result: SolvePathResult,
-        worker_clamp_twins: u64,
+        clamp: crate::arb_engine::executor::SolveClamp,
         payload: Option<SimulatedPathResult>,
         registry: &PathRegistry,
         delivery: &mut DeliveryPolicy,
-    ) -> u64 {
+    ) -> Option<ClampStatus> {
         let ctx = self.epoch_context(registry, metadata);
         merge::merge_one_result(
             &ctx,
             solve_block,
             metadata,
             pid,
-            result,
-            worker_clamp_twins,
+            clamp,
             payload,
             registry,
             delivery,
@@ -925,17 +930,18 @@ impl SolveCycle {
 
     /// The `&self` clamp door (ADR-076 D1): the body lives in `merge.rs`. The
     /// epoch reaches the same body through the context's core/margin; this
-    /// accessor serves the callers that hold no context.
+    /// accessor serves the callers that hold no context. `None` = the clamp
+    /// refused the candidate (a hooked leg with no honest quote frame).
     pub(crate) fn clamp_concentrated_liquidity_hop_capacity(
         &self,
         path_id: u64,
-        result: &mut SolvePathResult,
+        result: SolvePathResult,
         registry: &PathRegistry,
-    ) -> u64 {
+    ) -> Option<ClampReport> {
         // No block env on this door (the eager registration solve), so no
         // quote frame can be built honestly: hooked legs keep the white-box
         // figure and the path keeps `Caveats::HOOKED_POOL` (ADR-090
-        // fail-soft). Nothing is refused.
+        // fail-soft), which the clamp refuses rather than committing.
         merge::clamp_concentrated_liquidity_hop_capacity(
             &self.core,
             self.clamp_margin,
@@ -1156,7 +1162,7 @@ impl SolveCycle {
             arm,
         }
     }
-    pub(crate) fn solve_all(&self, registry: &PathRegistry) -> HashMap<u64, SolvePathResult> {
+    pub(crate) fn solve_all(&self, registry: &PathRegistry) -> HashMap<u64, ClampReport> {
         // same span-context re-entry as rebuild_and_solve_affected:
         // bin jobs re-enter this cycle span per work item, so per-path child
         // spans parent under the cold-start cycle instead of forking roots.
@@ -1195,7 +1201,7 @@ impl SolveCycle {
         let runtime_cfg = self.runtime_cfg;
         let min_floor = self.min_profit_floor;
         let clamp_margin = self.clamp_margin;
-        let (tx, rx) = std::sync::mpsc::channel::<(u64, SolvePathResult)>();
+        let (tx, rx) = std::sync::mpsc::channel::<(u64, ClampReport)>();
         for (bin_idx, bin) in bins.iter().enumerate() {
             let bin = bin.clone();
             let to_solve_bin = to_solve.clone();
@@ -1220,7 +1226,7 @@ impl SolveCycle {
                 for &i in &bin {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();
-                    if let Some(mut r) = ::degenbot_pools::solve::solve_path_with_min_profit(
+                    let Some(r) = ::degenbot_pools::solve::solve_path_with_min_profit(
                         resolved, min_floor, &gate_deps,
                     )
                     .result
@@ -1233,30 +1239,34 @@ impl SolveCycle {
                                 r.solver_pool_states.join(";")
                             );
                         }
-                    }) {
-                        if let Some(path) = path_pools.get(path_id) {
-                            let core_read =
-                                core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
-                            // ADR-090 fail-soft: the cold-start drive carries
-                            // no block env (no timestamp / base fee), so it
-                            // cannot build an honest quote frame at the block —
-                            // a hook reading `block.timestamp` would be priced
-                            // against a fabricated one. Hooked legs keep the
-                            // white-box figure and the path keeps
-                            // `Caveats::HOOKED_POOL`; the exact-only clamp
-                            // keeps the cold-start result out of execution.
-                            let plan = HookedLegPlan::empty();
-                            let _ = clamp_result_with_state(
-                                &core_read,
-                                *path_id,
-                                &path.pools,
-                                clamp_margin,
-                                &plan,
-                                &mut r,
-                            );
-                        }
-                        let _ = tx.send((*path_id, r));
-                    }
+                    }) else {
+                        continue;
+                    };
+                    let Some(path) = path_pools.get(path_id) else {
+                        continue;
+                    };
+                    let core_read = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
+                    // ADR-090 fail-soft: the cold-start drive carries no block
+                    // env (no timestamp / base fee), so it cannot build an
+                    // honest quote frame at the block — a hook reading
+                    // `block.timestamp` would be priced against a fabricated
+                    // one. Hooked legs keep the white-box figure and the path
+                    // keeps `Caveats::HOOKED_POOL`, which the clamp refuses: the
+                    // cold-start result never reaches execution.
+                    let plan = HookedLegPlan::empty();
+                    let Some(report) = clamp_result_with_state(
+                        &core_read,
+                        *path_id,
+                        &path.pools,
+                        clamp_margin,
+                        &plan,
+                        r,
+                    ) else {
+                        continue;
+                    };
+                    // The report itself rides: the cold-start sweep stores the
+                    // same fused figures + status the hot path does.
+                    let _ = tx.send((*path_id, report));
                 }
             };
             // LW-T8: the ONE Executor token submits on both stances.
@@ -1493,20 +1503,24 @@ impl SolveCycle {
         // Eagerly solve the newly registered path.
         if let Some(resolved) = registration.resolved.as_ref() {
             if resolved.valid {
-                if let Some(mut solve_result) = ::degenbot_pools::solve::solve_path(
+                if let Some(solve_result) = ::degenbot_pools::solve::solve_path(
                     resolved,
                     &::degenbot_pools::GateDeps::offline(),
                 )
                 .result
                 {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                        self.clamp_concentrated_liquidity_hop_capacity(
+                        // A refused candidate (`None` — a hooked leg with no
+                        // honest quote frame at registration) has nothing to
+                        // carry into the next dirty cycle.
+                        if let Some(report) = self.clamp_concentrated_liquidity_hop_capacity(
                             path_id,
-                            &mut solve_result,
+                            solve_result,
                             registry,
-                        );
-                        self.results.insert(path_id, solve_result);
-                        self.transients.pending_new_paths.insert(path_id);
+                        ) {
+                            self.results.insert(path_id, report);
+                            self.transients.pending_new_paths.insert(path_id);
+                        }
                     }
                 }
             }

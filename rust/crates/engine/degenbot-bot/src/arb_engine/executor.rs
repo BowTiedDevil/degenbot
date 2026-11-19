@@ -63,6 +63,7 @@ pub(crate) fn global_sim_executor(
 // asserts the one-outcome-per-path-per-cycle law across BOTH arms.
 // ---------------------------------------------------------------------------
 use crate::arb_engine::inline_sim::SimulatedPathResult;
+use crate::arb_engine::solve_cycle::ClampReport;
 use crate::arb_engine::{BlockMetadata, SolvePathResult};
 use degenbot_workers::dispatcher::{PanicAction, PanicVerdict};
 use std::collections::BTreeSet;
@@ -96,17 +97,55 @@ pub(crate) enum LaneFailure {
         seat: u64,
     },
 }
-/// The unified solved payload: the solved arm's
-/// `(pid, result, worker_clamp_twins, payload)` data PLUS the
-/// issuing-cycle identity (the exactness-ledger key material + the Q1a
-/// oracle) PLUS the per-merge `merge_one_result` arguments the sidecar
-/// reads off the item. The detached arm fills `cycle_seq`/`update_stamp`/
-/// `solve_span` per enqueue; the in-cycle arm fills them with inert values
-/// its drain never reads (`cycle_seq` 0 — its claims use the cycle's own seq).
+/// Which seam FINALIZED one lane outcome's executable amounts, outputs, and
+/// profit: the handoff the merge reads instead of the retired twin counter.
+///
+/// The presence of a report means the clamp already committed the figures
+/// together, so the merge stores them untouched — a second finalization could
+/// only re-apply the margin over committed amounts. Without a report (the
+/// stance-off arm) the raw result rides to the merge, which runs that ONE
+/// finalization itself.
+pub(crate) enum SolveClamp {
+    /// The worker clamp produced the final figures; the report owns them.
+    Finalized(ClampReport),
+    /// No worker clamp ran (the inline stance is off, or this bin has no
+    /// pool-ref snapshot): the merge finalizes this raw result exactly once.
+    Unfinalized(SolvePathResult),
+}
+
+impl SolveClamp {
+    /// The result this handoff carries — finalized, or pending finalization.
+    pub(crate) fn result(&self) -> &SolvePathResult {
+        match self {
+            Self::Finalized(report) => &report.result,
+            Self::Unfinalized(result) => result,
+        }
+    }
+}
+
+#[cfg(test)]
+impl SolveClamp {
+    /// The FINALIZED arm over an already-committed result: how the merge/lane
+    /// fixtures hand a straggler the values the engine already holds.
+    pub(crate) fn finalized_for_test(result: SolvePathResult) -> Self {
+        Self::Finalized(ClampReport::for_test(
+            result,
+            crate::arb_engine::solve_cycle::ClampStatus::Exact,
+        ))
+    }
+}
+
+/// The unified solved payload: the solved arm's `(pid, clamp, payload)` data
+/// PLUS the issuing-cycle identity (the exactness-ledger key material + the Q1a
+/// oracle) PLUS the per-merge `merge_one_result` arguments the sidecar reads off
+/// the item. The detached arm fills `cycle_seq`/`update_stamp`/`solve_span` per
+/// enqueue; the in-cycle arm fills them with inert values its drain never reads
+/// (`cycle_seq` 0 — its claims use the cycle's own seq).
 pub(crate) struct SolveOutcome {
     pub pid: u64,
-    pub result: SolvePathResult,
-    pub worker_clamp_twins: u64,
+    /// The result handoff + which seam finalized it (the single-finalization
+    /// protocol).
+    pub clamp: SolveClamp,
     pub payload: Option<SimulatedPathResult>,
     /// The solve block the result was computed against. The in-cycle drain
     /// asserts it equals its own cycle value (a mismatch is a wrong-arm
@@ -472,8 +511,7 @@ mod tests {
     fn solved(pid: u64) -> SolveOutcome {
         SolveOutcome {
             pid,
-            result: SolvePathResult::default(),
-            worker_clamp_twins: 0,
+            clamp: SolveClamp::finalized_for_test(SolvePathResult::default()),
             payload: None,
             solve_block: 0,
             metadata: crate::arb_engine::BlockMetadata::default(),

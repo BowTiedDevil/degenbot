@@ -383,11 +383,14 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
     // re-attaches it (telemetry::simulate_dispatch_span) so the whole block
     // chain renders as one Jaeger trace.
     crate::telemetry::publish_block_context(results_block);
+    // The store holds a report per path; the delivery diff is about the
+    // figures (the status rode to the store, where an operator/telemetry read
+    // can see it), so the snapshot carries the report's result.
     let results_snapshot: HashMap<u64, SolvePathResult> = engine
         .cycle
         .results
         .iter()
-        .map(|r| (*r.key(), r.value().clone()))
+        .map(|r| (*r.key(), r.value().result.clone()))
         .collect();
     // SIMPIPE2 T3: drain the worker-resolved inline payloads for this publish;
     // the delivery ships the entries for the delivered paths and drops the

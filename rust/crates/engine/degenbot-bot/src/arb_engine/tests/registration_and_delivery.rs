@@ -1,4 +1,5 @@
 use super::*;
+use crate::arb_engine::solve_cycle::{ClampReport, ClampStatus};
 
 #[test]
 fn register_v2_and_v3_pools() {
@@ -1117,15 +1118,18 @@ fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
     let path_id = 7u64;
     engine.cycle.results.insert(
         path_id,
-        SolvePathResult {
-            optimal_input: U256::from(1_000u64),
-            profit: huge_profit,
-            hop_outputs: vec![U256::from(1u64), huge_profit],
-            consumed_inputs: vec![U256::from(1_000u64)],
-            state_nonces: vec![],
-            solver_pool_states: vec![],
-            ..Default::default()
-        },
+        ClampReport::for_test(
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit: huge_profit,
+                hop_outputs: vec![U256::from(1u64), huge_profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
+                solver_pool_states: vec![],
+                ..Default::default()
+            },
+            ClampStatus::Exact,
+        ),
     );
     // Anchor the solve at a real block: candidates are only deliverable
     // once `results_block` is non-zero (solve-anchor delivery guard — a 0
@@ -1159,15 +1163,18 @@ fn profit_threshold_max_bound_is_inclusive() {
     let path_id = 7u64;
     engine.cycle.results.insert(
         path_id,
-        SolvePathResult {
-            optimal_input: U256::from(1_000u64),
-            profit,
-            hop_outputs: vec![U256::from(1u64), profit],
-            consumed_inputs: vec![U256::from(1_000u64)],
-            state_nonces: vec![],
-            solver_pool_states: vec![],
-            ..Default::default()
-        },
+        ClampReport::for_test(
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit,
+                hop_outputs: vec![U256::from(1u64), profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
+                solver_pool_states: vec![],
+                ..Default::default()
+            },
+            ClampStatus::Exact,
+        ),
     );
     // Anchor the solve at a real block (solve-anchor delivery guard — see
     // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
@@ -1193,15 +1200,18 @@ fn profit_threshold_min_bound_is_exclusive() {
     let path_id = 7u64;
     engine.cycle.results.insert(
         path_id,
-        SolvePathResult {
-            optimal_input: U256::from(1_000u64),
-            profit,
-            hop_outputs: vec![U256::from(1u64), profit],
-            consumed_inputs: vec![U256::from(1_000u64)],
-            state_nonces: vec![],
-            solver_pool_states: vec![],
-            ..Default::default()
-        },
+        ClampReport::for_test(
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit,
+                hop_outputs: vec![U256::from(1u64), profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+                state_nonces: vec![],
+                solver_pool_states: vec![],
+                ..Default::default()
+            },
+            ClampStatus::Exact,
+        ),
     );
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
     let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())

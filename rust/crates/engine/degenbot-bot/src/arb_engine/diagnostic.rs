@@ -421,10 +421,10 @@ pub(crate) fn diagnostic_path_state(
             field_drift: Vec::new(),
         });
     }
-    thread_solver_result_onto_snapshot(
-        &mut snapshot,
-        engine.cycle.results.get(&path_id).as_deref(),
-    );
+    // The store holds a clamp report per path; the diagnostic threads the
+    // figures it carries onto the snapshot.
+    let row = engine.cycle.results.get(&path_id);
+    thread_solver_result_onto_snapshot(&mut snapshot, row.as_deref().map(|report| &report.result));
     Some(snapshot)
 }
 /// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED

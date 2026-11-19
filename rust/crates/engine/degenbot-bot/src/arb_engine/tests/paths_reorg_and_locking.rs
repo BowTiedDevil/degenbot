@@ -1051,7 +1051,7 @@ fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
         let eager = results
             .get(&path_id)
             .expect("register_and_solve_path must eagerly solve a profitable path");
-        baseline.insert(path_id, eager.clone());
+        baseline.insert(path_id, eager.result.clone());
     }
     // Full batch re-solve via solve_all_paths — this is the call path
     // whose solve loop gets parallelized. Equivalent eager results must

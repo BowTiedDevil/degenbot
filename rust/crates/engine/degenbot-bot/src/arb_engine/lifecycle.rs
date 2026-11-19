@@ -6,8 +6,9 @@
 //! tests both call these directly, so no delegating inherent engine method
 //! remains outside `arb_engine/mod.rs` (the one-impl-block structural gate).
 
+use super::solve_cycle::ClampReport;
 use super::{ArbitrageEngine, HashMap};
-use ::degenbot_pools::solve::{PoolHop, SolvePathResult};
+use ::degenbot_pools::solve::PoolHop;
 /// the solve tree's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
@@ -168,7 +169,7 @@ pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
 /// engine. `O(n_results)` — typically <50 entries (profitable solves only)
 /// per drain.
 #[must_use]
-pub(crate) fn latest_results(engine: &ArbitrageEngine) -> (HashMap<u64, SolvePathResult>, u64) {
+pub(crate) fn latest_results(engine: &ArbitrageEngine) -> (HashMap<u64, ClampReport>, u64) {
     (
         engine
             .cycle

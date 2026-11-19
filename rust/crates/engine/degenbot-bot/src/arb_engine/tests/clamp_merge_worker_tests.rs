@@ -1,7 +1,8 @@
 #![expect(clippy::expect_used)] // tests assert clamp/merge invariants
+use crate::arb_engine::executor::SolveClamp;
 use crate::arb_engine::lane_walk::clamp_result_in_worker;
 use crate::arb_engine::lifecycle::register_path;
-use crate::arb_engine::solve_cycle::SolveCycleShared;
+use crate::arb_engine::solve_cycle::{ClampReport, ClampStatus, SolveCycleShared};
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
 use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
 use alloy::primitives::{Address, U256};
@@ -137,45 +138,189 @@ fn worker_probe_ctx(
         None,
     ))
 }
-/// The engine clamp and the WORKER clamp are the same computation from
-/// two call sites: byte-identical result + twin count on identical input.
+/// The over-fed two-hop fixture every clamp/merge test shares: a V2 hop
+/// feeding a narrow V4 hop whose committed input is far past its capacity.
+fn overfed_result() -> SolvePathResult {
+    let committed = U256::from(1u128) << 120;
+    SolvePathResult {
+        optimal_input: U256::from(1_000_000_000u64),
+        profit: U256::from(1_000u64),
+        hop_outputs: vec![committed, committed],
+        consumed_inputs: vec![committed, committed],
+        state_nonces: vec![],
+        solver_pool_states: Vec::new(),
+        ..Default::default()
+    }
+}
+
+/// The worker handoff, unwrapped: the stance is on in every probe here, so a
+/// non-finalized or refused handoff is a fixture error.
+fn expect_finalized(handoff: Option<crate::arb_engine::executor::SolveClamp>) -> ClampReport {
+    match handoff {
+        Some(crate::arb_engine::executor::SolveClamp::Finalized(report)) => report,
+        Some(crate::arb_engine::executor::SolveClamp::Unfinalized(_)) | None => {
+            unreachable!("the worker clamp finalizes when the stance is on")
+        }
+    }
+}
+
+/// The merge clamp and the WORKER clamp are the same computation from two call
+/// sites: byte-identical figures AND the same status on identical input.
 #[test]
 fn worker_clamp_matches_engine_clamp_bit_for_bit() {
-    use ::degenbot_pools::solve::MixedPoolRef;
     let (engine, path_id, pool_refs) = overfed_v4_engine();
-    let mk = || {
-        let committed = U256::from(1u128) << 120;
-        SolvePathResult {
-            optimal_input: U256::from(1_000_000_000u64),
-            profit: U256::from(1_000u64),
-            hop_outputs: vec![committed, committed],
-            consumed_inputs: vec![committed, committed],
-            state_nonces: vec![],
-            solver_pool_states: Vec::new(),
-            ..Default::default()
-        }
-    };
-    let (mut r_engine, mut r_worker) = (mk(), mk());
-    let twins_engine = engine.cycle.clamp_concentrated_liquidity_hop_capacity(
-        path_id,
-        &mut r_engine,
-        &engine.registry,
+    let engine_report = engine
+        .cycle
+        .clamp_concentrated_liquidity_hop_capacity(path_id, overfed_result(), &engine.registry)
+        .expect("the merge door commits");
+    assert_eq!(
+        engine_report.status,
+        ClampStatus::Adjusted,
+        "premise: the over-fed input must clamp"
     );
-    assert!(twins_engine > 0, "premise: the over-fed input must clamp");
     assert!(
-        r_engine.consumed_inputs[1] < U256::from(1u128) << 120,
+        engine_report.result.consumed_inputs[1] < U256::from(1u128) << 120,
         "premise: the V4 hop input clamp fired"
     );
     let ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
-    let twins_worker = clamp_result_in_worker(&ctx, 0, path_id, &mut r_worker);
-    assert_eq!(twins_worker, twins_engine, "twin count must match");
-    assert_eq!(r_engine, r_worker, "clamped result must be byte-identical");
-    // The pool-ref SNAPSHOT path (worker side) is exercised; the MixedPoolRef _ unused is intentional.
-    let _: Vec<Vec<MixedPoolRef>> = Vec::new();
+    let worker_report =
+        expect_finalized(clamp_result_in_worker(&ctx, 0, path_id, overfed_result()));
+    assert_eq!(
+        worker_report.status, engine_report.status,
+        "status must match"
+    );
+    assert_eq!(
+        worker_report.result, engine_report.result,
+        "clamped result must be byte-identical"
+    );
 }
-// The merge honors the worker's twin report: twins > 0 = the result is
-// already clamp-committed (no second clip); twins = 0 = the merge clips
-// the over-fed input itself (the legacy path — bit-identical).
+
+/// The clamp's status lattice over ONE V2→V2 fixture: a result whose figures
+/// already equal the twins' byte-exact values is `Exact`, one moved executable
+/// amount makes it `Adjusted`, and a hop with no byte-exact twin downgrades the
+/// WHOLE path to `Unverified` even when another hop changed.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one V2→V2 fixture drives all three statuses — splitting it would re-register the pools three times"
+)]
+fn clamp_status_is_exact_adjusted_or_unverified() {
+    use crate::arb_engine::hooked_leg_requote::HookedLegPlan;
+    use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use ::degenbot_pools::solve::{HopType, MixedPoolRef};
+    use degenbot_substrate::state_lock::LockSite;
+
+    // Pool A prices token0 richly in token1; pool B is its inverse — the
+    // round trip is grossly profitable, so the solve never filters on profit.
+    let mut engine = ArbitrageEngine::new();
+    let v2_a = engine.register_v2_pool(
+        Address::from([0x51u8; 20]),
+        U256::from(1_000_000_000_000u64).to(),
+        U256::from(2_000_000_000_000u64).to(),
+        997,
+        1000,
+    );
+    let v2_b = engine.register_v2_pool(
+        Address::from([0x52u8; 20]),
+        U256::from(2_000_000_000_000u64).to(),
+        U256::from(1_000_000_000_000u64).to(),
+        997,
+        1000,
+    );
+    let path_id = register_path(
+        &mut engine,
+        vec![
+            ::degenbot_pools::solve::PoolHop {
+                pool_id: v2_a,
+                zero_for_one: true,
+            },
+            ::degenbot_pools::solve::PoolHop {
+                pool_id: v2_b,
+                zero_for_one: false,
+            },
+        ],
+    )
+    .expect("V2→V2 path registers");
+
+    // ── Exact: the solver's own figures already ARE the twins' figures ────
+    let mut solved_all = engine.cycle.solve_all(&engine.registry);
+    let solved = solved_all.remove(&path_id).expect("the V2 arb solves");
+    assert_eq!(
+        solved.status,
+        ClampStatus::Exact,
+        "the cold-start sweep stores the same fused report the hot path does"
+    );
+    let exact = engine
+        .cycle
+        .clamp_concentrated_liquidity_hop_capacity(path_id, solved.result, &engine.registry)
+        .expect("the clamp commits");
+    assert_eq!(
+        exact.status,
+        ClampStatus::Exact,
+        "a V2/V2 path whose figures match both twins is exactly verified"
+    );
+    assert_eq!(
+        exact.result.profit,
+        exact
+            .result
+            .hop_outputs
+            .last()
+            .copied()
+            .expect("hop outputs")
+            .saturating_sub(exact.result.consumed_inputs[0]),
+        "the selection profit IS the final output minus the first consumed input"
+    );
+
+    // ── Adjusted: one over-reported hop output is realigned ──────────────
+    let mut drifted = exact.result.clone();
+    *drifted.hop_outputs.last_mut().expect("hop outputs") += U256::ONE;
+    let adjusted = engine
+        .cycle
+        .clamp_concentrated_liquidity_hop_capacity(path_id, drifted, &engine.registry)
+        .expect("the clamp commits");
+    assert_eq!(
+        adjusted.status,
+        ClampStatus::Adjusted,
+        "a realigned hop output is an adjustment"
+    );
+    assert_eq!(
+        adjusted.result, exact.result,
+        "the realignment lands on the twin's own figures"
+    );
+
+    // ── Unverified: no byte-exact twin for the hop's family ──────────────
+    let unsupported = SolvePathResult {
+        optimal_input: U256::from(1_000u64),
+        profit: U256::from(5u64),
+        hop_outputs: vec![U256::from(1_010u64)],
+        consumed_inputs: vec![U256::from(1_000u64)],
+        ..Default::default()
+    };
+    let core = engine.core().read_at(LockSite::Solver);
+    let unverified = clamp_result_with_state(
+        &core,
+        0,
+        &[MixedPoolRef {
+            hop_type: HopType::SolidlyStable,
+            pool_key: 9_999,
+            zero_for_one: true,
+        }],
+        U256::from(1u128),
+        &HookedLegPlan::empty(),
+        unsupported,
+    )
+    .expect("an unsupported family still yields a report");
+    assert_eq!(
+        unverified.status,
+        ClampStatus::Unverified,
+        "Solidly has no byte-exact twin at this seam — and Unverified dominates the profit recompute's adjustment"
+    );
+    assert_eq!(
+        unverified.result.hop_outputs,
+        vec![U256::from(1_010u64)],
+        "an unsupported hop's reported figures stand"
+    );
+}
 /// SIMPIPE2 T3: a payload riding `merge_one_result` is stored at the
 /// engine (`inline_payloads`) and a re-merge WITHOUT the payload drops the
 /// stale entry — per-entry presence decides Python-side. (The delivery
@@ -217,12 +362,11 @@ fn merge_stores_payload_and_drops_it_without_one() {
         hop_count: 1,
         failure: None,
     };
-    engine.cycle.merge_one_result(
+    let _ = engine.cycle.merge_one_result(
         42,
         &metadata,
         path_id,
-        mk(),
-        0,
+        SolveClamp::finalized_for_test(mk()),
         Some(payload),
         &engine.registry,
         &mut engine.delivery,
@@ -233,12 +377,11 @@ fn merge_stores_payload_and_drops_it_without_one() {
     );
     // The path re-solves WITHOUT a payload (stance off or hook silence):
     // the stale entry must drop — presence decides per entry.
-    engine.cycle.merge_one_result(
+    let _ = engine.cycle.merge_one_result(
         43,
         &metadata,
         path_id,
-        mk(),
-        0,
+        SolveClamp::finalized_for_test(mk()),
         None,
         &engine.registry,
         &mut engine.delivery,
@@ -248,65 +391,203 @@ fn merge_stores_payload_and_drops_it_without_one() {
         "a payload-less re-merge must drop the stale payload"
     );
 }
+/// The single-finalization protocol at the merge: a FINALIZED handoff stores
+/// the report's committed figures verbatim (no second margin application), and
+/// an UNFINALIZED handoff runs the merge's one finalizer — landing on the same
+/// figures, byte for byte.
 #[test]
-fn merge_reports_worker_twins_and_never_reclips() {
+fn merge_stores_a_finalized_report_verbatim_and_finalizes_an_unfinalized_one_once() {
     let (mut engine, path_id, pool_refs) = overfed_v4_engine();
     let metadata = BlockMetadata::default();
-    let overfed = || {
-        let committed = U256::from(1u128) << 120;
-        SolvePathResult {
-            optimal_input: U256::from(1_000_000_000u64),
-            profit: U256::from(1_000u64),
-            hop_outputs: vec![committed, committed],
-            consumed_inputs: vec![committed, committed],
-            state_nonces: vec![],
-            solver_pool_states: Vec::new(),
-            ..Default::default()
-        }
-    };
-    // Worker arm: clamp once (the worker report = committed truth), then
-    // merge with twins > 0 — the stored result stays byte-identical.
-    let mut worker_result = overfed();
+
+    // Worker arm: the clamp commits once; the merge stores the report as-is.
     let ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
-    let twins = clamp_result_in_worker(&ctx, 0, path_id, &mut worker_result);
-    assert!(twins > 0, "premise: worker clamp fired");
-    let committed = worker_result.clone();
-    engine.cycle.merge_one_result(
+    let report = expect_finalized(clamp_result_in_worker(&ctx, 0, path_id, overfed_result()));
+    assert_eq!(
+        report.status,
+        ClampStatus::Adjusted,
+        "premise: the clamp fired"
+    );
+    let committed = report.result.clone();
+    let status = engine.cycle.merge_one_result(
         42,
         &metadata,
         path_id,
-        worker_result,
-        twins,
+        SolveClamp::Finalized(report),
         None,
         &engine.registry,
         &mut engine.delivery,
     );
+    assert_eq!(status, Some(ClampStatus::Adjusted));
     {
         let stored = engine.cycle.results.get(&path_id).expect("worker-merged");
         assert_eq!(
             stored.consumed_inputs, committed.consumed_inputs,
-            "twins>0 must not re-clip the committed inputs"
+            "a finalized handoff must not re-clip the committed inputs"
         );
-        assert_eq!(stored.profit, committed.profit, "profit untouched on skip");
+        assert_eq!(
+            stored.profit, committed.profit,
+            "a finalized handoff must not recompute the profit"
+        );
+        assert_eq!(
+            stored.result, committed,
+            "the report's figures are stored verbatim"
+        );
+        assert_eq!(
+            stored.status,
+            ClampStatus::Adjusted,
+            "the stored row keeps the status that produced its figures"
+        );
     }
-    // Legacy arm (twins=0): the merge clips the over-fed V4 hop input
-    // itself (index 1 — the V2 hop has no input clamp by design).
-    let legacy = overfed();
-    let pre = legacy.consumed_inputs[1];
-    engine.cycle.merge_one_result(
+
+    // No worker clamp (stance off): the MERGE runs that one finalization.
+    let pre = overfed_result().consumed_inputs[1];
+    let status = engine.cycle.merge_one_result(
         42,
         &metadata,
         path_id,
-        legacy,
-        0,
+        SolveClamp::Unfinalized(overfed_result()),
         None,
         &engine.registry,
         &mut engine.delivery,
     );
-    let stored = engine.cycle.results.get(&path_id).expect("legacy-merged");
-    assert_ne!(
-        stored.consumed_inputs[1], pre,
-        "twins=0 must run the merge-site clamp"
+    assert_eq!(
+        status,
+        Some(ClampStatus::Adjusted),
+        "the merge finalizer clamps the over-fed hop itself"
+    );
+    let stored = engine.cycle.results.get(&path_id).expect("merge-finalized");
+    assert!(
+        stored.consumed_inputs[1] < pre,
+        "the merge clamp must fire when the worker reported none"
+    );
+    assert_eq!(
+        stored.result, committed,
+        "both finalization sites agree byte for byte"
+    );
+}
+
+/// The store keeps the clamp's status: an `Unverified` report merged for a path
+/// is `Unverified` in `results` AND in the `latest_results` accessor — the row
+/// is the report, never a status-stripped result.
+#[test]
+fn an_unverified_clamp_status_survives_the_store() {
+    use crate::arb_engine::hooked_leg_requote::HookedLegPlan;
+    use crate::arb_engine::lifecycle::latest_results;
+    use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use ::degenbot_pools::solve::{HopType, MixedPoolRef};
+    use degenbot_substrate::state_lock::LockSite;
+
+    let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
+    let metadata = BlockMetadata::default();
+    let unsupported = SolvePathResult {
+        optimal_input: U256::from(1_000u64),
+        profit: U256::from(5u64),
+        hop_outputs: vec![U256::from(1_010u64)],
+        consumed_inputs: vec![U256::from(1_000u64)],
+        ..Default::default()
+    };
+    let report = {
+        let core = engine.core().read_at(LockSite::Solver);
+        clamp_result_with_state(
+            &core,
+            path_id,
+            &[MixedPoolRef {
+                hop_type: HopType::SolidlyStable,
+                pool_key: 9_999,
+                zero_for_one: true,
+            }],
+            U256::from(1u128),
+            &HookedLegPlan::empty(),
+            unsupported,
+        )
+        .expect("an unsupported family still yields a report")
+    };
+    assert_eq!(report.status, ClampStatus::Unverified);
+    let merged = engine.cycle.merge_one_result(
+        42,
+        &metadata,
+        path_id,
+        SolveClamp::Finalized(report),
+        None,
+        &engine.registry,
+        &mut engine.delivery,
+    );
+    assert_eq!(merged, Some(ClampStatus::Unverified));
+    assert_eq!(
+        engine
+            .cycle
+            .results
+            .get(&path_id)
+            .expect("merged row")
+            .status,
+        ClampStatus::Unverified,
+        "the stored row keeps the status that produced its figures"
+    );
+    let (rows, _block) = latest_results(&engine);
+    let row = rows.get(&path_id).expect("accessor row");
+    assert_eq!(
+        row.status,
+        ClampStatus::Unverified,
+        "the accessor hands the status out with the figures"
+    );
+    assert_eq!(
+        row.profit,
+        U256::from(10u64),
+        "the figures still read off the report (profit recomputed from its outputs)"
+    );
+}
+
+/// A refused candidate merges NOTHING: the merge drops whatever figure the
+/// epoch still held for the path (and its stale sim payload), so the delivery
+/// window expires the path instead of re-publishing a superseded figure.
+#[test]
+fn a_refused_candidate_merges_nothing() {
+    let (mut engine, path_id, _pool_refs) = overfed_v4_engine();
+    let metadata = BlockMetadata::default();
+    let mut stale = overfed_result();
+    stale.profit = U256::from(7u64);
+    engine
+        .cycle
+        .results
+        .insert(path_id, ClampReport::for_test(stale, ClampStatus::Exact));
+
+    // A caveated (hooked) result the plan cannot price exactly is the clamp's
+    // ONLY refusal.
+    let mut caveated = overfed_result();
+    caveated.caveats = degenbot_pools::Caveats::HOOKED_POOL;
+    let status = engine.cycle.merge_one_result(
+        42,
+        &metadata,
+        path_id,
+        SolveClamp::Unfinalized(caveated),
+        None,
+        &engine.registry,
+        &mut engine.delivery,
+    );
+    assert_eq!(status, None, "the clamp refused the candidate");
+    assert!(
+        !engine.cycle.results.contains_key(&path_id),
+        "a refused candidate leaves no result to deliver"
+    );
+    assert!(
+        !engine.cycle.inline_payloads.contains_key(&path_id),
+        "a refused candidate leaves no sim payload behind"
+    );
+}
+
+/// The refusal at the WORKER seam: `clamp_result_in_worker` reports the refusal
+/// as `None`, so the walk records one Suppressed outcome and the merge never
+/// sees the candidate.
+#[test]
+fn the_worker_clamp_reports_a_refusal_as_absence() {
+    let (engine, path_id, pool_refs) = overfed_v4_engine();
+    let ctx = worker_probe_ctx(Arc::clone(engine.core()), pool_refs);
+    let mut caveated = overfed_result();
+    caveated.caveats = degenbot_pools::Caveats::HOOKED_POOL;
+    assert!(
+        clamp_result_in_worker(&ctx, 0, path_id, caveated).is_none(),
+        "an unpriceable hooked leg is refused at the worker seam too"
     );
 }
 // ----------------- bundle.simulate span hygiene -----------------
@@ -376,12 +657,11 @@ fn merge_payload_store_emits_no_bundle_simulate_span() {
         // Enclosing merge span, as in both production arms.
         let merge = tracing::info_span!("degenbot.arb.merge", merge.paths = 1u64);
         let _ctx = merge.enter();
-        engine.cycle.merge_one_result(
+        let _ = engine.cycle.merge_one_result(
             42,
             &metadata,
             path_id,
-            mk(),
-            0,
+            SolveClamp::finalized_for_test(mk()),
             Some(payload),
             &engine.registry,
             &mut engine.delivery,

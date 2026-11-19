@@ -13,7 +13,7 @@ use super::deliver;
 use super::{describe_path_cached_with, EpochContext};
 use crate::arb_engine::delivery_policy::DeliveryPolicy;
 use crate::arb_engine::detached_cycle::{self, LaneDrainCounts};
-use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
+use crate::arb_engine::executor::{LaneOutcome, SolveClamp, SolveOutcome};
 use crate::arb_engine::hooked_leg_requote::{
     commit_plan_hook_fees, hooked_leg_facts, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
 };
@@ -77,20 +77,91 @@ pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
 /// `margin > worst`, guarding the choice against regression. 1 wei is the
 /// smallest positive integer > 0, giving zero extraction loss (path-5000
 /// fixture: clamped output == solver output byte-identical).
-#[expect(clippy::too_many_lines)] // multi-hop concentrated liquidity twin loop + post-clamp profit recompute
+/// The clamp's verification status for one path's final figures.
+///
+/// The variants are ORDERED — `Exact < Adjusted < Unverified` — so the clamp
+/// escalates through [`Ord::max`] and one unsupported or unverifiable hop
+/// downgrades the whole path no matter what the other hops did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ClampStatus {
+    /// Every hop is a twin-verified family, and every executable amount as
+    /// well as the recomputed profit equal the solver's own figures.
+    Exact,
+    /// At least one executable amount (a consumed input, a hop output, or the
+    /// forward into the next hop) or the selection profit changed to the
+    /// byte-exact figure.
+    Adjusted,
+    /// At least one hop has no byte-exact twin at this seam (Curve, Balancer,
+    /// Solidly) or its twin could not be run (missing pool state, an input the
+    /// twin cannot price): the solver's figures stand, unverified.
+    Unverified,
+}
+
+/// The clamp's ONE product: the final consumed inputs, hop outputs, and
+/// recomputed profit, together with how far they were verified.
+///
+/// Nothing downstream corrects these values: a second correction pass would
+/// re-apply the margin over already-committed amounts — exactly the
+/// double-clamp and raw-profit divergence this report makes unrepresentable.
+///
+/// The report is what the engine HOLDS per path, so how far its figures were
+/// verified cannot be dropped by a store that only kept the amounts.
+#[derive(Debug, Clone)]
+pub struct ClampReport {
+    /// The final figures this report owns — the same values every consumer
+    /// reads through [`Deref`](std::ops::Deref).
+    pub result: SolvePathResult,
+    /// How far those figures were verified against the byte-exact twins.
+    pub status: ClampStatus,
+}
+
+/// A report reads AS the result it carries: every consumer of the stored
+/// figures (delivery, the accessors, the tests) keeps addressing
+/// `optimal_input` / `profit` / `consumed_inputs` / `hop_outputs` directly.
+impl std::ops::Deref for ClampReport {
+    type Target = SolvePathResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.result
+    }
+}
+
+impl std::ops::DerefMut for ClampReport {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.result
+    }
+}
+
+#[cfg(test)]
+impl ClampReport {
+    /// A hand-built report for the merge/lane fixtures; production reports
+    /// only ever come out of [`clamp_result_with_state`].
+    pub(crate) fn for_test(result: SolvePathResult, status: ClampStatus) -> Self {
+        Self { result, status }
+    }
+}
+
 pub(crate) fn clamp_result_with_state(
     core: &BotState,
     path_id: u64,
     pools: &[MixedPoolRef],
     margin: U256,
     plan: &HookedLegPlan,
-    result: &mut SolvePathResult,
-) -> u64 {
+    mut result: SolvePathResult,
+) -> Option<ClampReport> {
+    // A hooked leg the plan could not price exactly is a REFUSAL, not a
+    // clamp: there is no executable figure to commit, so there is no report
+    // to carry a corrected one either. The caller drops the candidate (the
+    // delivery window then expires the path) instead of merging a fiction.
+    // This is the ONLY `None` this body returns.
     if result.caveats.contains(Caveats::HOOKED_POOL) && !plan.lifts_caveat() {
-        result.profit = U256::ZERO;
-        // The result changed, so merge must not clamp it again with an
-        // approximate plan and recompute the dropped profit.
-        return 1;
+        op_info!(
+            domain = solver,
+            path_id,
+            hooked_legs = plan.hooked_legs(),
+            "hooked leg unpriced at the anchor — candidate refused"
+        );
+        return None;
     }
     // ADR-090 H3 → the admission floor: a hooked leg the finalist re-quote
     // priced exact at the anchor commits its MEASURED frame gas onto this
@@ -99,14 +170,16 @@ pub(crate) fn clamp_result_with_state(
     // delivery window price this same result). A refused re-quote writes
     // nothing and the hookless row stands. No hop projections, nothing to
     // write: an unpriceable result stays unpriced.
-    crate::arb_engine::admission_floor::commit_measured_leg_gas(result, plan);
+    crate::arb_engine::admission_floor::commit_measured_leg_gas(&mut result, plan);
 
     if pools.len() != result.consumed_inputs.len() {
-        return 0; // Index misalignment — never clamp a wrong hop
+        // Index misalignment — never clamp a wrong hop, and verify nothing.
+        return Some(ClampReport {
+            result,
+            status: ClampStatus::Unverified,
+        });
     }
-    // successful twin simulations executed this call (returned to
-    // the caller for the solve-cycle completion event).
-    let mut twins_executed: u64 = 0;
+    let mut status = ClampStatus::Exact;
     for (i, pool_ref) in pools.iter().enumerate() {
         let requested = result.consumed_inputs[i];
         // Run the tier-3-validated twin once per clamped family so we can
@@ -124,129 +197,15 @@ pub(crate) fn clamp_result_with_state(
         // otherwise keep the pre-clamp input's output — the
         // path-182449/110302 1-wei over-prediction that failed on-chain
         // with `UniswapV2: K`.
-        let (out, input_clamp): (U256, Option<U256>) = match pool_ref.hop_type {
-            HopType::V3 => {
-                let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::V3PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_ref.pool_key),
-                ) else {
-                    continue; // Pool state unavailable → can't clamp
-                };
-                let Ok(amount) = I256::try_from(requested) else {
-                    continue; // Input too large for i256 → skip
-                };
-                let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
-                let Some(twin) = v3_simulate_swap(
-                    state,
-                    identity.fee,
-                    identity.tick_spacing,
-                    pool_ref.zero_for_one,
-                    amount,
-                    limit,
-                )
-                .ok() else {
-                    continue;
-                };
-                let out = if pool_ref.zero_for_one {
-                    twin.amount1
-                } else {
-                    twin.amount0
-                };
-                twins_executed += 1;
-                (out, twin.exact_input_clamp_bound(requested, margin))
-            }
-            HopType::V4 => {
-                let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::V4PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key),
-                ) else {
-                    continue;
-                };
-                // ADR-090: a hooked leg re-quoted black-box at the anchor
-                // commits the chain's own answer. There is no white-box twin
-                // to run (the hook's deltas own the flow) and no empty-march
-                // input bound to derive from it — the exact output is the
-                // authority, and a candidate whose exact figure no longer
-                // clears the bar falls through the profit recompute below
-                // like any other. A hooked leg with NO exact quote was
-                // rejected above; this arm is reachable only for hookless
-                // paths and legacy result fixtures.
-                if let Some(exact) = plan.exact_out(i) {
-                    twins_executed += 1;
-                    (exact, None)
-                } else {
-                    let Some(twin) = white_box_v4_twin(
-                        state,
-                        identity.pool_key.fee,
-                        identity.pool_key.tick_spacing,
-                        pool_ref.zero_for_one,
-                        requested,
-                    ) else {
-                        continue;
-                    };
-                    let out = if pool_ref.zero_for_one {
-                        twin.amount1
-                    } else {
-                        twin.amount0
-                    };
-                    twins_executed += 1;
-                    (out, twin.exact_input_clamp_bound(requested, margin))
-                }
-            }
-            HopType::V2 => {
-                // V2 has no empty-march class (no input clamp), but its
-                // byte-exact twin output must still be the authoritative
-                // report once (b) has forward-clamped its input upstream.
-                // Orientation mirrors `simulate_swap`'s V2 arm.
-                let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::V2PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key),
-                ) else {
-                    continue; // Pool state unavailable → can't clamp
-                };
-                let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
-                    (
-                        state.reserve0.to::<U256>(),
-                        state.reserve1.to::<U256>(),
-                        identity.fee_token0.gamma_numer(),
-                        identity.fee_token0.denominator(),
-                    )
-                } else {
-                    (
-                        state.reserve1.to::<U256>(),
-                        state.reserve0.to::<U256>(),
-                        identity.fee_token1.gamma_numer(),
-                        identity.fee_token1.denominator(),
-                    )
-                };
-                let Some(out) = degenbot_math::v2::IntHopState::new(
-                    reserve_in,
-                    reserve_out,
-                    gamma_numer,
-                    fee_denom,
-                )
-                .swap(requested)
-                .ok() else {
-                    continue; // overflow reverts on-chain → nothing to align
-                };
-                twins_executed += 1;
-                (out, None)
-            }
-            // Curve / Balancer / Solidly — no byte-exact twin at this
-            // seam; their reported outputs stand (see module note). Counted
-            // per family so a first live occurrence is visible without
-            // per-hop logging.
-            HopType::SolidlyStable
-            | HopType::BalancerWeighted
-            | HopType::BalancerStable
-            | HopType::CurveStableswap => {
-                if let Some(kind) = clamp_skip_kind(pool_ref.hop_type) {
-                    crate::instruments::record(crate::instruments::CensusEvent::EngineError {
-                        kind,
-                    });
-                }
-                continue;
-            }
+        let Some(HopTwin { out, input_clamp }) =
+            hop_twin(core, pool_ref, plan, i, requested, margin)
+        else {
+            // No byte-exact twin at this seam for this hop (an unsupported
+            // family — counted inside `hop_twin` — missing pool state, or an
+            // input the twin cannot price): the reported figures stand and
+            // the path is not exactly verified.
+            status = status.max(ClampStatus::Unverified);
+            continue;
         };
         // (a) Input clamp: cap this concentrated liquidity hop's committed input at
         // `input_consumed - margin` when over-fed (the empty-march class).
@@ -261,6 +220,7 @@ pub(crate) fn clamp_result_with_state(
                     requested - clamped
                 );
                 result.consumed_inputs[i] = clamped;
+                status = status.max(ClampStatus::Adjusted);
             }
         }
         // (c) Align the solver's REPORTED output (`hop_outputs[i]`) to the
@@ -283,6 +243,7 @@ pub(crate) fn clamp_result_with_state(
                     }
                 );
                 *hop_out = out;
+                status = status.max(ClampStatus::Adjusted);
             }
         }
         // (b) Forward clamp: the next hop's executable input
@@ -302,6 +263,7 @@ pub(crate) fn clamp_result_with_state(
                     forward - out
                 );
                 result.consumed_inputs[i + 1] = out;
+                status = status.max(ClampStatus::Adjusted);
             }
         }
     }
@@ -312,7 +274,7 @@ pub(crate) fn clamp_result_with_state(
     // dispatched → executed to a loss → `no-profit` abort. Recompute the
     // selection profit from the clamped values (see `recompute_clamped_profit`);
     // a post-clamp loss saturates to 0 and is dropped.
-    if let Some(recomputed) = recompute_clamped_profit(result) {
+    if let Some(recomputed) = recompute_clamped_profit(&result) {
         let profit_before = result.profit;
         if recomputed != profit_before {
             op_info!(domain = solver, path_id,
@@ -322,6 +284,7 @@ pub(crate) fn clamp_result_with_state(
                 "recomputed selection profit from twin-aligned outputs"
             );
             result.profit = recomputed;
+            status = status.max(ClampStatus::Adjusted);
         }
     }
     // ADR-090 §4: the caveat lifts off a quote whose every hooked leg was
@@ -338,7 +301,7 @@ pub(crate) fn clamp_result_with_state(
             "path caveat lifted: every hooked leg re-quoted exact at the anchor"
         );
     }
-    twins_executed
+    Some(ClampReport { result, status })
 }
 
 /// The byte-exact V4 white-box twin for one hop's committed input — the
@@ -358,6 +321,153 @@ fn white_box_v4_twin(
     v4_simulate_swap(state, fee, tick_spacing, zero_for_one, neg, limit).ok()
 }
 
+/// One clamped hop's byte-exact figure: the output the composer's next hop may
+/// consume, and — for the concentrated-liquidity families — the input bound the
+/// empty-word march implies.
+struct HopTwin {
+    out: U256,
+    input_clamp: Option<U256>,
+}
+
+/// The byte-exact twin for ONE hop of the clamp seam, or `None` when the hop has
+/// no twin at this seam (Curve / Balancer / Solidly — counted per family so a
+/// first live occurrence is visible without per-hop logging) or the twin cannot
+/// price it (missing pool state, an input past the twin's range). A `None` is
+/// what makes the path's clamp status `Unverified`: the reported figures stand,
+/// and nothing downstream pretends they were verified.
+fn hop_twin(
+    core: &BotState,
+    pool_ref: &MixedPoolRef,
+    plan: &HookedLegPlan,
+    i: usize,
+    requested: U256,
+    margin: U256,
+) -> Option<HopTwin> {
+    match pool_ref.hop_type {
+        HopType::V3 => v3_hop_twin(core, pool_ref, requested, margin),
+        HopType::V4 => v4_hop_twin(core, pool_ref, plan, i, requested, margin),
+        HopType::V2 => v2_hop_twin(core, pool_ref, requested),
+        HopType::SolidlyStable
+        | HopType::BalancerWeighted
+        | HopType::BalancerStable
+        | HopType::CurveStableswap => {
+            if let Some(kind) = clamp_skip_kind(pool_ref.hop_type) {
+                crate::instruments::record(crate::instruments::CensusEvent::EngineError { kind });
+            }
+            None
+        }
+    }
+}
+
+/// The V3 hop's twin: the swap walk at the committed input, plus the input
+/// clamp bound the empty-word march implies (`input_consumed - margin` when the
+/// pool could not convert the whole input).
+fn v3_hop_twin(
+    core: &BotState,
+    pool_ref: &MixedPoolRef,
+    requested: U256,
+    margin: U256,
+) -> Option<HopTwin> {
+    let (state, identity) = (
+        core.pool_slice::<degenbot_pools::V3PoolState>(pool_ref.pool_key)?,
+        core.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_ref.pool_key)?,
+    );
+    let amount = I256::try_from(requested).ok()?;
+    let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
+    let twin = v3_simulate_swap(
+        state,
+        identity.fee,
+        identity.tick_spacing,
+        pool_ref.zero_for_one,
+        amount,
+        limit,
+    )
+    .ok()?;
+    Some(HopTwin {
+        out: if pool_ref.zero_for_one {
+            twin.amount1
+        } else {
+            twin.amount0
+        },
+        input_clamp: twin.exact_input_clamp_bound(requested, margin),
+    })
+}
+
+/// The V4 hop's twin. ADR-090: a hooked leg re-quoted black-box at the anchor
+/// commits the chain's own answer. There is no white-box twin to run (the hook's
+/// deltas own the flow) and no empty-march input bound to derive from it — the
+/// exact output is the authority, and a candidate whose exact figure no longer
+/// clears the bar falls through the profit recompute like any other. A hooked
+/// leg with NO exact quote is refused before this seam; the white-box arm is
+/// reachable only for hookless paths and legacy result fixtures.
+fn v4_hop_twin(
+    core: &BotState,
+    pool_ref: &MixedPoolRef,
+    plan: &HookedLegPlan,
+    i: usize,
+    requested: U256,
+    margin: U256,
+) -> Option<HopTwin> {
+    let (state, identity) = (
+        core.pool_slice::<degenbot_pools::V4PoolState>(pool_ref.pool_key)?,
+        core.pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key)?,
+    );
+    if let Some(exact) = plan.exact_out(i) {
+        return Some(HopTwin {
+            out: exact,
+            input_clamp: None,
+        });
+    }
+    let twin = white_box_v4_twin(
+        state,
+        identity.pool_key.fee,
+        identity.pool_key.tick_spacing,
+        pool_ref.zero_for_one,
+        requested,
+    )?;
+    Some(HopTwin {
+        out: if pool_ref.zero_for_one {
+            twin.amount1
+        } else {
+            twin.amount0
+        },
+        input_clamp: twin.exact_input_clamp_bound(requested, margin),
+    })
+}
+
+/// The V2 hop's twin. V2 has no empty-march class (no input clamp), but its
+/// byte-exact output must still be the authoritative report once the forward
+/// clamp upstream reduced its input — the path-182449/110302 `UniswapV2: K`
+/// class. Orientation mirrors `simulate_swap`'s V2 arm.
+fn v2_hop_twin(core: &BotState, pool_ref: &MixedPoolRef, requested: U256) -> Option<HopTwin> {
+    let (state, identity) = (
+        core.pool_slice::<degenbot_pools::V2PoolState>(pool_ref.pool_key)?,
+        core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key)?,
+    );
+    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
+        (
+            state.reserve0.to::<U256>(),
+            state.reserve1.to::<U256>(),
+            identity.fee_token0.gamma_numer(),
+            identity.fee_token0.denominator(),
+        )
+    } else {
+        (
+            state.reserve1.to::<U256>(),
+            state.reserve0.to::<U256>(),
+            identity.fee_token1.gamma_numer(),
+            identity.fee_token1.denominator(),
+        )
+    };
+    let out = degenbot_math::v2::IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom)
+        .swap(requested)
+        .ok()?;
+    Some(HopTwin {
+        out,
+        input_clamp: None,
+    })
+}
+
 /// Recompute a path result's selection profit from its CLAMPED
 /// (twin-aligned) outputs, per the documented `SolvePathResult::profit`
 /// semantics `final_output - consumed_inputs[0]` (with
@@ -375,36 +485,29 @@ pub(crate) fn recompute_clamped_profit(result: &SolvePathResult) -> Option<U256>
     Some(final_output.saturating_sub(first_consumed))
 }
 
-/// The merge of ONE solved result onto the epoch's result set: the worker's
-/// clamp verdict (or the merge-site clamp when the worker reported none), the
-/// per-result telemetry, the delivery handoff, and the result-store write.
+/// The merge of ONE lane outcome's result onto the epoch's result set: the ONE
+/// finalization door, the per-result telemetry, the delivery handoff, and the
+/// result-store write.
+///
+/// Returns the clamp status of the merged figures, or `None` when the clamp
+/// REFUSED the candidate — nothing merges and nothing is delivered, so the
+/// delivery window expires the path.
 #[expect(clippy::too_many_arguments)] // the epoch's whole per-result input set
 pub(super) fn merge_one_result(
     ctx: &EpochContext<'_>,
     solve_block: u64,
     metadata: &BlockMetadata,
     pid: u64,
-    result: SolvePathResult,
-    worker_clamp_twins: u64,
+    clamp: SolveClamp,
     payload: Option<SimulatedPathResult>,
     registry: &PathRegistry,
     delivery: &mut DeliveryPolicy,
-) -> u64 {
-    let mut result = result;
-    let twins = if worker_clamp_twins > 0 {
-        worker_clamp_twins
-    } else {
-        clamp_concentrated_liquidity_hop_capacity(
-            ctx.core,
-            ctx.clamp_margin,
-            pid,
-            &mut result,
-            registry,
-            ctx.hooked_leg_requote
-                .as_deref()
-                .map(|tier| (HookedLegAnchor::at(solve_block, metadata), tier)),
-        )
+) -> Option<ClampStatus> {
+    let Some(report) = finalize_clamp(ctx, solve_block, metadata, pid, clamp, registry) else {
+        refuse_merged_candidate(ctx, pid);
+        return None;
     };
+    let status = report.status;
     // Telemetry: profitable solves are the signal in the noise -
     // emit the economics + the concrete hop list on the solve span.
     // M2 probe: per-result events cross the Python log bridge (GIL) -
@@ -412,19 +515,60 @@ pub(super) fn merge_one_result(
     hotpath::measure_block!("merge.telemetry_event", {
         diag!(domain = path, block_number = solve_block,
             path.id = pid,
-            input = %result.optimal_input,
-            profit = %result.profit,
+            input = %report.optimal_input,
+            profit = %report.profit,
             path.hops = %describe_path_cached_with(ctx.path_description_cache, ctx.core, ctx.registry, pid),
             "profitable solve"
         );
     });
-    deliver::deliver_merged_result(ctx, delivery, solve_block, metadata, pid, &result, payload);
-    ctx.results.insert(pid, result);
+    deliver::deliver_merged_result(ctx, delivery, solve_block, metadata, pid, &report, payload);
+    // The report is the stored row: its status rides with the figures, so no
+    // consumer can see a clamped amount whose verification was dropped.
+    ctx.results.insert(pid, report);
     #[cfg(test)]
     if let Some(probe) = ctx.merge_probe {
         probe.lock().push(pid);
     }
-    twins
+    Some(status)
+}
+
+/// The ONE finalization door: a worker-finalized report is stored as-is (its
+/// amounts were committed together with the profit they imply — never
+/// re-clamped), and an unfinalized result is clamped HERE exactly once.
+fn finalize_clamp(
+    ctx: &EpochContext<'_>,
+    solve_block: u64,
+    metadata: &BlockMetadata,
+    pid: u64,
+    clamp: SolveClamp,
+    registry: &PathRegistry,
+) -> Option<ClampReport> {
+    match clamp {
+        SolveClamp::Finalized(report) => Some(report),
+        SolveClamp::Unfinalized(result) => clamp_concentrated_liquidity_hop_capacity(
+            ctx.core,
+            ctx.clamp_margin,
+            pid,
+            result,
+            registry,
+            ctx.hooked_leg_requote
+                .as_deref()
+                .map(|tier| (HookedLegAnchor::at(solve_block, metadata), tier)),
+        ),
+    }
+}
+
+/// A refused candidate has no executable figures: drop any result the epoch
+/// still holds for the path (and its stale sim payload) so the delivery window
+/// expires it instead of re-publishing a superseded figure.
+fn refuse_merged_candidate(ctx: &EpochContext<'_>, pid: u64) {
+    ctx.results.remove(&pid);
+    ctx.inline_payloads.remove(&pid);
+    op_info!(
+        domain = solver,
+        path_id = pid,
+        "candidate refused at the clamp — no executable figures merged"
+    );
 }
 
 /// The detached-merge envelope for ONE lane outcome: the Q1a stale/deregister
@@ -612,26 +756,23 @@ pub(super) fn drain_lane_outcomes(
                     o.solve_block, policy.solve_block,
                     "carrier/drain solve_block mismatch — wrong-arm delivery"
                 );
-                let SolveOutcome {
-                    result: solve_result,
-                    worker_clamp_twins,
-                    payload,
-                    ..
-                } = o;
-                if !solve_result.solver_pool_states.is_empty() {
+                let SolveOutcome { clamp, payload, .. } = o;
+                if !clamp.result().solver_pool_states.is_empty() {
                     diag!(
                         domain = solver,
                         "path_id={pid} hops=[{}]",
-                        solve_result.solver_pool_states.join(";")
+                        clamp.result().solver_pool_states.join(";")
                     );
                 }
-                merge_one_result(
+                // A refused candidate (`None`) merges and delivers nothing —
+                // the delivery window expires the path — but it still consumed
+                // its one outcome (the claim above).
+                let _merged = merge_one_result(
                     ctx,
                     policy.solve_block,
                     &policy.metadata,
                     pid,
-                    solve_result,
-                    worker_clamp_twins,
+                    clamp,
                     payload,
                     registry,
                     delivery,
@@ -666,17 +807,18 @@ pub(super) fn drain_lane_outcomes(
 }
 
 /// The merge-site clamp door: read the path's pool refs and the live state
-/// under one short core read, then drive the ONE clamp body.
+/// under one short core read, then drive the ONE clamp body. `None` is the
+/// clamp's refusal (or an unknown path): no report, nothing to commit.
 pub(super) fn clamp_concentrated_liquidity_hop_capacity(
     core: &Arc<StateLock<BotState>>,
     clamp_margin: U256,
     path_id: u64,
-    result: &mut SolvePathResult,
+    result: SolvePathResult,
     registry: &PathRegistry,
     requote: Option<(HookedLegAnchor, &dyn HookedLegReQuote)>,
-) -> u64 {
+) -> Option<ClampReport> {
     let Some(path) = registry.get(path_id) else {
-        return 0; // Unknown path → nothing to clamp
+        return None; // Unknown path → no executable figures to commit
     };
     // ADR-090: the hooked-leg facts come off ONE short guard, the re-quote
     // itself runs with the guard DROPPED (the tier prices against its own
