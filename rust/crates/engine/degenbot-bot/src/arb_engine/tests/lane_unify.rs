@@ -463,7 +463,7 @@ fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
         &affected_keys_v2,
     );
     assert_eq!(outcome.arm_label(), "detached");
-    // With a 400ms slow path the results land AFTER return (T2's read) —
+    // With a 400ms slow path the results land AFTER return —
     // at least the slow pid is absent.
     assert!(
         !latest_results(&engine).0.contains_key(&path_ids[0]),

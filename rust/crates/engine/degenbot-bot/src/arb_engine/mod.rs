@@ -172,10 +172,9 @@ mod path_cost_ledger;
 // heavy-path capture diagnostics, extracted from the retired
 // grab file (import-only move; the module owns its honesty probe + test island).
 mod solver_capture;
-// the pure workload-analysis cluster (solve-bin sizing, LPT
-// partition, named cordon-fallback seat plan, resolve-time cost proxies),
-// extracted from the retired grab file (import-only move; the module
-// owns its honesty probe + test islands).
+// the pure workload-analysis cluster (solve-bin sizing, LPT partition, named
+// cordon-fallback seat plan, resolve-time cost proxies); the module owns its
+// honesty probe + test islands.
 mod workload_partition;
 // The per-epoch WalkMemoStats tap: drains the
 // engine-owned WalkMemo ONCE per begin_block boundary (drain-then-advance)
@@ -183,9 +182,8 @@ mod workload_partition;
 // sink and the ADR-043 `degenbot.solver.walk_memo_*` instruments.
 // Observation only — zero behavior change to solving.
 pub(crate) mod walk_telemetry;
-// ADR-045 T1: the solve-cycle data-type seam (`CycleOutcome` /
-// `CycleArm` / `ResolveCensus` / `Registration`) — T3/T4 assemble
-// `SolveCycle` on top of it; nothing consumes the types yet.
+// The solve-cycle data-type seam (`CycleOutcome` / `CycleArm` /
+// `ResolveCensus` / `Registration`); `SolveCycle` is assembled on top of it.
 mod solve_cycle;
 // The cycle ticket: the solve cycle's transient-handoff value. The Resolved
 // stage row (`bot_core::AffectedPaths`) carries it from the draw to the epoch,
@@ -256,9 +254,9 @@ pub use session_events::{
 // ---------------------------------------------------------------------------
 // The path/snapshot/hop-state value types live in `degenbot_pools::solve`.
 pub use degenbot_substrate::BlockMetadata;
-// ADR-027 completion (2026-08-20 review): the block-clock pipe is
-// coordinator-owned; the type moved to bot_core. Re-exported so external
-// references keep working (same pattern as BlockMetadata above).
+// ADR-027: the block-clock pipe is coordinator-owned; the type lives in
+// bot_core. Re-exported so external references keep working (same pattern as
+// BlockMetadata above).
 pub use degenbot_core::block_notification::BlockNotification;
 /// Incremental result batch pushed to Python via the result channel.
 ///
@@ -284,9 +282,9 @@ pub struct ResultBatch {
     pub expired: Vec<u64>,
     /// Path IDs that were de-registered (permanently gone)
     pub removed: Vec<u64>,
-    /// SIMPIPE2 T3: the inline-sim payloads for the `fresh`/`updated` paths
-    /// (SIMPIPE stance `DEGENBOT_SOLVE_INLINE_SIM`). Absent (empty map) = the
-    /// legacy FFI-sim path for every entry — per-entry presence decides.
+    /// The inline-sim payloads for the `fresh`/`updated` paths (stance
+    /// `DEGENBOT_SOLVE_INLINE_SIM`). Absent (empty map) = the FFI-sim path for
+    /// every entry — per-entry presence decides.
     pub payloads: HashMap<u64, inline_sim::SimulatedPathResult>,
     /// The exporter lineage this batch was published under: the solve block
     /// plus the block span's context, captured ONCE at the publish. Every
@@ -319,7 +317,7 @@ pub(crate) type DeferredReRecordHook =
 pub(crate) struct ArbitrageEngine {
     /// the owner-loaded typed bot config (one loader process-wide;
     /// never re-read from the environment). Construction stances + capture
-    /// config read from here. ADR-045 T4: the solve cycle owns its own clone
+    /// config read from here. The solve cycle owns its own clone
     /// for the resolve/solve bodies; this field remains for the construction
     /// stances.
     #[expect(dead_code)]
@@ -327,7 +325,7 @@ pub(crate) struct ArbitrageEngine {
     /// the instance solver runtime stance, built at construction from
     /// [`Self::cfg`] and threaded down into every solve cycle. Replaces the
     /// solve tree's removed process-global RUNTIME `OnceLock`.
-    /// ADR-045 T4: the cycle owns its own copy.
+    /// The cycle owns its own copy.
     #[expect(dead_code)]
     runtime_cfg: ::degenbot_pools::SolveRuntimeConfig,
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
@@ -345,8 +343,8 @@ pub(crate) struct ArbitrageEngine {
     /// ADR-045: the solve cycle's owned state — the resolve
     /// companions, the cycle-transient stash, the solve output, the admissions
     /// stance, the detached-arm collaborator, the walk/projection recorders,
-    /// and the seven `for_test` knobs. Fields only at T3; behavior methods move
-    /// at T4. The engine keeps identity (`registry`), the shared core, the
+    /// and the seven `for_test` knobs. The engine keeps identity (`registry`),
+    /// the shared core, the
     /// delivery policy, the lifecycle phase, and the construction stances.
     pub(crate) cycle: SolveCycle,
     /// Delivery policy — the optional publish sink that consumes the solve
@@ -415,13 +413,12 @@ impl ArbitrageEngine {
         core: Arc<StateLock<BotState>>,
         cfg: &std::sync::Arc<::degenbot_config::BotConfig>,
     ) -> Self {
-        // Construction stances come from the CALLER's
-        // own cfg — never from an install-then-read process static. A
-        // parallel construction flips such a static between our install and
-        // a global read (TOCTOU). The install call remains for its process
-        // projections — the construction-STAMPED fleet boots; the
-        // stance statics other consumers observe). LW-T9: there is no
-        // stance — the fleet installs unconditionally, it is the only
+        // Construction stances come from the CALLER's own cfg — never from an
+        // install-then-read process static. A parallel construction flips such
+        // a static between our install and a global read (TOCTOU). The install
+        // call remains for its process projections (the construction-STAMPED
+        // fleet boots and the stance statics other consumers observe). There
+        // is no stance: the fleet installs unconditionally, it is the only
         // behavior.
         let streaming_delivery = cfg.pump.streaming_delivery;
         let resolve_par_stance = cfg.solve.solve_resolve_par;

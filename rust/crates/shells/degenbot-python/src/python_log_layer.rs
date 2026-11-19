@@ -666,7 +666,7 @@ where
     use tracing_subscriber::layer::Layer as _;
     use tracing_subscriber::layer::SubscriberExt;
     tracing_subscriber::registry()
-        // Per-layer filters (2026-08-22 audit): the OTel layer sees the
+        // Per-layer filters: the OTel layer sees the
         // RECORD-level filter (diagnostics uncapped — Jaeger keeps full
         // detail); the console sinks see the console filter (diagnostics
         // capped at warn). A single global filter could not split them.
@@ -750,7 +750,7 @@ pub fn init_logging_subscriber() {
                 );
                 None
             };
-            // T1: metrics ride the same DEGENBOT_OTEL gate — the Prometheus
+            // Metrics ride the same DEGENBOT_OTEL gate — the Prometheus
             // scrape endpoint (DEGENBOT_METRICS_ADDR, default 127.0.0.1:9464)
             // serves whatever instruments the drain path records. Fail-open:
             // a bind failure logs and the bot runs without scrapeable metrics.
@@ -878,7 +878,7 @@ mod tests {
         assert_eq!(state.dropped.load(Ordering::Relaxed), 1);
         assert_eq!(state.queue.len(), 2);
     }
-    /// Seam C: the "`OTel`" layer composes onto the base logging
+    /// The "`OTel`" layer composes onto the base logging
     /// registry (`EnvFilter` + fmt + the Python slot) and receives spans
     /// without a "`Python::attach"-capable` drainer thread. A "Capture"
     /// stand-in plays the Python slot (the real drainer needs the

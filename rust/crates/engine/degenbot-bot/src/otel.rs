@@ -153,11 +153,10 @@ where
     // exporter (which returns a future — the OTLP/HTTP client needs a tokio
     // reactor) from a bare std thread and panics with "there is no reactor
     // running".
-    // Span-event cap — BOUNDED (incident a8c1bf/81d006):
-    // the incident was the SDK default 128 truncating a busy solve span,
-    // silently dropping the phase events emitted AFTER the per-path
-    // activation flood. The u32::MAX emergency fix is now retired because
-    // the data it protected moved OFF events: per-path economics ride
+    // Span-event cap — BOUNDED: the SDK default 128 truncates a busy solve
+    // span, silently dropping the phase events emitted AFTER the per-path
+    // activation flood. The cap can be bounded rather than `u32::MAX` because
+    // the data that matters does not ride events: per-path economics ride
     // `degenbot.arb.path` child-span ATTRIBUTES and the phase aggregates
     // ride `degenbot.arb.{fanout,resolve,lpt,merge}` span attributes, so
     // event truncation can no longer lose phase data. 1024 bounds the only
@@ -165,7 +164,7 @@ where
     // `RUST_LOG=degenbot::engine=debug` (hundreds of activations per busy
     // cycle) — without the unbounded-memory exposure of u32::MAX.
     let span_limits = opentelemetry_sdk::trace::SpanLimits {
-        // See the incident note above: bounded headroom, not the u32::MAX fix.
+        // Bounded headroom, not an unbounded cap (see the note above).
         max_events_per_span: 1024,
         ..opentelemetry_sdk::trace::SpanLimits::default()
     };
@@ -234,7 +233,7 @@ pub fn provider_from_endpoint(
 pub fn layer(
     tracer: SdkTracer,
 ) -> tracing_opentelemetry::OpenTelemetryLayer<tracing_subscriber::Registry, SdkTracer> {
-    // Soak-2026-08-22 (v6): context activation MUST stay off. With it on,
+    // Context activation MUST stay off. With it on,
     // `on_enter` pushes an `opentelemetry::ContextGuard` onto
     // tracing-opentelemetry's per-thread GUARD_STACK; at thread exit the stack
     // dtor drops those guards, and each guard's Drop touches opentelemetry's
@@ -279,7 +278,7 @@ pub fn init_otel_tracing() -> Result<OtelHandle, OtelInitError> {
     // The OTel layer binds S=Registry, so it must sit directly on the bare
     // registry; fmt/EnvFilter compose on top (they are Layer for any
     // LookupSpan subscriber).
-    // Console-vs-trace split (2026-08-22 audit): the OTel layer gets the
+    // Console-vs-trace split: the OTel layer gets the
     // record-level RUST_LOG filter (uncapped); stderr fmt gets the console
     // filter with the diagnostic cap, so high-frequency `degenbot::diag`
     // events stay off stdout while remaining visible in traces.

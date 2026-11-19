@@ -205,7 +205,7 @@ impl PySimulateContext {
         self.provider.rpc_url()
     }
 
-    /// The executor contract address (checksummed hex) — SIMPIPE2 T3: the
+    /// The executor contract address (checksummed hex): the
     /// Python payload path constructs `SubmitCandidate`s directly for
     /// inline-simulated entries, and the submit leaf needs the same
     /// session-static `executor_address` the FFI join stamps onto each one.
@@ -217,14 +217,14 @@ impl PySimulateContext {
 
 #[pymethods]
 impl crate::bot::engine::PyArbEngine {
-    /// SIMPIPE2 T4: install the production inline-sim hook — the
+    /// Install the production inline-sim hook — the
     /// `degenbot_bot`-defined `InlineSimulator` seam's concrete closure over
-    /// THIS session's sim config + the engine's shared state (theADR-019 D7
+    /// THIS session's sim config + the engine's shared state (the ADR-019 D7
     /// dependency inversion, plumbed exactly like `set_result_channel`).
     /// Construction-time wiring: call once after the `SimulateContext` is
     /// built (a later call simply replaces the hook).
     ///
-    /// The sim itself runs per-path in the SOLVE WORKER (the T2 clamp seam)
+    /// The sim itself runs per-path in the SOLVE WORKER (the worker clamp seam)
     /// through a dedicated multi-thread runtime — see
     /// `simulation::inline_hook` for the thread/runtime matrix.
     fn install_inline_simulator(&self, py: Python<'_>, context: &PySimulateContext) {
@@ -240,7 +240,7 @@ impl crate::bot::engine::PyArbEngine {
             bot_state,
             warm_cache,
         ));
-        // LW-T3 (Seam C): the inline-sim runtime registers itself as the
+        // The inline-sim runtime registers itself as the
         // DEFAULT escalation port at hook install — escalated lane work
         // drives on THIS runtime, never on CPU seats; the cold-miss budget
         // ceiling is visible at the port's gauge surface.

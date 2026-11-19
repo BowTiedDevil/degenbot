@@ -1,5 +1,4 @@
-//! The Plan walker — the **deep, stable** half of the grammar (`grammar_shape.rs`
-//! split, candidate 2 of `architecture-review-1786663110.html`).
+//! The Plan walker — the **deep, stable** half of the grammar.
 //!
 //! A 2/3-hop family's stream is authored as an execution-ordered,
 //! callback-nested [`Plan`] of [`PlanStep`]s by the builders in

@@ -293,7 +293,7 @@ pub struct Operation<'a> {
     pub operation_id: u32,
     /// The discriminated operation type.
     pub operation_type: OperationType,
-    /// The Pool contract revision at parse-start (DP4 — read once per tx;
+    /// The Pool contract revision at parse-start (read once per tx;
     /// mid-tx `PoolUpdated` config events are the orchestrator's concern).
     pub pool_revision: u32,
     /// The Pool event triggering the operation (raw log); `None` for the
@@ -314,9 +314,8 @@ pub struct Operation<'a> {
     /// `operation.minted_to_treasury_amount` semantics — NOT pre-scaled.
     /// The scaling conversion (`ray_div` / `ray_div_ceil` per `pool_revision`) happens
     /// EXACTLY ONCE in `dispatch_mint_to_treasury` (mirrors Python's
-    /// `PoolMath::underlying_to_scaled_collateral` flow). Previously DP3
-    /// pre-converted for rev < 9 → dispatch would re-convert →
-    /// double-conversion divergence.
+    /// `PoolMath::underlying_to_scaled_collateral` flow); pre-converting here
+    /// for rev < 9 makes dispatch re-convert → double-conversion divergence.
     pub minted_to_treasury_amount: Option<U256>,
     /// For Liquidation: the `LiquidationCall` `debtToCover` field (surfaces
     /// the burn-amount's accuracy edge — the Burn `amount + balance_increase`
@@ -390,9 +389,9 @@ fn pool_ev_idx(log: &Log) -> u64 {
 pub enum LiquidationPattern {
     /// 1 liquidation, 1 burn (standard).
     Single,
-    /// N liquidations, 1 combined burn (issue 0056).
+    /// N liquidations, 1 combined burn.
     CombinedBurn,
-    /// N liquidations, N burns (issue 0065).
+    /// N liquidations, N burns.
     SeparateBurns,
 }
 
@@ -401,7 +400,7 @@ pub enum LiquidationPattern {
 /// Built per-tx by `crate::transaction_processor::build_liquidation_patterns`
 /// (the port of `detect_liquidation_patterns`); consumed by the liquidation
 /// dispatch (`dispatch_liquidation`) to apply the `COMBINED_BURN`
-/// aggregated-burn + Mint-skip behavior (Issue 0056).
+/// aggregated-burn + Mint-skip behavior.
 #[derive(Clone, Debug, Default)]
 pub struct LiquidationPatternContext {
     /// `(user, debt_v_token)` → detected pattern.

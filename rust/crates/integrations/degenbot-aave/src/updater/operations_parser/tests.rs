@@ -1569,34 +1569,32 @@ fn liquidation_group_detect_pattern() {
     assert_eq!(separate.detect_pattern(), LiquidationPattern::SeparateBurns);
 }
 
-// ── MintToTreasury DP3 must NOT pre-scale ─────────────────
+// ── MintToTreasury must NOT pre-scale ─────────────────────
 //
-// Root cause: `create_mint_to_treasury_operations` previously
-// pre-converted the MintedToTreasury `amount_minted` via `ray_div(.., HALF_UP)`
-// for `pool_revision < 9`, then `dispatch_mint_to_treasury` re-applied the
-// SAME `ray_div(.., HALF_UP)` on the pre-scaled value, DOUBLE-converting
-// by a factor of `idx/RAY` (treasury 0x464C WETH divergence -8.04e12 was the
-// diagnosis). The fix aligns Rust `op.minted_to_treasury_amount`
-// semantics with Python's `operation.minted_to_treasury_amount` (= raw
-// UNDERLYING amount, regardless of `pool_revision`) so the single
-// conversion lives in `dispatch_mint_to_treasury`.
+// `create_mint_to_treasury_operations` stores the MintedToTreasury
+// `amount_minted` as the RAW UNDERLYING amount (Python's
+// `operation.minted_to_treasury_amount` semantics, regardless of
+// `pool_revision`); the one scaled conversion (`ray_div(.., HALF_UP)`) lives in
+// `dispatch_mint_to_treasury`. Pre-scaling in the MintToTreasury builder
+// makes the
+// dispatch apply the SAME `ray_div(.., HALF_UP)` a second time, shrinking the
+// result by `idx/RAY` (the treasury 0x464C WETH residual).
 //
-// The WETH mainnet tuple below is the cold-boot block 16516952 evidence
-// used to ROOT-CAUSE the divergence — asserted by hand-math before
-// querying the DB:
+// The WETH mainnet tuple below is the arithmetic the divergence is derived
+// from:
 //   amountMinted (raw underlying) = 64_746_517_106_584_784
 //   liquidity_index at emit-time   = 1_000_124_218_031_532_223_928_748_283
 //   expected SINGLE ray_div result = 64_738_475_420_603_639 (Python gold
 //     = on-chain truth delta: treasury WETH scaledBalance went 0 →
 //     64_738_475_420_603,639 across the block boundary)
-//   buggy DOUBLE ray_div result    = 64_730_434_733_420_828 (= observed
-//     pre-fix Rust DB value, 8_040_687_182_811 LESS than Python gold).
+//   double ray_div result          = 64_730_434_733_420_828 (= the value a
+//     pre-scaling builder stores, 8_040_687_182_811 LESS than Python gold).
 //
-// The test creates an in-memory DB substrate + drives BOTH the DP3 builder
+// The test creates an in-memory DB substrate + drives BOTH the builder
 // (`create_mint_to_treasury_operations`) AND the apply dispatch
 // (`dispatch_mint_to_treasury`), asserting the FINAL `balance_delta` ==
-// Python gold's SINGLE conversion. RED on the unfixed version (the value
-// would be the DOUBLE-conversion result); GREEN on the fixed version.
+// Python gold's SINGLE conversion; a pre-scaling builder produces the
+// DOUBLE-conversion value instead.
 fn fresh_db_with_mint_to_treasury_asset() -> degenbot_db::DegenbotDb {
     use degenbot_db::DegenbotDb;
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
@@ -1676,7 +1674,7 @@ fn make_minted_to_treasury_log(idx: u64, reserve: Address, amount_minted: U256) 
 }
 
 /// Construct a `CollateralMint` `ScaledTokenEvent` aux `caller_address` set to
-/// the Pool contract (the `MintToTreasury` indicator that the DP3 builder
+/// the Pool contract (the `MintToTreasury` indicator that the builder
 /// filters on). The chunk parser detects a Mint-to-treasury
 /// (the aToken Mint event's caller == Pool).
 fn mint_to_treasury_collateral_mint_event(
@@ -1714,13 +1712,11 @@ fn mint_to_treasury_collateral_mint_event(
     }
 }
 
-/// Regression — asserts the FULLY-FIXED pipeline (DP3 + dispatch)
-/// produces the SINGLE `ray_div` result (= Python's
-/// `PoolMath::underlying_to_scaled_collateral` value), NOT the
-/// pre-fix DOUBLE-conversion result. Pre-fix, DP3 would pre-ray_div the
-/// `amount_minted`, then `dispatch_mint_to_treasury` would re-ray_div it,
-/// shrinking by `idx/RAY` (= the -8.04e12 divergence observed on the
-/// treasury WETH residual).
+/// Asserts the pipeline (builder + dispatch) produces the SINGLE `ray_div` result
+/// (= Python's `PoolMath::underlying_to_scaled_collateral` value), NOT a
+/// DOUBLE-conversion. Pre-scaling the `amount_minted` in the builder makes
+/// `dispatch_mint_to_treasury` re-ray_div it, shrinking by `idx/RAY`
+/// (= the -8.04e12 residual on the treasury WETH position).
 #[test]
 fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     let db = fresh_db_with_mint_to_treasury_asset();
@@ -1740,10 +1736,10 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     let amount_minted_raw = U256::from(64_746_517_106_584_784u128);
     let liquidity_index = U256::from(1_000_124_218_031_532_223_928_748_283u128);
 
-    // Pre-registered hand-math prediction:
+    // Hand-math prediction:
     //   Python gold / on-chain truth = ray_div_halfup(raw, idx) = 64_738_475_420_603_639
-    //   Pre-fix Rust (DOUBLE-conv)   = ray_div(ray_div(raw, idx), idx) = 64_730_434_733_420_828
-    //   Diff = Python gold - pre-fix Rust = 8_040_687_182_811 (= the observed divergence).
+    //   DOUBLE-conv                  = ray_div(ray_div(raw, idx), idx) = 64_730_434_733_420_828
+    //   Diff = Python gold - DOUBLE-conv = 8_040_687_182_811.
     let python_gold_scaled = U256::from(64_738_475_420_603_639u128);
     let buggy_double_conv_scaled = U256::from(64_730_434_733_420_828u128);
 
@@ -1776,7 +1772,7 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     )
     .unwrap();
 
-    // === DP3 STEP (the root-cause site) ===
+    // === BUILDER STEP (the parse-time site) ===
     let mut assigned_indices: HashSet<u64> = HashSet::new();
     let mut next_op_id: u32 = 0;
     let mut ops = parser.create_mint_to_treasury_operations(
@@ -1791,29 +1787,28 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
         "the synthetic Mint event should yield 1 MintToTreasury op"
     );
 
-    // The fix: DP3 must store the RAW UNDERLYING amount (= amount_minted_raw),
+    // The builder must store the RAW UNDERLYING amount (= amount_minted_raw),
     // NOT pre-scaled via ray_div — that scaled conversion happens EXACTLY
-    // ONCE in `dispatch_mint_to_treasury`. Without the fix, this value would
-    // be `Some(python_gold_scaled)` (= `ray_div(raw, idx, HALF_UP)`), which
-    // the dispatch then re-ray_div's → DOUBLE conversion.
+    // ONCE in `dispatch_mint_to_treasury`. A pre-scaling builder stores
+    // `Some(python_gold_scaled)` (= `ray_div(raw, idx, HALF_UP)`), which the
+    // dispatch then re-ray_div's → DOUBLE conversion.
     let op = ops.pop().unwrap();
     assert_eq!(
         op.minted_to_treasury_amount,
         Some(amount_minted_raw),
         "DP3 must store the raw underlying amountMinted (NOT pre-scaled); \
-         pre-fix would pre-scale to {python_gold_scaled} (= ray_div(raw, idx, HALF_UP)) which \
-         then DOUBLE-converts at dispatch",
+         pre-scaling to {python_gold_scaled} (= ray_div(raw, idx, HALF_UP)) \
+         DOUBLE-converts at dispatch",
     );
     assert_eq!(op.operation_type, OperationType::MintToTreasury);
 
     // === DISPATCH STEP (the apply-time conversion) ===
     // `dispatch_mint_to_treasury` does the single ray_div (`= Python's
-    // `PoolMath::underlying_to_scaled_collateral`). With the FIX in place,
-    // the final balance_delta == python_gold_scaled.
+    // `PoolMath::underlying_to_scaled_collateral`). The final balance_delta ==
+    // python_gold_scaled.
     //
-    // Pre-fix, `op.minted_to_treasury_amount` was already the SCALED value,
-    // so dispatch's ray_div would produce the DOUBLE-conv result =
-    // buggy_double_conv_scaled.
+    // An already-SCALED `op.minted_to_treasury_amount` makes dispatch's ray_div
+    // produce the DOUBLE-conv result = buggy_double_conv_scaled.
     let mut events: Vec<crate::run::AaveChunkEvent> = Vec::new();
     crate::transaction_processor::dispatch_mint_to_treasury(
         &op,
@@ -1830,8 +1825,8 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
                 *balance_delta,
                 alloy::primitives::I256::try_from(python_gold_scaled).unwrap(),
                 "final balance_delta must equal Python gold's SINGLE ray_div result \
-                 (= on-chain truth); the pre-fix DOUBLE-conversion would have \
-                 produced {} ({} LESS than Python gold)",
+                 (= on-chain truth); the DOUBLE-conversion produces {} \
+                 ({} LESS than Python gold)",
                 buggy_double_conv_scaled,
                 python_gold_scaled - buggy_double_conv_scaled,
             );

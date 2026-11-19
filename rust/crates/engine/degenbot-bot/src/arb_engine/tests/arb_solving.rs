@@ -787,11 +787,10 @@ fn v4_int128_overflow_path_rejected() {
 /// Forward-clamp staleness (the path-182449/110302 1-wei over-prediction
 /// class): when the upstream concentrated liquidity hop's twin forward-clamps the DOWNSTREAM
 /// V2 hop's committed input, the V2 hop's REPORTED output must be
-/// re-derived byte-exact at the clamped input. Pre-fix the V2 branch of
-/// the clamp loop was a bare `continue`, so the V2 `hop_outputs[i]` kept
-/// the pre-clamp input's output — over-predicting by exactly the 1 wei of
-/// clamped input (the live bot then failed on-chain with
-/// `UniswapV2: K`).
+/// re-derived byte-exact at the clamped input. A bare `continue` in the V2
+/// branch of the clamp loop keeps the V2 `hop_outputs[i]` at the pre-clamp
+/// input's output — over-predicting by exactly the 1 wei of clamped input (the
+/// live bot then fails on-chain with `UniswapV2: K`).
 #[expect(clippy::too_many_lines)]
 #[test]
 fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_clamp() {

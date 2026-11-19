@@ -1,16 +1,16 @@
-//! The production `InlineSimulator` implementation (SIMPIPE2 T4 prerequisite) —
-//! the degenbot-python closure over the session sim config.
+//! The production `InlineSimulator` implementation — the degenbot-python
+//! closure over the session sim config.
 //!
 //! The engine's `degenbot_bot` seam stays strategy-agnostic (ADR-019 D7):
 //! this crate installs the concrete simulator. One per-path sim drives the
 //! SAME core the FFI fan-out drives — `Evm2BlockSimHandle` (the layered DB:
 //! `AlloyAsyncDb` → `BlockingAsyncDb` → `BotStateDb` → `WarmCodeCache` →
 //! `CacheDB`, the state overrides applied once) → `simulate_path_on_evm` —
-//! so the two arms' verdicts are comparable by construction (the T4
-//! soak's premise). The deliberate differences:
+//! so the two arms' verdicts are comparable by construction (the soak's
+//! premise). The deliberate differences:
 //!
 //! - ZERO FFI: the sim runs entirely in the solve worker's thread context.
-//! - The per-path handle build (the `M1` amortization target) still happens
+//! - The per-path handle build (the amortization target) still happens
 //!   per candidate — the soak MEASURES that (a per-block handle reuse
 //!   inside the worker is a follow-up if the tail demands it).
 //! - `block_priority_fees` is `None` (the dispatcher's fee ring is
@@ -18,13 +18,12 @@
 //!   formula without the percentile clamp. The soak compares LATENCY
 //!   primarily; the formula (target/decay) dominates the clamp on mainnet.
 //!
-//! Runtime caveat (the T4 body note, updated by LW-T9):
+//! Runtime caveat:
 //! `BlockingAsyncDb::new` captures `Handle::try_current()` at build time,
 //! and its DB calls escalate to `block_in_place` on a multi-threaded
 //! worker. The fleet worker seats are `std` threads — NO ambient runtime
-//! (the LW-T2 wedge test pins this structurally; the old
-//! sync-inside-async BY DESIGN comment was that invariant's only
-//! enforcement before the cutover) — so the sim body spawns onto this
+//! (the fleet wedge test pins this structurally) — so the sim body spawns onto
+//! this
 //! hook's DEDICATED multi-thread runtime and the SYNC sim
 //! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`):
 //! a blocking-pool thread still carries the runtime handle (the
@@ -75,24 +74,24 @@ pub(crate) struct InlineSimHook {
     /// drop the guard BEFORE any provider I/O).
     bot_state: Arc<StateLock<BotState>>,
     warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
-    /// The dedicated multi-thread sim runtime (the T4 body note — see the
-    /// module doc). Built once, shared for the hook's lifetime.
+    /// The dedicated multi-thread sim runtime (see the module doc's runtime
+    /// caveat). Built once, shared for the hook's lifetime.
     sim_runtime: Arc<tokio::runtime::Runtime>,
-    /// SIMPIPE2 M2: per-block storage memo shared by every payload sim of
+    /// Per-block storage memo shared by every payload sim of
     /// the same sim height (recreated on block advance). Collapses the
     /// ~20-cold-storage-RPC-per-sim into ~per-pool-unique per cycle.
     storage_memo: std::sync::Mutex<(u64, Arc<degenbot_simulation::StorageMemo>)>,
-    /// VERIFY2 T2: paths whose LAST sim failed - their next sim re-verifies
+    /// Paths whose LAST sim failed - their next sim re-verifies
     /// with the divergence probe armed (engine-vs-RPC comparison on the same
     /// storage reads). Cleared after one armed sim (verify once per failure).
     reverify_armed: std::sync::Mutex<std::collections::HashSet<u64>>,
-    /// VERIFY2 T2: the random spot-check arm counter; 0 = the env spot-check
+    /// The random spot-check arm counter; 0 = the env spot-check
     /// is off.
     spotcheck_n: std::sync::atomic::AtomicU64,
 }
 
 impl InlineSimHook {
-    /// The escalation port bound to the hook's sim runtime (LW-T3 Seam C):
+    /// The escalation port bound to the hook's sim runtime:
     /// handed to `install_default_escalation_port` at hook install — the
     /// default impl's capability lane IS the inline-sim runtime; the
     /// cold-miss budget ceiling is the runtime's drive capacity.
@@ -197,7 +196,7 @@ impl InlineSimHook {
             Err(poisoned) => poisoned.into_inner(),
         };
         if guard.0 != block {
-            // M2 visibility: the retiring block's memo tally - the hit
+            // Visibility: the retiring block's memo tally - the hit
             // share is the RPC-trip compression the memo buys. The
             // degenbot::diag target stays off the Python log cap (console
             // + OTel only).
@@ -241,8 +240,7 @@ impl InlineSimHook {
         }
     }
 
-    /// Convert a core `SimResult` into the primitive payload (the T1 field
-    /// table).
+    /// Convert a core `SimResult` into the primitive payload.
     fn payload_from_sim(path_id: u64, sim: &SimResult) -> SimulatedPathResult {
         SimulatedPathResult {
             path_id,
@@ -272,7 +270,7 @@ impl InlineSimHook {
     }
 }
 
-// SIMPIPE2 T1 continuation: the spawned sim task must re-enter the calling
+// The spawned sim task must re-enter the calling
 // span context. tokio::spawn clones tokio task context but NOT the tracing
 // span context, so any span created inside the task without this re-entry
 // becomes an independent Jaeger trace ROOT (observed 635 orphan roots/60s -
@@ -302,17 +300,15 @@ where
     .await
 }
 
-/// LW-T3 (Seam C): the DEFAULT escalation port impl — the inline-sim
-/// runtime IS the port's own capability lane (pyo3 is fine here; the trait
-/// lives pyo3-free in degenbot-workers; the FFI boundary rule is
+/// The DEFAULT escalation port impl — the inline-sim runtime IS the port's own
+/// capability lane (pyo3 is fine here; the trait lives pyo3-free in
+/// degenbot-workers; the FFI boundary rule is
 /// `docs/architecture/worker-fleet.md` §8) and escalated work
 /// NEVER occupies the submitting seat (CPU cannot starve I/O). The
 /// cold-miss budget ceiling is the runtime's drive capacity (worker count)
-/// and is visible at [`EscalationPort::counters`].
-///
-/// RED scaffold: the budget is NOT enforced and the caller's span context
-/// is NOT propagated (the orphan-root pattern) — the red tests
-/// fail exactly there.
+/// and is visible at [`EscalationPort::counters`]. A refused escalation is a
+/// typed synchronous error, and the caller's span context re-enters the
+/// spawned task.
 pub(crate) struct SimRuntimeEscalationPort {
     runtime: Arc<tokio::runtime::Runtime>,
     gate: Arc<degenbot_workers::lane::EscalationGate>,
@@ -320,9 +316,9 @@ pub(crate) struct SimRuntimeEscalationPort {
 
 impl SimRuntimeEscalationPort {
     /// Build the port over the sim runtime; the cold-miss budget is the
-    /// runtime's worker count (its drive capacity).
-    /// RED: the cap is WORKER-PARITY BY DESIGN (each escalation busies a
-    /// runtime worker, as blocking sims do) — should escalations become
+    /// runtime's worker count (its drive capacity). The cap is WORKER-PARITY
+    /// BY DESIGN (each escalation busies a runtime worker, as blocking sims
+    /// do) — should escalations become
     /// io-await-heavy enough to sit purely on I/O resources, re-derive this
     /// cap and document the NEW model here; do not let the number drift by
     /// accident.
@@ -363,15 +359,11 @@ impl degenbot_workers::lane::EscalationPort for SimRuntimeEscalationPort {
 }
 
 /// Join a sim-task future from a worker seat: the dedicated sim runtime is
-/// driven directly. The ambient-runtime arm the old treatment carried
-/// (`block_in_place` + ambient-handle drive) is DELETED with the tokio
-/// solve stance (LW-T9): every caller is a fleet worker seat — plain OS
-/// thread, NO ambient runtime, pinned structurally by the LW-T2 wedge test
-/// in the engine's fleet-executed solve arms — and sim
-/// escalations drive on the injected `EscalationPort`, never an ambient
-/// `Handle`. A future caller that DOES hold an ambient runtime now fails
-/// loudly (`block_on` inside a runtime panics — the 2026-09-05 soak freeze
-/// #2 anti-pattern the old arm re-purchased) instead of silently
+/// driven directly. Every caller is a fleet worker seat — plain OS thread, NO
+/// ambient runtime, pinned structurally by the fleet wedge test in the
+/// engine's fleet-executed solve arms — and sim escalations drive on the
+/// injected `EscalationPort`, never an ambient `Handle`. A caller that DOES hold an ambient runtime fails loudly
+/// (`block_on` inside a runtime panics) instead of silently
 /// `block_in_place`-driving on a CPU seat.
 fn join_sim_task<F>(sim_runtime: &tokio::runtime::Runtime, fut: F) -> F::Output
 where
@@ -381,8 +373,8 @@ where
     sim_runtime.block_on(fut)
 }
 
-/// The inline-sim runtime previously kept the default thread name
-/// (`tokio-runtime-worker`) — indistinguishable in thread dumps from every
+/// The inline-sim runtime names its threads: the default
+/// (`tokio-runtime-worker`) is indistinguishable in thread dumps from every
 /// other defaulting pool. The census declares the distinct
 /// `degenbot-inline-sim-{n}` pattern; the seq closure mirrors tokio 1.53's
 /// per-thread `thread_name_fn` invocation (same mechanism as
@@ -411,13 +403,10 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     #[expect(clippy::expect_used)]
     // unreachable in production: multi-thread Builder only fails on allocator OOM or invalid config (worker count is clamped 1..=32)
     tokio::runtime::Builder::new_multi_thread()
-        // M2 soak sizing (2026-09-05): with the hard-coded 2
-        // workers the per-cycle wall was 72ms + 4.74ms/path
-        // (R^2 0.89, 228 steady cycles) - the payload sims queued
-        // on the 2-thread runtime while ~50 bins/cycle arrived
-        // concurrently (sims p50 12ms). Sizing to the core count
-        // lets the bins' sims actually overlap. Env-tunable for
-        // constrained hosts. Workers exist for SIM
+        // Sizing: a 2-worker runtime queues the payload sims while ~50
+        // bins/cycle arrive concurrently; sizing to the core count lets the
+        // bins' sims actually overlap. Env-tunable for constrained hosts.
+        // Workers exist for SIM
         // PARALLELISM, NOT block_on compensation — the sync sim drive runs
         // on this runtime's BLOCKING pool (`spawn_blocking`, see the sim
         // body), so DB waits never convert a worker and the blocking adds
@@ -429,9 +418,9 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         .expect("inline-sim runtime build")
 }
 
-/// The inline-sim runtime's worker count (M2 soak sizing): core-count by
-/// default (the payload sims are the per-path marginal cost of every solve
-/// cycle - see the M1/M2 soak records), overridable via the typed
+/// The inline-sim runtime's worker count: core-count by default (the payload
+/// sims are the per-path marginal cost of every solve cycle), overridable via
+/// the typed
 /// `solve.inline_sim_workers` key (env `DEGENBOT_INLINE_SIM_WORKERS`).
 /// Value parsing/validation is the loader's job (fail-closed at boot,
 /// fail-closed at boot); this layer just clamps to 1..=32.
@@ -456,9 +445,9 @@ impl InlineSimulator for InlineSimHook {
         //    cycle holds the engine `Mutex` for its whole duration (the busy
         //    loop that owns this worker), so re-entering the engine lock from
         //    the worker would self-deadlock (cycle-waits-on-bin,
-        //    bin-waits-on-cycle — the 2026-09-05 soak freeze). The projection
+        //    bin-waits-on-cycle). The projection
         //    (build_path_info) needs only a short core read, same class as
-        //    the T2 clamp's read. Unknown/unresolvable hops degrade to `None`
+        //    the worker clamp's read. Unknown/unresolvable hops degrade to `None`
         //    (the batch entry stays payload-less -> the legacy FFI path).
         let path_info = {
             let core = self
@@ -511,9 +500,9 @@ impl InlineSimulator for InlineSimHook {
         let base_fee_next = Self::next_base_fee(&req);
         let provider = Arc::clone(&self.provider);
         let warm_cache = Arc::clone(&self.warm_cache);
-        // M2: the cycle-scoped storage memo - one per sim block; sims at a
+        // The cycle-scoped storage memo - one per sim block; sims at a
         // new block recreate it (pre-state differs across heights).
-        // VERIFY2 T2: on-demand verification arming. A path whose last sim
+        // On-demand verification arming. A path whose last sim
         // failed re-simulates with the divergence probe armed; fresh paths
         // may sample into a spot-check at DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD
         // per-ten-thousand (default 0 = off). Armed probes cost no extra RPC
@@ -559,20 +548,20 @@ impl InlineSimulator for InlineSimHook {
             // `degenbot.bundle.simulate`) BEFORE the runtime hop; the helper
             // re-enters it inside the spawned task so `degenbot.simulate.inline`
             // joins the block trace instead of forking an orphan root.
-            // SIMSPANDUP: the same capture is ALSO the seam span the sim body
+            // The same capture is ALSO the seam span the sim body
             // reuses (see `simulate_path_on_evm_in_span`) — the seam no longer
             // opens a second same-named span under `degenbot.simulate.inline`.
             let sim_task_parent = tracing::Span::current();
             let seam_span = tracing::Span::current();
             let sim_future = async move {
                 spawn_sim_task(sim_task_parent, async move {
-                    // SIMPIPE2 M1 span parity: the engine-side sim stays
+                    // Span parity: the engine-side sim stays
                     // Jaeger-visible via `degenbot.simulate.inline`, nested
                     // under the spawning solve worker's span context (the
-                    // T1 helper forwards the caller's span across the
-                    // tokio::spawn). The `degenbot.bundle.simulate` span the
+                    // span-forwarding helper carries the caller's span across
+                    // the `tokio::spawn`). The `degenbot.bundle.simulate` span the
                     // worker already holds is REUSED by the seam body
-                    // (SIMSPANDUP) - one inline sim = two spans, no duplicate.
+                    // - one inline sim = two spans, no duplicate.
                     let req = req_task;
                     let inline_span = tracing::info_span!(
                         target: "degenbot::solver",
@@ -653,7 +642,7 @@ impl InlineSimulator for InlineSimHook {
                             degenbot_simulation::sim::evm2::jit::shared_runner(),
                         ) {
                             let mut buckets = FailBuckets::new();
-                            // SIMSPANDUP: the sim body rides the CALLER-HELD
+                            // The sim body rides the CALLER-HELD
                             // `degenbot.bundle.simulate` span (captured before the
                             // runtime hop below) — the seam must not open a
                             // same-named duplicate nested under this span.
@@ -1070,7 +1059,7 @@ mod tests {
         assert_eq!(super::inline_sim_worker_count(), default);
     }
 
-    /// LW-T3 (Seam C): the DEFAULT escalation port enforces the cold-miss
+    /// The DEFAULT escalation port enforces the cold-miss
     /// budget fail-fast (typed `ColdMissBudgetExceeded`, visible on the
     /// gauge surface) and retired escalations re-free capacity.
     #[test]
@@ -1114,7 +1103,7 @@ mod tests {
             .expect("completed escalations re-free capacity");
     }
 
-    /// LW-T3 (Seam C, reth `IncCounterOnDrop`): an escalated future that
+    /// An escalated future (reth `IncCounterOnDrop`) that
     /// PANICS must NOT leak its admission slot — finish-on-drop covers
     /// completion, panic and cancel identically; a leaked slot is a budget
     /// leak into permanent hard-refusal (the raddest fail-fast failure
@@ -1133,7 +1122,7 @@ mod tests {
                 reason = "panicking escalated work is the reclaimed-slot contract under test"
             )]
             {
-                panic!("cold-miss escalation panics mid-work (LW-T3)");
+                panic!("cold-miss escalation panics mid-work");
             }
         }))
         .expect("escalation admitted");
@@ -1374,9 +1363,8 @@ mod spawn_span_parent_tests {
         );
     }
 
-    /// LW-T3 (Seam C): escalations RE-ENTER the caller's span through the
-    /// port — Jaeger continuity survives the port (no orphan roots).
-    /// RED scaffold: the port does not propagate the span yet.
+    /// Escalations RE-ENTER the caller's span through the port — Jaeger
+    /// continuity survives the port (no orphan roots).
     #[test]
     fn escalations_reenter_the_caller_span_through_the_port() {
         let exporter = InMemorySpanExporter::default();

@@ -270,7 +270,7 @@ impl DeliveryPolicy {
         // Always send a batch even if empty — Python needs the block
         // metadata and solve_block to drive its main loop. Quiet no-op when
         // no channel is open (standalone consumer) or after close.
-        // SIMPIPE2 T3: ship the payload for every delivered entry; stale
+        // Ship the payload for every delivered entry; stale
         // payload ids (expired/removed, or a path that re-solved without a
         // payload) drop here — presence decides per entry Python-side.
         let payloads: HashMap<u64, SimulatedPathResult> = fresh
@@ -300,7 +300,7 @@ impl DeliveryPolicy {
     }
 }
 impl DeliveryPolicy {
-    /// T3: `DEGENBOT_STREAMING_DELIVERY` — emit ONE above
+    /// `DEGENBOT_STREAMING_DELIVERY` — emit ONE above
     /// -threshold result as an immediate single-entry batch, advancing the
     /// per-entry diff bookkeeping. Per-entry deltas compose with the regular
     /// debounce sweep (which still owns `expired`/`removed` and the metadata
@@ -331,7 +331,7 @@ impl DeliveryPolicy {
                 self.delivered.insert(path_id, result.clone());
             }
         }
-        // SIMPIPE2 T3: a streamed entry carries its own payload.
+        // A streamed entry carries its own payload.
         let payloads: HashMap<u64, SimulatedPathResult> = payload
             .map(|p| HashMap::from([(path_id, p.clone())]))
             .unwrap_or_default();
@@ -398,7 +398,7 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
         .iter()
         .map(|r| (*r.key(), r.value().result.clone()))
         .collect();
-    // SIMPIPE2 T3: drain the worker-resolved inline payloads for this publish;
+    // Drain the worker-resolved inline payloads for this publish;
     // the delivery ships the entries for the delivered paths and drops the
     // rest.
     let inline_payloads: HashMap<u64, crate::arb_engine::inline_sim::SimulatedPathResult> = engine
@@ -443,7 +443,7 @@ pub(crate) fn deregister_path(engine: &mut ArbitrageEngine, path_id: u64) -> boo
     // and clears the dedup signature.
     let removed = engine.registry.remove(path_id);
     let existed = removed.is_some();
-    // ADR-045 T4: the path-deregistration coupling (resolve companions,
+    // The path-deregistration coupling (resolve companions,
     // results, pending-new carry) is the cycle's `forget`.
     engine.cycle.forget(path_id);
     // Record for the next batch (delivery-policy half)

@@ -103,8 +103,8 @@ pub enum ProcessTxError {
 /// (the GHO bad-debt override pending the orchestrator's confirm on the
 /// `DEFICIT_CREATED` vs `user_liquidation_count` mechanism — flagged).
 ///
-/// `discounts` is the orchestrator-pre-fetched GHO discount snapshot (DP2 —
-/// the `raw_call` for users-not-in-DB discounts is the driver-shell's
+/// `discounts` is the orchestrator-pre-fetched GHO discount snapshot (the
+/// `raw_call` for users-not-in-DB discounts is the driver-shell's
 /// concern, NOT C3's). Keyed by user address → the discount percent (basis
 /// points, `10_000 == 100.00%`) in effect at the tx's start. C3's
 /// [`GhoDiscountContext`] resolves the EFFECTIVE discount per event (adjusting
@@ -148,7 +148,7 @@ pub fn process_transaction(
     // Build the per-tx liquidation-pattern context (the port of
     // `_preprocess_liquidation_aggregates` → `detect_liquidation_patterns`).
     // Drives the COMBINED_BURN aggregated-burn + Mint-skip behavior in
-    // `dispatch_liquidation` (Issue 0056 — N liquidations share 1 burn).
+    // `dispatch_liquidation` (N liquidations share 1 burn).
     let mut liq_patterns =
         build_liquidation_patterns(conn, market_id, &parsed.operations, substrate);
 
@@ -158,8 +158,9 @@ pub fn process_transaction(
     let mut sorted_ops: Vec<&Operation> = parsed.operations.iter().collect();
     sorted_ops.sort_by_key(|op| operation_sort_key(op));
 
-    // The per-tx running-state map for GHO debt positions (the crash #7
-    // stale-snapshot fix). Per-tx scope (the run-loop's
+    // The per-tx running-state map for GHO debt positions: every event in one
+    // tx threads the running balance/index instead of re-reading the pre-tx
+    // snapshot. Per-tx scope (the run-loop's
     // `apply_chunk_events_on_conn` flushes the events Vec right after this
     // fn returns, so the next tx's reads are fresh).
     let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
@@ -271,8 +272,8 @@ fn build_liquidation_patterns(
         //    must NOT create a spurious 0-liquidation group — such a group
         //    classifies as `CombinedBurn` with `total_debt_to_cover() == 0`,
         //    and `dispatch_liquidation`'s COMBINED_BURN override would size the
-        //    burn by 0 (Issue 0056 regression: chunk 22122071 GHO debt-burn
-        //    zeroing bug). Dedup by log_index — Python iterates the tx-wide
+        //    burn by 0 (the GHO debt-burn zeroing bug). Dedup by log_index —
+        //    Python iterates the tx-wide
         //    `scaled_token_events` once; the per-op iteration can only ever see
         //    each burn once (the parser attaches it to a single op —
         //    `COMBINED_BURN` position 0).
@@ -591,13 +592,12 @@ fn build_scaled_event_chunk_event(
             // for V4/V5), and dispatches a `DebtBurnEvent(value=actual_scaled_burn,
             // scaled_amount=actual_scaled_burn)`. Routing through
             // `process_debt_mint`'s else arm instead recomputes
-            // `balance_increase - event.value` (= 9_999_999 for the smoking-gun
-            // `repayAmount=10M, balance_increase=461M, value=451M` tx @ block
-            // 23_093_579), which floor-divides to 8_437_165 — diverging by 1 wei
-            // from the pool-word floor division to 8_437_166. This was the root
-            // cause of the 438 non-GHO debt divergences @23.1M + the +1 signature
-            // on the residual 7 + crash #10's balance-would-go-negative at
-            // 23_093_579.
+            // `balance_increase - event.value` (= 9_999_999 for the
+            // `repayAmount=10M, balance_increase=461M, value=451M` case at
+            // block 23_093_579), which floor-divides to 8_437_165 — diverging by 1 wei
+            // from the pool-word floor division to 8_437_166. A one-wei
+            // divergence per repay accumulates until the final full repay
+            // underflows the uint128 balance guard.
             let is_debt_repay_mint_edge = token_type == "v_token"
                 && matches!(ev.event_type, ScaledTokenEventType::DebtMint)
                 && matches!(
@@ -860,7 +860,7 @@ fn build_scaled_event_chunk_event(
             // block in `_process_collateral_transfer`). Burn-to-zero legs
             // (`Transfer(from=user, to=0x0, amount)` = dust from a direct
             // aToken `transfer()` drop to the burn address) must NOT create
-            // a 0x0 collateral row — crash #8.
+            // a 0x0 collateral row.
             let from_addr = ev.from_address.unwrap_or(ev.user_address);
             let to_addr = ev.target_address.unwrap_or_default();
             let from_position_id = resolve_position_id(
@@ -905,9 +905,10 @@ fn build_scaled_event_chunk_event(
 /// the SCALED balance being moved (+ the liquidity index) — those are the
 /// authoritative inputs for credit/debit + `last_index` advancement
 /// (mirrors Python's `_match_paired_balance_transfer` in transfers.py).
-/// Pre-fix this dispatched the ERC20's UNDERLYING amount with `transfer_index=0`
-/// at `liquidity_index != 1` the underlying > the credited scaled balance
-/// → `balance would go negative`. Post-fix we use the BT's scaled amount + index.
+/// The BT's SCALED amount and index are the only valid inputs: dispatching
+/// the ERC20's UNDERLYING amount with `transfer_index=0` debits more than the
+/// credited scaled balance whenever the liquidity index is not 1, and the
+/// uint128-negative guard rejects it.
 fn dispatch_balance_transfer(
     op: &Operation,
     market_id: i64,
@@ -1131,7 +1132,7 @@ fn dispatch_interest_accrual(
 ///   `updates_by_log_index` map (per-user, sorted by log index).
 /// - scans `tx_logs` for `DEFICIT_CREATED` events → builds the `bad_debt_users`
 ///   set (the bad-debt-liquidation signal — `_is_bad_debt_liquidation`).
-/// - holds the orchestrator-pre-fetched `discounts` snapshot (DP2 — the
+/// - holds the orchestrator-pre-fetched `discounts` snapshot (the
 ///   `raw_call` for users-not-in-DB is the driver-shell's concern).
 ///
 /// The `effective_discount(user, log_index, vtoken_rev)` resolves the discount
@@ -1153,7 +1154,7 @@ pub struct GhoDiscountContext<'a> {
     /// events, per-user, sorted ascending by log index. Mirrors
     /// `tx_context.discount_updates_by_log_index`.
     updates_by_log_index: HashMap<Address, Vec<(u64, U256)>>,
-    /// The orchestrator-pre-fetched GHO discount snapshot (DP2). Keyed by user
+    /// The orchestrator-pre-fetched GHO discount snapshot. Keyed by user
     /// address → the discount percent (basis points) in effect at the tx's
     /// start. Users not in the map default to 0 (no discount).
     discounts: &'a HashMap<Address, U256>,
@@ -1510,18 +1511,18 @@ fn build_gho_chunk_event(
         //   • `LiquidationHandler.handle`: the defaulting path through `_get_calculation_event_type`
         //     (returns `event_type` as-is) → event-type-based (MINT for GhoDebtMint, BURN for GhoDebtBurn)
         //
-        // Crash #10 root cause: pre-fix this compute used the magnitude heuristic
-        // `if ev.amount >= balance_increase { MINT } else { BURN }`. For GHO
-        // REPAY (GhoDebtBurn) events where `Burn.value > Burn.balanceIncrease`
-        // (typical when the user repays the principal, not just interest), the
-        // heuristic misclassified it as a MINT event → CEIL rounding + burned
-        // 1 wei MORE than Python's FLOOR per burn. Across the 5 GHO Burns in
-        // the 23M→23.1M chunk this accumulated to a 5-wei underflow at the
-        // final full-repay (= Python final balance 0; Rust final balance -5,
-        // blocked by the uint128-negative guard that STAYS).
+        // The rounding mode derives from the operation's handler, never from
+        // the event magnitudes: the heuristic
+        // `if ev.amount >= balance_increase { MINT } else { BURN }` reads a GHO
+        // REPAY (GhoDebtBurn) whose `Burn.value > Burn.balanceIncrease`
+        // (typical when the user repays the principal, not just interest) as a
+        // MINT, so it CEILs and burns 1 wei more than Python's FLOOR per burn.
+        // Across several GHO Burns in one chunk that accumulates into a wei
+        // underflow at the final full repay, blocked by the uint128-negative
+        // guard that must STAY.
         //
-        // This dispatch fixes the heuristic per Python's handler-by-handler
-        // strategy selection. The deriving `ray_div` call uses the chosen
+        // The dispatch follows Python's handler-by-handler strategy selection.
+        // The deriving `ray_div` call uses the chosen
         // per-op per-event rounding mode. Note the dispatch_gho_liquidation
         // path already handles bad-debt via `DebtPositionReset` (before reaching
         // this compute).
@@ -1566,17 +1567,14 @@ fn build_gho_chunk_event(
     // `ScaledTokenProcessor` does not — GHO is the exception). Mirrors the
     // Python's read of `debt_position.balance` / `.last_index`.
     //
-    // THE PER-TX RUNNING-STATE FIX (crash #7):
+    // THE PER-TX RUNNING STATE:
     // when a single tx has multiple GHO events for the same position
     // (e.g., borrow + accrued-interest Mint + zero-noop Mint in the same
     // `process_transaction`), each event MUST thread the running
     // `prev_balance` + `prev_index` — reading the DB pre-tx state on every
     // event re-applies the `accrue_debt_on_action` `discount_scaled` burn
-    // multiple times (`balance_increase` appears non-zero each event
-    // because `prev_index` is stale pre-tx). This produced the exact 2×
-    // `discount_scaled` drift on chunk8 events (block 18076682 tx
-    // 0x1116737166520b7c, user 0x4bd5Eb24: drift = -0.833732 GHO = exactly
-    // 2 × discount_scaled of 0.416866 GHO). Mirrors Python's `position.
+    // once per event, because `balance_increase` looks non-zero against a
+    // stale `prev_index`. Mirrors Python's `position.
     // balance += balance_delta` immediate SQLAlchemy-session write.
     //
     // The map is per-tx (the run-loop's `apply_chunk_events_on_conn` lands
@@ -1714,7 +1712,7 @@ fn dispatch_liquidation(
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
-        // COMBINED_BURN (Issue 0056): N liquidations of the same
+        // COMBINED_BURN: N liquidations of the same
         // `(user, debt_v_token)` share 1 burn. The aggregated burn — sized by
         // the group's `total_debt_to_cover` (handled below for `DebtBurn`) —
         // covers ALL debt reduction; the debt Mint events for this group are
@@ -1734,15 +1732,14 @@ fn dispatch_liquidation(
         // reset "applies to both GHO and non-GHO tokens" for ANY debt burn in a
         // Liquidation/GhoLiquidation op. A GHO debt burn attached to a
         // NON-GHO LiquidationCall (the parser's `collect_debt_burns`
-        // single-liquidation branch attaches ALL of the user's debt burns —
-        // Issue: chunk 22122071, the GHO bad-debt write-off zeroing bug) MUST
+        // single-liquidation branch attaches ALL of the user's debt burns) MUST
         // be reset here: it never reaches `dispatch_gho_liquidation` (the op
         // is `Liquidation`, not `GhoLiquidation`), so there is no GHO-path
-        // double-apply to guard against. The prior `is_gho` guard + the
-        // `GhoDebtBurn` omission from `is_debt` caused the GHO burn to fall
-        // through to `build_scaled_event_chunk_event` with `raw_amount` = the
-        // non-GHO LiquidationCall's `debtToCover` (a dust value) → a
-        // wrongly-sized burn that left the 1.28e15 GHO debt un-burnt.
+        // double-apply to guard against. An `is_gho` guard plus omitting
+        // `GhoDebtBurn` from `is_debt` lets the GHO burn fall through to
+        // `build_scaled_event_chunk_event` with `raw_amount` = the non-GHO
+        // LiquidationCall's `debtToCover` (a dust value) → a wrongly-sized
+        // burn that leaves the 1.28e15 GHO debt un-burnt.
         let is_debt = matches!(
             ev.event_type,
             ScaledTokenEventType::DebtBurn
@@ -1782,7 +1779,7 @@ fn dispatch_liquidation(
         // The per-event-type raw-amount extractor resolves debt burn/transfer
         // → word 0, collateral burn/transfer → word 1.
         let mut ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
-        // COMBINED_BURN aggregation (Issue 0056): size the single shared
+        // COMBINED_BURN aggregation: size the single shared
         // debt burn by the group's aggregate `debt_to_cover` across ALL its
         // liquidations — NOT this single LiquidationCall's `debtToCover`.
         // Mirrors `_process_debt_burn_with_match`'s COMBINED_BURN arm:
@@ -1834,16 +1831,16 @@ fn dispatch_deficit_coverage(
     // ERC20 Transfer's paired `BalanceTransfer` log + uses the BT's SCALED
     // value — NOT the unscaled ERC20 amount).
     //
-    // Crash #9 root cause: pre-fix this dispatch processed BOTH transfer
-    // variants (`CollateralTransfer` (BT, scaled value) +
-    // `Erc20CollateralTransfer` (ERC20 Transfer, UNSCALED value)) with
-    // `scaled_amount = ev.amount`. The double-application applied
-    // `unscaled + scaled` deltas — when the unscaled amount exceeded the
-    // position's scaled balance, the uint128-negative guard fired (the
-    // balance is uint128 on-chain — see AToken.rev_1.sol:1714, linearity
-    // checked; this guard is CORRECT and must STAY).
+    // The two transfer variants carry the same logical delta at different
+    // scales (`CollateralTransfer` (BT, scaled value) +
+    // `Erc20CollateralTransfer` (ERC20 Transfer, UNSCALED value)), so
+    // dispatching both with `scaled_amount = ev.amount` applies
+    // `unscaled + scaled` — when the unscaled amount exceeds the position's
+    // scaled balance the uint128-negative guard fires (the balance is uint128
+    // on-chain — see AToken.rev_1.sol:1714, linearity checked; this guard is
+    // CORRECT and must STAY).
     //
-    // Fix (faithful-mirror parity, class (i)):
+    // The dispatch (faithful-mirror parity):
     //   - SKIP the `CollateralTransfer` (BT) variant entirely (Python's
     //     `Rule 1` — the BT log is also in `op.balance_transfer_events`,
     //     paired with the ERC20 Transfer that handles the delta).
@@ -1915,7 +1912,7 @@ fn dispatch_deficit_coverage(
 /// `PoolMath::underlying_to_scaled_collateral` revision split:
 /// - rev >= 9: `ray_div_ceil(amountMinted, liquidity_index)` (reverse of `ray_mul_floor`).
 /// - rev <= 8: `ray_div(amountMinted, liquidity_index, HALF_UP)` (reverse of `ray_mul` half-up).
-///   The `amountMinted` field is on `op.minted_to_treasury_amount` (A's DP3 field).
+///   The `amountMinted` field is on `op.minted_to_treasury_amount`.
 pub(crate) fn dispatch_mint_to_treasury(
     op: &Operation,
     market_id: i64,
@@ -2321,7 +2318,7 @@ mod tests {
         assert!(!ctx.is_gho_vtoken(Address::from([0xCD; 20])));
     }
 
-    // ── GHO interest-accrual dispatch (crash #2) ───────────────
+    // ── GHO interest-accrual dispatch ──────────────────────────
 
     /// Seed an in-memory DB with a market + a GHO debt asset (V4, no
     /// discount) whose vToken erc20 is `0xvtoken`. Returns (db, `vtoken_addr`).
@@ -2470,7 +2467,7 @@ mod tests {
         }
     }
 
-    /// Crash #9 RED→GREEN: `dispatch_deficit_coverage` must mirror Python's
+    /// `dispatch_deficit_coverage` must mirror Python's
     /// `_process_deficit_coverage_operation` — the `CollateralTransfer` (BT
     /// variant, with `.index` set) is SKIPPED (Python's
     /// `_should_skip_collateral_transfer` Rule 1 — the BT log is in
@@ -2481,11 +2478,11 @@ mod tests {
     /// `override_transfer_with_paired_bt`) — its `scaled_amount` is the BT's
     /// SCALED value, NOT the unscaled ERC20 Transfer amount.
     ///
-    /// Pre-fix this dispatched BOTH the `Erc20CollateralTransfer` (unscaled
-    /// `ev.amount`) AND the `CollateralTransfer` (BT, scaled `ev.amount`)
-    /// `chunk_events` — the unscaled amount `168401963` over-debited the
-    /// position's scaled balance `148831960` and the uint128-negative guard
-    /// fired (the guard STAYS — on-chain `UserState.balance` is uint128,
+    /// Dispatching both the `Erc20CollateralTransfer` (unscaled `ev.amount`)
+    /// and the `CollateralTransfer` (BT, scaled `ev.amount`) as `chunk_events`
+    /// double-bills the position: the unscaled amount `168401963` over-debits
+    /// the scaled balance `148831960` and the uint128-negative guard rejects
+    /// it (the guard STAYS — on-chain `UserState.balance` is uint128,
     /// `AToken.rev_1.sol:1712`).
     #[test]
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
@@ -2526,12 +2523,13 @@ mod tests {
                                                                 // 168401963 / index ≈ 148831959 — the unscaled amount EXCEEDS the
                                                                 // user's scaled balance (148831960) by the difference between the
                                                                 // unscaled + the scaled: `168401963 - 148831959 = 19_570_004` → the
-                                                                // uint128 guard fires pre-fix.
+                                                                // uint128 guard fires.
         let unscaled_amount = U256::from(168_401_963u64);
         let bt_scaled = U256::from(148_831_959u64);
 
-        // 1) Build the ERC20 Transfer event log (idx 214) — pre-fix this
-        // was the source of `ev.amount = unscaled_amount` for the crash.
+        // 1) Build the ERC20 Transfer event log (idx 214): it carries
+        // `ev.amount = unscaled_amount`, the unscaled leg the pairing must
+        // override.
         // The Transfer log has 3 indexed topics + 32-byte data. (For the
         // Erc20CollateralTransfer variant the parser does NOT read the
         // topics' order precedence, but constructs the `ScaledTokenEvent`
@@ -2623,7 +2621,7 @@ mod tests {
 
         // 3) Build the Burn event (deficit-coverage burn) — the second-pass
         // burn handler produces a `ScaledTokenBurn` chunk_event (NOT a transfer),
-        // so it doesn't affect the crash #9 transfer-leg count assertion.
+        // so it doesn't affect the transfer-leg count assertion.
         // we build a complete Burn log so `build_scaled_event_chunk_event`'s
         // collateral-burn arm can compute a scaled amount (via `ray_div`).
         let burn_amount = U256::from(100u64);
@@ -2702,12 +2700,12 @@ mod tests {
         // the other `ScaledTokenBurn` (the deficit-coverage burn). The
         // `CollateralTransfer` (BT) VARIANT is SKIPPED (the BT log is in
         // `op.balance_transfer_events`, paired with the ERC20 Transfer).
-        // Pre-fix would have emitted THREE events (= ERC20 + BT + Burn) —
-        // the BT chunk_event would double-bill the user.
+        // A THIRD event (= ERC20 + BT + Burn) would double-bill the user via
+        // the BT chunk_event.
         assert_eq!(
             events.len(),
             2,
-            "DeficitCoverage must emit exactly 2 chunk_events (the ERC20 paired with the BT + the deficit burn) — pre-fix this was 3"
+            "DeficitCoverage must emit exactly 2 chunk_events (the ERC20 paired with the BT + the deficit burn)"
         );
 
         let transfer_chunk = events
@@ -2722,11 +2720,11 @@ mod tests {
             } => {
                 assert_eq!(
                     *scaled_amount, bt_scaled,
-                    "the ERC20 Transfer must be paired with the BT — scaled_amount must be the BT's scaled value (148831959), not the unscaled ERC20 amount (168401963, crash #9 root cause)"
+                    "the ERC20 Transfer must be paired with the BT — scaled_amount must be the BT's scaled value (148831959), not the unscaled ERC20 amount (168401963)"
                 );
                 assert_eq!(
                     *transfer_index, index,
-                    "transfer_index must be the BT's liquidity index (NOT zero — the pre-fix fallback ev.index.unwrap_or_default())"
+                    "transfer_index must be the BT's liquidity index (NOT the zero `ev.index.unwrap_or_default()` fallback)"
                 );
             }
             other => panic!("expected ScaledTokenTransfer, got {other:?}"),
@@ -2739,17 +2737,15 @@ mod tests {
         );
     }
 
-    // ── Issue 0056: COMBINED_BURN (N liquidations share 1 burn) ──────────
-    // The failing chunk 20872071-20882070: a Balancer flash-loan liquidation
-    // (tx 0x75b41542...) with 2 LiquidationCalls on the same (user, USDC
-    // debt) + exactly 1 vUSDC DebtBurn (value = liq#2's debtToCover) + 1
-    // repay-path DebtMint (balInc > value). The Python detects
+    // ── COMBINED_BURN (N liquidations share 1 burn) ──────────────────────
+    // A Balancer flash-loan liquidation with 2 LiquidationCalls on the same
+    // (user, USDC debt) produces exactly 1 vUSDC DebtBurn (value = liq#2's
+    // debtToCover) + 1 repay-path DebtMint (balInc > value). Python detects
     // `LiquidationPattern.COMBINED_BURN`, sizes the single burn by the group's
-    // `total_debt_to_cover` (sum), and skips the Mint entirely. Pre-fix the
-    // Rust port had NO pattern layer (`LiquidationPatternContext` was a
-    // stub — never built/consumed), so each op's LiquidationCall word0 sized
-    // the burn (under-burn) + the DebtMint was applied as a standard borrow
-    // (over-mint) → 262_371_189_504 divergence vs chain `scaledBalanceOf`.
+    // `total_debt_to_cover` (sum), and skips the Mint entirely. Sizing the
+    // burn by each op's LiquidationCall word0 under-burns, and applying the
+    // DebtMint as a standard borrow over-mints: the pair diverges from chain
+    // `scaledBalanceOf` by 262_371_189_504.
 
     /// Build a synthetic `LiquidationCall` log.
     fn make_liquidation_call_log(
@@ -2865,16 +2861,15 @@ mod tests {
         }
     }
 
-    /// RED→GREEN: `build_liquidation_patterns` detects `COMBINED_BURN` for the
+    /// `build_liquidation_patterns` detects `COMBINED_BURN` for the
     /// 2-liquidations/1-burn group, and `dispatch_liquidation` (a) sizes the
     /// single shared burn by the group's aggregate `total_debt_to_cover`, and
     /// (b) skips the `DebtMint` entirely.
     ///
-    /// Pre-fix: `build_liquidation_patterns` didn't exist + the pattern
-    /// layer was a stub → the burn was sized by liq#1's `debtToCover`
-    /// (`47_005_978`, ~42 scaled — vs the aggregate `292_585_135_322`) and the
-    /// `DebtMint` was applied twice (once per op) as a positive borrow delta →
-    /// the `262_371_189_504` divergence (`rayDiv(292_538_129_344, idx)`).
+    /// Sizing the burn by liq#1's `debtToCover` (`47_005_978`, ~42 scaled — vs
+    /// the aggregate `292_585_135_322`) and applying the `DebtMint` once per op
+    /// as a positive borrow delta diverges by `262_371_189_504`
+    /// (`rayDiv(292_538_129_344, idx)`).
     #[test]
     fn dispatch_liquidation_combined_burn_aggregates_debt_and_skips_mint() {
         use crate::{ray_div, RayRounding};
@@ -2967,7 +2962,7 @@ mod tests {
         };
         let operations = vec![op0.clone(), op1.clone()];
 
-        // RED→GREEN #1: the pattern context detects COMBINED_BURN.
+        // The pattern context detects COMBINED_BURN.
         let conn = db.lock();
         let mut liq_patterns =
             build_liquidation_patterns(&conn, 1, &operations, &mut ChunkSubstrate::lazy(1));
@@ -2985,7 +2980,7 @@ mod tests {
             "the group's total_debt_to_cover must be the sum of both debtToCovers",
         );
 
-        // RED→GREEN #2: dispatch sizes the single burn by the aggregate +
+        // Dispatch sizes the single burn by the aggregate +
         // skips the mint (0 mints across both ops).
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
@@ -3059,16 +3054,15 @@ mod tests {
         }
     }
 
-    // RED→GREEN (Issue 0056 regression): a debt burn whose vToken does NOT
-    // match any LiquidationCall's debt vToken — e.g. a cross-asset burn
-    // attached to a liquidation op, or a standalone (non-liquidation) repay —
-    // must NOT be classified as `COMBINED_BURN`. Pre-fix, the Rust
-    // `build_liquidation_patterns` step-2 used `entry().or_default()`, which
-    // created a spurious 0-liquidation + 1-burn group; `detect_pattern` then
-    // returned `CombinedBurn` with `total_debt_to_cover() == 0`, and
-    // `dispatch_liquidation`'s COMBINED_BURN override sized the burn by 0
-    // (chunk 22122071 GHO debt-burn zeroing bug: DB expected ~1.28e15,
-    // chain = 0). Mirrors Python's `detect_liquidation_patterns` guard
+    // A debt burn whose vToken does NOT match any LiquidationCall's debt
+    // vToken — e.g. a cross-asset burn attached to a liquidation op, or a
+    // standalone (non-liquidation) repay — must NOT be classified as
+    // `COMBINED_BURN`. Grouping it under `entry().or_default()` creates a
+    // spurious 0-liquidation + 1-burn group; `detect_pattern` then returns
+    // `CombinedBurn` with `total_debt_to_cover() == 0`, and
+    // `dispatch_liquidation`'s COMBINED_BURN override sizes the burn by 0 —
+    // zeroing a debt balance chain expects ~1.28e15 on. Mirrors Python's
+    // `detect_liquidation_patterns` guard
     // `if key not in groups: continue`.
     #[test]
     fn build_liquidation_patterns_does_not_classify_standalone_burn_as_combined() {
@@ -3156,28 +3150,27 @@ mod tests {
     }
 
     // ── Bad-debt reset for a GHO debt burn in a NON-GHO liquidation ─────
-    // Chunk 22122071-22132070: tx 0x0affc26f is a `batchLiquidate` (9
-    // LiquidationCalls, all debtAsset=WBTC). The parser's `collect_debt_burns`
-    // single-liquidation branch ("collect ALL debt burns, no asset filter")
-    // attaches user 0xfb27's GHO-debt vToken Burn (idx 661) to the WBTC-LC op
-    // (idx 665) because the user has exactly 1 liquidation. The GHO burn's
-    // real value is 1.28e15 (the FULL GHO debt — a bad-debt write-off: the
-    // contract emits DEFICIT_CREATED, on-chain scaledBalanceOf drops to 0).
+    // A `batchLiquidate` (N LiquidationCalls, all debtAsset=WBTC) can carry a
+    // user's GHO-debt vToken Burn attached to a WBTC-LC op: the parser's
+    // `collect_debt_burns` single-liquidation branch ("collect ALL debt burns,
+    // no asset filter") attaches it because the user has exactly 1
+    // liquidation. The GHO burn's real value is 1.28e15 (the FULL GHO debt —
+    // a bad-debt write-off: the contract emits DEFICIT_CREATED, on-chain
+    // scaledBalanceOf drops to 0).
     //
     // The Python `_process_debt_burn_with_match` applies the bad-debt reset
     // FIRST (balance=0) — and its comment says "applies to both GHO and
     // non-GHO tokens" — for ANY debt burn in a Liquidation/GhoLiquidation op
     // when `_is_bad_debt_liquidation` is true.
     //
-    // Pre-fix, the Rust `dispatch_liquidation` gated the reset on `is_debt`,
-    // which EXCLUDED `GhoDebtBurn` (the set was {DebtBurn, DebtTransfer,
-    // Erc20DebtTransfer}), AND excluded the GHO vToken via a `is_gho` guard
-    // (intended to defer to `dispatch_gho_liquidation` — but that path is
-    // NEVER reached for a GHO burn attached to a NON-GHO LC). So the GHO burn
-    // fell through to `build_scaled_event_chunk_event` with `raw_amount` = the
-    // WBTC LiquidationCall's word0 `debtToCover` (a dust value, 142 wei) →
-    // `ray_div(142, gho_index)` = 126 (the residual); the 1.28e15 GHO debt was
-    // never burned → DB expected ~1.28e15, on-chain 0.
+    // Gating the reset on `is_debt` EXCLUDES `GhoDebtBurn` (the set is
+    // {DebtBurn, DebtTransfer, Erc20DebtTransfer}), and an `is_gho` guard
+    // excludes the GHO vToken (deferring to `dispatch_gho_liquidation` — a
+    // path NEVER reached for a GHO burn attached to a NON-GHO LC). The GHO
+    // burn then falls through to `build_scaled_event_chunk_event` with
+    // `raw_amount` = the WBTC LiquidationCall's word0 `debtToCover` (a dust
+    // value, 142 wei) → `ray_div(142, gho_index)` = 126 residual, and the
+    // 1.28e15 GHO debt is never burned.
     #[test]
     fn dispatch_liquidation_resets_gho_debt_burn_on_bad_debt() {
         use degenbot_core::address_utils::address_to_checksum_string;
@@ -3294,11 +3287,10 @@ mod tests {
         )
         .expect("dispatch");
 
-        // GREEN: a DebtPositionReset must be emitted for the GHO debt
-        // position (the bad-debt write-off zeroes the balance). Pre-fix, the
-        // GHO burn was NOT reset (is_debt excluded GhoDebtBurn + the GHO
-        // vToken guard), so a wrongly-sized ScaledTokenBurn was emitted
-        // instead (delta = ray_div(142, index) = 126, leaving 1.28e15).
+        // A DebtPositionReset must be emitted for the GHO debt position (the
+        // bad-debt write-off zeroes the balance). Without the reset the GHO
+        // burn emits as a wrongly-sized ScaledTokenBurn instead
+        // (delta = ray_div(142, index) = 126, leaving 1.28e15).
         let reset = events.iter().find_map(|e| match e {
             AaveChunkEvent::DebtPositionReset {
                 position_id,
@@ -3330,26 +3322,24 @@ mod tests {
     }
 
     // ── DebtMint in a Liquidation (interest exceeds debtToCover) ─────────
-    // Chunk 24352071-24362070: two off-by-1 debt divergences (DB +1 too high
-    // on both). tx-shape: a `LiquidationCall` whose `_burnScaled` emits BOTH
-    // a `Mint` (value = balanceIncrease - debtToCover, when interest > the
-    // liquidated debt) AND a `Burn` (value = debtToCover). The Mint is a NET
-    // BURN (the on-chain `scaledBalanceOf` DROPS at the Mint's block) — Aave
-    // V3 `_burnScaled` mints the interest-remainder token then the actual
-    // burn subtracts the principal scaled amount.
+    // A `LiquidationCall` whose `_burnScaled` emits BOTH a `Mint` (value =
+    // balanceIncrease - debtToCover, when interest > the liquidated debt) AND
+    // a `Burn` (value = debtToCover). The Mint is a NET BURN (the on-chain
+    // `scaledBalanceOf` DROPS at the Mint's block) — Aave V3 `_burnScaled`
+    // mints the interest-remainder token then the actual burn subtracts the
+    // principal scaled amount.
     //
     // The Python `_process_debt_mint_with_match` treats a `DebtMint` in
     // {LIQUIDATION, GHO_LIQUIDATION, REPAY, REPAY_WITH_ATOKENS, GHO_REPAY} as
     // a burn sized by the Pool event's `debtToCover`/`repayAmount` (decoded
     // from the Pool event word0), via `get_debt_burn_scaled_amount` (FLOOR for
-    // rev ≥4). The Rust `is_debt_repay_mint_edge` originally gated on
-    // `Repay | RepayWithAtokens` ONLY — so a `DebtMint` in a `Liquidation`
-    // bypassed the edge + fell to the standard-mint REPAY-arm, which derives
-    // the amount from `balance_increase - value` (= `bi - (bi - debtToCover)`
-    // = debtToCover on paper — but the on-chain Mint `value` field is rounded
-    // relative to debtToCover by ±1 wei). floor-dividing `bi - value`
-    // (= 496_463_174) instead of `debtToCover` (= 496_463_175) → a burn 1 wei
-    // too small → DB ends 1 wei too high (848_653_331 vs on-chain 848_653_330).
+    // rev ≥4). The Rust `is_debt_repay_mint_edge` gate must include
+    // `Liquidation`: a `DebtMint` outside it falls to the standard-mint
+    // REPAY-arm, which derives the amount from `balance_increase - value`
+    // (= `bi - (bi - debtToCover)` = debtToCover on paper — but the on-chain
+    // Mint `value` field is rounded relative to debtToCover by ±1 wei).
+    // Floor-dividing `bi - value` (= 496_463_174) instead of `debtToCover`
+    // (= 496_463_175) burns 1 wei too small, leaving the DB 1 wei too high.
     #[test]
     fn dispatch_liquidation_treats_debt_mint_as_burn_via_debt_to_cover() {
         use rusqlite::params;
@@ -3380,11 +3370,10 @@ mod tests {
             )
             .unwrap();
         }
-        // The smoking-gun values from chunk 24352071 (user 0xb9579e5c, USDC
-        // debt vToken rev 5): index + debtToCover chosen so that
-        // floor(debtToCover / idx) = 408_261_084 (the on-chain Mint effect)
-        // while floor((balance_increase - value) / idx) = 408_261_083 (the
-        // standard-mint REPAY-arm's under-burn by 1).
+        // Fixture values (USDC debt vToken rev 5): index + debtToCover chosen
+        // so that floor(debtToCover / idx) = 408_261_084 (the on-chain Mint
+        // effect) while floor((balance_increase - value) / idx) = 408_261_083
+        // (the standard-mint REPAY-arm's under-burn by 1).
         let index = U256::from_str_radix("3ede331d09b14470cc739a4", 16).unwrap();
         let debt_to_cover = U256::from(496_463_175u64);
         let balance_increase = U256::from(666_026_406u64);

@@ -7,7 +7,7 @@ use super::{
 
 impl<'a> TransactionOperationsParser<'a, '_> {
     /// The v8-vs-v9+ `ray_div`
-    /// subtlety (DP3): for `pool_revision` <= 8, `amountMinted` is in underlying
+    /// subtlety: for `pool_revision` <= 8, `amountMinted` is in underlying
     /// units → apply `ray_div(amountMinted, liquidity_index, HALF_UP)` to
     /// derive the scaled amount; for `pool_revision` >= 9, `amountMinted`
     /// equals the scaled amount directly.
@@ -68,16 +68,16 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 }
             }
 
-            // DP3: store the MintedToTreasury event's `amount_minted` as the
+            // Store the MintedToTreasury event's `amount_minted` as the
             // raw UNDERLYING amount on the operation (regardless of pool
             // revision). The scaling conversion (ray_div / ray_div_ceil per
             // rev) happens EXACTLY ONCE in `dispatch_mint_to_treasury`
-            // (single conversion at apply-time). Previously this DP3 arm
-            // pre-converted for rev < 9 → `dispatch_mint_to_treasury` would
-            // convert AGAIN → double-division by `idx`, shrinking the applied
-            // scaled_amount by a factor of `idx/RAY` (root cause:
-            // treasury 0x464C divergences across 4 aToken positions — WETH
-            // -8.04e12, wstETH -2.29e11, DAI -3.12e15, USDC -6415).
+            // (single conversion at apply-time). Pre-converting here for rev < 9
+            // makes `dispatch_mint_to_treasury` convert AGAIN →
+            // double-division by `idx`, shrinking the applied scaled_amount by
+            // a factor of `idx/RAY` (the treasury 0x464C divergence across 4
+            // aToken positions — WETH -8.04e12, wstETH -2.29e11, DAI -3.12e15,
+            // USDC -6415).
             let resolved = minted_amount;
 
             assigned_indices.insert(ev.log_index);
@@ -122,10 +122,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         }
     }
 
-    /// Deficit-coverage
-    /// `BalanceTransfer` + Burn pair (phase 4c). ERC20-Transfer +
-    /// `BalanceTransfer` + Burn triplet matching (the parity-drift knife-edge
-    /// per DP6 — kept in A; escalate to B if gnarly).
+    /// Deficit-coverage `BalanceTransfer` + Burn pair, plus the
+    /// `Erc20-Transfer` + `BalanceTransfer` + Burn triplet matching (the
+    /// parity-drift knife-edge).
     pub(super) fn create_deficit_coverage_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],

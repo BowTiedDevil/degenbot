@@ -194,9 +194,9 @@ pub(crate) type LinesFn = fn(
 ///
 /// WHY the name and not the pointer's code address: a crate-private fn may be
 /// instantiated once per codegen unit, so `std::ptr::fn_addr_eq` on the SAME
-/// fn can compare unequal depending on profile flags (2026-10-14: the ADR-071
-/// D3 identity gate failed in CI under `CARGO_PROFILE_DEV_DEBUG=0
-/// CARGO_INCREMENTAL=0` while passing locally). The name derives from the same
+/// fn can compare unequal depending on profile flags (the ADR-071 D3 identity
+/// gate fails in CI under `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`
+/// while passing locally). The name derives from the same
 /// token as the pointer, so it matches iff the same fn item is registered, in
 /// every build layout.
 pub(crate) struct NamedFn<F> {
@@ -1115,7 +1115,7 @@ mod gate_tests {
         // never the fn's code ADDRESS. `ptr::fn_addr_eq` compares addresses of
         // crate-private fns, which rustc may instantiate once per codegen
         // unit; the same fn then compares unequal across profile flags
-        // (2026-10-14: this gate failed in CI under `CARGO_PROFILE_DEV_DEBUG=0
+        // (this gate fails in CI under `CARGO_PROFILE_DEV_DEBUG=0
         // CARGO_INCREMENTAL=0` while passing locally). Names match iff the
         // same ident is registered, in every build layout.
         //

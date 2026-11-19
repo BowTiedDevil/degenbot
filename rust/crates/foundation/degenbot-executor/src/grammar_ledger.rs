@@ -107,7 +107,7 @@ pub struct ShapeClass {
     pub bribe: Bribe,
 }
 
-/// The stream-varying D1 output axes (candidate 4) — the axes a
+/// The stream-varying D1 output axes — the axes a
 /// family's builder may **branch on in the produced STREAM**, as opposed to
 /// the runtime `profit_mode`/`pack_config` config seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1744,7 +1744,7 @@ mod tests {
         assert_eq!(e.balance(weth()), 400);
     }
 
-    /// D0 — take-before-credit is rejected (the pre-fix `v2_v2_v4` bug).
+    /// D0 — take-before-credit is rejected (the `v2_v2_v4` over-take shape).
     #[test]
     fn take_before_credit_is_rejected() {
         let mut v = LedgerValidator::default();
@@ -1776,13 +1776,13 @@ mod tests {
             .is_ok());
     }
 
-    /// D0 — the pre-fix `v2_v2_v4` stream (take-WETH before any V4 swap creates
-    /// a positive WETH delta) is rejected end-to-end.
+    /// D0 — the `v2_v2_v4` over-take stream (take-WETH before any V4 swap
+    /// creates a positive WETH delta) is rejected end-to-end.
     #[test]
     fn prefixed_v2_v2_v4_take_before_swap_rejected() {
         let mut v = LedgerValidator::default();
         let stream = [
-            // The bug: an early take of WETH with no prior PM[WETH] credit.
+            // The over-take: an early take of WETH with no prior PM[WETH] credit.
             LedgerOp::Take {
                 currency: weth(),
                 amount: 100_000,

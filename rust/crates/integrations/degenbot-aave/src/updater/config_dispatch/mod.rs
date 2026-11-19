@@ -260,12 +260,11 @@ async fn dispatch_single_config_event(
             Some(resolve_reserve_initialized(ctx, ev, oracle).await?)
         }
         // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
-        // dispatch. Crash #3: the prior design processed
-        // these as proxies for the zero-leg Transfers; the Python never
-        // did (Staked/Redeem are fetched only for classification in
-        // `fetch_stk_aave_events`). The decoders stay (harmless, available
-        // for future classification) — what goes is the balance-mutation
-        // proxy. Balance mutation flows through the Transfer arm below. ──
+        // dispatch. They are not proxies for the zero-leg Transfers; the
+        // Python never treated them that way (Staked/Redeem are fetched only
+        // for classification in `fetch_stk_aave_events`). The decoders stay
+        // (harmless, available for future classification). Balance mutation
+        // flows through the Transfer arm below. ──
         DecodedAaveEvent::Staked(_) | DecodedAaveEvent::Redeem(_) => None,
         // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
         // neither-zero case via Option<i64>; scoped to the discount token). ──

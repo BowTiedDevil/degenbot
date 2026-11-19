@@ -450,7 +450,7 @@ pub fn dispatch_profitable_results(
     refuse_duplicate_candidate_ids(&candidates)?;
 
     let pre_filter_count = candidates.len();
-    // T3: candidates entering the fan-out (pre-filter sizes summed; the
+    // Candidates entering the fan-out (pre-filter sizes summed; the
     // per-stage drop counts live on `DispatchOutcome` for the logs).
     degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesEntered {
         n: u64::try_from(pre_filter_count).unwrap_or(u64::MAX),
@@ -555,7 +555,7 @@ pub(crate) fn dispatch_admitted_profitable_results(
     refuse_duplicate_candidate_ids(admitted.iter().map(AdmittedCandidate::candidate))?;
 
     let entering = admitted.len();
-    // T3: the same census edge the raw leaf emits — the candidates THIS leaf
+    // The same census edge the raw leaf emits — the candidates THIS leaf
     // considered, so a migrated caller's metric keeps its meaning.
     degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesEntered {
         n: u64::try_from(entering).unwrap_or(u64::MAX),
@@ -779,8 +779,8 @@ fn simulate_leaf(
     // once per pass — a duplicated id could otherwise record both a success and
     // a failure against it, or count one failure twice toward suppression.
     let candidate_ids: Vec<CandidateId> = candidates.iter().map(|c| c.candidate_id).collect();
-    // SIMPIPE T1 lab baseline: snapshot BEFORE the fan-out so the exit log
-    // carries this fan-out's cold-fetch/build/sim deltas.
+    // Snapshot BEFORE the fan-out so the exit log carries this fan-out's
+    // cold-fetch/build/sim deltas.
     let lab_before = degenbot_simulation::sim::sim_metrics::snapshot();
     let lab_fanout_started = std::time::Instant::now();
     let fanout_candidate_count = candidates.len();
@@ -806,19 +806,17 @@ fn simulate_leaf(
             // committed to the shared `CacheDB`). `parking_lot`'s read guard is
             // held for the serial loop's duration.
             Some(arc) => {
-                // Incident 2026-08-20 #1 root fix: snapshot the sim
-                // anchor under a SHORT read and drop the guard BEFORE any
-                // provider I/O. Pre-fix this read guard was held across
-                // `Evm2BlockSimHandle::build` + the whole serial sim loop — every
-                // cold-miss fetch parked a `BotState` writer behind it for the
-                // transport delay (minutes on a stalled RPC pre-F2). The
-                // snapshot is O(pools) scalar words; see
-                // `bot_core::SimAnchorState` for the audited surface.
+                // Snapshot the sim anchor under a SHORT read and drop the guard
+                // BEFORE any provider I/O: this read guard must never be held
+                // across `Evm2BlockSimHandle::build` or the serial sim loop, or
+                // every cold-miss fetch parks a `BotState` writer behind it for
+                // the whole transport delay. The snapshot is O(pools) scalar
+                // words; see `bot_core::SimAnchorState` for the audited surface.
                 //
-                // ADR-039: since T5 the snapshot is an ENUMERATED
-                // per-family projection (`project_sim_anchor_scalars`), never an
-                // arbitrary-key probe — this guard scope paid a ~2.7s hold per
-                // block through the V3 tick-descent + V4 O(V^2) keccak paths.
+                // ADR-039: the snapshot is an ENUMERATED per-family projection
+                // (`project_sim_anchor_scalars`), never an arbitrary-key probe —
+                // the arbitrary-key probe paid a ~2.7s guard hold per block
+                // through the V3 tick-descent + V4 O(V^2) keccak paths.
                 // DO NOT re-point the projection at the arbitrary-key probe, and
                 // do not extend this guard across anything below it.
                 let anchor = {
@@ -855,14 +853,14 @@ fn simulate_leaf(
                     let evm2_warm_cache = warm_cache.unwrap_or_else(
                     degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner::shared_default,
                 );
-                    // SIMPIPE2 M2, cross-fan-out: the storage memo is scoped to the
+                    // Cross-fan-out: the storage memo is scoped to the
                     // read anchor (`sim_block` — the block the fallback tags every
                     // RPC read with), not to this fan-out. Every dispatch at this
                     // anchor shares one memo, so a block's fan-outs pay the cold
                     // chain once; the session-owned slot retires it (and every
                     // value it cached) the moment the anchor moves, incl. a reorg
                     // rewind. The degrade path above mints a per-call cache, hence
-                    // a fresh slot — the old per-fan-out scope, unchanged.
+                    // a fresh slot with the per-call scope.
                     //
                     // The anchor is a BLOCK, not a height: its hash rides the key
                     // (`ReadAnchor`), so a same-height reorg — the anchor number
@@ -872,7 +870,7 @@ fn simulate_leaf(
                     // against the cold storage chain the memo saves on this
                     // anchor's later fan-outs, and BEFORE any guard is taken
                     // (never across provider I/O). A failed read degrades to the
-                    // number-only anchor — the pre-fence scope, never a wrong one.
+                    // number-only anchor, never a wrong one.
                     // The storage representation this fan-out reads through:
                     // the legacy per-anchor memo (the default) or a ready BAL
                     // delta generation. The selection resolves the anchor either
@@ -1111,8 +1109,8 @@ fn simulate_leaf(
             )
             }
         };
-    // SIMPIPE T1 lab: this fan-out's delta — the per-dispatch cold-fetch and
-    // handle-build profile that decides the M1 handle-pool default.
+    // This fan-out's delta — the per-dispatch cold-fetch and handle-build
+    // profile that decides the handle-pool default.
     {
         let lab = degenbot_simulation::sim::sim_metrics::delta(
             degenbot_simulation::sim::sim_metrics::snapshot(),
@@ -1579,13 +1577,10 @@ mod tests {
         }
     }
 
-    /// Incident 2026-08-20 #1 root fix: the fan-out must NOT hold
-    /// the `BotState` read guard across provider I/O. Pre-fix,
-    /// the per-block handle build + the serial sim loop borrowed the guard
-    /// while every cold-miss fetch went over RPC — a writer parked for the
-    /// full transport delay (minutes on a stalled RPC pre-F2). Post-fix the
-    /// anchor is snapshotted under a SHORT read and the writer proceeds
-    /// while the sim is mid-RPC.
+    /// The fan-out must NOT hold the `BotState` read guard across provider
+    /// I/O: the anchor is snapshotted under a SHORT read, so a writer queued
+    /// while the per-block handle build or the serial sim loop is mid-RPC
+    /// proceeds instead of parking for the whole transport delay.
     #[test]
     #[expect(clippy::expect_used)]
     fn fanout_does_not_hold_the_botstate_guard_across_provider_io() {
@@ -1647,7 +1642,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<std::time::Duration>();
         let writer = std::thread::spawn(move || {
             let start = std::time::Instant::now();
-            let _guard = writer_state.write_at(degenbot_substrate::state_lock::LockSite::Sim); // parks behind the fan-out's read (pre-fix)
+            let _guard = writer_state.write_at(degenbot_substrate::state_lock::LockSite::Sim); // parks behind the fan-out's read
             tx.send(start.elapsed()).expect("report wait");
         });
 

@@ -159,7 +159,7 @@ pub enum RouteAction {
 ///   BACKFILL buffer: drained fully at registration, matching
 ///   `buffer_backfill_v3_liquidity_update`.
 /// - Live × Unregistered × `TickMutation` is the staged-mutation row: it MUST stage
-///   into the pump buffer. It used to be an implicit drop.
+///   into the pump buffer, never an implicit drop.
 // The per-cell rows are deliberate: this IS the table — merging arms would
 // hide which cell each behavior belongs to.
 #[expect(clippy::match_same_arms)]
@@ -268,9 +268,8 @@ mod tests {
     }
 
     /// THE STAGED-MUTATION ROW: a live-phase tick mutation for a not-yet-registered
-    /// pool MUST stage into the pump buffer. It used to be an implicit drop
-    /// at the dispatcher funnel — this test exists so nobody can reintroduce
-    /// that inference here.
+    /// pool MUST stage into the pump buffer, never an implicit drop at the
+    /// dispatcher funnel — this test exists so that inference cannot return.
     #[test]
     fn fuwyur_row_live_unregistered_tick_mutation_buffers() {
         assert_eq!(

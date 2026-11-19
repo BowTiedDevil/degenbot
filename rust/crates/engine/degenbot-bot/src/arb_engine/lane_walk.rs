@@ -25,16 +25,15 @@ use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
 use ::degenbot_pools::solve::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::diag;
 // ===========================================================================
-// the walk-adjacent helpers, moved here with the walk they
-// serve (the retired grab file is deleted outright).
+// the walk-adjacent helpers, moved here with the walk they serve.
 // ===========================================================================
-/// SIMPIPE2 T2: the WORKER-side clamp — drive the merge-site-identical
-/// clamp from the solve worker's `to_solve`-aligned pool-ref snapshot, so a
-/// result is clamp-committed BEFORE the streaming handoff (the T1/T3 seam
-/// simulates on a payload whose `consumed_inputs` are the merge-committed
-/// values with no engine-lock round-trip). Stance-gated: with
-/// `DEGENBOT_SOLVE_INLINE_SIM` unset the result rides UNFINALIZED and the
-/// merge runs that one finalization itself.
+/// The WORKER-side clamp — drive the merge-site-identical clamp from the
+/// solve worker's `to_solve`-aligned pool-ref snapshot, so a result is
+/// clamp-committed BEFORE the streaming handoff (the inline sim runs on a
+/// payload whose `consumed_inputs` are the merge-committed values with no
+/// engine-lock round-trip). Stance-gated: with `DEGENBOT_SOLVE_INLINE_SIM`
+/// unset the result rides UNFINALIZED and the merge runs that one
+/// finalization itself.
 ///
 /// `None` is the clamp's refusal (a hooked leg the plan could not price
 /// exactly): the candidate has no executable figures, so the walk records it
@@ -72,9 +71,9 @@ pub(crate) fn clamp_result_in_worker(
     clamp_result_with_state(&core, pid, pools, ctx.clamp_margin, &plan, result)
         .map(SolveClamp::Finalized)
 }
-/// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
-/// from the clamp-committed result on the SAME worker context the T2 clamp
-/// opened (shared core + to_solve-aligned pool refs; stance + hook gated).
+/// The WORKER-side inline sim — resolve the per-path payload from the
+/// clamp-committed result on the SAME worker context the worker clamp opened
+/// (shared core + to_solve-aligned pool refs; stance + hook gated).
 /// The payload rides the result handoff so the merge never calls out — the
 /// merge only stores/forwards. `None` = stance off, no hook, or the hook
 /// reported failure-without-payload.
@@ -92,18 +91,17 @@ pub(crate) fn inline_sim_payload(
     let sim = ctx.inline_sim.as_ref()?;
     // The assembly lives in ONE home (`arb_engine::inline_sim`); this
     // wrapper is only the guards + shape, and otel tests reachable through
-    // it pin the production assembly directly (span shape,
-    // SIMSPANDUP verdict discipline).
+    // it pin the production assembly directly (span shape, verdict
+    // discipline).
     let request = crate::arb_engine::inline_sim::build_inline_sim_request(ctx, idx, pid, result);
     crate::arb_engine::inline_sim::run_inline_sim(sim, request, result.profit, parent_span.clone())
 }
 
-/// Stamp the sim payload onto the held Solved outcome and submit it —
-/// ONE flush shape for BOTH solve arms (carry; unified by
-/// ). The arms differ only in the `submit` closure:
-/// the detached arm's closure sends on the merge pipe AND bumps its
-/// in-flight gauge at SEND success (a bin that dies before sending
-/// never leaks a count); the in-cycle arm's closure is `lane.solved`.
+/// Stamp the sim payload onto the held Solved outcome and submit it — ONE
+/// flush shape for BOTH solve arms. The arms differ only in the `submit`
+/// closure: the detached arm's closure sends on the merge pipe and bumps its
+/// in-flight gauge at SEND success (a bin that dies before sending never
+/// leaks a count); the in-cycle arm's closure is `lane.solved`.
 pub(crate) fn flush_solved_item(
     held: &mut Vec<(u64, Option<SolveOutcome>)>,
     submit: &mut dyn FnMut(SolveOutcome),
@@ -311,7 +309,7 @@ pub(crate) fn drive_lane_walk(
     for &i in &bin_plan.indices {
         let (pid, resolved) = &bin_plan.items[i];
         let outcome = solve_one_path(shared, solve_span, *pid, resolved).and_then(|(pid, r)| {
-            // SIMPIPE2 T2: clamp in the worker (stance-gated) BEFORE the
+            // Clamp in the worker (stance-gated) BEFORE the
             // profitless filter — the clamp recompute can zero a candidate,
             // and the filter must see the commit-ready values. `None` here is
             // the clamp's refusal: the candidate dies with the `None` arm

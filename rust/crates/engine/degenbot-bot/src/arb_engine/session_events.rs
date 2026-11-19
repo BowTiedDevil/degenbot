@@ -2,11 +2,10 @@
 //!
 //! # The stream
 //!
-//! The engine used to hand out two independent channels — a result-batch source
-//! and a block-clock source — so a consumer's *poll order* decided whether a
-//! block's view was published before that block's batches. That made the two
-//! clocks
-//! a bug class instead of an ordering guarantee.
+//! Two independent channels — a result-batch source and a block-clock source —
+//! would let a consumer's *poll order* decide whether a block's view is
+//! published before that block's batches, making the two clocks a bug class
+//! instead of an ordering guarantee.
 //!
 //! Here there is one source and two arms:
 //!

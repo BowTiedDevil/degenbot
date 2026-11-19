@@ -175,9 +175,9 @@ impl DeploymentFanOutOutcome {
 /// target-selection policy, the three policy registries, and the engine
 /// handles.
 ///
-/// Every field is NAMED at the call site. The two positional hazards the old
-/// signatures carried are gone: the simulated block [`Self::block`] and the
-/// block number [`Self::current_block`] can no longer be transposed, and the
+/// Every field is NAMED at the call site, so the two positional hazards are
+/// unrepresentable: the simulated block [`Self::block`] and the block number
+/// [`Self::current_block`] cannot be transposed, and the
 /// suppression ledger, divergence memo, and fee-on-transfer registry cannot be
 /// passed in each other's slot. Adding a shared input adds a field.
 ///

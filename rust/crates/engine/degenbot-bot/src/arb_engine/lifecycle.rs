@@ -34,7 +34,7 @@ pub(crate) fn solve_runtime_config_from_cfg(
         envelope_pruned_refine: true,
     }
 }
-/// T4: the ONE config parse point for the engine's runtime stances —
+/// The ONE config parse point for the engine's runtime stances —
 /// called at engine construction with the typed `BotConfig`; hot paths read
 /// the parsed statics. The crate performs ZERO environment reads: every stance
 /// is a schema key (env or TOML loads into it via the degenbot-config loader).
@@ -52,13 +52,12 @@ pub(crate) fn install_engine_stances(
     cfg: &::degenbot_config::BotConfig,
     boot_stamp: &crate::arb_engine::boot_stamp::BootStamp,
 ) {
-    // LW-T9 (no stance, no migration flag): the solve bins ALWAYS ride the
-    // fleet-hosted executor; the typed boot descriptor (quota + overrides +
-    // posture) is parsed here once.
-    // the engine's OWN construction boot, stamped — each role's
-    // install records the identified ride (first-fleet-wins per role).
+    // The solve bins ALWAYS ride the fleet-hosted executor; the typed boot
+    // descriptor (quota + overrides + posture) is parsed here once. The
+    // engine's OWN construction boot is stamped, and each role's install
+    // records the identified ride (first-fleet-wins per role).
     crate::arb_engine::fleet_solve_executor::install_boot(boot_stamp.clone());
-    // candidate 4: the two POOLED roles install through the ONE
+    // The two POOLED roles install through the ONE
     // registry. Sim installs BEFORE registration, so the registry's
     // first-wins canonical process boot is sim's (same descriptor value as
     // registration's — the boot is shared). ADR-042 F4: the SimDriver seat
@@ -164,7 +163,7 @@ pub(crate) fn flush_event_buffer(engine: &mut ArbitrageEngine) {
 }
 /// Read the last solved results and block number.
 ///
-/// Engine-shard T1: snaps a snapshot of the `DashMap`
+/// Snaps a snapshot of the `DashMap`
 /// shards into an owned `HashMap` so the caller never holds a lock into the
 /// engine. `O(n_results)` — typically <50 entries (profitable solves only)
 /// per drain.

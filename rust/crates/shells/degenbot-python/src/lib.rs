@@ -110,7 +110,7 @@ pub mod provider_seam;
 pub mod python_log_layer;
 #[cfg(feature = "rpc")]
 pub mod rpc;
-/// FF-T5: the runtime fleet status — budget, plan, census
+/// The runtime fleet status — budget, plan, census
 /// ("degenbot.runtime_status()"), gated on `bot`: the plan and the census it
 /// projects are the engine's (the bot's fleet status over the workers' plan),
 /// so a build with no engine has no fleet to report.
@@ -221,7 +221,7 @@ static PANIC_HOOK: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 fn driver_boot(_py: Python<'_>) {
     ambient_runtime::ensure_async_runtime_bound();
 
-    // Soak-2026-08-22 forensics + ADR-043 §2: the panic hook lives in the
+    // ADR-043 §2: the panic hook lives in the
     // observability facade (degenbot_core::telemetry::install_panic_hook) so
     // the pure-Rust core and this binding share ONE contract — exactly one
     // ERROR carrying the panic payload + thread name, with the active span
@@ -289,7 +289,7 @@ mod _ffi {
     #[pymodule_export]
     use crate::cli::cli_main;
 
-    // FF-T5: the runtime fleet status — budget, plan, census
+    // The runtime fleet status — budget, plan, census
     // ("degenbot.runtime_status()"). Gated with its module: the fleet plan and
     // census are the engine's.
     #[cfg(feature = "bot")]
@@ -700,7 +700,7 @@ mod _ffi {
                 "VerificationRpcError",
                 py.get_type::<crate::bot::engine::VerificationRpcError>(),
             )?;
-            // FF-T1: the fleet boot refusal surfaces as the typed
+            // The fleet boot refusal surfaces as the typed
             // BootRefused exception — the library never aborts the host process
             // on the boot-refusal arm; the degenbot binary maps it to its loud
             // named fail-fast exit.

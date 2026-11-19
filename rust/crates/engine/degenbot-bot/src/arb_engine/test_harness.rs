@@ -1,6 +1,6 @@
 //! Test-only free-function harness for the direct-engine drives.
 //!
-//! The T4 shims (`run_test_cycle`, `merge_detached_for_test`,
+//! The test shims (`run_test_cycle`, `merge_detached_for_test`,
 //! `finalize_for_test`, `process_updates`) and the boot-stamp probe
 //! were inherent `ArbitrageEngine` methods. The one-impl-block structural gate
 //! (`just check-engine-impl-blocks`) forbids any inherent engine member outside

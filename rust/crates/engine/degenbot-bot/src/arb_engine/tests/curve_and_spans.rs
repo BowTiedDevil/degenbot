@@ -1019,17 +1019,17 @@ fn solve_cycle_skips_span_when_nothing_dirty() {
 /// with the tokio solve executor each path's
 /// result reaches `self.results` as soon as ITS OWN solve completes —
 /// the slowest path in the batch may not delay the fast ones' merge.
-/// RED before the per-path result-queue streaming exists: the batched
-/// barrier merges everything only AFTER the slowest solve, so the drain
-/// probe stays empty past the deadline while the slow path still runs.
+/// A batched barrier merges everything only AFTER the slowest solve, so the
+/// drain probe stays empty past the deadline while the slow path still runs
+/// (the shape that motivates per-path result-queue streaming).
 ///
-/// Pinned-tier fixture (FF-T2): the streaming-merge premise binds only
+/// Pinned-tier fixture: the streaming-merge premise binds only
 /// on a host whose auto-resolved fleet binding is pinned (see the
 /// host-tier gate in the body); the serial tier's ONE solve seat has no
 /// second LPT bin to stream a fast merge into the probe.
 #[expect(
     clippy::too_many_lines,
-    reason = "the T1 acceptance carries the whole hook-probe + streaming-ordering story in one deterministic body"
+    reason = "the acceptance carries the whole hook-probe + streaming-ordering story in one deterministic body"
 )]
 #[test]
 fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
@@ -1038,7 +1038,7 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
         eprintln!("skipping: streaming-merge test requires >=2 cores");
         return;
     }
-    // Host-tier gate (FF-T2): the premise needs the PINNED tier's
+    // Host-tier gate: the premise needs the PINNED tier's
     // multi-seat solver fan-out — the slow path isolated in its own LPT
     // bin while the other bins stream fast merges into the probe. On a
     // 2-5-core host the auto profile resolves the fleet to the serial
@@ -1187,7 +1187,7 @@ fn tokio_executor_merges_fast_paths_while_slow_path_solves() {
              barrier order puts the marker first (probe = {observed:?})"
     );
 }
-/// T3 acceptance: with `DEGENBOT_STREAMING_DELIVERY` the drain
+/// With `DEGENBOT_STREAMING_DELIVERY` the drain
 /// emits each clamp-passed above-threshold result as an immediate single
 /// -entry batch — a fast path's batch must arrive on the channel while the
 /// slow path is still solving. RED before the per-result emission: the

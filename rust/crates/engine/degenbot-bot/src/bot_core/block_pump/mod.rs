@@ -56,9 +56,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-// LW-T5 (Seam E): the pump feeds the cgroup throttle sample straight
-// through the Executor seam (block_pump no longer reaches into the
-// engine's internal solve-executor module).
+// The pump feeds the cgroup throttle sample straight through the Executor
+// seam (block_pump never reaches into the engine's internal solve-executor
+// module).
 use crate::bot_core::stage_machine::QuiesceParams;
 use crate::bot_core::{CompletenessDecision, StageDecision, StageMachine};
 use degenbot_substrate::stance;
@@ -97,7 +97,7 @@ fn us_to_secs(us: u64) -> f64 {
     f64::from(u32::try_from(us).unwrap_or(u32::MAX)) / 1_000_000.0
 }
 
-/// LW-T5 (Seam E): wall-clock anchor for the header throttle-sample
+/// Wall-clock anchor for the header throttle-sample
 /// cadence — the pump owns the sample interval. The FSM needs each
 /// sample's poll interval (elapsed), and the pump poller samples on
 /// header cadence, so the delta accounting lives here with the sampler.
@@ -117,7 +117,7 @@ fn feed_executor_throttle_sample(now_ms: u64, events: u64, throttled_usec: u64) 
     } else {
         now_ms.saturating_sub(last_ms).saturating_mul(1_000)
     };
-    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // Feeder-site contract: the wrapper feeds the owner AND wakes
     // the fleet hosts on a real (non-`Held`) transition — never a raw
     // `observe_throttle` call.
     crate::arb_engine::feed_throttle(
@@ -264,8 +264,7 @@ pub struct BlockPump {
     watchdog_ticks: std::sync::atomic::AtomicU64,
     /// Wall-clock ms of the last accepted header — the anchor the driver
     /// measures `header_to_publish` (the ADR-041 epoch race) against
-    /// (succeeds the dissolved `DispatchOwner`'s T2 header→solved anchor;
-    /// single-writer: the pump task).
+    /// (the header→solved anchor; single-writer: the pump task).
     header_ms: std::sync::atomic::AtomicU64,
     /// Whether the per-block WS-delivery completeness cross-check runs
     /// (`assert_ws_block_complete` — aborts on any relevant-topic log that
@@ -281,7 +280,7 @@ pub struct BlockPump {
     /// block window, the gate dispatches ONE bounded early Drain mid-burst
     /// instead of waiting for burst quiesce — the designed replacement for
     /// the retired finalize steal. `0` disables the slice (exact
-    /// pre-T2 gate behavior). One slice per block window (reset at each
+    /// gate behavior). One slice per block window (reset at each
     /// accepted header and at each settle dispatch) keeps the unbounded
     /// per-gap serial solves from returning.
     early_slice_ms: u64,
@@ -381,8 +380,8 @@ impl BlockPump {
             ws_completeness_enabled: false,
             // Fixed-debounce posture exactly as the historical tests pin it
             // (no ambient-env reads); adaptive-mode tests override via
-            // `set_quiesce_for_test`. The fixed 50 mirrors the retired
-            // `debounce_ms` field this constructor used to set.
+            // `set_quiesce_for_test`. The fixed 50 matches the constructor's
+            // debounce default.
             quiesce_params: QuiesceParams::fixed(50),
             // Production default — finite test streams end before
             // the slice deadline, so existing quiesce tests are unaffected;

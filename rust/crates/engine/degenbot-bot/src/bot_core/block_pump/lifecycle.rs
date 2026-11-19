@@ -243,11 +243,11 @@ impl BlockPump {
     /// This is the SYNCHRONOUSLY-awaitable half of `resume_from_subscribe` —
     /// `PumpState::resume` `block_on`s it BEFORE spawning the live loop so
     /// Python's `build_paths` (which drains the per-pool backfill buffer via
-    /// `apply_backfill_buffer_v3`) cannot race the backfill. Pre-fix the
-    /// backfill ran inside the spawned `resume_from_subscribe` task and
-    /// `resume` returned immediately, so an active pool's burn was not yet
-    /// buffered when `build_paths` drained → `VerificationMismatchError` at
-    /// post-drain verify (2026-07-12 settlement-arbitrage crash).
+    /// `apply_backfill_buffer_v3`) cannot race the backfill. Running the
+    /// backfill inside the spawned `resume_from_subscribe` task lets `resume`
+    /// return immediately, so an active pool's burn is not yet buffered when
+    /// `build_paths` drains → `VerificationMismatchError` at post-drain
+    /// verify.
     ///
     /// No-op (`Ok(0)`) when `S` is unset (cold start), `S >= W` (catch-up
     /// snapshot), or `S == 0` — those are successes, not failures. An `Err` is a

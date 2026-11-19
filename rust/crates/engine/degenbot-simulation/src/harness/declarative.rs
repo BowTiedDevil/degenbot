@@ -53,9 +53,9 @@
 //! executor capital, and they stay in `Harness::{add_pool, add_v3_pool,
 //! add_v4_pool, executor_approve_pair}`.
 //!
-//! Migrating a call site is therefore a statement about capital, not plumbing:
-//! a row that used to lean on the runner's funding either seeds the holding it
-//! means to test ([`Harness::run_chain`], the production default) or asks for
+//! A call site is therefore a statement about capital, not plumbing: a row
+//! either seeds the holding it means to test ([`Harness::run_chain`], the
+//! production default) or asks for
 //! the self-funded posture ([`Harness::run_chain_capital`] with
 //! [`FixtureCapital::self_fund`]), whose entry comes from the stream itself.
 //!

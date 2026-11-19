@@ -70,17 +70,15 @@ pub(super) fn dispatch_discount_percent_updated(
 ///   (`process_transaction`); only the stkAAVE discount token is this fn's
 ///   scope (matches the Python `assert contract_address == discount_token`).
 ///
-/// Crash #3: the prior design dedupe-skipped the zero-leg
-/// here + processed the paired `Staked`/`Redeem` semantic events via separate
-/// dispatch fns. That required an empirically-falsified invariant — every
-/// zero-leg Transfer must pair with a semantic event. Some actions emit ONLY
-/// the `Transfer(X→0)` event with no paired `Redeem` (verified via cast logs
-/// across the 16.59M→18M range), leaving the sender's `stk_aave_balance`
-/// stuck at its pre-burn cache value → wrong `calculate_gho_discount_rate`
-/// → GHO-burn delta overshoots `prev_scaled_balance` → crashes. The dispatch
-/// handlers are now retired (the Python never processed Staked/Redeem for
-/// balance mutation — they're fetched only for classification in
-/// `fetch_stk_aave_events`); all balance mutation flows through this fn now.
+/// A zero-leg `Transfer` is a half-event: the `ZERO_ADDRESS` side is skipped
+/// and the real user mutated. It must NOT be dedupe-skipped in favour of a
+/// paired `Staked`/`Redeem` semantic event — that pairing is not an invariant.
+/// Some actions emit ONLY the `Transfer(X→0)` event with no paired `Redeem`,
+/// leaving the sender's `stk_aave_balance` stuck at its pre-burn cache value
+/// → wrong `calculate_gho_discount_rate` → GHO-burn delta overshoots
+/// `prev_scaled_balance` → a negative balance. Staked/Redeem never mutate
+/// balances (they're fetched only for classification in
+/// `fetch_stk_aave_events`); all balance mutation flows through this fn.
 pub(super) async fn dispatch_stk_aave_transfer(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
@@ -115,14 +113,12 @@ pub(super) async fn dispatch_stk_aave_transfer(
     // ZERO_ADDRESS side, always resolve + mutate the real user. Mirrors
     // `process_stk_aave_transfer_event` — the Python skips ZERO_ADDRESS
     // entirely (`from_user=None`/`to_user=None` collapses to a no-op on that
-    // side). The prior design dedupe-skipped the zero-leg here + processed the
-    // paired Staked/Redeem semantic events (those dispatch fns are now
-    // retired); that required an empirically-falsified invariant — every
-    // zero-leg Transfer must pair with a semantic event. Some actions emit
-    // ONLY the `Transfer(X→0)` event with no paired `Redeem` (verified via
-    // cast logs across the 16.59M→18M range), leaving the sender's balance
-    // stuck at the pre-burn cache value → wrong `calculate_gho_discount_rate`
-    // → GHO-burn delta overshoots `prev_scaled_balance` → crash #3.
+    // side). Dedupe-skipping the zero-leg in favour of a paired
+    // Staked/Redeem semantic event is not safe: some actions emit ONLY the
+    // `Transfer(X→0)` event with no paired `Redeem`, leaving the sender's
+    // balance stuck at the pre-burn cache value → wrong
+    // `calculate_gho_discount_rate` → GHO-burn delta overshoots
+    // `prev_scaled_balance` → a negative balance.
     let from_user_id = if decoded.from == Address::ZERO {
         None // the mint-from-zero leg — skipped at apply.
     } else {

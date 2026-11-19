@@ -80,7 +80,7 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
 /// Q1a stale policy (red/green): a straggler whose resolved-update stamp
 /// is stale (a pool ticked during the solve → its `update_block` moved)
 /// is DROPPED, not applied. A fresh-stamp straggler applies
-/// (apply-if-unchanged) through the same merge seam. LW-T9: the two
+/// (apply-if-unchanged) through the same merge seam. The two
 /// dispositions ride DIFFERENT pids — the exactness fuse (carried
 /// to the sidecar) owns per-(cycle_seq, pid) delivery uniqueness, so the
 /// stale→fresh stamp flip on ONE pid is fused by construction now.
@@ -179,12 +179,10 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
         1
     );
 }
-/// LW-T9 note-(a) carry (red): the DETACHED sidecar merge must carry the
-/// SAME exactness assert as the in-cycle drain: one path outcome
-/// exactly once — a duplicate (`cycle_seq`, `pid`) delivery trips the loud
-/// exactness fuse and is NOT applied a second time. RED before the
-/// cutover: the sidecar had no duplicate guard, so the twin merge
-/// counted applied == 2.
+/// The DETACHED sidecar merge must carry the SAME exactness assert as the
+/// in-cycle drain: one path outcome exactly once — a duplicate
+/// (`cycle_seq`, `pid`) delivery trips the loud exactness fuse and is NOT
+/// applied a second time.
 #[test]
 fn detached_duplicate_straggler_trips_the_exactness_fuse() {
     // Const hoist: the baseline in-cycle run consumed seq 1 — the
@@ -449,7 +447,7 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         "the panicked sidecar has exited: later sends hit the dead pipe (the send-failure signal)"
     );
 }
-/// T2 cadence acceptance, ported: with detached
+/// With detached
 /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
 /// shipped `solve_dirty` cadence the driver executes INLINE at the machine's
 /// decision points), each solve call RETURNS at enqueue-end (µs) while the

@@ -1,6 +1,4 @@
-//! Builders — the **per-family dispatch surface** + validator gate
-//! (`grammar_shape.rs` split, candidate 2 of
-//! `architecture-review-1786663110.html`).
+//! Builders — the **per-family dispatch surface** + validator gate.
 //!
 //! [`derive_shape`] dispatches every well-formed family through
 //! [`crate::grammar_walker::build_walk`] (the single facts → derive_plan →
@@ -64,10 +62,9 @@ pub use crate::grammar_ledger::{InitialCapital, InsolventZeroCapital};
 // diverges (`v2_v3` repays its flash in `weth`; all-V2 in `v2_forward(last)`).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// The pure V2/V3 3-hop scaffolding (seed_address_table, guard_no_zeroed_output,
-// checked_swap_input, finish_plan) was decommissioned by the facts-driven T5
-// migration : every pure V2/V3 2-hop + 3-hop builder now delegates
-// to `derive_plan`, which inlines the equivalent guards.
+// Every pure V2/V3 2-hop + 3-hop builder delegates to `derive_plan`, which
+// owns the equivalent guards: the shared AddressTable scaffold, the
+// no-zeroed-output check, the swap-input check, and the terminal plan step.
 
 // ═══════════════════════════════════════════════════════════════════════════// ═══════════════════════════════════════════════════════════════════════════
 // 3-hop Plan scaffolding (pilot). The shared topology pieces every
@@ -398,7 +395,7 @@ pub fn derive_shape_detailed(path: &PathInfo, inputs: &ComposerInputs<'_>) -> De
     Derive::Encoded(out)
 }
 
-/// Public accessor (candidate 4): the declared stream-varying axes
+/// Public accessor: the declared stream-varying axes
 /// for a path's family, **derived from the hop-protocol facts** (not a
 /// per-row table) — the family's walker branches `FundingSource` only for the
 /// `v2_v3` / any-N all-V2 families, and `ProfitCapture` only for the pure-V4
@@ -936,10 +933,10 @@ mod tests {
         )
     }
     /// Build the Plan and assert it projects a trace that
-    /// validates clean through the gate. The byte-level `derive_shape`
-    /// comparison this used to make is gone — `derive_shape` IS the same
-    /// Plan path now, so it was a self-comparison (the runtime matrix is the
-    /// byte source of truth; `encoders_parity` pins the primitive wire format).
+    /// validates clean through the gate. A byte-level `derive_shape`
+    /// comparison here would be a self-comparison (`derive_shape` IS the same
+    /// Plan path; the runtime matrix is the byte source of truth;
+    /// `encoders_parity` pins the primitive wire format).
     fn plan_builds_and_validates(
         build: fn(&PathInfo, &ComposerInputs) -> Option<(Vec<u8>, Plan, AddressTable)>,
         path: &PathInfo,

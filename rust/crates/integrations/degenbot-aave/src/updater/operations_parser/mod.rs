@@ -102,7 +102,7 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// The Pool contract address (for the `MintToTreasury`
     /// `caller_address == pool_address` test).
     pub pool_address: Address,
-    /// The treasury address (for `MintToTreasury` test DP3-style fallbacks;
+    /// The treasury address (for `MintToTreasury` test-style fallbacks;
     /// None if the market doesn't expose one).
     pub treasury_address: Option<Address>,
     /// The GHO token (underlying) address — None for non-GHO markets.
@@ -122,7 +122,7 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// reborrow ends when the parser drops, so the run loop can keep using
     /// the cache for the apply + the liquidation patterns.
     pub(crate) substrate: &'s mut ChunkSubstrate,
-    /// The Pool contract revision resolved at parse-start (DP4). Served from
+    /// The Pool contract revision resolved at parse-start. Served from
     /// the chunk substrate cache (the per-parse read behind it); mid-tx `PoolUpdated`
     /// config events are the orchestrator's concern.
     pub pool_revision: u32,
@@ -143,8 +143,7 @@ pub enum ParseError {
     /// market has no aToken for the reserve the Supply event named).
     #[error("substrate lookup failed: {0}")]
     Substrate(String),
-    /// An RPC-style `ray_div` math error from the `MintToTreasury` v8 branch
-    /// (DP3).
+    /// An RPC-style `ray_div` math error from the `MintToTreasury` v8 branch.
     #[error("ray-div math error: {0}")]
     RayMath(#[from] crate::WadRayError),
 }

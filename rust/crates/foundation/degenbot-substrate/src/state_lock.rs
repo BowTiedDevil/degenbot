@@ -1,15 +1,15 @@
 //! Diagnostic wrapper around the shared `parking_lot::RwLock` that guards
-//! `BotState` (incident 2026-08-21).
+//! `BotState`.
 //!
 //! ## Why this exists
 //!
-//! The 2026-08-21 settlement-bot wedge was caused by ONE `RwLock<BotState>`
-//! read guard that was never released (held by a suspended async task across
-//! an `.await` — invisible in every thread dump). The engine solver blocked
-//! in `write()` waiting for readers; registration-lifecycle reads and the
-//! Python `build_v4_pool`/`register_token` FFI queued behind it; the pump
-//! stalled and both Python streams went silent. Nothing in the process held
-//! the GIL, so the gil-probe reported "busy, not a deadlock" for ~11 minutes.
+//! ONE `RwLock<BotState>` read guard left unreleased (held by a suspended
+//! async task across an `.await`) is invisible in every thread dump: the
+//! engine solver blocks in `write()` waiting for readers; registration-
+//! lifecycle reads and the Python `build_v4_pool`/`register_token` FFI queue
+//! behind it; the pump stalls and both Python streams go silent. Nothing in
+//! the process holds the GIL, so the gil-probe reports "busy, not a deadlock"
+//! while the process is wedged.
 //!
 //! `parking_lot` does not track lock owners, and clippy's `await_holding_lock`
 //! does not cover `lock_api` guards — this bug class is otherwise invisible.
@@ -432,9 +432,8 @@ pub fn dump_active_holds() -> String {
 /// (e.g. inside a closure fed by the first guard's data) self-deadlocks
 /// when a writer queues between the two acquisitions: read#2 parks behind
 /// the writer, the writer waits on read#1, and read#1 lives until the
-/// expression completes — which needs read#2. Both soak-2026-08-22
-/// deadlocks (`a3ab1c676` V3, `decf7cd8a` V4) were exactly this shape.
-/// The compiler cannot catch this class.
+/// expression completes — which needs read#2. The compiler cannot catch this
+/// class.
 ///
 /// The lease is the structural remedy: [`StateLock::read_with`] /
 /// [`StateLock::write_with`] acquire exactly one guard and hand the closure
@@ -522,7 +521,7 @@ impl<T> StateLock<T> {
             );
         }
         // Flag previously-registered holds that have now aged past the
-        // threshold (the phantom-reader signature from the incident).
+        // threshold (the phantom-reader signature).
         let threshold = warn_threshold_ms();
         let mut map = ACTIVE_READS.lock();
         let aged = map

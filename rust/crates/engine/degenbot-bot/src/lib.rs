@@ -266,7 +266,7 @@ pub mod instruments {
         None
     }
 
-    /// no-op (FF-T5 fleet profile metric)
+    /// no-op (the fleet profile metric is otel-gated)
     pub fn note_fleet_profile(_summary: &crate::arb_engine::FleetProfileSummary) {}
 
     /// The census vocabulary, shared with the otel build (data-only here;

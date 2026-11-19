@@ -155,7 +155,7 @@ impl PoolLookup {
     /// [`Self::own_liquidity_clock`]: the state owner chains key → spacing
     /// inside one `read_with(Registration)` lease, so a caller never holds a
     /// read while requesting a second one on the same lock (nested reads are a
-    /// self-deadlock when a writer queues between them — soak-2026-08-22).
+    /// self-deadlock when a writer queues between them).
     #[must_use]
     pub fn tick_spacing(&self, core: &StateLock<BotState>) -> Option<i32> {
         match self {
@@ -233,7 +233,7 @@ impl PoolLookup {
     /// Takes the lock rather than a guard: the state owner chains key → clock
     /// inside one `read_with(Registration)` lease, so a caller never holds a
     /// read while requesting a second one on the same lock (nested reads are a
-    /// self-deadlock when a writer queues between them — soak-2026-08-22).
+    /// self-deadlock when a writer queues between them).
     pub fn own_liquidity_clock(&self, core: &StateLock<BotState>) -> u64 {
         match self {
             Self::Address(address) => core.pool_tick_data_block_by_address(address),

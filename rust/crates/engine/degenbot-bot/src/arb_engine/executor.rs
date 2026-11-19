@@ -1,4 +1,4 @@
-//! THE Executor seam (parking-lot decision, LW-T8): the name is
+//! THE Executor seam: the name is
 //! **`Executor`** — the LANEWARDEN vocabulary finalizes here. Since the pooled intake port landed,
 //! this module owns the GLOBAL EXECUTOR TOKEN
 //! FAMILY for `arb_engine` — `global_executor` (the solve-arm seam) plus
@@ -14,12 +14,11 @@ use degenbot_workers::dispatcher::{BootError, SubmitError};
 use degenbot_workers::lane::LaneCtx;
 /// One escalated work item handed through a seat's `LaneCtx` port.
 pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
-/// The ONE executor seam (LW-T8): `boot/bin_count/submit` + the
-/// `LaneCtx`/`EscalationPort` contracts. (the retired
-/// `observe_throttle` absorb-by-contract default is dissolved — the ONE
-/// process posture owner (`degenbot_workers::posture::process_owner`) is fed
-/// by the block pump directly, and every fleet host consults the same
-/// owner; the seam carries no posture channel anymore.)
+/// The ONE executor seam: `boot/bin_count/submit` + the
+/// `LaneCtx`/`EscalationPort` contracts. The ONE process posture owner
+/// (`degenbot_workers::posture::process_owner`) is fed by the block pump
+/// directly, and every fleet host consults the same owner; the seam carries
+/// no posture channel.
 pub(crate) trait Executor: Send + Sync {
     /// The structural seat count bins bind at.
     fn bin_count(&self) -> usize;
@@ -31,14 +30,13 @@ pub(crate) trait Executor: Send + Sync {
     /// lane).
     fn submit(&self, bin: usize, work: SubmitWork) -> Result<SubmitReceipt, SubmitError>;
 }
-/// The solve-arm global token (LW-T8): every SOLVE call site submits
+/// The solve-arm global token: every SOLVE call site submits
 /// through here. It is the solve arm of a token FAMILY — the
 /// pooled intake arms submit through `global_sim_executor` here (which
 /// delegates to `fleet_intake`'s `FleetIntake` port) and
 /// `fleet_intake::registration_intake` (the pyo3-leaf registration arm),
-/// not through this fn — the fleet-hosted executors remain the only
-/// executors since the LW-T9 cutover (the tokio stance is deleted; there
-/// is no stance parameter).
+/// not through this fn — the fleet-hosted executors are the only executors
+/// (there is no tokio stance and no stance parameter).
 /// Construction precondition: the fleet materializes LAZILY on the
 /// first call — from the construction-STAMPED boot the first engine
 /// construction installed (`with_core_cfg`). There is NO fallback boot: a
@@ -83,7 +81,7 @@ pub(crate) enum LaneFailure {
         /// The panic payload when it is a string.
         message: Option<String>,
     },
-    /// The LANE died mid-flight (FF-T4): the seat thread
+    /// The LANE died mid-flight: the seat thread
     /// abandoned its bin before draining its paths — every still-owed
     /// path becomes one of these terminal records. The fleet cordons
     /// (the sticky [`degenbot_workers::posture::PostureCause::LaneDeath`]
@@ -236,7 +234,7 @@ static DRAIN_DEATH_LOGS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// the sidecar thread, and `spawn_merge_sidecar` spawns exactly one per
 /// engine lifetime — a dead merge seat can NEVER recover in-process.
 /// CLASSIFICATION: a dead merge seat is NOT a `failure_policy`
-/// Fatal/Exit bucket; it is the FF-T4 LANE-DEATH terminal class — a STICKY
+/// Fatal/Exit bucket; it is the LANE-DEATH terminal class — a STICKY
 /// cordon plus a live (loud) process, exactly like a solve-lane death.
 /// `owner` overrides the process posture owner for hermetic tests.
 pub(crate) fn drain_death_response(
@@ -251,7 +249,7 @@ pub(crate) fn drain_death_response(
             crate::instruments::record(crate::instruments::CensusEvent::MergePanic);
         }
     }
-    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // Feeder-site contract: the wrapper feeds the owner AND wakes
     // the fleet hosts on a real transition — never a raw `observe_cause`.
     crate::arb_engine::fleet_wake::feed_cause(
         owner,
@@ -367,7 +365,7 @@ impl SolveLane {
             .collect()
     }
 }
-/// The lane-death response (FF-T4 — AC 3): a lane that died
+/// The lane-death response: a lane that died
 /// mid-flight (its seat thread abandoned the bin before draining its
 /// paths) gets TERMINAL RECEIPTS — every still-owed path patched onto
 /// the pipe as exactly one typed `Failed(LaneFailure::LaneDeath)`
@@ -385,7 +383,7 @@ pub(crate) fn lane_death_response(
     for pid in unemitted {
         lane.failed(pid, LaneFailure::LaneDeath { unit, seat });
     }
-    // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
+    // Feeder-site contract: the wrapper feeds the owner AND wakes
     // the fleet hosts on a real transition — never a raw `observe_cause`.
     crate::arb_engine::fleet_wake::feed_cause(
         owner,
@@ -404,9 +402,9 @@ pub(crate) fn lane_death_response(
 /// `Failed(LaneFailure::SeatPanic)` record — so BOTH arms satisfy
 /// "one outcome per submitted path" even through a panic. A bin body
 /// that RETURNS with still-owed paths is a lane death (the seat
-/// abandoned its bin mid-flight, FF-T4): the lane-death response fires —
+/// abandoned its bin mid-flight): the lane-death response fires —
 /// terminal receipts + the cordoned posture + a live process — instead of
-/// the silent sender-drop undercount that used to trip the merge fuse.
+/// a silent sender-drop undercount that trips the merge fuse.
 pub(crate) fn run_solve_lane(
     lane: &mut SolveLane,
     verdict: &dyn PanicVerdict,
@@ -457,15 +455,14 @@ pub(crate) fn run_solve_lane(
 /// THE outcome ledger: ONE implementation asserting one
 /// typed outcome per path per cycle exactly once, across BOTH solve arms
 /// (the in-cycle drain and the detached merge sidecar). Keyed
-/// `(solve_seq, pid)`; the prune-age constant is carried unchanged from
-/// the former sidecar ledger age (LW-T9 note (a)).
+/// `(solve_seq, pid)`; the prune-age constant is the sidecar ledger age.
 pub(crate) mod outcome_ledger {
     /// How many recent solve cycles the ledger spans before pruning
     /// (carried unchanged from the former sidecar ledger age constant;
     /// the boot
     /// in-flight cap bounds meaningful straggler age at ~8, so 64 keeps a
-    /// duplicate permanently longer than any straggler can live — the
-    /// LW-T9 note (a) invariant, now uniform across both arms).
+    /// duplicate permanently longer than any straggler can live — uniform
+    /// across both arms).
     pub(crate) const LEDGER_AGE: u64 = 64;
     /// The seen-outcome ledger. One key spelling for BOTH arms:
     /// `(solve_seq, pid)`. The seq comes from the engine's monotone
@@ -566,7 +563,7 @@ mod tests {
             "a FAILED send is not a delivery: the in-flight gauge must not bump"
         );
     }
-    /// The drain-death response trips the FF-T4 STICKY
+    /// The drain-death response trips the STICKY
     /// cordon (only a fresh process lifts it) and stays loud.
     #[test]
     fn a_dead_merge_drain_cordons_the_fleet_stickily() {

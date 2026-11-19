@@ -493,11 +493,8 @@ crate::config_schema! {
         strict_sparse_apply [bool] = false, env = "DEGENBOT_STRICT_SPARSE_APPLY", def = "false",
             doc = "Strict sparse-word apply gate for V3 Mint/Burn and V4 ModifyLiquidity events. ON refuses a tick mutation whose boundary tick-bitmap word is not in the pool's checked set (`known_bitmap_words` on a Sparse pool), backfills the word through the stored tick-data fetcher with no state lock held, and re-routes the event; a word that cannot be backfilled leaves the event unapplied as the typed `MissingTickWord` routing outcome. OFF (the default) is the lazy production posture: the event applies immediately and the word is fetched at solve time. ON protects the reorg journal's per-tick priors, which applying over an unchecked word would record for a region whose other initialized ticks are absent.";
         // the
-        // adaptive trailing-quiesce estimator. Default flipped to `adaptive`
-        // after the 2026-09-09 live A/B (the untracked `logs/` run artifact
-        // logs/perf-after-20260909.md: settle
-        // p50 25→10ms, publish p95 100→50ms, zero late-admit tripwires);
-        // `fixed` retains the historical `pump_debounce_ms` behavior. W =
+        // adaptive trailing-quiesce estimator (the default); `fixed` retains
+        // the constant `pump_debounce_ms` behavior. W =
         // clamp(EWMA·quiesce_margin, floor, ceil), the EWMA tracking each
         // block's max intra-block silence gap.
         quiesce_mode [enum QuiesceMode Fixed Adaptive] = QuiesceMode::Adaptive, env = "DEGENBOT_PUMP_QUIESCE_MODE", def = "adaptive",
@@ -1341,9 +1338,8 @@ mod tests {
             );
             assert_eq!(key.map(|k| k.env), Some(env), "{toml_path} env drift");
         }
-        // LW-T9 hard cutover: the stance key is RETIRED — it must not be
-        // declared (mirror of the solve.executor removal; the env
-        // var + TOML key fail the load loudly at the loader).
+        // The stance key is RETIRED — it must not be declared: the env var and
+        // the TOML key fail the load loudly at the loader.
         assert!(
             !SCHEMA.iter().any(|k| k.toml_path == "fleet.stance"),
             "fleet.stance must be retired from the schema"

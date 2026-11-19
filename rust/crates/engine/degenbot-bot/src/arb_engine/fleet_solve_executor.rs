@@ -4,7 +4,7 @@
 //!
 //! Replaces the private `solve_executor` runtime fleet on this axis, with
 //! the degenbot-workers `FleetHost` FSM driving dispatch: per-bin worker
-//! pinning is a keyed pin (Solver pin per LPT bin, T3/T6 across cycles —
+//! pinning is a keyed pin (Solver pin per LPT bin, across cycles —
 //! warm L1/L2 + allocator arenas, carried
 //! over); per-path result streaming is the callers' existing per-path
 //! mpsc sends (not per-bin) and is unchanged. The deadlock ledger carries
@@ -15,8 +15,8 @@
 //!
 //! Bin keys reuse the LPT bin index offset by [`SOLVE_BIN_KEY_BASE`] so
 //! the merge pin key `0` stays unique: first sight claims a pin from an
-//! idle Solver seat (T1→T2→T3); every later unit for that bin continues
-//! on the SAME seat (T6).
+//! idle Solver seat; every later unit for that bin continues on the SAME
+//! seat.
 use crate::arb_engine::boot_stamp::{BootRole, BootStamp};
 use crate::arb_engine::seat_host::{
     host_loop, GrantContract, HostDiscipline, HostLoop, HostMsg, SeatJob, SeatSink,
@@ -77,7 +77,7 @@ fn validate_bin_index(bin: usize, solver_seats: usize) -> Result<(), String> {
 /// allocator arenas across cycles).
 pub(crate) struct FleetSolveExecutor {
     tx: mpsc::Sender<HostMsg>,
-    /// The waker-fan-out token (T3): deregistered on drop.
+    /// The waker-fan-out token: deregistered on drop.
     waker: u64,
     unit_seq: AtomicU64,
     /// The BOUNDED role-queue length at the LAST stamp (spill or
@@ -91,8 +91,8 @@ pub(crate) struct FleetSolveExecutor {
     /// Seat count (read via [`FleetSolveExecutor::bin_count`] — the
     /// dispatch arms bin at exactly this count so every bin has a home).
     solver_seats: usize,
-    /// The resolved lane-to-thread binding (FF-T4 — test-facing
-    /// parity assertions; the host itself moved into the host thread).
+    /// The resolved lane-to-thread binding (test-facing parity assertions; the
+    /// host itself lives in the host thread).
     #[cfg(all(test, feature = "executor-ab-probe"))]
     binding: degenbot_workers::plan::Binding,
 }
@@ -128,19 +128,18 @@ impl FleetSolveExecutor {
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
         let host = FleetHost::boot(boot)?;
-        // FF-T3: the LANE-TO-THREAD BINDING SEAM — the same
-        // adapter slot the pooled pair runs (seat_host): the PINNED
-        // binding preserves today's topology exactly (the per-seat
-        // keyed mailboxes over the ONE HostPump); the serial binding is
-        // a SeatSink + ONE grant lane over the same HostPump and lands
-        // with FF-T4 — until then the arm refuses with the plan's
-        // typed pending refusal (never a silent narrow).
+        // The LANE-TO-THREAD BINDING SEAM — the same adapter slot the pooled
+        // pair runs (seat_host): the PINNED binding is the per-seat keyed
+        // mailboxes over the ONE HostPump; the SERIAL binding is a SeatSink
+        // plus ONE grant lane over the same HostPump. Both boot; an unknown
+        // binding refuses with the plan's typed refusal (never a silent
+        // narrow).
         match host.plan().binding {
             degenbot_workers::plan::Binding::Pinned => Ok(Self::boot_pinned(host)),
-            // FF-T4: the serial arm BOOTS — the serial
-            // projection's ONE solver seat is the named serial-0 cycle
-            // thread: one persistent keyed mailbox (bin 0) over the ONE
-            // HostPump, the §10 never-drop shape unchanged.
+            // The serial arm BOOTS — the serial projection's ONE solver seat
+            // is the named serial-0 cycle thread: one persistent keyed
+            // mailbox (bin 0) over the ONE HostPump, the never-drop shape
+            // unchanged.
             degenbot_workers::plan::Binding::Serial => Ok(Self::boot_serial(host)),
         }
     }
@@ -149,9 +148,9 @@ impl FleetSolveExecutor {
     fn boot_pinned(host: FleetHost) -> Self {
         Self::boot_seats(host, WorkerRole::Solver.thread_name())
     }
-    /// The SERIAL binding's instantiation (FF-T4): the projection's
-    /// ONE solver seat is the named `serial-0` cycle thread — the same
-    /// keyed-mailbox construction, one seat, the §10 shape unchanged.
+    /// The SERIAL binding's instantiation: the projection's ONE solver seat is
+    /// the named `serial-0` cycle thread — the same keyed-mailbox
+    /// construction, one seat, the never-drop shape unchanged.
     fn boot_serial(host: FleetHost) -> Self {
         Self::boot_seats(host, crate::arb_engine::seat_host::SERIAL_SEAT_NAME)
     }
@@ -193,7 +192,7 @@ impl FleetSolveExecutor {
                 "seat mailboxes must tile the SlotLayout solver range exactly",
             );
         }
-        // The submit mirror (LW-T5, Seam E) lives with the host thread and
+        // The submit mirror lives with the host thread and
         // every executor handle shares the same cells.
         // No posture mirror — posture-invariant Solver admission
         // retired its only reader (the host FSM still owns every posture
@@ -267,8 +266,8 @@ impl FleetSolveExecutor {
             binding,
         }
     }
-    /// Test-facing: the resolved plan binding (FF-T4 — the parity
-    /// tests assert the tier each boot instantiated). Rides the
+    /// Test-facing: the resolved plan binding (the parity tests assert the
+    /// tier each boot instantiated). Rides the
     /// `executor-ab-probe` lane with its only consumer (ADR-084 D3).
     #[cfg(all(test, feature = "executor-ab-probe"))]
     fn plan_binding_for_test(&self) -> degenbot_workers::plan::Binding {
@@ -282,8 +281,8 @@ impl FleetSolveExecutor {
         self.solver_seats
     }
     /// Submit one LPT bin job keyed to its bin; the seat hands the unit body
-    /// a [`LaneCtx`] carrying the bin's pin key and warm arena identity
-    /// (LW-T2 Seam B). The typed submit receipt never drops a unit (the
+    /// a [`LaneCtx`] carrying the bin's pin key and warm arena identity.
+    /// The typed submit receipt never drops a unit (the
     /// host-side backlog preserves the legacy unbounded-mpsc semantics);
     /// posture refusals are TYPED at this seam (admission-side only —
     /// running units are never preempted); a closed host channel (executor
@@ -312,9 +311,9 @@ impl FleetSolveExecutor {
         );
         // Solver admission is posture-invariant (worker-fleet.md §6:
         // cordon effects are the Deferrable hold + sim-intake floor ONLY;
-        // Solver is CordonClass::Never in workers::role). The LW-T5-era
-        // seam-side refusal was backed out — the soak showed it stranded the
-        // bin's result pipe and aborted the bot on routine cgroup throttling.
+        // Solver is CordonClass::Never in workers::role). A seam-side refusal
+        // here strands the bin's result pipe and aborts the bot on routine
+        // cgroup throttling.
         // The ONE process posture owner feeds the Deferrable
         // hold + sim floor downstream (the dispatcher's own gates consult it
         // live; the host sheds on the owner's transition feed).
@@ -338,8 +337,8 @@ impl FleetSolveExecutor {
     }
 }
 /// One Solver seat (a persistent keyed pin): execute units one at a time —
-/// no yield mid-unit — and report completion so the host applies T3 (the
-/// seat re-pins warm; arenas are never live across a role switch).
+/// no yield mid-unit — and report completion so the host re-pins the warm
+/// seat; arenas are never live across a role switch).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "the seat's mailbox Receiver is owned by the seat thread — a borrow cannot cross the thread boundary"
@@ -383,7 +382,7 @@ fn seat_loop(seat: u64, rx: mpsc::Receiver<SeatJob>, done: &mpsc::Sender<HostMsg
 }
 
 /// The solve host's seat model: per-seat
-/// keyed mailboxes — a seat is a persistent pin (T3/T6 warm arenas), so a
+/// keyed mailboxes — a seat is a persistent pin (warm arenas), so a
 /// granted unit routes POSITIONALLY to the grant slot's mailbox:
 /// seat i <-> `SlotLayout::solver.start` + i).
 struct SolveSink<'a> {
@@ -409,9 +408,9 @@ impl SeatSink for SolveSink<'_> {
                 "unknown seat (seat i <-> SlotLayout solver_range.start + i —                  a non-solver grant has no mailbox)",
             );
         };
-        // LW-T2 (Seam B): mint the warm arena at the grant seam — the
+        // Mint the warm arena at the grant seam — the
         // ctx handed to the unit at dispatch time ALWAYS carries the
-        // warm identity (stable across cycles; released at T9). An
+        // warm identity (stable across cycles; released at teardown). An
         // unknown slot here is structurally unreachable (the grant came
         // from THIS host) — a silent default would violate the loud
         // posture, so it aborts with BOTH numbers-style.
@@ -428,7 +427,7 @@ impl SeatSink for SolveSink<'_> {
         let ctx = LaneCtx {
             pin: unit.key.unwrap_or(0),
             arena,
-            // LW-T3 (Seam C): the injected default escalation port (the
+            // The injected default escalation port (the
             // inline-sim runtime, registered at hook install) — lanes
             // without one are refused TYPED at escalate, never dropped.
             escalation: degenbot_workers::lane::default_escalation_port()
@@ -456,10 +455,8 @@ impl HostDiscipline for SolveDiscipline {
         abort_executor(&format!("{SOLVE_NOUN} enqueue"), err)
     }
     fn completion_refused(&self, err: &str) -> ! {
-        // ONE wording across both models (ADR-079 D3): the pooled side's
-        // "seat completion (T5)" — neither T-number is the shared arm's
-        // own (the applied T-row is slot-FSM data), so the dispatch
-        // default held.
+        // ONE wording across both models (ADR-079 D3): this side reuses the
+        // pooled side's wording, and the dispatch default holds for the label.
         abort_executor("seat completion (T5)", err)
     }
     fn foreign_grant(&self, kind: GrantKind) -> ! {
@@ -609,13 +606,13 @@ mod tests {
         results.sort_unstable_by_key(|(pid, _)| *pid);
         results
     }
-    /// FLEET FIXTURE (LW-T9 single-arm): the fleet-hosted solve
+    /// FLEET FIXTURE: the fleet-hosted solve
     /// executor produces exact, honest outcomes on the committed heavy-concentrated-liquidity
     /// capture fixture — outcomes can never exceed submissions, every
     /// submitted path yields exactly one outcome (`solve_one_path` verdict
     /// or failure), and the pinned-seat parity semantics carry (
     /// pins == bins). The former legacy-executor parity arm is deleted
-    /// with the stance (LW-T9; there is no other executor to diff against).
+    /// with the stance (there is no other executor to diff against).
     #[test]
     fn fleet_executor_yields_exact_outcomes_on_capture_fixture() {
         let items = load_corpus_fixture();
@@ -623,7 +620,7 @@ mod tests {
         // The bins bind at the fleet's STRUCTURAL seat
         // count — pins == bins. Binning at the machine-derived worker count
         // instead boots 6 hermetic seats against host-core-derived bins (22
-        // on the 24-core raw host) and aborts at the T2 grant — the
+        // on the 24-core raw host) and aborts at the grant — the
         // host-only `just test-rust` failure this restructuring pins.
         let executor = FleetSolveExecutor::boot(hermetic_boot()).expect("fleet boot");
         let bins = prod_lpt_bins(&items, executor.bin_count());
@@ -654,14 +651,14 @@ mod tests {
         assert_ne!(SOLVE_BIN_KEY_BASE, degenbot_workers::slot::MERGE_PIN_KEY);
     }
     /// Pinning fixture: per-bin worker pinning — every bin's
-    /// units ride the same seat across cycles (T3/T6), matching the
+    /// units ride the same seat across cycles, matching the
     /// One-persistent-worker-per-bin contract.
     ///
     /// Sizing reconciliation: the fleet seats are the
     /// STRUCTURAL LPT bin count — at a hermetic Q = 8 boot,
     /// floor(8) − the default solve headroom (2) = 6 seats — not the
     /// retired sharesx2 multiple (8). The dispatch arms bin at this same
-    /// count, so every bin owns a warm keyed seat across cycles (T6).
+    /// count, so every bin owns a warm keyed seat across cycles.
     #[expect(
         clippy::print_stderr,
         reason = "the self-skip channel when a parallel test won the stamp race (the documented F1 skip semantics)"
@@ -745,18 +742,15 @@ mod tests {
             );
         }
     }
-    // ---- LW-T2 (Seam B): seat context — no ambient runtime, LaneCtx identity
-    /// The runtime wedge (LW-T2): fleet seats are OS threads with NO ambient
+    // ---- Seat context — no ambient runtime, LaneCtx identity ----------------
+    /// The runtime wedge: fleet seats are OS threads with NO ambient
     /// tokio runtime. The executor boots and submits from inside a LIVE
     /// multi-thread runtime here, and every seated unit still observes
     /// `Handle::try_current() == Err` — any future drift that puts a runtime
     /// on the seat (the tokio-stance path) fails this test.
     ///
-    /// INTENDED TRIPWIRE: this test passing today is correct (fleet seats
-    /// are plain `std::thread`s). It goes RED deliberately when the
-    /// tokio-stance path is ported, and again when LW-T8 consolidates the
-    /// executors behind a trait — that red is the T9 cutover gate, not a
-    /// regression.
+    /// This test passing is correct (fleet seats are plain `std::thread`s);
+    /// it fails if the seat ever grows an ambient runtime.
     #[test]
     fn fleet_seats_run_units_with_no_ambient_tokio_runtime() {
         let executor = FleetSolveExecutor::boot(hermetic_boot()).expect("fleet boot");
@@ -793,7 +787,7 @@ mod tests {
             "fleet seats must run units OUTSIDE any ambient tokio runtime"
         );
     }
-    /// The `LaneCtx` submit seam (LW-T2): `submit_solve_bin` hands the unit a
+    /// The `LaneCtx` submit seam: `submit_solve_bin` hands the unit a
     /// ctx carrying the bin's pin key AND the warm arena identity — the
     /// SAME `ArenaToken` across cycles (warm), never the detached stub.
     #[test]
@@ -826,8 +820,8 @@ mod tests {
                 ctx.pin, expected_key,
                 "the ctx must carry the bin's pin key"
             );
-            // Solver seats are pinned lanes: the arena is minted at the T2
-            // grant seam, so a SOLVER unit must NEVER observe the detached
+            // Solver seats are pinned lanes: the arena is minted at the grant
+            // seam, so a SOLVER unit must NEVER observe the detached
             // stub (the DETACHED token is pooled seats only).
             assert_ne!(
                 ctx.arena,
@@ -845,8 +839,8 @@ mod tests {
             "the SAME ArenaToken across cycles (warm)"
         );
     }
-    // ---- LW-T6 (Seam G2): seat naming + census atoms -------------------------
-    /// LW-T6: the boot census carries the seat fleet's rows — per-index
+    // ---- Seat naming + census atoms ----------------------------------------
+    /// The boot census carries the seat fleet's rows — per-index
     /// `{n}` patterns matching the roles, the Solver budget matching the
     /// STRUCTURAL seat count, and no two rows sharing a thread-name pattern
     /// (the collision lock, fleet-wide).
@@ -876,7 +870,7 @@ mod tests {
             "census thread-name patterns must be unique"
         );
     }
-    /// LW-T6: the runtime registration is not a lie — the OS thread names of
+    /// The runtime registration is not a lie — the OS thread names of
     /// RUNNING seats match the census rows (per-index under the pattern).
     #[test]
     fn running_seat_thread_names_match_their_census_rows() {
@@ -920,13 +914,12 @@ mod tests {
             "every structural seat has its own distinct census-NAMED thread"
         );
     }
-    // ---- LW-T5 (Seam E): posture & precedence at the submit seam ------------
-    /// Soak adjudication (2026-09-10): Solver admission is
-    /// posture-INVARIANT — design doc §6's cordon effects hold only the
-    /// Deferrable classes + the sim intake floor, and `workers::role`
-    /// declares `Solver` `CordonClass::Never`; a cordon never refuses a
-    /// Solver bin at the submit seam (the LW-T5-era gate over-reached the
-    /// spec and the soak found the refusal stranded the bin's result pipe).
+    // ---- Posture & precedence at the submit seam ---------------------------
+    /// Solver admission is posture-INVARIANT — design doc §6's cordon effects
+    /// hold only the Deferrable classes + the sim intake floor, and
+    /// `workers::role` declares `Solver` `CordonClass::Never`; a cordon never
+    /// refuses a Solver bin at the submit seam, because a refusal strands the
+    /// bin's result pipe.
     #[test]
     fn submit_in_cordoned_posture_still_admits_solver_units_and_running_units_complete() {
         // The hermetic owner is INJECTED at boot, and the
@@ -985,7 +978,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
-    /// LW-T5 (Seam E): overflow past a role queue cap lands in the
+    /// Overflow past a role queue cap lands in the
     /// unbounded host backlog (S10 ledger) and NEVER drops - the receipts
     /// report accepted-with-backlog, and every submitted unit completes.
     #[test]
@@ -1051,7 +1044,7 @@ mod tests {
             "every submitted unit must complete - never dropped"
         );
     }
-    // ---- LW-T3 (Seam C): escalation port — self-contained I/O lane ----------
+    // ---- Escalation port — self-contained I/O lane -------------------------
     /// A TEST escalation port: a dedicated single-thread tokio runtime owned
     /// by its own pump thread (a self-contained capability lane, never the
     /// caller's CPU seat) — the shape of the default impl (the inline-sim
@@ -1095,9 +1088,9 @@ mod tests {
             self.gate.counters()
         }
     }
-    /// LW-T3 (Seam C, `docs/reth-parallelism-research.md` §7): escalation is a
-    /// SELF-CONTAINED I/O
-    /// lane — a bin escalates its cold-miss work through its `LaneCtx`
+    /// Escalation (see `docs/reth-parallelism-research.md` §7) is a
+    /// SELF-CONTAINED I/O lane — a bin escalates its cold-miss work through
+    /// its `LaneCtx`
     /// while EVERY solver seat is mid-unit, and the escalations complete on
     /// the port lane (never on a solver seat: CPU cannot starve I/O).
     #[test]
@@ -1285,12 +1278,11 @@ mod tests {
             "the 3rd path and everything after it must land as typed failures"
         );
     }
-    /// FF-T4 — AC 3: a lane death mid-flight yields TERMINAL
-    /// RECEIPTS for in-flight paths (typed `LaneFailure::LaneDeath`,
-    /// exactly one outcome per submitted path — the ledger stays
-    /// exact), the CORDONED posture (sticky — clean windows never lift
-    /// it), and a LIVE process (the response returns; the pre-FF-T4
-    /// shape was the merge fuse's loud abort on the undercount).
+    /// A lane death mid-flight yields TERMINAL RECEIPTS for in-flight paths
+    /// (typed `LaneFailure::LaneDeath`, exactly one outcome per submitted path
+    /// — the ledger stays exact), the CORDONED posture (sticky — clean windows
+    /// never lift it), and a LIVE process (the response returns instead of the
+    /// merge fuse's loud abort on the undercount).
     #[test]
     fn a_lane_death_mid_flight_yields_terminal_receipts_cordon_and_a_live_process() {
         let owner = hermetic_owner();
@@ -1371,11 +1363,11 @@ mod tests {
         // A LIVE process: this line running is the proof — the response
         // returned instead of the abort.
     }
-    /// FF-T4 — the production auto-arm: a bin body that RETURNS with
+    /// The production auto-arm: a bin body that RETURNS with
     /// still-owed paths (the seat abandoned its bin mid-flight) gets
     /// the lane-death response through `run_solve_lane` — terminal
-    /// records on the pipe, never the silent sender-drop undercount
-    /// that used to trip the merge fuse.
+    /// records on the pipe, never a silent sender-drop undercount that
+    /// trips the merge fuse.
     #[test]
     fn a_bin_that_abandons_its_paths_mid_flight_drains_terminal_records() {
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
@@ -1407,7 +1399,7 @@ mod tests {
             "every still-owed path lands as a typed terminal record"
         );
     }
-    /// FF-T4 — AC 4: the outcome corpus is IDENTICAL across the pinned
+    /// The outcome corpus is IDENTICAL across the pinned
     /// and serial bindings (parity: the binding changes which threads
     /// run the lanes, never the outcomes — the promotion-gate
     /// contract). The corpus is a deterministic three-bin fixture
@@ -1546,7 +1538,7 @@ mod tests {
                                 red_panic("cycle-0 bin panics (red harness)");
                             } else {
                                 // cycle 1 runs CLEAN — every path delivers on
-                                // the surviving seat (FF-T4: a bin that returns
+                                // the surviving seat (a bin that returns
                                 // with still-owed paths is a lane death, not a
                                 // clean cycle; this body owes both and pays both).
                                 lane.suppressed(cycle * 10);

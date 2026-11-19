@@ -249,7 +249,7 @@ pub(crate) fn boot_session(
     bot: Arc<degenbot_bot::bot_core::Bot>,
     stages: Arc<degenbot_bot::arb_engine::EngineStages>,
 ) -> Result<BootedEngine, SessionBootError> {
-    // An engine construction IS the ambient runtime's first use (FF-T5):
+    // An engine construction IS the ambient runtime's first use:
     // the fleet boot stamps the process with a fleet, so the shared io
     // runtime must exist - the worker census reports at least the
     // io_runtime_workers row - regardless of whether the backrun lane's

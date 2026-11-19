@@ -1253,8 +1253,8 @@ impl ConcentratedLiquidityOrchestration {
         }
     }
     /// Record `words` as known on the concentrated liquidity pool behind `pool_id` — the
-    /// write-path twin of [`Self::sync_tick_data_by_pool_id`] (arch-review
-    /// cand 4, T1). Sparse pools only: the trait writer no-ops for Tracked
+    /// write-path twin of [`Self::sync_tick_data_by_pool_id`]. Sparse pools
+    /// only: the trait writer no-ops for Tracked
     /// (their bitmap is complete). The FFI `update_tick_data` seam calls
     /// both under one write guard: tick rows replaced first, then the
     /// caller's checked words recorded (the contract that retires the
@@ -3153,7 +3153,7 @@ mod registered_v4_fast_path_tests {
         .expect("test setup: V4 registration")
     }
 
-    /// The 2026-08-28 missed-WS-pong fix: an already-registered V4 pool must
+    /// An already-registered V4 pool must
     /// re-resolve from the core alone (identity + fees + coverage) so the
     /// `PyO3` builder can skip the RPC build pipeline entirely.
     #[test]

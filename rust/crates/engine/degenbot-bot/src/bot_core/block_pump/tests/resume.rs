@@ -3,7 +3,7 @@ use degenbot_core::fee::fee_ratio;
 
 /// Solve-anchor regression (ADR-008 D2 solver-release gate): the SOLVE anchor
 /// follows the LOG-DRIVEN settled block (`open`), not a header that raced a
-/// RED→GREEN tracer : the pump forwards a
+/// Tracer: the pump forwards a
 /// `BlockNotification` for every `newHeads` header it accepts (one per
 /// header, carrying the header's number + metadata), via
 /// `StageHandlers::notify_block` — independent of solve/debounce state. This
@@ -192,7 +192,7 @@ async fn resume_never_resets_pump_complete_cutoff() {
 }
 
 // ==============================================================
-// T3: the single-writer boundary rule has one owner —
+// The single-writer boundary rule has one owner —
 // the FSM's recovery anchor + `should_drop_recovered_forward` (the
 // drop path). The driver seeds the anchor from the resume
 // boundary; no inline `snapshot_seed` check remains in the log loop.
@@ -202,8 +202,8 @@ async fn resume_never_resets_pump_complete_cutoff() {
 /// snapshot→WS gap backfilled (S < W), the WS's partial duplicate of W
 /// (the boundary block the backfill already fully applied) must not be
 /// re-applied, while the first LIVE log (W+1) flows through. Pins the
-/// behavior T3 preserves while the drop rule's owner moves from the
-/// inline driver check to the FSM's recovery anchor.
+/// behavior the drop rule's owner preserves: the FSM's recovery anchor
+/// replaces the inline driver check.
 #[tokio::test]
 async fn resume_boundary_duplicate_dropped_live_block_applied() {
     use stream::StreamExt;
@@ -278,16 +278,12 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
     assert_eq!(st.update_block, w + 1, "the live W+1 log applies");
 }
 
-/// The T3 behavior delta: a `removed: true` (reorg) log at or below the
-/// resume boundary must REACH the reorg classifier — the single-writer
-/// drop rule only exempts forward logs. Before T3 the inline
-/// `snapshot_seed` check silently dropped reorg logs at the boundary
-/// (a deep-reorg re-delivery could never unwind the backfilled range);
-/// after T3 `should_drop_recovered_forward(removed: true)` is false and
+/// A `removed: true` (reorg) log at or below the resume boundary must REACH
+/// the reorg classifier — the single-writer drop rule only exempts forward
+/// logs, so an inline `snapshot_seed` drop of reorg logs at the boundary
+/// would let a deep-reorg re-delivery never unwind the backfilled range.
+/// `should_drop_recovered_forward(removed: true)` is false and
 /// `ReorgCoordinator` restores the pool's pre-block state.
-///
-/// (RED on pre-T3 code: the reorg log drops inline and the pool stays at
-/// the backfilled-at-W reserves.)
 #[tokio::test]
 async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
     use stream::StreamExt;
@@ -365,7 +361,7 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
     assert_eq!(st.update_block, w - 5);
 }
 
-/// T4: one fact — a forward log applied to engine state —
+/// One fact — a forward log applied to engine state —
 /// feeds two consumers: the FSM quiesce arm (`on_log_applied`, which
 /// arms the quiesce-gated publish) and the engine-side
 /// `has_logs_this_block` bookkeeping, routed through the
@@ -492,7 +488,7 @@ async fn resume_anchors_to_subscribe_block() {
     // before `resume`) anchors `last_processed_block` to W — exactly as
     // the production settle drain does (the `StageHandlers` solve stage).
     // Then resume with first_observed=W
-    // (the real subscribe block, post-fix).
+    // (the real subscribe block).
     let (mut pump, sink) = pump_for_test(None);
     let w = 21_500_000u64;
     let meta_w = BlockMetadata {
@@ -526,7 +522,7 @@ async fn resume_anchors_to_subscribe_block() {
         "solve(W) must anchor the cursor (mirrors the old SolveCoordinator drain)"
     );
 
-    // Resume stream (post-fix: first_observed = W, not 0). header(W+1)
+    // Resume stream (first_observed = W, not 0). header(W+1)
     // is the first header → first_header anchor advances W→W+1; then a
     // forward log for W+2 tombstones W+1 → finalize(W+1, meta_w1).
     let tombstone_log = make_v2_sync_log(

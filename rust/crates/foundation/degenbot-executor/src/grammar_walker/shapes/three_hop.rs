@@ -16,9 +16,9 @@ pub(crate) fn derive(
     inputs: &ComposerInputs<'_>,
 ) -> Option<(Plan, AddressTable)> {
     return if facts.len() == 3 && facts.iter().all(|f| matches!(f.prot, Prot::V2 | Prot::V3)) {
-        // ── T6 cutover: the 7 V2/V3-only 3-hop families (v3v3v3, v3v3v2,
-        // v3v2v3, v3v2v2, v2v2v3, v2v3v3, v2v3v2) are now derived by the
-        // rule-driven walker (`rule_walk_v2v3`) — R1 (enclosure root) + R2
+        // ── The 7 V2/V3-only 3-hop families (v3v3v3, v3v3v2, v3v2v3,
+        // v3v2v2, v2v2v3, v2v3v3, v2v3v2) are derived by the rule-driven
+        // walker (`rule_walk_v2v3`) — R1 (enclosure root) + R2
         // (repay-graph nest) + R3 (leaf + WETH-seed placement) + the
         // V2-flash upgrade — instead of 7 hand-written arms. Byte-identity
         // is pinned by `command_stream_bytepin` + the `degenbot-simulation` evm2
@@ -78,7 +78,7 @@ pub(crate) fn derive(
             && facts[1].prot == Prot::V4
             && matches!(facts[2].prot, Prot::V2 | Prot::V4)
         {
-            // ── v3v4{v2,v4} — MERGED on the terminal-form axis (T6).
+            // ── v3v4{v2,v4} — one arm on the terminal-form axis.
             // Same leading V3 flash + V4 mid unlock; the trailing hop reads
             // `facts[2].terminal_form`.
             let (fa, fb, fc) = (&facts[0], &facts[1], &facts[2]);
@@ -300,11 +300,10 @@ pub(crate) fn derive(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// T6 — rule-driven walker for the 7 V2/V3-only 3-hop families.
+// Rule-driven walker for the 7 V2/V3-only 3-hop families.
 //
-// Replaces the 7 hand-written arms (`v3v3v3` … `v2v3v2`) with a single
-// rule-driven derivation. The rules (the T6 analysis lived in a scratch file
-// under /tmp and was never committed):
+// The 7 hand-written arms (`v3v3v3` … `v2v3v2`) reduce to a single
+// rule-driven derivation. The rules:
 //
 // **R1 (enclosure root).** Every family is SelfFund-led: a `SelfFund{WETH,
 // optimal}` prepends the plan. The outermost frame is the **last
@@ -616,7 +615,7 @@ fn stage_pools(at: &mut AddressTable, hops: &[&HopFacts; 3]) -> Option<(u8, u8, 
 // terminal output to SELF via a flash or a V2 calc, so no PM-delta capture is
 // emitted. The `use_v4_batch` + `any_gap` batch/bridge split is data-driven
 // (the pure-V4 `v4v4v4` path); the batch layout is reproduced inline since
-// `mechanics::v4_batch` is gated dead-code (T7 will wire it).
+// `mechanics::v4_batch` is gated dead-code (not wired yet).
 //
 // The irreducible per-family residue is the `AddressTable` staging ORDER
 // (the preamble dumps addresses in insertion order and every `pool_idx` /
@@ -1284,7 +1283,7 @@ fn rule_walk_v4_led(
 // (but not the v4-led block — that is `rule_walk_v4_led` — and not the
 // `v3v4{v2,v4}` terminal-form merge): `v2v2v4`, `v2v4v4`, `v2v3v4`,
 // `v3v2v4`, `v3v3v4`, `v2v4v2`, `v2v4v3`. They collapse to one rule-driven
-// derivation. The rules (stated below; T6 record in ADR-031's Resolution):
+// derivation. The rules (ADR-031's Resolution):
 //
 // **R1 (enclosure root).** Two root forms:
 //   • A `V4Unlock` is the root when the V4 hop is the flat terminal

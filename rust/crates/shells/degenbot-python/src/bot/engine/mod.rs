@@ -109,7 +109,7 @@ impl Drop for PyArbEngine {
 
 impl PyArbEngine {
     /// Sanctioned stage-surface access for pymethod code (GIL/`BotState`
-    /// inversion class, incidents 2026-08-20/21): the closure runs INSIDE
+    /// inversion class): the closure runs INSIDE
     /// `py.detach`. Same invariant contract as `PyBot::with_state` — see the
     /// doc comment there.
     pub(crate) fn with_stages<T>(

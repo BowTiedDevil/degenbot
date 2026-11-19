@@ -140,10 +140,10 @@ struct FakeStageEngine {
     /// `on_drain` path fires. Default `false` keeps every existing test's
     /// no-drain behavior unchanged.
     dirty: AtomicBool,
-    /// `record_logs_this_block` call count (T4 pairing pin): the bookkeeping write must fire exactly when the
+    /// `record_logs_this_block` call count (the pairing pin): the bookkeeping write must fire exactly when the
     /// FSM's `on_log_applied` ran for an applied forward log.
     logs_recorded: std::sync::atomic::AtomicUsize,
-    /// `pump_ended` recorded (incident 2026-08-20 stream-death test).
+    /// `pump_ended` recorded (the stream-death test).
     pump_ended: std::sync::atomic::AtomicBool,
     /// Candidate-2 seam pin : the loud close must arrive
     /// exactly once through the `PumpControl` surface, never through the
@@ -204,8 +204,8 @@ impl FakeStageEngine {
     }
 
     /// Number of `record_logs_this_block` calls the pump routed here
-    /// (T4 pairing pin).
-    /// True once the pump notified stream death (incident 2026-08-20).
+    /// (the pairing pin).
+    /// True once the pump notified stream death.
     fn pump_ended(&self) -> bool {
         self.pump_ended.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -218,8 +218,7 @@ impl FakeStageEngine {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Candidate-2 pin : closes driven through the stage
-    /// seam's pump-ended poke (removed at T2). Must stay 0.
+    /// Closes driven through the stage seam's pump-ended poke. Must stay 0.
     fn stage_seam_ends(&self) -> usize {
         self.stage_seam_ends
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -340,12 +339,9 @@ impl StageHandlers for FakeStageEngine {
     }
 }
 
-/// Candidate-2 seam pin : the TARGET `PumpControl` surface.
-/// At HEAD this cannot compile (`PumpControl` lands in T2); that is the
-/// intended red. The fake records the close here so the pin proves the
-/// pump actually drove the loud close through the control seam rather than
-/// returning silently. The `StageHandlers` impl above is what HEAD uses; T2
-/// deletes that poke and this impl becomes the only close path.
+/// The `PumpControl` surface. The fake records the close here so the pin
+/// proves the pump drove the loud close through the control seam rather than
+/// returning silently; this impl is the only close path.
 impl crate::bot_core::PumpControl for FakeStageEngine {
     fn has_dirty_paths(&self) -> bool {
         self.dirty.load(Ordering::Relaxed)
@@ -529,8 +525,7 @@ fn gap_burst_stream_with_dirty_edge(
 /// (headers every 40ms; gap > slice deadline 25ms, gap < settle debounce
 /// 50ms), the gate dispatches ONE early Drain at ~first-dirty + 25ms
 /// (mid-burst, NOT at burst end), then the tail still gets its quiesce
-/// settle at the newest block. RED before T2 (the gate only dispatched
-/// at stream end).
+/// settle at the newest block.
 /// Register the V2 pool `gap_burst_stream` logs target (mirrors
 /// `solve_gate_waits_for_buffered_log_before_solving`'s fixture).
 fn register_burst_pool(bot: &Arc<Bot>) {

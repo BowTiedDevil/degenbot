@@ -80,8 +80,7 @@ pub struct BudgetOverrides {
     /// `fleet.pool_state_updater_slots` — `PoolStateUpdater` slot count.
     pub pool_state_updater_slots: Option<usize>,
     /// Solve headroom `H_s` in the seat formula `floor(Q) − H_s` (the
-    /// documented floor-allocation constant; LW-T4 makes it an explicit
-    /// boot-authority input).
+    /// documented floor-allocation constant, an explicit boot-authority input).
     pub solve_headroom: Option<usize>,
 }
 
@@ -96,7 +95,7 @@ impl BudgetOverrides {
             solver_cpus: cfg.fleet.solver_cpus.and_then(|v| u64::try_from(v).ok()),
             sim_slot_cap: cfg.fleet.sim_slot_cap,
             pool_state_updater_slots: cfg.fleet.pool_state_updater_slots,
-            // The typed T8 follow-through: the headroom override
+            // The typed headroom override
             // reaches the budget derive; unset stays None and the documented
             // constant rules below.
             solve_headroom: cfg.solve.solve_headroom,
@@ -127,7 +126,7 @@ pub enum BudgetError {
          the fleet cannot host the pinned latency roles there — the \
          serial/sequential fallback DECISION POINT is here (reth \
          has_enough_parallelism(): lane capability is explicit, never silently \
-         narrower); the fallback arm itself is a DOWNSTREAM decision (LW-T7)"
+         narrower); the fallback arm is a DOWNSTREAM decision"
     )]
     QuotaTooSmallForPinnedRoles {
         /// The fractional quota (cores).
@@ -461,7 +460,7 @@ impl FleetBudget {
     }
 
     /// Re-declare the shares under a changed quota (posture/logged event).
-    /// Pure re-derivation; the HOST decides which pins change (T9) and never
+    /// Pure re-derivation; the HOST decides which pins change and never
     /// re-keys mid-cycle.
     ///
     /// # Errors
@@ -475,7 +474,7 @@ impl FleetBudget {
     }
 
     /// Whether moving from this budget to `next` requires pin re-keying
-    /// (a pin-count change) — the epoch-boundary rebalance trigger (T9).
+    /// (a pin-count change) — the epoch-boundary rebalance trigger.
     #[must_use]
     pub const fn pins_require_rekey(&self, next: &FleetBudget) -> bool {
         self.solver_pin_count != next.solver_pin_count
@@ -651,7 +650,7 @@ mod tests {
         assert_eq!(b.solver_pin_count, 4);
     }
 
-    // ---- LW-T4 (Seam A+G1): boot authority — quota-derived sizing, no ambient fallback
+    // ---- Boot authority — quota-derived sizing, no ambient fallback ------------
 
     /// The documented floor-allocation formula is the SOLE seat authority:
     /// `pins == floor(Q) − solve_headroom` (floored at 1) with the shares
@@ -744,7 +743,7 @@ mod tests {
         }
     }
 
-    /// LW-T4 (reth research lesson-4): the boot authority never falls back to
+    /// The boot authority never falls back to
     /// ambient host state — `available_parallelism` must not appear in the
     /// sizing paths (the DETECTION ceilings live in degenbot-core / quota.rs;
     /// the seat authority floors purely from the injected quota). This is a
@@ -770,7 +769,7 @@ mod tests {
         );
     }
 
-    /// LW-T4: oversubscription is TYPED at boot (derive returns the error —
+    /// Oversubscription is TYPED at boot (derive returns the error —
     /// `abort_executor` is reserved for RUNTIME strand abandonment only)
     /// and the message names BOTH numbers (declared sum AND quota floor).
     #[test]
@@ -796,10 +795,10 @@ mod tests {
         );
     }
 
-    /// LW-T4: quota below the capacity floor is a TYPED refusal naming the
-    /// floor and pointing at the serial/sequential fallback decision point
-    /// (reth `has_enough_parallelism()` lesson: lane capability is explicit,
-    /// never silently narrower). The fallback arm itself is LW-T7's.
+    /// Quota below the capacity floor is a TYPED refusal naming the floor and
+    /// pointing at the serial/sequential fallback decision point (reth
+    /// `has_enough_parallelism()` lesson: lane capability is explicit, never
+    /// silently narrower). The fallback arm itself is a DOWNSTREAM decision.
     #[test]
     fn quota_below_the_capacity_floor_refuses_typed_naming_the_fallback_point() {
         let err = FleetBudget::derive(2.0, &overrides())
@@ -847,7 +846,7 @@ mod tests {
         let big = FleetBudget::derive(8.0, &overrides()).expect("8");
         let small = big.resize(6.5, &overrides()).expect("6.5 hostable");
         assert_eq!(small.declared_sum(), small.quota_floor);
-        // Pin-count change flags the T9 rebalance (never a mid-cycle re-key).
+        // Pin-count change flags the rebalance (never a mid-cycle re-key).
         assert!(big.pins_require_rekey(&small));
         // Idempotent re-declaration under an unchanged quota.
         let same = big.resize(8.0, &overrides()).expect("8 again");

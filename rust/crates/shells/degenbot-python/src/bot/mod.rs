@@ -136,7 +136,7 @@ fn open_construction_db(
 #[pyclass(name = "Bot", module = "degenbot._ffi")]
 pub struct PyBot {
     bot: Arc<Bot>,
-    /// ADR-006 D4 (T3): the pump lifecycle state, shared with the
+    /// ADR-006 D4: the pump lifecycle state, shared with the
     /// `PyArbEngine` this bot owns. `None` until an engine is
     /// constructed against this bot (the engine attaches its `Arc<PumpState>`
     /// back here during `new()`). Once attached, the three pump methods —
@@ -714,13 +714,12 @@ impl PyBot {
     }
 
     /// Attach a construction-I/O handle built from a Python provider + an
-    /// optional `database_path` (architecture review 2025-07-18 / candidate 1).
+    /// optional `database_path`.
     /// The Python `Bot.__init__` calls this after constructing `PyBot` so the
     /// 7 generic RPC + 12 DB atomic methods on `PyBotIo` can delegate through
     /// the core trait objects. Alloy-only — a non-alloy provider raises
-    /// `RuntimeError` (Q6-narrow; the 27 choreography wrappers keep their
-    /// Python-delegation fallback this slice, deleted with the builder-
-    /// choreography port).
+    /// `RuntimeError` (the choreography wrappers keep their Python-delegation
+    /// fallback).
     ///
     /// `database_path = None` → the DB half is `NoDb` (every read returns
     /// `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
@@ -744,7 +743,7 @@ impl PyBot {
             AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction, NoDb,
         };
 
-        // Q6-narrow: the trait is alloy-only. A non-alloy provider (legacy
+        // The trait is alloy-only. A non-alloy provider (legacy
         // test doubles that exercise the choreography fallback) yields `None`
         // here — we skip attaching, leaving `construction_io = None`. The 7
         // RPC + 12 DB methods on `PyBotIo` then fall back to the `self.alloy` /
@@ -814,7 +813,7 @@ impl PyBot {
         py.detach(|| self.bot.snapshot_seed_block())
     }
 
-    /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
+    /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4).
     ///
     /// The Bot-owned pump entry point — delegates to the shared `PumpState`
     /// attached when an engine wrapper was constructed against this bot.
@@ -835,7 +834,7 @@ impl PyBot {
             .map_err(map_connect_err)
     }
 
-    /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
+    /// Resume the pump — begin normal WS processing (ADR-006 D4).
     ///
     /// The snapshot→WS gap is closed automatically inside the core
     /// `BlockPump::resume_from_subscribe`; the pyo3
@@ -867,7 +866,7 @@ impl PyBot {
         Ok(())
     }
 
-    /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
+    /// Set the HTTP RPC URL used for verification (ADR-006 D4).
     ///
     /// Builds the verify home's ONE provider and installs it through the
     /// home's own `config()`/`configure()` door (the body blocks at this
@@ -884,7 +883,7 @@ impl PyBot {
         crate::bot::pump::install_verify_provider(py, &driver, rpc_url)
     }
 
-    /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+    /// Set the `StateView` contract address for V4 verification (ADR-006 D4).
     ///
     /// # Errors
     /// `RuntimeError` when no engine is attached to this bot; `ValueError` on
@@ -2435,11 +2434,11 @@ impl PyBot {
     /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
     /// never visible to the live pump (resumed before `build_paths`) in an
-    /// unseeded state. Previously the builder registered with empty `tick_data`
-    /// then seeded through a separate pool write — a pump `ModifyLiquidity`
-    /// landing between register and seed was applied then CLOBBERED by the seed
-    /// overwrite (lost update → V4 tick-map desync → `verify_liquidity_maps`
-    /// mismatch). Mirrors the V3 closure.
+    /// unseeded state. Registering with empty `tick_data` and seeding through a
+    /// separate pool write leaves a window where a pump `ModifyLiquidity`
+    /// lands, is applied, and is then CLOBBERED by the seed overwrite (lost
+    /// update → V4 tick-map desync → `verify_liquidity_maps` mismatch).
+    /// Mirrors the V3 closure.
     ///
     /// Raises:
     ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode;
@@ -3062,11 +3061,11 @@ impl PyBot {
         let symbol = symbol.to_string();
         // release the GIL across the BotState write-lock acquisition +
         // insert so the live pump (tokio) + the asyncio loop keep making GIL
-        // progress while the main thread awaits `core.write()`. Pre-fix no
-        // registration seam released the GIL, so a parked `core.write()` /
-        // `engine.lock()` carried the GIL with it — the startup-stall enabler
-        // (the asyncio loop froze for the whole park; the pump's GIL-requiring
-        // notify/log path could not progress). The lock + insertion live
+        // progress while the main thread awaits `core.write()`. A registration
+        // seam that does NOT release the GIL carries it into a parked
+        // `core.write()` / `engine.lock()` — the startup stall: the asyncio
+        // loop freezes for the whole park and the pump's GIL-requiring
+        // notify/log path cannot progress. The lock + insertion live
         // inside the core method ([`Bot::register_token`]) under this
         // py.detach; the `PyErc20Token` handle is built afterward from the
         // parsed `addr`.
@@ -4178,7 +4177,7 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    /// T3, rewired to CHAIN truth: a Tracked snapshot's rows are reconciled
+    /// Rewired to CHAIN truth: a Tracked snapshot's rows are reconciled
     /// against the word bitmaps read from chain. With no chain transport the
     /// gate refuses with a typed `RuntimeError` (never a silent pass); a chain
     /// transport that disagrees refuses with a typed `ValueError`; and a chain

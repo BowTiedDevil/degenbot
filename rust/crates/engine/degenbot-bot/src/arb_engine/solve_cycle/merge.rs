@@ -4,7 +4,7 @@
 //! Machine-direct free functions over the epoch's [`EpochContext`]: the merge
 //! runs on the detached-merge sidecar (and inline for the test harness), so
 //! the bodies take the epoch workspace the spine builds rather than the whole
-//! cycle. The clamp is the ONE body shared with the SIMPIPE2 T2 worker
+//! cycle. The clamp is the ONE body shared with the worker-side clamp
 //! (`lane_walk::clamp_result_in_worker`), so it takes the core handle and the
 //! margin explicitly — the `&self` accessor on [`super::SolveCycle`] is the
 //! only caller with no context to hand.
@@ -37,8 +37,8 @@ use std::sync::Arc;
 // worker` both drive the same `clamp_result_with_state`; there is exactly
 // one clamp body (ADR-046 "no inherent twins").
 // ===========================================================================
-/// The clamp shared by the merge-site gate and the SIMPIPE2 T2 worker
-/// relocation — the pool list is a parameter so the WORKER can drive the
+/// The clamp shared by the merge-site gate and the worker-side clamp — the
+/// pool list is a parameter so the WORKER can drive the
 /// identical logic from its `to_solve`-aligned snapshot, and the clamp margin
 /// arrives as a parameter packed from the typed config (never a process-static
 /// read). The worker takes the SAME short core read the merge-site clamp took
@@ -499,7 +499,7 @@ pub(super) fn merge_one_result(
     let status = report.status;
     // Telemetry: profitable solves are the signal in the noise -
     // emit the economics + the concrete hop list on the solve span.
-    // M2 probe: per-result events cross the Python log bridge (GIL) -
+    // Per-result events cross the Python log bridge (GIL) -
     // size that cost vs the map/delivery work (hotpath-attributed).
     hotpath::measure_block!("merge.telemetry_event", {
         diag!(domain = path, block_number = solve_block,

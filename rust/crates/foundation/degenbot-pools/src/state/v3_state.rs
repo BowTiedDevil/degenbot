@@ -166,7 +166,7 @@ impl crate::families::liquidity_event::LiquidityEvent for BufferedV3PoolEvent {
 /// V3: `slot0` spans TWO words, shifting every following slot by
 /// one (liquidity@5, ticks@6). Reads of a fork pool through the Uniswap
 /// indices misread the contract (the false [sim-divergence] on pool
-/// 0x1ac1A8FE, VERIFY2 T4).
+/// 0x1ac1A8FE).
 ///
 /// The layout is immutable per pool → carried on [`V3PoolIdentity`].
 /// Deliberately NO `Default`: a fork slot layout must always be chosen
@@ -296,7 +296,7 @@ pub struct RegisterV3PoolParams {
     /// `UNISWAP_V3_MAINNET_INIT_HASH` fallback (the retired Python `ClassVar`'s
     /// documented default for non-JSON V3 pools).
     pub init_hash: B256,
-    /// The pool contract's storage-slot layout family (VERIFY2 T4). The
+    /// The pool contract's storage-slot layout family. The
     /// struct-update default is for fixtures only — production
     /// registrations set it from the fork table
     /// (`V3_VARIANTS` in `degenbot-bot::connector_index`).
@@ -405,7 +405,7 @@ pub struct V3PoolIdentity {
     /// when shipped, else the Uniswap V3 mainnet fallback const. Off the
     /// handle, not the retired Python `ClassVar`.
     pub init_hash: B256,
-    /// The pool contract's storage-slot layout family (VERIFY2 T4) — drives
+    /// The pool contract's storage-slot layout family — drives
     /// every slot-index consumer (divergence probe, sim-anchor projection,
     /// any direct slot serve). Immutable per pool.
     pub slot_layout: ConcentratedLiquiditySlotLayout,
@@ -502,8 +502,8 @@ pub struct V3PoolState {
     /// an active pool on a slow `build_paths`, the pump buffer accumulates
     /// Mint/Burn events at blocks PAST the backfill boundary; draining them
     /// advances `tick_data` to a state that matches on-chain at a LATER block,
-    /// so verifying against `verify_backfill_block` fabricated a mismatch and
-    /// crashed the bot (2026-06-29). Capturing the block alongside the state
+    /// so verifying against `verify_backfill_block` fabricates a mismatch and
+    /// aborts the registration. Capturing the block alongside the state
     /// — under the same write-lock that finished the drain — makes the
     /// (state, block) pair self-consistent and the verify race-free.
     ///

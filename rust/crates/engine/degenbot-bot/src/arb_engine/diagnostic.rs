@@ -4,27 +4,21 @@
 //! registered path. Intended for debugging simulation failures. All access is
 //! synchronous and does not mutate engine state.
 //!
-//! ## Retired: on-chain recompute + `fetch_onchain`
+//! ## Ground truth: captured swaps
 //!
-//! The on-chain recompute half — `fetch_onchain`, the `recompute_v2/v3/v4_*`
-//! family, the Multicall3 batching + per-family `build_*`/`decode_*` calls,
-//! the hand-rolled ABI hex parsers, `HopRecompute`, and
-//! `DiagnosticHop::recompute` — was retired when `[sim-diag]` moved onto the
-//! revm inspector's **captured swaps**. Captured swaps ARE byte-exact ground
-//! truth (proven via the `swap_capture_correctness` mainnet probe, block
-//! 25612576 V2+V3 PASS), so no RPC re-fetch + offline recompute is needed to
-//! classify a revert. The classifier compares each captured swap's output amount
-//! against the solver-reported `hop_outputs[i]`: `SolverCalc` = mismatch,
-//! Encoding = all match but sim reverted.
+//! `[sim-diag]` reads the revm inspector's **captured swaps**, which ARE the
+//! byte-exact ground truth (proven via the `swap_capture_correctness` mainnet
+//! probe, block 25612576 V2+V3 PASS). There is no second on-chain quote
+//! authority and no RPC re-fetch: the classifier compares each captured swap's
+//! output amount against the solver-reported `hop_outputs[i]` — `SolverCalc` =
+//! mismatch, `Encoding` = all match but the sim reverted.
 //!
-//! Retained here: the pure typed field-diff utilities (`FieldDiff`,
-//! `compute_field_diffs`) + the engine-state-read half (`DiagnosticPoolState`,
+//! This module provides the pure typed field-diff utilities (`FieldDiff`,
+//! `compute_field_diffs`) and the engine-state-read half (`DiagnosticPoolState`,
 //! `DiagnosticHop`, `DiagnosticPathState`, `diagnostic_path_state`). The
-//! `DiagnosticHop` onchain-comparison fields (`onchain_state`, `diff`,
-//! `drift`, `field_drift`) stay on the struct (always default now — no fetch
-//! populates them) so the JSON shape + a future lightweight drift detector can
-//! repopulate them via `compute_field_diffs` without re-introducing the heavy
-//! Multicall3 recompute.
+//! `DiagnosticHop` comparison fields (`onchain_state`, `diff`, `drift`,
+//! `field_drift`) default empty so the JSON shape stays stable for a future
+//! lightweight drift detector fed by `compute_field_diffs`.
 use super::{ArbitrageEngine, ClampStatus};
 use ::degenbot_pools::solve::{HopType, MixedPoolRef};
 use alloy::primitives::{Address, U256};
@@ -290,8 +284,8 @@ pub struct DiagnosticHop {
     /// typed `Unsupported` verdict when no authoritative quote exists.
     pub engine_state: DiagnosticPoolState,
     /// On-chain state fetched after the lock was released (`None` — the
-    /// `fetch_onchain` half was retired; retained for a future
-    /// lightweight drift detector).
+    /// `fetch_onchain` half is unused; retained for a future lightweight drift
+    /// detector).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onchain_state: Option<DiagnosticPoolState>,
     /// Human-readable field-level differences between engine and chain.
@@ -390,7 +384,7 @@ fn u256_to_hex(value: U256) -> String {
 /// No RPC calls are made here.
 ///
 /// Returns `None` if the path is not registered. A crate-internal free
-/// function (T5): the stage surface owns the public seam.
+/// function: the stage surface owns the public seam.
 #[must_use]
 pub(crate) fn diagnostic_path_state(
     engine: &ArbitrageEngine,
@@ -455,8 +449,8 @@ pub(crate) fn diagnostic_path_state(
 }
 /// Thread the solver's `optimal_input` + `hop_outputs` (the solver's REPORTED
 /// per-hop amounts — the EXPECTED basis the classifier compares captured
-/// swaps against) onto the snapshot. The recompute-population half that used
-/// to live here was retired (captured swaps replace the recompute).
+/// swaps against) onto the snapshot. Captured swaps replace the recompute, so
+/// no recompute-population half lives here.
 fn thread_solver_result_onto_snapshot(
     snapshot: &mut DiagnosticPathState,
     solve_result: Option<&::degenbot_pools::solve::SolvePathResult>,

@@ -1,11 +1,9 @@
 //! `DeliveryLifecycle` — the engine-side delivery channel's open/send/close
-//! and the end-of-stream contract (architecture review 2026-08-20; incident
-//! 2026-08-20 #2 class).
+//! and the end-of-stream contract.
 //!
 //! The contract this module owns: **receivers observe a natural stream end
-//! exactly once, on pump death or engine drop.** Before this module the
-//! contract was a five-hop relay with default-no-op links; now it has one
-//! home and one test suite.
+//! exactly once, on pump death or engine drop.** It has ONE home and one test
+//! suite here.
 //!
 //! # Why the transport is the session's ORDERED source (ADR-093 D5)
 //!
@@ -35,17 +33,16 @@ use degenbot_core::channel_lifecycle::{ChannelPhase, SendOutcome};
 use tokio::sync::mpsc;
 
 /// The engine-side delivery channel's open/send/close — ONE home for the
-/// end-of-stream contract (architecture review 2026-08-20; incident 2026-08-20
-/// #2 class):
+/// end-of-stream contract:
 ///
 /// > **Receivers observe a natural stream end exactly once, on pump death or
 /// > engine drop.**
 ///
-/// Before this module the contract lived as a five-hop relay across two
-/// languages with default-no-op links; a missed link was invisible at the
-/// source and fatal at the Python consumer (the engine owned the senders and
-/// outlived the pump task, so the streams neither delivered nor ended).
-/// Now the contract has one module and one test suite; [`DeliveryPolicy`]
+/// As a five-hop relay across two languages with default-no-op links, a missed
+/// link is invisible at the source and fatal at the Python consumer (the engine
+/// owns the senders and outlives the pump task, so the streams neither deliver
+/// nor end). This module and its one test suite are the contract's home;
+/// [`DeliveryPolicy`]
 /// (super) owns the *policy* half — what is worth sending — and holds one
 /// instance of this type for the *transport* half.
 ///

@@ -538,9 +538,9 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
 /// `update_block` stays at N — the gated drain then yields only complete-
 /// block events, and the pin captures a self-consistent pair.
 ///
-/// Pre-fix (RED): the live Swap applied directly, advancing `update_block`
-/// to N+1 while a same-block buffered Burn stayed retained; `pin_v4_post_
-/// drain_snapshot` captured `(tick_data_without_burn, N+1)` → mismatch.
+/// Applying the live Swap directly advances `update_block` to N+1 while a
+/// same-block buffered Burn stays retained; `pin_v4_post_drain_snapshot`
+/// would capture `(tick_data_without_burn, N+1)` → mismatch.
 #[test]
 fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     use alloy::primitives::U128;

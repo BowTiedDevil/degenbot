@@ -246,7 +246,7 @@ impl SubmitOutcome {
 /// simulate's `gasUsed` when building the [`TxParams`].
 const GAS_SAFETY_MARGIN: f64 = 1.5;
 
-/// T4: a candidate's net profit as `f64` wei (saturating at `u128::MAX`;
+/// A candidate's net profit as `f64` wei (saturating at `u128::MAX`;
 /// dashboards chart magnitudes, not exact wei).
 #[expect(clippy::cast_precision_loss)]
 fn candidate_net_wei(candidate: &SubmitCandidate) -> f64 {
@@ -1205,7 +1205,7 @@ pub async fn dispatch_and_submit(
     let mut outcome = SubmitOutcome::default();
     let mut state = BatchState::default();
 
-    // T4: per-batch latency anchor — candidate loop start → each broadcast.
+    // Per-batch latency anchor — candidate loop start → each broadcast.
     let batch_start = std::time::Instant::now();
     for (index, candidate) in candidates.iter().enumerate() {
         SubmitBatch::record_candidate_economics(candidate);
@@ -1276,7 +1276,7 @@ pub async fn dispatch_and_submit(
             nonce,
         });
 
-        // T4: realized profit — this candidate's net profit lands on the
+        // Realized profit — this candidate's net profit lands on the
         // realized counter iff its tx confirms.
         let () =
             stage!(batch.spawn_monitor(tx_hash, nonce, path_pools, candidate_net_wei(candidate)));

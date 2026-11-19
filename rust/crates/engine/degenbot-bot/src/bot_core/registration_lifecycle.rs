@@ -1,8 +1,8 @@
 //! Registration verify-lifecycle core ownership (ADR-022).
 //!
 //! Owns the per-pool `quarantine → drain+pin → two-step verify → Live`
-//! sequence that was previously orchestrated in Python
-//! (`src/degenbot/arbitrage/engine_registry.py::register_v3/v4_pool`).
+//! sequence (the Python reference is
+//! `src/degenbot/arbitrage/engine_registry.py::register_v3/v4_pool`).
 //!
 //! The sequence is ONE machine ([`run_verify_lifecycle`]) over one pool key
 //! ([`PoolLookup`]): a V3 pool is addressed by contract address, a V4 pool
@@ -39,7 +39,7 @@
 //! drain + pin run under ONE `core.write()` hold (the step-2 rolling-start race
 //! fix); step-1 verifies the pinned snapshot seed @ snapshot block;
 //! step-2 verifies the pin's own captured block (never a constant backfill
-//! block — the 2026-06-29 crash class).
+//! block).
 
 use hashbrown::HashMap;
 use std::future::Future;
@@ -200,8 +200,7 @@ where
             // Single acquisition by construction: the leased accessor chains
             // key → liquidity clock inside ONE `read_with(Registration)`.
             // Never recompose the two single-step reads here — nested reads
-            // are a self-deadlock when a writer queues between them
-            // (soak-2026-08-22).
+            // are a self-deadlock when a writer queues between them.
             let own = key.own_liquidity_clock(core);
             let seed_block = if own > 0 { own } else { snapshot_block };
             verify_seed(seed, seed_block).await?;
@@ -235,7 +234,7 @@ where
     // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
     // (the `tick_data_block` — liquidity clock, two-stamp rule). Comparing
     // against a caller-supplied constant would fabricate a mismatch on active
-    // pools (the 2026-06-29 crash). The pin is consumed exactly once.
+    // pools. The pin is consumed exactly once.
     let pin = {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.take_post_drain(&mut state)

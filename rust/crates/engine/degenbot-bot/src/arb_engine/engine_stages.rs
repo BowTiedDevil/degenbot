@@ -85,7 +85,7 @@ use hashbrown::HashMap;
 /// before any cycle). Pipeline-free by design: a consumer without the meter
 /// installed is a no-op (pure-Rust/test seams).
 ///
-/// ADR-045 T5: the caller drives it with `CycleOutcome::arm_label()` — the
+/// The caller drives it with `CycleOutcome::arm_label()` — the
 /// cycle's duration/Mutex hold are observed a frame up, in `EngineStages`,
 /// after `solve_dirty` returns, so the OUTCOME (not a post-hoc engine stash)
 /// is the byte-stable source of the label.
@@ -533,7 +533,7 @@ impl EngineStages {
 
     /// Close the delivery channels — the result-batch stream and the block
     /// clock — so a pending receiver observes the natural end-of-stream
-    /// exactly once (the incident-2026-08-20 #2 contract owned by
+    /// exactly once (the end-of-stream contract owned by
     /// `DeliveryLifecycle` + the block-clock pipe). Idempotent: a later
     /// close is a quiet no-op and a post-close send reports not-sent.
     ///
@@ -562,11 +562,8 @@ impl EngineStages {
     /// (the solve entry that deliberately bypasses pump semantics). The
     /// driver arrives via `StageHandlers::on_solve`; the stage-span and
     /// detached-sidecar unit-test harnesses drive it directly. The
-    /// engine-level cycle method was retired: the
-    /// buffered-event expiry now runs HERE, under this call's held engine
-    /// lock, ahead of `SolveCycle::run_epoch` (the whole
-    /// `event_routing.rs` module is gone). The eight inherent twins were
-    /// hard-cut (no shims).
+    /// buffered-event expiry runs HERE, under this call's held engine lock,
+    /// ahead of `SolveCycle::run_epoch`.
     pub(crate) fn run_solve_cycle(
         &self,
         ticket: CycleTicket,
@@ -606,9 +603,9 @@ impl EngineStages {
         // hangs off ITS OWN epoch's block span, never a neighbouring block's.
         crate::telemetry::attach_lineage(&span, &lineage);
         let _guard = span.enter();
-        // T3: solve duration + registered-path gauge (dirty solves only).
+        // Solve duration + registered-path gauge (dirty solves only).
         let solve_start = std::time::Instant::now();
-        // ADR-045 T5: the typed cycle outcome flows out of the engine and
+        // The typed cycle outcome flows out of the engine and
         // attributes the span + the duration/hold histograms below.
         let cycle_outcome;
         {
@@ -618,7 +615,7 @@ impl EngineStages {
             hotpath::gauge!("engine_registered_paths").set(f64::from(
                 u32::try_from(path_count(&engine)).unwrap_or(u32::MAX),
             ));
-            // T3: the solve cycle must not pin a shared
+            // The solve cycle must not pin a shared
             // pump-runtime worker while it runs. Seam #4: under the
             // detached stance the engine Mutex hold collapses to enqueue end
             // (µs); the in-cycle arm is the backpressure safety valve only.
@@ -641,10 +638,10 @@ impl EngineStages {
                 "cycle.solve_block",
                 engine.cycle.cursor.coordinates().results_block,
             );
-            // Cold-start trace (ADR-045 T5): attribute the cycle arm from the
+            // Cold-start trace: attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
             let _ = record_cycle_arm_telemetry(&span, cycle_outcome.arm_label());
-            // ADR-045 T5: keep the outcome's full typed record live at the
+            // Keep the outcome's full typed record live at the
             // consumer seam (the census is the same resolve counts the cycle
             // already emitted; the solved-block is the cycle's anchor).
             let _ = cycle_outcome.solved_block();
@@ -733,7 +730,7 @@ fn run_engine_cycle(
 /// `liquidity_event_buffer.rs`) - and each write still bought a ~2.9s
 /// writer-queue slot under the block-apply stream (lock WAIT p90
 /// 2.76-3.03s, work 0us in 4,298/4,298 samples). Skip lock-free when
-/// expiry is not configured (read from the T2 retune value).
+/// expiry is not configured (read from the retune value).
 fn expire_buffered_events(engine: &ArbitrageEngine, block_number: u64) {
     if engine.event_buffer_expiry_enabled {
         let (v3_lock_wait_us, v3_work_us) = expire_buffered_telemetry(engine, "v3", |core| {
@@ -845,7 +842,7 @@ impl StageHandlers for EngineStages {
     /// Solved pass.
     fn on_resolve(&self, work: &Resolve<'_>) -> Result<AffectedPaths, StageError> {
         let mut engine = self.engine.lock();
-        // ADR-045 T4: the admission draw is the cycle's `draw` (engine mutex
+        // The admission draw is the cycle's `draw` (engine mutex
         // held, ledger mutex inner - order unchanged).
         let ticket = engine.cycle.draw(work.delta, work.ctx.block());
         drop(engine);
@@ -1028,8 +1025,7 @@ impl PumpControl for EngineStages {
 }
 #[cfg(test)]
 mod fleet_stance_tests {
-    //! The merge sidecar hosted as the fleet `Merge` role. LW-T9:
-    //! the fleet.stance flip matrix is retired — ONE posture survives.
+    //! The merge sidecar hosted as the fleet `Merge` role — ONE posture.
     // the naming/census fns moved into the machine; the pins
     // (byte-identical naming + census row) stay right here.
     use crate::arb_engine::detached_cycle::{
@@ -1050,10 +1046,8 @@ mod fleet_stance_tests {
         assert_eq!(row.thread_name, "work-fleet-merge-{n}");
         assert_eq!(row.count, 1);
     }
-    /// LW-T9: there IS no legacy posture — every construction hosts the
-    /// sidecar as the fleet `Merge` role, byte-identical to the fleet arm
-    /// (RED before the cutover: the false-stance branch kept the
-    /// historical "arb-detached-merge" identity).
+    /// There is no legacy posture — every construction hosts the sidecar as
+    /// the fleet `Merge` role, byte-identical to the fleet arm.
     #[test]
     fn every_construction_hosts_the_sidecar_as_the_merge_role() {
         let name = merge_sidecar_thread_name();
@@ -1113,12 +1107,9 @@ mod candidate2_seam_pins {
                 .push((event.metadata().target().to_string(), message));
         }
     }
-    /// Pin 3 loudness half (GREEN at HEAD). The `EngineStages` pump-ended
-    /// close emits the `op_error!` loud-close log. Today the log is on the
-    /// `StageHandlers::on_pump_ended` hook; T2 moves it (with the poke) to
-    /// `PumpControl::on_pump_ended` and deletes the non-logging inherent
-    /// twin, so this captures the load-bearing behavior that must SURVIVE the
-    /// T2/T3 deletions — a silent close would turn this red.
+    /// The `EngineStages` pump-ended close emits the `op_error!` loud-close
+    /// log (the log rides the `StageHandlers::on_pump_ended` hook); a silent
+    /// close would turn this red.
     #[test]
     fn candidate2_enginestages_pump_ended_logs_loudly() {
         use tracing_subscriber::layer::SubscriberExt;
@@ -1133,7 +1124,7 @@ mod candidate2_seam_pins {
         });
         assert!(
             capture.saw_loud_close(),
-            "EngineStages::on_pump_ended must emit the op_error loud-close log (it must survive T2/T3)"
+            "EngineStages::on_pump_ended must emit the op_error loud-close log"
         );
     }
 

@@ -229,18 +229,15 @@ pub enum AaveChunkEvent {
     /// corresponding address is `ZERO_ADDRESS`, and the apply fn skips `None`
     /// + mutates the other.
     ///
-    /// Crash #3: the prior design shipped separate
-    /// `StkAaveStaked`/`StkAaveRedeem` variants as proxies for the zero-leg
-    /// Transfers (and dedupe-skipped the zero legs here). That required a now
-    /// empirically-falsified invariant — every zero-leg Transfer must pair
-    /// with a `Staked`/`Redeem` semantic event. Some actions emit ONLY the
-    /// `Transfer(X→0)` event with no paired `Redeem` (verified via cast logs
-    /// across the 16.59M→18M range), leaving the sender's `stk_aave_balance`
-    /// stuck at its pre-burn cache value → wrong `calculate_gho_discount_rate`
-    /// → `(C)` refresh over-applies discount → GHO-burn delta overshoots
-    /// `prev_scaled_balance` → balance would go negative (the crash #3 byte-
-    /// exact match: overshoot == `discount_scaled`). Retired per AGENTS.md
-    /// (no backwards-compat shim for retired implementations).
+    /// A zero-leg `Transfer` is a half-event: the `ZERO_ADDRESS` side is
+    /// skipped and the real user mutated. It must NOT be dedupe-skipped in
+    /// favour of a `Staked`/`Redeem` semantic event — that pairing is not an
+    /// invariant. Some actions emit ONLY the `Transfer(X→0)` event with no
+    /// paired `Redeem`, leaving the sender's `stk_aave_balance` stuck at its
+    /// pre-burn cache value → wrong `calculate_gho_discount_rate` → `(C)`
+    /// refresh over-applies discount → GHO-burn delta overshoots
+    /// `prev_scaled_balance` → the balance goes negative (the overshoot equals
+    /// `discount_scaled`).
     StkAaveTransfer {
         /// `aave_v3_users.id` of the sender (decremented by `amount`). `None`
         /// iff `from == ZERO_ADDRESS` (the mint-from-zero leg) — apply skips
@@ -399,9 +396,8 @@ pub struct AaveChunkWriteReport {
     /// post-apply pass consumes them (`balanceOf` + recompute `gho_discount`).
     pub gho_refresh_discount: usize,
     /// stkAAVE `Transfer(from, to, value)` — the canonical balance-mutation
-    /// channel (crash #3): covers the zero-leg arms + the
-    /// neither-zero case. `Staked`/`Redeem` semantic dispatchers were retired
-    /// (their effect is now covered by the zero-leg Transfers).
+    /// channel: covers the zero-leg arms + the neither-zero case.
+    /// `Staked`/`Redeem` semantic events never mutate balances.
     pub stk_aave_transfer: usize,
     /// No-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
@@ -694,8 +690,8 @@ pub fn apply_chunk_events_on_conn(
                 // deltas the substrate fn computes: debit the sender
                 // (negative; `I256::MIN` saturation), credit the recipient
                 // (positive; `I256::MAX` saturation) — the recipient leg
-                // SKIPPED for the ZERO_ADDRESS leg (`None`, the crash #8
-                // guard). Both legs are collateral (BalanceTransfer is
+                // SKIPPED for the ZERO_ADDRESS leg (`None`, the 0x0
+                // collateral-row guard). Both legs are collateral (BalanceTransfer is
                 // aToken-only).
                 let (from_balance, from_index) = substrate.position_state_for_apply(
                     conn,
@@ -1849,13 +1845,12 @@ mod tests {
         );
     }
 
-    /// Crash #8 (RED→GREEN): a `ScaledTokenTransfer` whose recipient
-    /// address is `ZERO_ADDRESS` (a burn-to-zero leg, the `Transfer(from=user,
-    /// to=0x0, amount)` shape) must NOT create a 0x0 collateral position. The
-    /// orchestrator's 19M→22M march diverged exactly here: Rust wrote BOTH
-    /// legs unconditionally, creating an extra `aave_v3_collateral_positions`
-    /// row for the 0-address user on rETH (balance=911746220 wei = dust) where
-    /// Python ref had zero 0-address rows for rETH.
+    /// A `ScaledTokenTransfer` whose recipient address is `ZERO_ADDRESS` (a
+    /// burn-to-zero leg, the `Transfer(from=user, to=0x0, amount)` shape) must
+    /// NOT create a 0x0 collateral position: writing both legs unconditionally
+    /// creates an `aave_v3_collateral_positions` row for the 0-address user
+    /// (a dust balance, e.g. 911746220 wei) where the Python reference has no
+    /// such rows.
     ///
     /// Python's mirror filter lives in `transfers.py:_process_collateral_transfer`
     /// the recipient block (`if scaled_event.target_address != ZERO_ADDRESS:`)
@@ -2159,16 +2154,16 @@ mod tests {
     /// burn must be processed as a half-event (decrement `from` for the
     /// burn, increment `to` for the mint), mirroring Python's
     /// `process_stk_aave_transfer_event` (which only skips the `ZERO_ADDRESS`
-    /// side + always mutates the real user). The prior dispatch skipped
-    /// both legs and relied on a paired `Staked`/`Redeem` semantic event that
-    /// empirically does NOT always fire — leaving senders' `stk_aave_balance`
-    /// stuck at the pre-burn cache value. Crash #3 root cause.
+    /// side + always mutates the real user). Skipping both legs and relying on
+    /// a paired `Staked`/`Redeem` semantic event leaves senders'
+    /// `stk_aave_balance` stuck at the pre-burn cache value — that event does
+    /// not always fire.
     #[test]
     fn apply_aave_chunk_writes_on_conn_stk_aave_transfer_to_zero_decrements_sender() {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
         // Pre-set stk_aave_balance = 9086 (the on-chain-stale cache value at
-        // the user's last GHO action — mirrors the crash #3 reproduction).
+        // the user's last GHO action).
         {
             let conn = db.lock();
             conn.execute(

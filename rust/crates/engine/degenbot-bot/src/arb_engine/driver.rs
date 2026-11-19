@@ -3,8 +3,8 @@
 //!
 //! # Why this type exists
 //!
-//! The only external driver of the pump/solve lifecycle used to be the `PyO3`
-//! `PyArbEngine` + `PumpState` pair in `degenbot-python`:
+//! The pump/solve lifecycle's only driver cannot be the `PyO3` `PyArbEngine` +
+//! `PumpState` pair in `degenbot-python`:
 //! [`crate::arb_engine::ArbitrageEngine`] is `pub(crate)` machinery, and the
 //! public [`crate::arb_engine::EngineStages`] seam is an observer/stage surface
 //! (no connect/run/close). A pure-Rust `cargo add degenbot` consumer could not
@@ -246,9 +246,9 @@ impl std::error::Error for BackfillGap {}
 /// The closed `run` error surface.
 ///
 /// A consumer matches on the variant; no string matching, and no arm that
-/// exists only to carry a sentence. The three prose arms the old surface had
-/// (`SessionState(String)`, `Subscribe(String)`, `Backfill(String)`) became a
-/// typed pose refusal, a typed transport refusal at `connect`, and this gap.
+/// exists only to carry a sentence. Prose state is typed refusals — a pose
+/// refusal, a transport refusal at `connect`, and this gap — never
+/// `SessionState(String)` / `Subscribe(String)` / `Backfill(String)` arms.
 /// A "no consumer attached" arm has no state to name: the hand-off carries the
 /// claim and `run` takes it by value, so the rule is refused at the hand-off
 /// (`ClaimRefusal`) instead. `Registration` left with the operation (ADR-093
@@ -1083,9 +1083,9 @@ impl EngineDriver {
     /// the pump is down, closes the event stream exactly once, and publishes
     /// `StopCompleted` last.
     ///
-    /// Nothing here parks a runtime: the joins are awaits, so the old
-    /// `block_on`-inside-the-runtime hazard is gone. A caller that must block
-    /// does it at its own adapter boundary.
+    /// Nothing here parks a runtime: the joins are awaits, so the
+    /// `block_on`-inside-the-runtime hazard is unrepresentable. A caller that
+    /// must block does it at its own adapter boundary.
     pub async fn close(&self) -> TeardownReport {
         let mut slot = self.close.lock().await;
         if let Some(report) = *slot {
@@ -1302,7 +1302,7 @@ impl EngineDriver {
     }
 }
 
-/// Soak 2026-08-22 forensics: name teardown paths that bypass
+/// Name teardown paths that bypass
 /// [`EngineDriver::close`]. If the session still holds an armed live loop at
 /// drop time, unwinding tore down the driver without calling `close()` — the
 /// silent-exit shape this exists to catch. Leveling: only the bypassed-close

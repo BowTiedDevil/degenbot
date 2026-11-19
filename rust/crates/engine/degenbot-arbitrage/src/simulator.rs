@@ -393,12 +393,12 @@ pub struct RevertingFrame {
 /// The shapes a zero-gross-profit simulation outcome can take, as a labeled
 /// discriminant rather than a `no-profit` catch-all.
 ///
-/// One bucket used to carry two different verdicts: an ECONOMIC one (the path
-/// traded and its balance legs netted ≤ 0) and an ORCHESTRATION one
+/// One shared bucket would carry two different verdicts: an ECONOMIC one (the
+/// path traded and its balance legs netted ≤ 0) and an ORCHESTRATION one
 /// (`execute()` emitted no swap at all — nothing ran). An empty
-/// `captured_swaps` list was documented as "`execute()` did nothing", so a
-/// record could not say which it was, and every legitimately empty list read as
-/// the other class. The captured swap set is the discriminator, so the label
+/// `captured_swaps` list alone cannot say which it is, and every legitimately
+/// empty list reads as the other class. The captured swap set is the
+/// discriminator, so the label
 /// derives from the same record it labels and cannot disagree with the evidence
 /// beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -966,7 +966,7 @@ struct SimSpanVerdict {
     /// the span and tallied via `degenbot.sim.error_reason{reason}`.
     error_reason: Option<&'static str>,
     profit: Option<i64>,
-    /// T3: wall-clock anchor for the per-path simulate duration histogram.
+    /// Wall-clock anchor for the per-path simulate duration histogram.
     started: std::time::Instant,
 }
 
@@ -976,7 +976,7 @@ impl Drop for SimSpanVerdict {
         if let Some(profit) = self.profit {
             self.span.record("simulate.expected_profit", profit);
         }
-        // T3: verdict counter (labeled, small closed set) + duration histogram.
+        // Verdict counter (labeled, small closed set) + duration histogram.
         degenbot_bot::instruments::record(
             degenbot_bot::instruments::CensusEvent::SimulateVerdict {
                 verdict: self.verdict.as_str(),
@@ -3313,7 +3313,7 @@ mod tests {
         );
     }
 
-    /// SIMSPANDUP (trace 73604143 cleanup): the worker-inline arm hands the
+    /// The worker-inline arm hands the
     /// caller-held `degenbot.bundle.simulate` span to
     /// [`simulate_path_on_evm_in_span`] — the seam must REUSE it (records the
     /// verdict on it) rather than open a duplicate same-named span nested

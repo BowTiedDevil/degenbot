@@ -744,11 +744,11 @@ fn register_path_rejects_pool_id_not_in_bot() {
 /// (`chunk_end=2000`) must land as TWO separate journal deltas at blocks 10
 /// and 20 — not collapse into one delta stamped at 2000.
 ///
-/// Pre-fix every log in the chunk was journaled at `chunk_end`, so
-/// `push_delta`'s same-block replacement collapsed the whole chunk into a
-/// single delta at block 2000. A reorg landing mid-chunk (e.g. targeting
-/// block 15) then couldn't restore a per-block landed-at state, and buffer
-/// expiry timestamps were off-block.
+/// Journaling every log in the chunk at `chunk_end` makes `push_delta`'s
+/// same-block replacement collapse the whole chunk into a single delta at
+/// block 2000. A reorg landing mid-chunk (e.g. targeting block 15) then cannot
+/// restore a per-block landed-at state, and buffer expiry timestamps are
+/// off-block.
 #[test]
 #[expect(clippy::too_many_lines)]
 fn process_backfill_logs_stamps_per_log_block_number() {
@@ -860,7 +860,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     assert_eq!(
             s.journal.len(),
             2,
-            "per-log block stamping must keep B1 and B2 as separate deltas (pre-fix: collapsed to 1 at chunk_end={chunk_end})"
+            "per-log block stamping must keep B1 and B2 as separate deltas (never collapsed to 1 at chunk_end={chunk_end})"
         );
     assert_eq!(
         s.journal.earliest_block(),
@@ -1207,7 +1207,7 @@ fn block_notification_carries_block_and_metadata() {
 // session's one `Block` arm, and the consumer's block clock reads it there.
 #[test]
 fn on_pump_ended_closes_the_result_stream() {
-    // Incident 2026-08-20 (WS-silent class): pump death routes the sink's
+    // Pump death (the WS-silent class) routes the sink's
     // `on_pump_ended` liveness answer to the engine-side close;
     // result stream must report Disconnected so the consumer ends and the
     // bot fails loudly (the engine outlives the pump, so without the

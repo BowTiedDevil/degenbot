@@ -429,7 +429,7 @@ fn clamp_status_is_exact_adjusted_or_unverified() {
         "an unsupported hop's reported figures stand"
     );
 }
-/// SIMPIPE2 T3: a payload riding `merge_one_result` is stored at the
+/// A payload riding `merge_one_result` is stored at the
 /// engine (`inline_payloads`) and a re-merge WITHOUT the payload drops the
 /// stale entry — per-entry presence decides Python-side. (The delivery
 /// drain into `ResultBatch.payloads` is covered by the `delivery_policy`

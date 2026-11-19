@@ -120,8 +120,8 @@ pub struct BlockLog {
 }
 
 /// The event-touched (dirty) write set of one pool's apply — the O(events)
-/// shape the delta persist writes (Perf B: the apply loop can only mutate
-/// each event's `tick_lower`/`tick_upper` and their bitmap words, so the
+/// shape the delta persist writes (the apply loop can only mutate each
+/// event's `tick_lower`/`tick_upper` and their bitmap words, so the
 /// chunk's write set is exactly the dirty keys' post-apply state, never the
 /// pool's full map). Produced by
 /// [`DegenbotDb::compute_v3_liquidity_delta_on_conn`] (a dirty-subset read
@@ -593,7 +593,7 @@ impl DegenbotDb {
         persist_v4(conn, managed_pool_id, tick_data, last_event)
     }
 
-    /// The **dirty-key delta compute** (V3 — Perf B): read ONLY the rows the
+    /// The **dirty-key delta compute** (V3): read ONLY the rows the
     /// chunk's events can touch (each event's `tick_lower`/`tick_upper` and
     /// their bitmap words), run the SAME [`apply_event_loop`] over that dirty
     /// subset, and return the dirty write set — survive rows + drained keys —
@@ -648,7 +648,7 @@ impl DegenbotDb {
         )?))
     }
 
-    /// The **delta persist** (V3 — Perf B): write ONLY the event-touched keys.
+    /// The **delta persist** (V3): write ONLY the event-touched keys.
     /// Upsert the dirty survivors (multi-row, deterministic order — the same
     /// upserts the full-map persist uses), `DELETE` exactly the drained keys
     /// (`... AND tick IN (...)` — no complement scan), and stamp the marker.
@@ -702,7 +702,7 @@ impl DegenbotDb {
     /// row is created by THIS chunk's `PoolCreated` upsert (no committed base
     /// state exists yet). Applies `events` to an EMPTY base map under the same
     /// `apply_event_loop` semantics, returning the map WITHOUT persisting -
-    /// the pre-transaction verification seam (Perf A: the verify RPC must not
+    /// the pre-transaction verification seam (the verify RPC must not
     /// hold the write lock, so the map is computed before the chunk
     /// `Transaction` opens; the in-transaction apply re-derives it from the
     /// just-upserted row - byte-equal by construction: same empty base, same
@@ -1594,9 +1594,9 @@ mod tests {
     // in `persist_v3`/`persist_v4`. The shared `delete_stale_rows` helper MUST
     // then issue `DELETE FROM {table} WHERE {id_col} = ?1` (drop everything),
     // matching the Python `db_ticks - helper_ticks` complement-delete-all
-    // semantics (helper empty → drop all). The pre-fix code early-returned
-    // `Ok(())` on the empty path, deleting nothing → ghost rows linger →
-    // compounding corruption on the next apply's reconstituted base.
+    // semantics (helper empty → drop all). An early return `Ok(())` on the empty
+    // path deletes nothing: ghost rows linger and corrupt the next apply's
+    // reconstituted base.
 
     use crate::discovery::{V3PoolRowInput, V4PoolRowInput};
     use crate::migrate::SchemaState;
@@ -1665,8 +1665,8 @@ mod tests {
     }
 
     /// Direct unit repro: an empty `live_keys` slice MUST delete every row for
-    /// the pool (the "delete all" semantic). Pre-fix this early-returned and
-    /// deleted nothing → ghost rows.
+    /// the pool (the "delete all" semantic); an early return deletes nothing →
+    /// ghost rows.
     #[test]
     fn delete_stale_v3_empty_live_deletes_all_rows() {
         let (db, pool_id, _addr) = v3_db_with_pool();
@@ -1704,7 +1704,7 @@ mod tests {
     /// End-to-end repro through the public apply flow: a Mint grows the seeded
     /// position + opens a second pair, then two Burns fully drain EVERY tick →
     /// `live_ticks`/`live_words` empty → the drained pool's tables must be empty
-    /// + the marker stamped. Pre-fix, the seed rows lingered as ghosts (count 2).
+    /// + the marker stamped. An early return leaves the seed rows as ghosts.
     #[test]
     fn apply_v3_full_drain_empties_tables_and_stamps_marker() {
         let (db, pool_id, addr) = v3_db_with_pool();
@@ -1843,8 +1843,8 @@ mod tests {
     //
     // The DB schema stores no per-tick/per-word block, so the reconstitution
     // stamps every row with the caller's snapshot block (the pool's
-    // `liquidity_update_block` — the stamp contract's "bulk-sync block"). The
-    // pre-fix code hardcoded `0` there, silently falsifying every row.
+    // `liquidity_update_block` — the stamp contract's "bulk-sync block").
+    // Hardcoding `0` there silently falsifies every row.
 
     #[test]
     fn fetch_v3_liquidity_map_stamps_rows_with_the_snapshot_block() {
@@ -1971,14 +1971,14 @@ mod tests {
         );
     }
 
-    // ── Perf B: the delta persist paths ────────────────────────────────
+    // ── The delta persist paths ────────────────────────────────────────
     //
     // The delta persist must leave the DB in EXACTLY the state the
     // full-map persist leaves: the strongest possible pin is an
     // equivalence test — both persists run on identical inputs into two
     // DBs, then every row of the table must match. Plus: the drained-key
-    // delete removes EXACTLY the drained rows (untouched rows survive —
-    // the property the complement delete used to guarantee wholesale), and
+    // delete removes EXACTLY the drained rows (untouched rows survive — the
+    // wholesale property the complement delete guarantees), and
     // the dirty-subset compute agrees with the full compute on every key
     // both can see.
 

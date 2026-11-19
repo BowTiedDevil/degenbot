@@ -756,7 +756,7 @@ class SimulateContext:
     @property
     def executor_address(self, /) -> str:
         """
-        The executor contract address (checksummed hex) — SIMPIPE2 T3: the
+        The executor contract address (checksummed hex): the
         Python payload path constructs `SubmitCandidate`s directly for
         inline-simulated entries, and the submit leaf needs the same
         session-static `executor_address` the FFI join stamps onto each one.

@@ -1647,8 +1647,8 @@ fn required_read(err: ProviderError) -> PoolBuilderError {
 /// assembly twin of `CurvePoolBuilder.build`):
 /// discovers coins/balances, fetches `A`/`fee`/`admin_fee`, detects A-ramping,
 /// lending, crypto, `lp_token` + metapool (base pool + underlying coins),
-/// resolves the strategy discriminants (T3), computes rate/precision
-/// multipliers, and constructs the [`RpcCurveDataProvider`] (T4) — producing a
+/// resolves the strategy discriminants, computes rate/precision multipliers,
+/// and constructs the [`RpcCurveDataProvider`] — producing a
 /// [`RegisterCurvePoolParams`] ready for `BotState::register_curve_pool` with
 /// no Python round-trip.
 ///

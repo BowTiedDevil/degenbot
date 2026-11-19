@@ -421,14 +421,14 @@ class ArbitrageEngine:
         """
     def install_inline_simulator(self, /, context: SimulateContext) -> None:
         """
-        SIMPIPE2 T4: install the production inline-sim hook — the
+        Install the production inline-sim hook — the
         `degenbot_bot`-defined `InlineSimulator` seam's concrete closure over
-        THIS session's sim config + the engine's shared state (theADR-019 D7
+        THIS session's sim config + the engine's shared state (the ADR-019 D7
         dependency inversion, plumbed exactly like `set_result_channel`).
         Construction-time wiring: call once after the `SimulateContext` is
         built (a later call simply replaces the hook).
 
-        The sim itself runs per-path in the SOLVE WORKER (the T2 clamp seam)
+        The sim itself runs per-path in the SOLVE WORKER (the worker clamp seam)
         through a dedicated multi-thread runtime — see
         `simulation::inline_hook` for the thread/runtime matrix.
         """
@@ -995,13 +995,12 @@ class Bot:
     def attach_construction_io(self, /, provider: Any, database_path: str | None = None) -> None:
         """
         Attach a construction-I/O handle built from a Python provider + an
-        optional `database_path` (architecture review 2025-07-18 / candidate 1).
+        optional `database_path`.
         The Python `Bot.__init__` calls this after constructing `PyBot` so the
         7 generic RPC + 12 DB atomic methods on `PyBotIo` can delegate through
         the core trait objects. Alloy-only — a non-alloy provider raises
-        `RuntimeError` (Q6-narrow; the 27 choreography wrappers keep their
-        Python-delegation fallback this slice, deleted with the builder-
-        choreography port).
+        `RuntimeError` (the choreography wrappers keep their Python-delegation
+        fallback).
 
         `database_path = None` → the DB half is `NoDb` (every read returns
         `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
@@ -1147,7 +1146,7 @@ class Bot:
         """
     def connect(self, /, rpc_url: str) -> int:
         """
-        Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
+        Subscribe to the WS `newHeads` + logs streams (ADR-006 D4).
 
         The Bot-owned pump entry point — delegates to the shared `PumpState`
         attached when an engine wrapper was constructed against this bot.
@@ -1723,11 +1722,11 @@ class Bot:
         ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
         INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
         never visible to the live pump (resumed before `build_paths`) in an
-        unseeded state. Previously the builder registered with empty `tick_data`
-        then seeded through a separate pool write — a pump `ModifyLiquidity`
-        landing between register and seed was applied then CLOBBERED by the seed
-        overwrite (lost update → V4 tick-map desync → `verify_liquidity_maps`
-        mismatch). Mirrors the V3 closure.
+        unseeded state. Registering with empty `tick_data` and seeding through a
+        separate pool write leaves a window where a pump `ModifyLiquidity`
+        lands, is applied, and is then CLOBBERED by the seed overwrite (lost
+        update → V4 tick-map desync → `verify_liquidity_maps` mismatch).
+        Mirrors the V3 closure.
 
         Raises:
             `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode;
@@ -1771,7 +1770,7 @@ class Bot:
         """
     def run(self, /) -> None:
         """
-        Resume the pump — begin normal WS processing (ADR-006 D4 T3).
+        Resume the pump — begin normal WS processing (ADR-006 D4).
 
         The snapshot→WS gap is closed automatically inside the core
         `BlockPump::resume_from_subscribe`; the pyo3
@@ -1797,7 +1796,7 @@ class Bot:
         """
     def set_verify_rpc_url(self, /, rpc_url: str) -> None:
         """
-        Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
+        Set the HTTP RPC URL used for verification (ADR-006 D4).
 
         Builds the verify home's ONE provider and installs it through the
         home's own `config()`/`configure()` door (the body blocks at this
@@ -1810,7 +1809,7 @@ class Bot:
         """
     def set_verify_state_view(self, /, state_view_address: str) -> None:
         """
-        Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+        Set the `StateView` contract address for V4 verification (ADR-006 D4).
 
         # Errors
         `RuntimeError` when no engine is attached to this bot; `ValueError` on

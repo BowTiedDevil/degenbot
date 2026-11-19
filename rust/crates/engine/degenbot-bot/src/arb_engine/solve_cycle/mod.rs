@@ -2,48 +2,42 @@
 //!
 //! ## Scope (this file)
 //!
-//! **T1** pinned the data-type seam of ADR-045: the `CycleOutcome` /
-//! `CycleArm` / `ResolveCensus` / `Registration` vocabulary, with
-//! `CycleArm::label()` reproducing the ADR-043 `cycle.arm` labels
+//! The data-type seam is ADR-045's `CycleOutcome` / `CycleArm` /
+//! `ResolveCensus` / `Registration` vocabulary, with `CycleArm::label()`
+//! reproducing the ADR-043 `cycle.arm` labels
 //! `"shed" | "skipped_empty" | "detached"` byte-for-byte.
 //!
-//! **T3** assembled [`SolveCycle`] — the resolve companions, the
-//! cycle-transient stash, the solve output, the admissions stance, the
-//! detached-arm collaborator, the walk/projection recorders, and the test
-//! knobs. The engine holds it as `engine.cycle`.
+//! [`SolveCycle`] carries the resolve companions, the cycle-transient stash,
+//! the solve output, the admissions stance, the detached-arm collaborator, the
+//! walk/projection recorders, and the test knobs. The engine holds it as
+//! `engine.cycle`.
 //!
-//! **ADR-076 D1/D2/D3** shrank the surface back to production shape: the test
-//! knobs are construction-time fields on [`SolveCycle`] (internal seams, never
-//! interface methods), the pending-new carry no longer hands out a `&mut`, and
-//! [`run_epoch`] is the composition spine over the explicit [`EpochContext`]
-//! whose phases live in the `shed` / `resolve` / `solve` / `merge` / `deliver`
-//! submodules — each a machine-direct free function, with only the draw, the
-//! merge doors, and the `&self` clamp accessor keeping a `SolveCycle` door here.
+//! ADR-076 D1/D2/D3 keep the surface at production shape: the test knobs are
+//! construction-time fields on [`SolveCycle`] (internal seams, never interface
+//! methods), the pending-new carry never hands out a `&mut`, and [`run_epoch`]
+//! is the composition spine over the explicit [`EpochContext`] whose phases
+//! live in the `shed` / `resolve` / `solve` / `merge` / `deliver` submodules —
+//! each a machine-direct free function, with only the draw, the merge doors,
+//! and the `&self` clamp accessor keeping a `SolveCycle` door here.
 //!
-//! **T4** landed the interface and moved its bodies onto
-//! [`SolveCycle`]: `draw` / `run_epoch` / `register_path` /
+//! The interface is `draw` / `run_epoch` / `register_path` /
 //! `register_and_solve_path` / `solve_all_paths` / `merge_detached_item` /
-//! `forget`. The T1 vocabulary is consumed by that surface.
-//!
-//! **T5** hard-cut the string stashes: [`run_epoch`] returns the
-//! typed [`CycleOutcome`], the `cycle_arm` / `solve_entry` string fields are
-//! deleted, and the stage hook records `cycle.arm` off the outcome. The
-//! `CycleEntry` enum existed only to feed the deleted `solve_entry`, so it is
-//! gone with it.
+//! `forget`. [`run_epoch`] returns the typed [`CycleOutcome`], and the stage
+//! hook records `cycle.arm` off that outcome — never off a string field.
 //!
 //! ## The ticket (the transient stash's one door)
 //!
-//! The admission draw's verdict used to be a `bool` on the cycle, written by
-//! the resolve call and read by the epoch in a later call — the retired
-//! pending-new-paths disease. [`CycleTicket`] replaces it: the draw mints one,
-//! the Resolved stage row carries it, and the epoch consumes it by value.
+//! A `bool` verdict field on the cycle — written by the resolve call and read
+//! by the epoch in a later call — is the pending-new-paths staleness disease.
+//! [`CycleTicket`] replaces it: the draw mints one, the Resolved stage row
+//! carries it, and the epoch consumes it by value.
 //!
 //! The staleness class cannot compile. The cycle holds no verdict field, no
 //! other module can mint a ticket, and the epoch takes the one it is handed,
-//! so the retired shape has nothing left to name:
+//! so the unguarded shape has nothing left to name:
 //!
 //! ```text
-//! // The engine-side stash the draw used to write (and a LATER call to read):
+//! // A stash the draw could leave for a LATER call to read:
 //! fn stale_verdict_read(cycle: &SolveCycle) {
 //!     let _ = cycle.admission_draw_zero; // E0609: no field `admission_draw_zero`
 //! }
@@ -70,24 +64,23 @@
 //! * **The cycle ticket** (a deliberate half-step): the draw mints it, the
 //!   epoch consumes it, and the Resolved row's take-once slot is pinned by
 //!   `the_resolved_row_takes_its_ticket_exactly_once`.
-//! * **Green pins** (the ADR-043 vocabulary and the target type shape):
+//! * **The arm vocabulary and the target type shape**:
 //!   `cycle_arm_labels_are_byte_stable`,
 //!   `cycle_arm_is_dispatch_selects_detached_arms`,
 //!   `cycle_outcome_exposes_block_and_arm_label`,
 //!   `registration_encodes_created_and_resolved`,
 //!   `pending_new_path_result_survives_one_dirty_cycle`.
-//! * **Flipped at T4**: `dedup_hit_does_not_touch_pending_new_carry` is now
-//!   the positive contract — a dedup hit yields
-//!   `Registration { created: false, .. }` and the carry write in
-//!   `register_and_solve_path` is gated on `Registration.created`, so the
-//!   pending-new carry is untouched. The two formerly-ignored sketches are
-//!   live: `run_epoch_consumes_the_epoch_work_carried_delta` (the cycle
-//!   consumes the epoch's work-carried delta — one owner, no second
-//!   swappable handle) and
-//!   `register_and_solve_path_reports_registration_created`.
+//! * `dedup_hit_does_not_touch_pending_new_carry` is the positive contract — a
+//!   dedup hit yields `Registration { created: false, .. }` and the carry write
+//!   in `register_and_solve_path` is gated on `Registration.created`, so the
+//!   pending-new carry is untouched.
+//!   `run_epoch_consumes_the_epoch_work_carried_delta` pins the cycle consuming
+//!   the epoch's work-carried delta (one owner, no second swappable handle) and
+//!   `register_and_solve_path_reports_registration_created` pins the created
+//!   flag.
 //!
-//! There is no module-level `dead_code` expectation: the T1 vocabulary is
-//! consumed by the T5 surface. The remaining per-item expectation covers the
+//! There is no module-level `dead_code` expectation: the vocabulary is
+//! consumed by this surface. The remaining per-item expectation covers the
 //! test-only `CycleArm::is_dispatch` helper.
 use super::block_cursor::BlockCursor;
 use super::delivery_policy::DeliveryPolicy;
@@ -126,7 +119,7 @@ mod solve;
 
 /// The clamp/merge bodies live in `merge.rs` (ADR-076 D1). The clamp body and
 /// the report it produces are production-reachable through these re-exports
-/// (the SIMPIPE2 worker, the merge finalizer, and `solve_all`); the two
+/// (the worker-side clamp, the merge finalizer, and `solve_all`); the two
 /// test-only doors are re-exported under `cfg(test)` so a non-test build
 /// carries no unreachable import.
 pub(crate) use merge::clamp_result_with_state;
@@ -239,7 +232,7 @@ pub(crate) struct SolveCycleShared {
     /// witness (typed Failed records) and gauge pairing through a panic.
     #[cfg(test)]
     pub(crate) test_solve_panic: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync>>,
-    /// SIMPIPE2 T2: the shared core (Arc-cloned from the engine at cycle
+    /// The shared core (Arc-cloned from the engine at cycle
     /// build) — the WORKER-side clamp takes the same short core read the
     /// merge-site clamp took; no engine state is touched (
     /// engine-then-core ordering, short read, no guard across awaits).
@@ -251,9 +244,9 @@ pub(crate) struct SolveCycleShared {
     /// The cycle's block metadata (Copy) — the inline-sim request's block env
     /// (solve block from `solve_block`; timestamp/base-fee from here).
     pub(crate) metadata: BlockMetadata,
-    /// SIMPIPE2 T2 worker-side clamp gate (construction-time pack).
+    /// The worker-side clamp gate (construction-time pack).
     pub(crate) worker_clamp: bool,
-    /// SIMPIPE2 T3: the engine's inline-sim hook snapshot. `Some` + stance ON
+    /// The engine's inline-sim hook snapshot. `Some` + stance ON
     /// → the worker resolves the per-path payload right after the clamp (no
     /// engine lock — the same off-lock seam the worker clamp opened).
     pub(crate) inline_sim:
@@ -321,7 +314,7 @@ impl SolveCycleShared {
 /// [`CycleTicket`] the draw mints and the epoch consumes.
 #[derive(Default)]
 pub(crate) struct CycleTransients {
-    /// The typed latch of the most recent cycle's arm (ADR-045 T5). The
+    /// The typed latch of the most recent cycle's arm. The
     /// string stash is gone: [`CycleOutcome`] is authoritative and the stage
     /// hook records `cycle.arm` straight off it. This latch survives only so
     /// the white-box probes and the latency histograms can name the arm AFTER
@@ -391,10 +384,10 @@ impl CycleTicket {
 ///
 /// The resolve companions, the cycle-transient stash, the solve output,
 /// the admissions stance, the detached-arm collaborator, the
-/// walk/projection recorders, and the construction-time test knobs. The T4
+/// walk/projection recorders, and the construction-time test knobs. The
 /// interface (`draw` / `run_epoch` / `register_path` /
 /// `register_and_solve_path` / `solve_all_paths` / `merge_detached_item` /
-/// `forget`) now lands its bodies here.
+/// `forget`) lands its bodies here.
 ///
 /// The engine holds this as `engine.cycle`; the white-box tests re-index
 /// mechanically to `engine.cycle.*`. The test knobs are data, not methods
@@ -454,12 +447,12 @@ pub(crate) struct SolveCycle {
     /// produced them always travel together (the report derefs to its
     /// `SolvePathResult` for the field readers).
     ///
-    /// Engine-shard T1: sharded into a `DashMap` so Python
+    /// Sharded into a `DashMap` so Python
     /// `latest_results` reads never park behind the drain-lock held engine
     /// `Mutex`.
     pub(crate) results: DashMap<u64, ClampReport>,
-    /// SIMPIPE2 T3: the per-path inline payloads resolved in the solve
-    /// workers (SIMPIPE2 T2's off-lock seam). Keyed by path id.
+    /// The per-path inline payloads resolved in the solve workers (the
+    /// worker clamp's off-lock seam). Keyed by path id.
     pub(crate) inline_payloads: DashMap<u64, SimulatedPathResult>,
     // --- Admissions stance --------------------------------------------
     /// Construction-time admission stance (`DEGENBOT_SOLVE_ADMISSION`,
@@ -487,15 +480,15 @@ pub(crate) struct SolveCycle {
     /// (`solve.clamp_margin_wei`) via `EngineRetune`.
     pub(crate) clamp_margin: U256,
     /// The inline-sim stance as an engine instance value (documented stance
-    /// semantics unchanged, SIMPIPE2 T2/T4).
+    /// semantics).
     pub(crate) inline_sim_enabled: bool,
     /// Per-path previous-block MEASURED cost (walk sims + gate µs, written by
     /// the walk's ledger `record` after each solve; ONE typed snapshot read at
     /// bin construction). Refines the LPT makespan predictor for stable pool
-    /// shapes (loop-12 lab); the gate term covers gate-heavy paths that carry
-    /// sims≈0 and were bin-packed cheap (loop-18).
+    /// shapes; the gate term covers gate-heavy paths that carry sims≈0 and
+    /// were bin-packed cheap.
     pub(crate) path_cost_history: Arc<super::path_cost_ledger::PathCostHistory>,
-    /// T3: emit each clamp-passed above-threshold result as an
+    /// Emit each clamp-passed above-threshold result as an
     /// IMMEDIATE single-entry [`ResultBatch`] during the drain instead of
     /// waiting for the pump debounce. Construction-time stance.
     pub(crate) streaming_delivery: bool,
@@ -504,7 +497,7 @@ pub(crate) struct SolveCycle {
     pub(crate) deferred_re_record: Option<DeferredReRecordHook>,
     /// the chunked-parallel resolve stance as an instance value.
     pub(crate) resolve_par_stance: bool,
-    // --- Shared dependencies (ADR-045 T4: the cycle drives resolve/solve) ---
+    // --- Shared dependencies (the cycle drives resolve/solve) ---
     /// The shared `BotState` handle (a clone of the engine's Arc; ADR-006 D1).
     pub(crate) core: Arc<degenbot_substrate::state_lock::StateLock<degenbot_substrate::BotState>>,
     /// Config + the instance solver runtime stance (immutable after
@@ -802,17 +795,16 @@ fn describe_path_cached_with(
 }
 
 // ===========================================================================
-// ADR-045 T4: the moved solve-cycle behavior. Bodies moved verbatim from
-// the retired grab file / `lifecycle.rs`; only the receiver (`self` is the
-// cycle) and the identity/delivery borrows changed. Lock discipline, span
-// names and event names are byte-identical.
+// The solve-cycle behavior: each body's receiver is the cycle (`self`); lock
+// discipline, span names and event names are byte-identical to the engine
+// stages that call it.
 // ===========================================================================
 impl SolveCycle {
-    /// The CURRENT cycle's dispatch arm (ADR-045 T5): the latency
+    /// The CURRENT cycle's dispatch arm: the latency
     /// histograms' `arm` label, read by the caller that observes the cycle.
     /// Backed by the typed `last_arm` latch, not a string stash; the stage
     /// hook reads the `CycleOutcome` directly for its own span/duration.
-    /// Moved here from `event_routing.rs::ArbitrageEngine::cycle_arm` — the machine owns the cycle state. Test-only: the
+    /// The machine owns the cycle state. Test-only: the
     /// production stage hook attributes the arm from `CycleOutcome`.
     #[cfg(test)]
     #[must_use]
@@ -1131,8 +1123,8 @@ impl SolveCycle {
         }
         // monotone advance on the block cursor.
         self.cursor.advance_solved(solve_block);
-        // ENQUEUE-END semantics (T2 acceptance: "return is enqueue-end,
-        // not apply-end"): the engine Mutex hold ENDS here; the sidecar
+        // ENQUEUE-END semantics ("return is enqueue-end, not apply-end"): the
+        // engine Mutex hold ENDS here; the sidecar
         // re-acquires it per merged straggler.
         // Note: no compute_diff_and_send here — the pump controls when
         // batches are dispatched (debounce timer or block boundary).
@@ -1269,7 +1261,7 @@ impl SolveCycle {
                     let _ = tx.send((*path_id, report));
                 }
             };
-            // LW-T8: the ONE Executor token submits on both stances.
+            // The ONE Executor token submits on both stances.
             if let Err(err) = crate::arb_engine::executor::global_executor()
                 .submit(bin_idx, Box::new(move |_ctx| run_bin()))
             {
@@ -1578,7 +1570,7 @@ impl SolveCycle {
     /// without-payload. `metadata` supplies the sim's block env (the same
     /// fields the worker path fills from its cycle snapshot).
     ///
-    /// T3 re-home: the cycle owns the hook handle and the solve-anchor cursor,
+    /// The cycle owns the hook handle and the solve-anchor cursor,
     /// so the request reads them directly; only the shared registry crosses as
     /// an argument.
     #[cfg(test)]
@@ -1660,7 +1652,6 @@ impl SolveCycle {
     /// INLINE through the sidecar's own per-item merge path
     /// (`merge_detached_item`), so a direct `solve_dirty` /
     /// `rebuild_and_solve_affected` caller reads its results synchronously.
-    /// Moved here from `ArbitrageEngine` (ADR-045 T4).
     pub(crate) fn drain_merge_inline(
         &mut self,
         expected: usize,
@@ -1897,7 +1888,7 @@ mod tests {
     // ---------------------------------------------------------------------
     // The dedup fact and the pending-new carry (positive contract).
     // ---------------------------------------------------------------------
-    /// The positive contract (ADR-045, T4): a dedup hit yields
+    /// The positive contract (ADR-045): a dedup hit yields
     /// `Registration { created: false, .. }` and must NOT touch the
     /// pending-new carry. `register_and_solve_path` gates the carry write on
     /// `Registration.created`, so only a fresh register re-arms it and the
@@ -1931,9 +1922,9 @@ mod tests {
         );
     }
     // ---------------------------------------------------------------------
-    // T4 wiring: the target surface now exists.
+    // The ticket-consuming surface.
     // ---------------------------------------------------------------------
-    /// The candidate-8 interlock, re-pinned on the ticket: the cycle consumes
+    /// The interlock, pinned on the ticket: the cycle consumes
     /// the epoch's work-carried delta (the keys the draw put on the ticket)
     /// and holds no second swappable handle for the verdict.
     #[test]

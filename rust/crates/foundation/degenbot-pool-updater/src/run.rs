@@ -38,13 +38,13 @@
 //! (the market-wide interval/completion policies) are ADDITIONAL checks over
 //! the whole in-scope market, never a substitute for the per-chunk gate.
 //!
-//! # Perf A: the transaction boundary (hoisted read pass + verify)
+//! # The transaction boundary (read pass + verify outside it)
 //!
-//! Since Perf A, the per-pool O(map) compute and the pre-commit verify RPC
-//! run BEFORE the chunk `Transaction` opens ([`compute_preverified_liquidity`]
-//! + the driver's gates): zero RPC round trips - and none of the planned
-//!   pools' map SELECTs - sit between `transaction()` open and commit/drop.
-//!   The soundness argument for the moved boundary:
+//! The per-pool O(map) compute and the pre-commit verify RPC run BEFORE the
+//! chunk `Transaction` opens ([`compute_preverified_liquidity`] + the
+//! driver's gates): zero RPC round trips - and none of the planned pools' map
+//! SELECTs - sit between `transaction()` open and commit/drop. The soundness
+//! argument for that boundary:
 //!
 //! 1. The read pass computes each in-scope pool's map from the COMMITTED DB
 //!    state; the apply persists either that exact map (planned pools) or the
@@ -60,8 +60,8 @@
 //!    (`set_exchange_last_update_block_if_unchanged_on_conn`); a moved marker
 //!    matches zero rows -> [`RunError::MarkerMoved`] -> the transaction drops
 //!    (nothing staged survives) and the chunk re-plans from refreshed specs.
-//! 3. A verification RED today never opens the transaction. The observable
-//!    contract is byte-identical to the pre-Perf-A rollback shape:
+//! 3. A verification RED never opens the transaction. The observable contract
+//!    is:
 //!    [`RunError::Verification`] raised, ZERO rows written, the stamp
 //!    unadvanced - the verification-gate probes assert exactly this triple
 //!    (post-run state) and stay green with unchanged assertions.
@@ -264,7 +264,7 @@ pub struct ChunkInputs {
 }
 
 /// A pre-transaction-computed liquidity map for one in-scope pool - the
-/// read pass's output (Perf A). `is_new_pool` marks a pool whose row is
+/// read pass's output. `is_new_pool` marks a pool whose row is
 /// created by THIS chunk's pool-creation upsert: it has no committed base
 /// state to read pre-transaction, so its planned map (empty base + events,
 /// sentinel `pool_id`) exists ONLY to feed the pre-transaction verify RPC;
@@ -276,7 +276,7 @@ pub struct PlannedLiquidityMap {
     /// verifier's input contract is a complete map, and every plan is
     /// verified before its chunk commits.
     pub computed: ComputedLiquidityUpdate,
-    /// The event-touched write set the apply persists (Perf B): dirty
+    /// The event-touched write set the apply persists: dirty
     /// survivors + drained keys, O(events) — the full map is verification
     /// input, the delta is the write set.
     pub delta: LiquidityDelta,
@@ -286,7 +286,7 @@ pub struct PlannedLiquidityMap {
 
 /// The read pass's output: per-pool planned maps for the chunk's in-scope
 /// liquidity applies, computed BEFORE the chunk `Transaction` opens - the
-/// O(map) full-map SELECTs leave the write lock (survey finding 1, Perf A).
+/// O(map) full-map SELECTs leave the write lock.
 /// The maps are then verified against on-chain truth pre-transaction (no lock
 /// held across the RPC), and the apply persists only verified maps; a RED
 /// never opens the transaction.
@@ -434,14 +434,14 @@ pub fn map_pool_creation(
 /// `Transaction` uncommitted → it drops → the whole chunk reverts →
 /// `last_update_block` unchanged → restart re-processes (restart-invariant).
 ///
-/// # Perf A: the RPC and the map compute live OUTSIDE this fn
+/// # The RPC and the map compute live OUTSIDE this fn
 ///
 /// The per-pool map compute + the on-chain-truth verification RPC run
 /// in the pre-transaction read pass ([`compute_preverified_liquidity`] plus
 /// the driver's gate), NOT here: zero RPC round trips (and none of the
 /// per-pool read SELECTs for planned pools) sit between the caller's
 /// `transaction()` open and its commit/drop. Pools with a planned non-new
-/// state persist the plan's DELTA (Perf B: only the event-touched keys —
+/// state persist the plan's DELTA (only the event-touched keys —
 /// dirty survivors upserted, drained keys deleted by key); chunk-new pools
 /// (whose row is created by this chunk's upsert) take the fused
 /// in-transaction dirty compute→delta-persist path — their plan (empty base
@@ -498,13 +498,13 @@ pub fn apply_chunk_writes_on_conn(
         inputs.v3_liquidity.iter().map(|(a, e)| (*a, e)).collect();
     v3_pools.sort_by_key(|(a, _)| *a);
     for (pool_address, events) in &v3_pools {
-        // Perf A: a planned, non-new pool persists its pre-computed map -
+        // A planned, non-new pool persists its pre-computed map -
         // the read pass's compute SELECTs ran before `BEGIN`, not under the
         // write lock, and (gated) the map is the one the verify RPC checked.
         if let Some(plan) = preverified.v3.get(pool_address) {
             if !plan.is_new_pool {
-                // Perf B: persist ONLY the event-touched keys (the plan's
-                // delta) — the full-map complement rewrite is gone.
+                // Persist ONLY the event-touched keys (the plan's delta) —
+                // no full-map complement rewrite.
                 DegenbotDb::persist_v3_liquidity_delta_on_conn(conn, &plan.delta)?;
                 report.liquidity_apply_count += 1;
                 continue;
@@ -534,11 +534,11 @@ pub fn apply_chunk_writes_on_conn(
             continue; // pool belongs to an exchange not being updated this chunk
         }
         let compute_started = Instant::now();
-        // Perf B: the fused path is the chunk-new pools' dirty compute — the
-        // base is the just-upserted EMPTY row, so the dirty read (the
-        // touched keys' rows + words) is the whole read, and the delta is
-        // the whole write set. Byte-equal to the pre-Perf-B full re-derive
-        // (same empty base, same events, same spacing).
+        // The fused path is the chunk-new pools' dirty compute — the base is
+        // the just-upserted EMPTY row, so the dirty read (the touched keys'
+        // rows + words) is the whole read, and the delta is the whole write
+        // set. Byte-equal to a full re-derive (same empty base, same events,
+        // same spacing).
         let Some(delta) = DegenbotDb::compute_v3_liquidity_delta_on_conn(
             conn,
             chain_id,
@@ -555,7 +555,7 @@ pub fn apply_chunk_writes_on_conn(
     }
 
     // 3. V4 liquidity - per-pool apply (the V4 fetch is per-PoolManager,
-    //    already per-exchange-scoped). Same Perf A split as the V3 loop.
+    //    already per-exchange-scoped). Same split as the V3 loop.
     //    Deterministic per-pool order (same reason as the V3 loop above).
     let mut v4_pools: Vec<(&String, &Vec<LiquidityUpdateEvent>)> =
         inputs.v4_liquidity.iter().collect();
@@ -563,8 +563,8 @@ pub fn apply_chunk_writes_on_conn(
     for (pool_hash, events) in v4_pools {
         if let Some(plan) = preverified.v4.get(pool_hash) {
             if !plan.is_new_pool {
-                // Perf B: persist ONLY the event-touched keys (the plan's
-                // delta) — the full-map complement rewrite is gone.
+                // Persist ONLY the event-touched keys (the plan's delta) —
+                // no full-map complement rewrite.
                 DegenbotDb::persist_v4_liquidity_delta_on_conn(conn, &plan.delta)?;
                 report.liquidity_apply_count += 1;
                 continue;
@@ -581,8 +581,8 @@ pub fn apply_chunk_writes_on_conn(
             continue;
         }
         let compute_started = Instant::now();
-        // Perf B: the fused path is the chunk-new pools' dirty compute (the
-        // V4 mirror of the V3 arm above).
+        // The fused path is the chunk-new pools' dirty compute (the V4 mirror
+        // of the V3 arm above).
         let Some(delta) = DegenbotDb::compute_v4_liquidity_delta_on_conn(
             conn,
             pool_hash,
@@ -601,7 +601,7 @@ pub fn apply_chunk_writes_on_conn(
     // 4. Stamp `last_update_block` for each in-scope exchange - the LAST
     //    write in the transaction (the section-1 restart-invariant: on
     //    rollback the stamp does NOT advance, so a restart re-processes the
-    //    chunk). Perf A: the stamp is OPTIMISTIC - it carries the marker the
+    //    chunk). The stamp is OPTIMISTIC - it carries the marker the
     //    read pass assumed, so a marker that moved under the chunk
     //    (impossible under the bot's single-writer discipline; the check
     //    makes the invariant structural rather than argued) changes ZERO rows
@@ -777,7 +777,7 @@ fn in_scope_fetch_start(
 }
 
 /// The tick spacing of an in-scope V3 `PoolCreated` row for `pool_address`,
-/// when this chunk's creations upsert it (Perf A's chunk-new-pool classifier:
+/// when this chunk's creations upsert it (the chunk-new-pool classifier:
 /// the read pass and the apply must agree on which pools the chunk creates -
 /// a pool both planned and created would double-persist).
 fn in_scope_v3_creation_tick_spacing(
@@ -813,7 +813,7 @@ fn in_scope_v4_creation_tick_spacing(
     })
 }
 
-/// The pre-transaction read pass (Perf A + Perf B): compute every in-scope
+/// The pre-transaction read pass: compute every in-scope
 /// pool's post-chunk liquidity state BEFORE the chunk `Transaction` opens.
 /// The per-pool map SELECTs (the baseline's in-lock compute) and the per-pool
 /// scope fetches run on the plain guarded connection - a WAL reader takes no
@@ -954,7 +954,7 @@ fn compute_preverified_liquidity(
     Ok(preverified)
 }
 
-/// The pre-transaction verify gate (Perf A): compare each planned map against
+/// The pre-transaction verify gate: compare each planned map against
 /// on-chain truth at `block_number` with NO lock held (the read pass's guard
 /// is long dropped by the time this runs). A non-empty divergence list
 /// surfaces [`RunError::Verification`] - the chunk transaction never opens,
@@ -1287,7 +1287,7 @@ pub fn run_pool_update_on_db(
 
     let mut working_start_block = initial_start_block;
     let mut last_progress_log = Instant::now();
-    // The optimistic stamp's retry budget (Perf A's structural marker check).
+    // The optimistic stamp's retry budget (the structural marker check).
     // Unreachable under the bot's single-writer discipline; a bound keeps a
     // pathological flip from spinning the loop. NOT reset on commit: four
     // marker moves per RUN is already far past any real contention shape.
@@ -1459,7 +1459,7 @@ pub fn run_pool_update_on_db(
 
         // The market-wide gate's chunk predicate (interval boundary crossing +
         // run completion), evaluated BEFORE the read pass: the pure block math
-        // is the same value the gate block below consumes, and Perf B's read
+        // is the same value the gate block below consumes, and the read
         // pass needs it NOW — full maps are built iff any verification will
         // consume them, the dirty overlay + delta otherwise.
         let run_full = crate::verify::should_run_full_verify_at_interval(
@@ -1468,7 +1468,7 @@ pub fn run_pool_update_on_db(
             verify_all_interval,
         ) || (verify_all_at_completion && working_end_block >= last_block);
 
-        // Perf A: the read pass computes every in-scope pool's post-chunk
+        // The read pass computes every in-scope pool's post-chunk
         // state BEFORE the transaction opens - the per-pool map SELECTs leave
         // the write lock (survey finding 1). The per-chunk gate consumes the
         // FULL maps, so the read pass always builds them (the gate's input
@@ -1486,7 +1486,7 @@ pub fn run_pool_update_on_db(
         drop(compute_guard);
 
         // The pre-commit on-chain-truth gate (Full per-pool verification),
-        // hoisted out of the transaction (Perf A): each planned map is
+        // outside the transaction: each planned map is
         // compared against on-chain truth at `working_end_block` with NO lock
         // held - a divergence means the transaction NEVER OPENS, so the
         // observable RED contract is unchanged (`RunError::Verification`, zero
@@ -1512,8 +1512,8 @@ pub fn run_pool_update_on_db(
         // Full (market-wide) verification gate: interval boundary crossing +
         // run completion - hoisted the same way. The committed maps (read
         // pre-transaction) overlay the planned maps for this chunk's touched
-        // pools, so the verified state is exactly what the in-transaction
-        // gate used to see post-apply; a divergence never opens the tx.
+        // pools, so the verified state is exactly what the in-transaction gate
+        // would see post-apply; a divergence never opens the tx.
         // (`run_full` is computed above the read pass — the same value; the
         // read pass consumed it as its full-map requirement.)
         if run_full {
@@ -1550,7 +1550,7 @@ pub fn run_pool_update_on_db(
         // structural check): drop, refresh the specs, re-plan the chunk.
         // The apply stage span wraps the single-transaction write block —
         // for the pool loop this IS the write-lock hold (the read pass + the
-        // verify gates run outside the tx, Perf A), so the span's Jaeger
+        // verify gates run outside the tx), so the span's Jaeger
         // duration and the `write_lock_hold_time` ChunkProgress number are
         // the same boundary.
         let apply_span = tracing::info_span!(

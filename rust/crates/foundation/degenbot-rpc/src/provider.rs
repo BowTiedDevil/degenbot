@@ -1820,8 +1820,8 @@ impl AlloyProvider {
                 // 6-topic OR filter over up to 2000 blocks → ~100k logs, ~90 MB
                 // well over both default caps).
                 //
-                // Failure mode WITHOUT the raise (confirmed via
-                // `ws_getlogs_large_filter_diagnostic` + tracing, 2026-07-12):
+                // Failure mode WITHOUT the raise (reproducible with
+                // `ws_getlogs_large_filter_diagnostic` + tracing):
                 // tungstenite correctly returns `Error::Capacity(MessageTooLong)`
                 // when the oversized response arrives, but `alloy-pubsub`'s
                 // `WsBackend` converts that to `TransportErrorKind::backend_gone()`

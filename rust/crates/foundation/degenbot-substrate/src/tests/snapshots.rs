@@ -403,16 +403,15 @@ fn v3_post_drain_snapshot_is_none_for_sparse_pools() {
     );
 }
 
-/// Regression (post-drain pin block race, 2026-06-29): the post-drain pin
-/// must carry the block its `tick_data` was computed at — namely the
-/// `update_block` at pin time, which reflects the last drained backfill OR
-/// pump event's block. Pre-fix the pin stored `tick_data` only and the
-/// step-2 verify compared it against on-chain@`verify_backfill_block`
-/// (a start()-time constant). For an active pool on a slow `build_paths`,
-/// the pump buffer accumulated Mint/Burn events at blocks PAST the
-/// backfill boundary; draining them advanced `tick_data` to a state that
-/// matched on-chain at a LATER block, so the verify fabricated a mismatch
-/// and crashed the bot.
+/// The post-drain pin must carry the block its `tick_data` was computed at —
+/// namely the `update_block` at pin time, which reflects the last drained
+/// backfill OR pump event's block. A pin that stores `tick_data` only lets the
+/// step-2 verify compare it against on-chain@`verify_backfill_block` (a
+/// start()-time constant). For an active pool on a slow `build_paths`, the
+/// pump buffer accumulates Mint/Burn events at blocks PAST the backfill
+/// boundary; draining them advances `tick_data` to a state that matches
+/// on-chain at a LATER block, so the verify fabricates a mismatch and aborts
+/// the registration.
 ///
 /// This test reproduces the exact shape: a seed at block S, a backfill
 /// event at S+1 (within the backfill window), and a pump event at block B
@@ -496,15 +495,15 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
 
     // The pin must carry the pump event's block — the block the drained
-    // `tick_data` actually matches on-chain at. Pre-fix the pin carried no
-    // block at all and the verify used `backfill_block` → false mismatch.
+    // `tick_data` actually matches on-chain at. A pin that carries no block
+    // makes the verify use `backfill_block` → false mismatch.
     let taken = PoolLookup::from_address(v3_addr).take_post_drain(&mut core);
     let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
     assert_eq!(
         pinned_block, pump_block,
         "pin's block must be the last drained event's block (the pump Mint at {pump_block}), \
-         not the backfill boundary ({backfill_block}) — pre-fix the verify used the wrong \
-         block and fabricated a mismatch on every active pool during a slow build_paths"
+         not the backfill boundary ({backfill_block}) — verifying against the boundary \
+         fabricates a mismatch on every active pool during a slow build_paths"
     );
 
     // Sanity: the drained tick_data reflects seed + backfill Mint + pump Mint.
@@ -982,8 +981,8 @@ fn quarantine_buffer_and_drain_behind_the_clock(
 }
 
 /// The prior mismatch shape: a seed map stamped at 100 with the pump holding a
-/// Mint@100 the tombstone cutoff (99) has not released. Pre-fix the pin
-/// lowered the stamp to 99 — a block the map was never captured at. The map
+/// Mint@100 the tombstone cutoff (99) has not released. Lowering the stamp
+/// to 99 would name a block the map was never captured at. The map
 /// omits an event at its own clock, so no stamp is complete and the pin
 /// refuses.
 #[test]
@@ -1097,9 +1096,9 @@ fn pin_incomplete_is_rebuilt_by_the_next_drain() {
 }
 
 /// A pool with no tombstone at all (`cutoff == 0`) proves nothing about a
-/// seeded map's clock, so a held-back event still refuses the pin. Pre-fix the
-/// clamp's `cutoff > 0` guard skipped the clamp here and stamped the map at
-/// its clock — the same contradiction, unwarned.
+/// seeded map's clock, so a held-back event still refuses the pin. A clamp
+/// guarded by `cutoff > 0` skips the clamp here and stamps the map at its
+/// clock — the same contradiction, unwarned.
 #[test]
 fn pin_refuses_incomplete_with_no_tombstone_yet() {
     let mut core = BotState::new();

@@ -460,8 +460,7 @@ impl BlockPump {
             // Solve execution moved OUT of the loop head to the drained-settle
             // gate at the bottom of the loop: the solver
             // must not fire while buffered WS events are still unprocessed —
-            // the 2026-08-22 stall crash was exactly the loop-head solve
-            // racing a still-queued swap log.
+            // a loop-head solve racing a still-queued swap log is that stall.
 
             // ADR-008 D2: solver-release gate. `fsm.publish_pending` is set when a forward
             // log applies (block becomes quiesced). The flush below fires
@@ -882,7 +881,7 @@ impl BlockPump {
                         // mimalloc purge-delay control (hysteresis-limited
                         // option write; no-op unless allocator-ctrl + auto).
                         crate::allocator_ctrl::on_header_observed();
-                        // T2: blocks-observed counter + the header→solved anchor.
+                        // Blocks-observed counter + the header→solved anchor.
                         crate::instruments::record(crate::instruments::CensusEvent::HeaderAccepted);
                         // follow-up: the kernel throttle counters
                         // that identified the >10s solve p95 belong on the
@@ -894,14 +893,11 @@ impl BlockPump {
                                     usecs: stats.throttled_usec,
                                 },
                             );
-                            // LW-T5 (Seam E), re-routed
-                            // Part A: the SAME per-block sample feeds
-                            // the ONE process fleet posture owner
-                            // (`degenbot_workers::posture::process_owner()`
-                            // the Executor seam channel is
-                            // dissolved). The pump owns the
-                            // header-cadence delta
-                            // (LAST_HEADER_SAMPLE_MS). Always fed.
+                            // The pump owns the header-cadence delta
+                            // (`LAST_HEADER_SAMPLE_MS`) and feeds this per-block
+                            // sample to the ONE process fleet posture owner
+                            // (`degenbot_workers::posture::process_owner()`).
+                            // Always fed.
                             feed_executor_throttle_sample(
                                 wall_ms(),
                                 stats.nr_throttled,
@@ -920,8 +916,8 @@ impl BlockPump {
                     // watchdog anchors) emits, in order, the effects the driver
                     // must execute (Backfill → SetLastSolved → Notify); the FSM
                     // owns every cursor/metadata/anchor transition. The inline
-                    // `is_first_header` copy that used to live here is gone —
-                    // `on_header` is the single authoritative header handler.
+                    // `on_header` is the single authoritative header handler;
+                    // this loop keeps no header-state copy.
                     let metadata = BlockMetadata {
                         timestamp,
                         base_fee_per_gas,
@@ -1468,7 +1464,7 @@ impl BlockPump {
                     // records the clock's received/applied edges and arms the
                     // quiesce-gated publish (ADR-008 D2).
                     // One fact — a forward log applied to engine state — feeds
-                    // two consumers (T4 pairing pin): the FSM
+                    // two consumers (the pairing pin): the FSM
                     // quiesce arm (`on_log_applied` -> publish_pending) and
                     // the engine's `has_logs_this_block` (finalize
                     // bookkeeping). Coordinated here, once; do not
@@ -1538,8 +1534,8 @@ impl BlockPump {
                             }
                         }
                     }
-                    // Incident 2026-08-20 (WS-silent class): the pump is DEAD -
-                    // the WS subscription dropped and no reconnect exists.
+                    // The pump is DEAD (the WS-silent class): the WS
+                    // subscription dropped and no reconnect exists.
                     // Loud error + sink notification (drops the engine delivery
                     // channels) so the Python consumer's block stream ENDS and
                     // the settlement bot aborts loudly instead of idling
@@ -1587,7 +1583,7 @@ impl BlockPump {
             // cycle, so a following tail solve only re-solves NEWLY dirtied
             // pools; one slice per block window keeps the unbounded
             // serial solves from returning. `0` = disabled → the wait below
-            // is always the bare debounce window (exact pre-T2 behavior).
+            // is always the bare debounce window.
             if dirty_now && slice_first_dirty.is_none() && !slice_done {
                 slice_first_dirty = Some(tokio::time::Instant::now());
             }

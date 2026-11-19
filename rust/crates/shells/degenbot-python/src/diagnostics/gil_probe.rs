@@ -315,8 +315,8 @@ fn watchdog_verdict(
 /// Dump threshold for a long-Busy episode: after this much
 /// heartbeat staleness with the probe still sampling, dump the registry once.
 /// A LONG Busy episode is the signature of a NON-GIL wedge — a Rust lock held
-/// across an await (incident 2026-08-21: the bot sat "busy" for 11 minutes
-/// before a secondary GIL grab made the verdict flip to Deadlocked).
+/// across an await: a long "busy" episode ends only when a secondary GIL grab
+/// flips the verdict to Deadlocked.
 const BUSY_DUMP_AFTER_MS: u64 = 300_000;
 
 /// Pure decision: has a Busy episode aged past the dump threshold?

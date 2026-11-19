@@ -141,13 +141,13 @@ async fn header_arms_per_block_span_with_number_and_parent() {
     );
 }
 
-/// Regression: a header burst through the pump must CLOSE (export)
-/// every per-epoch span, never leaking still-entered spans on worker
-/// threads (the pre-fix loop-wide `Span::enter()` guard lived across the
-/// select's await points; when the multi-threaded runtime migrated the task
-/// between workers, it entered on one thread and dropped on another, so the
-/// span stayed entered in the abandoned worker's TLS — never closed, never
-/// exported, every child orphaned). The DETERMINISTIC defense is the
+/// A header burst through the pump must CLOSE (export) every per-epoch span,
+/// never leaking still-entered spans on worker threads: a loop-wide
+/// `Span::enter()` guard held across the select's await points is entered on
+/// one thread and dropped on another once the multi-threaded runtime migrates
+/// the task, so the span stays entered in the abandoned worker's TLS — never
+/// closed, never exported, every child orphaned. The DETERMINISTIC defense is
+/// the
 /// structural fix (no `enter` guard may outlive a poll); this test locks
 /// the observable symptom — all N spans closed — and exercises cross-await
 /// parking so CI load that DOES migrate the task surfaces the old leak.
@@ -192,7 +192,7 @@ async fn header_burst_closes_every_block_span() {
         })
         .collect();
     // Force a park between headers: a ready stream never suspends, so the
-    // task would stay on one worker and the pre-fix leaked-enter bug (which
+    // task would stay on one worker and the leaked-enter bug (which
     // only manifests when the task MIGRATES across an enter guard) would not
     // be exercised. The 1ms is this scenario's SCHEDULING INPUT — a park long
     // enough for an idle worker to take the task — not a wait for the pump to

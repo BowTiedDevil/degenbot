@@ -15,8 +15,8 @@ use crate::BotState;
 /// one closure: V3 `address → pool_id → value`, V4
 /// `(pool_manager, pool_id) → pool_id → value`. A caller receives the value,
 /// never a guard, so no path here can hold read#1 while requesting read#2 on
-/// the same lock: the soak-2026-08-22 cycle (a writer queued between two
-/// nested reads) is not reachable from these lookups. Rationale, and the
+/// the same lock: the nested-read self-deadlock (a writer queued between two
+/// acquisitions) is not reachable from these lookups. Rationale, and the
 /// single-step alternative, in the `NEVER NEST ACQUISITIONS` note on
 /// [`crate::state_lock`].
 ///

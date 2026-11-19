@@ -38,7 +38,7 @@ impl BlockPump {
             to_block,
             "BlockPump: backfilling blocks"
         );
-        // T2: one counter per executed backfill range.
+        // One counter per executed backfill range.
         crate::instruments::record(crate::instruments::CensusEvent::BackfillExecuted);
 
         // The transport fetch is degenbot-ingestion's; the
