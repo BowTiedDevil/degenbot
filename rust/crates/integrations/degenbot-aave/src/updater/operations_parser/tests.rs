@@ -1,3 +1,4 @@
+use super::util::{CompanionSide, EventDisposition, EventOwnership};
 use super::*;
 use crate::operations::{LiquidationGroup, LiquidationPattern};
 use crate::updater::run::substrate::ChunkSubstrate;
@@ -290,21 +291,50 @@ fn scaled_event(
         &aave_event_decoder::AAVE_SUPPLY_TOPIC,
         &[],
     )));
+    let scaled_index = index.unwrap_or(U256::from(1_000_000_000u64));
+    let (decoded, from_address, target_address, caller_address) = match event_type {
+        ScaledTokenEventType::CollateralMint
+        | ScaledTokenEventType::DebtMint
+        | ScaledTokenEventType::GhoDebtMint => (
+            ScaledTokenEventData::Mint {
+                caller: Address::ZERO,
+                on_behalf_of: user,
+                value: amount,
+                balance_increase: U256::ZERO,
+                index: scaled_index,
+            },
+            None,
+            None,
+            Some(Address::ZERO),
+        ),
+        ScaledTokenEventType::CollateralBurn
+        | ScaledTokenEventType::DebtBurn
+        | ScaledTokenEventType::GhoDebtBurn => (
+            ScaledTokenEventData::Burn {
+                from: user,
+                target: Address::ZERO,
+                value: amount,
+                balance_increase: U256::ZERO,
+                index: scaled_index,
+            },
+            Some(user),
+            Some(Address::ZERO),
+            None,
+        ),
+        other => panic!(
+            "scaled_event builds semantic Mint/Burn fixtures only; use \
+             balance_transfer_event/transfer_to_event for {other:?}"
+        ),
+    };
     ScaledTokenEvent {
         log,
-        decoded: ScaledTokenEventData::Burn {
-            from: user,
-            target: Address::ZERO,
-            value: amount,
-            balance_increase: U256::ZERO,
-            index: index.unwrap_or(U256::from(1_000_000_000u64)),
-        },
+        decoded,
         event_type,
         token_address,
         user_address: user,
-        caller_address: None,
-        from_address: Some(user),
-        target_address: Some(Address::ZERO),
+        caller_address,
+        from_address,
+        target_address,
         amount,
         balance_increase: Some(U256::ZERO),
         index,
@@ -331,12 +361,10 @@ fn transfer_to_event(
     )));
     ScaledTokenEvent {
         log,
-        decoded: ScaledTokenEventData::Burn {
+        decoded: ScaledTokenEventData::Transfer {
             from,
-            target,
+            to: target,
             value: amount,
-            balance_increase: U256::ZERO,
-            index: U256::from(1_000_000_000u64),
         },
         event_type,
         token_address,
@@ -345,10 +373,762 @@ fn transfer_to_event(
         from_address: Some(from),
         target_address: Some(target),
         amount,
-        balance_increase: Some(U256::ZERO),
-        index: Some(U256::from(1_000_000_000u64)),
+        balance_increase: None,
+        index: None,
         log_index: log_idx,
     }
+}
+
+/// Construct an index-bearing `BalanceTransfer` fixture — the SCALED report of
+/// a balance movement. The same movement's underlying-unit report is
+/// [`transfer_to_event`] (the index-less ERC20 `Transfer`).
+fn balance_transfer_event(
+    log_idx: u64,
+    event_type: ScaledTokenEventType,
+    from: Address,
+    to: Address,
+    token_address: Address,
+    value: U256,
+    index: U256,
+) -> ScaledTokenEvent<'static> {
+    let log = Box::leak(Box::new(test_log(
+        log_idx,
+        &aave_event_decoder::AAVE_SUPPLY_TOPIC,
+        &[],
+    )));
+    ScaledTokenEvent {
+        log,
+        decoded: ScaledTokenEventData::BalanceTransfer {
+            from,
+            to,
+            value,
+            index,
+        },
+        event_type,
+        token_address,
+        user_address: from,
+        caller_address: None,
+        from_address: Some(from),
+        target_address: Some(to),
+        amount: value,
+        balance_increase: Some(U256::ZERO),
+        index: Some(index),
+        log_index: log_idx,
+    }
+}
+
+// ── per-log ownership classification ──────────────────────────────────────
+//
+// `EventOwnership::classify` resolves each decoded log's role ONCE: semantic
+// Mint/Burn, zero-address companion, or a movement report (the index-less ERC20
+// carrier + the scaled `BalanceTransfer`). The operation builders consume those
+// dispositions; the tests here pin the decisions themselves.
+
+/// One disposition per decoded log: the semantic event, the zero-address
+/// companion mirroring it, or the two reports of a movement.
+#[test]
+fn classify_assigns_one_disposition_per_decoded_log() {
+    let user = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        // Mint: Aave emits the companion ERC20 Transfer BEFORE the Mint.
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            Address::ZERO,
+            user,
+            a_token,
+            U256::from(5),
+        ),
+        scaled_event(
+            11,
+            ScaledTokenEventType::CollateralMint,
+            user,
+            a_token,
+            U256::from(5),
+            Some(ray),
+        ),
+        // A standalone movement: ERC20 report + its scaled BalanceTransfer.
+        transfer_to_event(
+            12,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        balance_transfer_event(
+            13,
+            ScaledTokenEventType::CollateralTransfer,
+            user,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+        // Burn: the companion ERC20 Transfer(user→0x0) PRECEDES the Burn.
+        transfer_to_event(
+            14,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            U256::from(5),
+        ),
+        scaled_event(
+            15,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(5),
+            None,
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.len(),
+        events.len(),
+        "every decoded log has exactly one disposition"
+    );
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::Companion {
+            owner: 11,
+            side: CompanionSide::Mint
+        }),
+        "the from-0x0 ERC20 Transfer is a typed benign companion of the Mint"
+    );
+    assert_eq!(
+        ownership.disposition(11),
+        Some(EventDisposition::SemanticMint)
+    );
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::StandaloneTransfer {
+            scaled_partner: Some(13)
+        }),
+        "the ERC20 report carries the movement and names its scaled report"
+    );
+    assert_eq!(
+        ownership.disposition(13),
+        Some(EventDisposition::BalanceTransfer {
+            underpinned_by: Some(12)
+        }),
+        "the scaled report is underpinned by the ERC20 report of the same movement"
+    );
+    assert_eq!(
+        ownership.disposition(14),
+        Some(EventDisposition::Companion {
+            owner: 15,
+            side: CompanionSide::Burn
+        })
+    );
+    assert_eq!(
+        ownership.disposition(15),
+        Some(EventDisposition::SemanticBurn)
+    );
+}
+
+/// Multiple burns in one transaction: every companion names its own burn, so a
+/// liquidation's collateral debit can never be confused with a debt burn.
+#[test]
+fn classify_multiple_burns_each_own_their_companion() {
+    let user = Address::from([0xA0; 20]);
+    let a_token = Address::from([0xB0; 20]);
+    let v_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            U256::from(500),
+        ),
+        scaled_event(
+            11,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        transfer_to_event(
+            12,
+            ScaledTokenEventType::Erc20DebtTransfer,
+            user,
+            Address::ZERO,
+            v_token,
+            U256::from(2_000),
+        ),
+        scaled_event(
+            13,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            v_token,
+            U256::from(2_000),
+            Some(ray),
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::Companion {
+            owner: 11,
+            side: CompanionSide::Burn
+        })
+    );
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::Companion {
+            owner: 13,
+            side: CompanionSide::Burn
+        })
+    );
+}
+
+/// Two burns of the SAME user and token each get their own companion: companion
+/// assignment is injective, so the second companion can never name a burn that
+/// is already owned.
+#[test]
+fn classify_same_token_burns_claim_distinct_companions() {
+    let user = Address::from([0xA0; 20]);
+    let a_token = Address::from([0xB0; 20]);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            U256::from(500),
+        ),
+        scaled_event(
+            11,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        transfer_to_event(
+            12,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            U256::from(500),
+        ),
+        scaled_event(
+            13,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::Companion {
+            owner: 11,
+            side: CompanionSide::Burn
+        })
+    );
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::Companion {
+            owner: 13,
+            side: CompanionSide::Burn
+        }),
+        "the second companion must claim the second burn, never the already-owned first burn"
+    );
+}
+
+/// stkAAVE (the GHO discount token) emits a single ERC20 `Transfer` and no
+/// scaled report: the movement is an unpaired standalone carrier.
+#[test]
+fn classify_discount_transfer_is_an_unpaired_standalone_carrier() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let stk_aave = Address::from([0xC0; 20]);
+
+    let events = vec![transfer_to_event(
+        10,
+        ScaledTokenEventType::DiscountTransfer,
+        sender,
+        recipient,
+        stk_aave,
+        U256::from(42),
+    )];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::StandaloneTransfer {
+            scaled_partner: None
+        })
+    );
+}
+
+/// Same-value distinct movements are independently owned: ownership keys on the
+/// movement's addresses, never on its amount.
+#[test]
+fn classify_same_value_distinct_movements_stay_independent() {
+    let user = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let amount = U256::from(1_000);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            amount,
+        ),
+        scaled_event(
+            11,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            amount,
+            None,
+        ),
+        transfer_to_event(
+            12,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            recipient,
+            a_token,
+            amount,
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::Companion {
+            owner: 11,
+            side: CompanionSide::Burn
+        }),
+        "the zero-side report of the burn is the burn's companion"
+    );
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::StandaloneTransfer {
+            scaled_partner: None
+        }),
+        "an equal-valued transfer to a real recipient is its own movement"
+    );
+}
+
+/// Duplicate ownership rejection: two identical ERC20 reports of one movement
+/// share exactly one scaled report. The first log-order carrier owns it; the
+/// second is a typed duplicate of that carrier and can never emit.
+#[test]
+fn classify_types_a_duplicate_carrier_and_keeps_one_owner() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        balance_transfer_event(
+            12,
+            ScaledTokenEventType::CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::StandaloneTransfer {
+            scaled_partner: Some(12)
+        })
+    );
+    assert_eq!(
+        ownership.disposition(11),
+        Some(EventDisposition::DuplicateCarrier { owner: 10 }),
+        "the second report of the same movement names the first carrier and \
+         never becomes a second carrier"
+    );
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::BalanceTransfer {
+            underpinned_by: Some(10)
+        })
+    );
+}
+
+/// Log order is not the ownership key: a scaled report emitted BEFORE its ERC20
+/// report still pairs into the one movement, with the ERC20 as the carrier.
+#[test]
+fn classify_pairs_scaled_report_emitted_before_its_erc20_report() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        balance_transfer_event(
+            10,
+            ScaledTokenEventType::CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+        transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+    ];
+
+    let ownership = EventOwnership::classify(&events);
+
+    assert_eq!(
+        ownership.disposition(10),
+        Some(EventDisposition::BalanceTransfer {
+            underpinned_by: Some(11)
+        })
+    );
+    assert_eq!(
+        ownership.disposition(11),
+        Some(EventDisposition::StandaloneTransfer {
+            scaled_partner: Some(10)
+        })
+    );
+}
+
+// ── standalone-transfer operation ownership (step 4e) ─────────────────────
+
+/// The standalone operation carries the movement's ERC20 report and rides the
+/// scaled report as its scaling partner.
+#[test]
+fn standalone_transfer_builds_one_operation_from_the_paired_reports() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            12,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        balance_transfer_event(
+            13,
+            ScaledTokenEventType::CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+    ];
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert_eq!(ops.len(), 1, "one movement → exactly one operation");
+    assert_eq!(ops[0].operation_type, OperationType::BalanceTransfer);
+    assert_eq!(
+        ops[0].scaled_events[0].log_index, 12,
+        "the ERC20 report is the carrier"
+    );
+    assert_eq!(ops[0].balance_transfer_events.len(), 1);
+    assert_eq!(log_idx_value(ops[0].balance_transfer_events[0]), 13);
+}
+
+/// A movement whose scaled report is already claimed by an earlier operation
+/// (the liquidation protocol-fee movement) belongs to that operation. Building
+/// a standalone operation here would apply the fee a second time.
+#[test]
+fn standalone_transfer_skips_a_movement_owned_by_another_operation() {
+    let user = Address::from([0xA0; 20]);
+    let treasury = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            treasury,
+            a_token,
+            U256::from(5_815_314_991_815_639_u64),
+        ),
+        balance_transfer_event(
+            12,
+            ScaledTokenEventType::CollateralTransfer,
+            user,
+            treasury,
+            a_token,
+            U256::from(5_812_238_924_384_490_u64),
+            ray,
+        ),
+    ];
+    let ownership = EventOwnership::classify(&events);
+    let mut assigned = HashSet::new();
+    assigned.insert(12); // collected by the liquidation operation
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert!(
+        ops.is_empty(),
+        "the liquidation owns the fee movement; a standalone op would double-apply it"
+    );
+}
+
+/// Duplicate carriers of one movement emit exactly one operation: the repeat is
+/// a typed benign ignore, never a second standalone carrier.
+#[test]
+fn standalone_transfer_emits_one_operation_for_duplicate_carriers() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        balance_transfer_event(
+            12,
+            ScaledTokenEventType::CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+    ];
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert_eq!(ops.len(), 1, "duplicate carriers describe one movement");
+    assert_eq!(ops[0].scaled_events[0].log_index, 10);
+    assert_eq!(ops[0].balance_transfer_events.len(), 1);
+}
+
+/// A duplicate carrier never emits, even when the movement's scaled report is
+/// already claimed by another operation (the liquidation protocol-fee case):
+/// the duplicate is ignored regardless of claim state, so the apply path never
+/// sees the same movement twice.
+#[test]
+fn standalone_transfer_never_emits_a_duplicate_of_a_claimed_movement() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        transfer_to_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+        ),
+        balance_transfer_event(
+            12,
+            ScaledTokenEventType::CollateralTransfer,
+            sender,
+            recipient,
+            a_token,
+            U256::from(7),
+            ray,
+        ),
+    ];
+    let ownership = EventOwnership::classify(&events);
+    let mut assigned = HashSet::new();
+    assigned.insert(12); // collected by the liquidation operation
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert!(
+        ops.is_empty(),
+        "a claimed movement's duplicate must not emit; the apply path already saw the movement"
+    );
+}
+
+/// A semantic Mint/Burn's zero-address companion never becomes a standalone
+/// operation, even when no Pool-event builder claimed either event.
+#[test]
+fn standalone_transfer_never_applies_a_semantic_companion() {
+    let user = Address::from([0xA0; 20]);
+    let a_token = Address::from([0xC0; 20]);
+
+    let events = vec![
+        transfer_to_event(
+            10,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            Address::ZERO,
+            a_token,
+            U256::from(500),
+        ),
+        scaled_event(
+            11,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+    ];
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert!(
+        ops.is_empty(),
+        "the Burn carries the debit; its companion Transfer is benign-ignored"
+    );
+}
+
+/// stkAAVE transfers keep their dedicated operation type and have no scaling
+/// partner.
+#[test]
+fn standalone_discount_transfer_builds_stk_aave_operation() {
+    let sender = Address::from([0xA0; 20]);
+    let recipient = Address::from([0xB0; 20]);
+    let stk_aave = Address::from([0xC0; 20]);
+
+    let events = vec![transfer_to_event(
+        10,
+        ScaledTokenEventType::DiscountTransfer,
+        sender,
+        recipient,
+        stk_aave,
+        U256::from(42),
+    )];
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
+    let mut next_op_id = 0;
+
+    let ops = TransactionOperationsParser::create_transfer_operations(
+        9,
+        &events,
+        &ownership,
+        &assigned,
+        &mut next_op_id,
+    );
+
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].operation_type, OperationType::StkAaveTransfer);
+    assert!(ops[0].balance_transfer_events.is_empty());
 }
 
 /// `SINGLE` pattern: one `LiquidationCall` → one debt Burn for the same user.
@@ -525,8 +1305,10 @@ fn analyze_user_liquidation_count_counts_per_user() {
 }
 
 /// `collect_collateral_events`: the `collateral_burn` vs `collateral_transfers`
-/// split. When collateral is moved to the liquidator (not burned), the
-/// burn is `None` + `collateral_transfers` is non-empty.
+/// split. A liquidator's credit arrives as the movement's scaled
+/// `BalanceTransfer` report (or a `Mint` when `receiveAToken=true`); the
+/// index-less ERC20 report of that movement is never an operation source inside
+/// a liquidation.
 #[test]
 fn collect_collateral_events_burn_vs_transfers_split() {
     let user = Address::from([0xA0; 20]);
@@ -542,16 +1324,9 @@ fn collect_collateral_events_burn_vs_transfers_split() {
         U256::from(500),
         None,
     );
-    // The transfer to a non-ZERO liquidator (NOT the burn-side pair).
-    //
-    // this Erc20CollateralTransfer is now SKIPPED by the LC-op filter — in
-    // Liquidation ops, ALL ERC20 CollateralTransfers are filtered at
-    // collect-time (the filter has the same behavior: `index is None
-    // AND op=LC` → skip). The liquidator's net credit comes from the Mint
-    // event (when `receiveAToken=true`) or from a paired `CollateralTransfer`
-    // (BalanceTransfer variant — index=non-None) — NOT via the standard
-    // ERC20 Transfer event. Marked assigned so the standalone Step-4e
-    // Transfer path doesn't re-collect it.
+    // The underlying-unit report of collateral moved to the liquidator. The
+    // Burn carries the user's debit; an index-less report never carries a
+    // liquidation movement (the scaled report does).
     let transfer = transfer_to_event(
         11,
         ScaledTokenEventType::Erc20CollateralTransfer,
@@ -570,12 +1345,14 @@ fn collect_collateral_events_burn_vs_transfers_split() {
         None,
     );
     let events = vec![burn, transfer, other_burn];
-    let mut assigned = HashSet::new();
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
     let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
-        &mut assigned,
+        &ownership,
+        &assigned,
     );
     assert!(
         cb.is_some(),
@@ -585,36 +1362,21 @@ fn collect_collateral_events_burn_vs_transfers_split() {
     assert_eq!(
         ct.len(),
         0,
-        "Erc20CollateralTransfer to liquidator is now SKIPPED at \
-         collect-time (the LC-op filter — ERC20 Transfers in Liquidation ops \
-         are never applied; \
-         the liquidator's credit comes via the Mint event or via the \
-         `CollateralTransfer` BalanceTransfer variant, not via the standard \
-         ERC20 Transfer event)"
+        "the index-less ERC20 report of a collateral movement is not a \
+         liquidation collateral event: the Burn carries the debit and the \
+         scaled BalanceTransfer report carries the moved balance"
     );
     assert!(
-        assigned.contains(&11),
-        "filtered ERC20 transfer marked assigned so the standalone \
-         Step-4e Transfer path doesn't re-collect it"
+        assigned.is_empty(),
+        "the collector consumes the disposition; it never writes claims back"
     );
 }
 
-/// Regression guard — `collect_collateral_events` MUST skip
-/// `Erc20CollateralTransfer` to a NON-ZERO recipient in LC ops (the
-/// Aave V3 treasury protocol-fee Transfer shape). Aave V3 `LiquidationCall`
-/// transfers the protocol-fee portion from the liquidated user to the
-/// treasury via `transferOnLiquidation`, emitting BOTH:
-///   - `Transfer(user, treasury, fee_underlying)` (`Erc20CollateralTransfer`,
-///     index=None) — the standard ERC20 Transfer event
-///   - `BalanceTransfer(user, treasury, fee_scaled, liquidity_index)`
-///     (`CollateralTransfer` variant, index=non-None) — Aave V3's native
-///     scaled-balance move event
-///
-/// The apply-path collateral-transfer filter skips the
-/// ERC20 variant in LC ops so the user is debited + treasury credited
-/// ONCE via the BT event's `value`. Rust mirrors the filter at
-/// collect-time here. RED-verified: stripping the skip-guard causes
-/// the assertion to fail (Erc20 collected, `ct.len()` == 1).
+/// The Aave V3 protocol fee is one balance movement reported twice: the
+/// standard ERC20 `Transfer(user→treasury, fee_underlying)` and Aave's native
+/// `BalanceTransfer(user→treasury, fee_scaled, liquidity_index)`.
+/// `collect_collateral_events` collects the scaled report only — collecting both
+/// reports would debit the user and credit the treasury twice.
 #[test]
 fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation() {
     let user = Address::from([0xA0; 20]);
@@ -631,12 +1393,9 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
         U256::from(500_000),
         Some(U256::from(1_000_500_000u64)),
     );
-    // Standard ERC20 Transfer(user→treasury, fee_underlying) emitted
-    // alongside `LiquidationCall` by `transferOnLiquidation`. Without the
-    // skip-guard, this would be DOUBLE-APPLIED (once here as the
-    // fee_underlying amount, AND once via the paired BT.value below),
-    // over-debiting the user + over-crediting the treasury by exactly
-    // the fee_underlying amount.
+    // The fee's underlying-unit report: applying this as well as the scaled
+    // report below would over-debit the user and over-credit the treasury by
+    // exactly the fee.
     let fee_underlying_amount = U256::from(5_815_314_991_815_639u64);
     let erc20_fee_transfer = transfer_to_event(
         11,
@@ -646,60 +1405,58 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
         a_token,
         fee_underlying_amount,
     );
-    // Paired Aave V3 BalanceTransfer(user→treasury, fee_scaled, index) —
-    // the SCALED-balance move that Python (and Rust) applies.
-    // value × index / RAY ≈ erc20_fee_transfer.amount (within tiny
-    // ray-floor rounding). Modeled here via the CollateralTransfer variant
-    // (index is non-None, indicating a BalanceTransfer event_type).
+    // The same movement's scaled report — value × index / RAY ≈ the ERC20
+    // report's amount (within ray-floor rounding).
     let fee_scaled_amount = U256::from(5_812_238_924_384_490u64);
-    let bt_fee_transfer = transfer_to_event(
+    let bt_fee_transfer = balance_transfer_event(
         12,
         ScaledTokenEventType::CollateralTransfer,
         user,
         treasury,
         a_token,
         fee_scaled_amount,
+        U256::from(1_000_000_000u64),
     );
     let events = vec![burn, erc20_fee_transfer, bt_fee_transfer];
-    let mut assigned = HashSet::new();
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
     let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
-        &mut assigned,
+        &ownership,
+        &assigned,
     );
     // Burn must be found.
     assert_eq!(cb.unwrap().log_index, 10);
-    // ONLY the BT event is collected — the ERC20 fee Transfer is skipped.
+    // ONLY the scaled report is collected — the ERC20 report is a benign mirror.
     assert_eq!(
         ct.len(),
         1,
-        "only the BT fee transfer is collected; \
-        the Erc20CollateralTransfer(user→treasury, fee) is SKIPPED at \
-        collect-time (the LC-op filter)"
+        "only the scaled report of the fee movement is collected; \
+         the ERC20 report is the same movement's underlying-unit mirror"
     );
     assert_eq!(
         ct[0].log_index, 12,
-        "the collected transfer is the BT event"
+        "the collected transfer is the BalanceTransfer report"
     );
-    // The skipped ERC20 fee Transfer MUST be marked assigned so the
-    // standalone Step-4e Transfer path doesn't re-collect it (which
-    // would re-instate the double-application the skip-guard prevents).
+    assert_eq!(
+        ownership.disposition(12),
+        Some(EventDisposition::BalanceTransfer {
+            underpinned_by: Some(11)
+        }),
+        "the classification ties the fee's two reports into one movement"
+    );
     assert!(
-        assigned.contains(&11),
-        "the skipped Erc20CollateralTransfer to treasury IS marked \
-         assigned so the standalone Step-4e Transfer path skips it; the \
-         paired BT event also IS marked assigned by being collected"
+        assigned.is_empty(),
+        "the collector no longer claims the mirror report: step 4e skips the \
+         movement because the liquidation owns its scaled report"
     );
-    // The BT event is marked assigned by being collected into collateral_transfers
-    // (the caller writes assigned.insert for collected items elsewhere).
 }
 
-/// `collect_collateral_events` pair-Transfer filter (per the orchestrator's
-/// fix directive): a burn-side pair ERC20 Transfer-to-ZERO (the Burn
-/// event's operational companion) MUST be excluded from
-/// `collateral_transfers` so the Liquidation path doesn't double-debit
-/// the user (the p1198-class 4.33× divergence root cause).
+/// A burn's zero-side companion report (the ERC20 `Transfer user→0x0`) is
+/// benign-ignored: the `Burn` is the sole operational debit. The collector must
+/// neither collect the companion nor rewrite the claim set to remember it.
 #[test]
 fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
     let user = Address::from([0xA0; 20]);
@@ -713,62 +1470,74 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
         U256::from(500),
         None,
     );
-    // The paired ERC20 Transfer user→0x0 (burn-side companion — same user +
-    // token, value matches). MUST be filtered by `is_part_of_burn`.
-    let pair_transfer = scaled_event(
+    // The paired ERC20 Transfer user→0x0 (the burn-side companion).
+    let pair_transfer = transfer_to_event(
         11,
         ScaledTokenEventType::Erc20CollateralTransfer,
         user,
+        Address::ZERO,
         a_token,
         U256::from(500),
-        None,
     );
     let events = vec![burn, pair_transfer];
-    let mut assigned = HashSet::new();
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
     let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
-        &mut assigned,
+        &ownership,
+        &assigned,
     );
     assert!(cb.is_some(), "burn collected");
     assert_eq!(cb.unwrap().log_index, 10);
     assert_eq!(
         ct.len(),
         0,
-        "burn-side pair Transfer-to-ZERO filtered by is_part_of_burn"
+        "the burn's companion report is benign-ignored by disposition"
+    );
+    assert_eq!(
+        ownership.disposition(11),
+        Some(EventDisposition::Companion {
+            owner: 10,
+            side: CompanionSide::Burn
+        })
     );
     assert!(
-        assigned.contains(&11),
-        "filtered pair-transfer marked assigned so it isn't re-collected by standalone Step-4e"
+        assigned.is_empty(),
+        "no write-back: the companion is excluded by its disposition, not by a claim"
     );
 }
 
-/// `collect_collateral_events`: when no events match (collateral was fully
-/// transferred, no burn), the split is `(None, [...])`. The Python's caller
-/// asserts at least one event exists; tested variant separately.
+/// `collect_collateral_events`: when collateral is moved (no burn), the scaled
+/// report is collected and the burn is `None`.
 #[test]
 fn collect_collateral_events_no_burn_only_transfers() {
     let user = Address::from([0xA0; 20]);
     let a_token = Address::from([0xB0; 20]);
-    let transfer = scaled_event(
+    let liquidator = Address::from([0xD0; 20]);
+    let transfer = balance_transfer_event(
         11,
         ScaledTokenEventType::CollateralTransfer,
         user,
+        liquidator,
         a_token,
         U256::from(500),
-        Some(U256::from(1_000_000_000u64)),
+        U256::from(1_000_000_000u64),
     );
     let events = vec![transfer];
-    let mut assigned = HashSet::new();
+    let ownership = EventOwnership::classify(&events);
+    let assigned = HashSet::new();
     let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
-        &mut assigned,
+        &ownership,
+        &assigned,
     );
     assert!(cb.is_none(), "no burn — collateral moved via transfer");
     assert_eq!(ct.len(), 1);
+    assert_eq!(ct[0].log_index, 11);
 }
 
 /// `LiquidationGroup::detect_pattern` —

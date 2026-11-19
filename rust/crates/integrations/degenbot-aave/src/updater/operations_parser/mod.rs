@@ -29,7 +29,7 @@
 //!   collector).
 //! - `validation`: the per-`Operation` validators.
 //! - `util`: shared free helpers (log-index/address codecs, event cloning,
-//!   the tolerance comparison, the burn/mint pairing predicates).
+//!   the tolerance comparison, the per-log ownership classification).
 //!
 //! # The plumbing-equivalence caveat (escalation trigger)
 //!
@@ -75,7 +75,7 @@ mod tests;
 
 pub use util::amounts_match_with_tolerance;
 pub(crate) use util::{addr_to_hex, log_idx_value, parse_address};
-use util::{is_erc20_transfer_log, is_minted_to_treasury_log};
+use util::{is_erc20_transfer_log, is_minted_to_treasury_log, EventOwnership};
 
 use pool_events::extract_pool_events;
 
@@ -220,25 +220,16 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         }
     }
 
-    /// Whether two transfer types are compatible (ERC20 Transfer ↔ `BalanceTransfer`
-    /// pairing — the cross-token discrimination for the `_find_matching_balance_transfer`
-    /// helper).
+    /// Whether two transfer-report types describe the same balance movement
+    /// (the index-less ERC20 report ↔ the index-bearing `BalanceTransfer`
+    /// report). The ownership classification uses it to pair a movement's two
+    /// reports.
     #[must_use]
     pub fn are_compatible_transfer_types(
         ev1: ScaledTokenEventType,
         ev2: ScaledTokenEventType,
     ) -> bool {
-        use ScaledTokenEventType::{
-            CollateralTransfer, DebtTransfer, Erc20CollateralTransfer, Erc20DebtTransfer,
-        };
-        let collateral_pair = (CollateralTransfer, Erc20CollateralTransfer);
-        let debt_pair = (DebtTransfer, Erc20DebtTransfer);
-        let pair = (ev1, ev2);
-        let pair_rev = (ev2, ev1);
-        pair == collateral_pair
-            || pair == debt_pair
-            || pair_rev == collateral_pair
-            || pair_rev == debt_pair
+        util::are_compatible_transfer_types(ev1, ev2)
     }
 
     // ── the `parse()` scaffold ──
@@ -295,6 +286,13 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         }
         scaled_events.sort_by_key(|e| e.log_index);
 
+        // Step 2b: classify each decoded log's ownership ONCE — the semantic
+        // Mint/Burn carrying a delta, a zero-address companion of one, or a
+        // movement report (index-less ERC20 carrier + scaled `BalanceTransfer`).
+        // Builders consume these dispositions instead of re-deriving pairing
+        // rules or coordinating through the claim set.
+        let ownership = EventOwnership::classify(&scaled_events);
+
         // Step 3: group into operations.
         let mut operations: Vec<Operation<'a>> = Vec::new();
         let mut assigned_log_indices: HashSet<u64> = HashSet::new();
@@ -305,6 +303,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
                 next_op_id,
                 pool_event,
                 &scaled_events,
+                &ownership,
                 events,
                 &mut assigned_log_indices,
             )?;
@@ -359,10 +358,12 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         }));
         operations.extend(interest_accrual_ops);
 
-        // Step 4e: Transfer (ERC20 Transfer leftover handling).
-        let transfer_ops = self.create_transfer_operations(
+        // Step 4e: standalone transfer reports (leftover handling).
+        let transfer_ops = Self::create_transfer_operations(
+            self.pool_revision,
             &scaled_events,
-            &mut assigned_log_indices,
+            &ownership,
+            &assigned_log_indices,
             &mut next_op_id,
         );
         assigned_log_indices.extend(transfer_ops.iter().flat_map(|op| {

@@ -1,6 +1,6 @@
 use super::{
-    aave_event_decoder, log_idx_value, HashSet, Log, Operation, ParseError, ScaledTokenEvent,
-    TransactionOperationsParser,
+    aave_event_decoder, log_idx_value, EventOwnership, HashSet, Log, Operation, ParseError,
+    ScaledTokenEvent, TransactionOperationsParser,
 };
 
 impl<'a> TransactionOperationsParser<'a, '_> {
@@ -11,6 +11,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         operation_id: u32,
         pool_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
+        ownership: &EventOwnership,
         all_events: &'a [&'a Log],
         assigned_indices: &mut HashSet<u64>,
     ) -> Result<Operation<'a>, ParseError> {
@@ -42,6 +43,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 operation_id,
                 pool_event,
                 scaled_events,
+                ownership,
                 all_events,
                 assigned_indices,
             )

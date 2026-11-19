@@ -1,4 +1,4 @@
-use super::util::{clone_scaled_event, is_part_of_burn, is_part_of_mint};
+use super::util::{clone_scaled_event, EventDisposition, EventOwnership};
 use super::{
     aave_event_decoder, log_idx_value, Address, HashMap, HashSet, Log, Operation, OperationType,
     ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser, U256,
@@ -207,41 +207,25 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         burns
     }
 
-    /// collect collateral
-    /// events (burns and transfers) for the liquidation. During liquidations
-    /// a borrower may have BOTH collateral burned AND multiple transfers.
-    /// Collateral may be burned OR transferred to treasury (`BalanceTransfer`).
+    /// Collect the collateral events this liquidation owns: the semantic
+    /// collateral `Burn` (the user's debit) and the `BalanceTransfer` reports for
+    /// this liquidation's collateral asset (the movement to the liquidator, or
+    /// the protocol-fee move to the treasury).
+    ///
+    /// Ownership comes from [`EventOwnership`]: a zero-address companion report
+    /// is benign-ignored (its delta belongs to the semantic event), and an
+    /// index-less ERC20 report never carries a liquidation movement — the `Burn`
+    /// and the scaled `BalanceTransfer` reports do. Nothing is written into the
+    /// claim set: a report excluded here is excluded by its disposition, so this
+    /// collector only *skips* logs an earlier operation already claimed.
     ///
     /// Returns `(collateral_burn, collateral_transfers)`.
-    ///
-    /// # The burn-side / mint-side pair ERC20 Transfer bug class
-    ///
-    /// By Aave V3 protocol, the aToken emits the `Burn` event AND the paired
-    /// ERC20 `Transfer user→0x0` (the burn-side companion) as ONE operational
-    /// action (the same for `Mint` + `Transfer 0x0→user`). Pre-fix this fn
-    /// pushed the burn-side ERC20 Transfer into `collateral_transfers`
-    /// unfiltered (no `is_part_of_burn` / `is_part_of_mint` call — those filters
-    /// lived only on the standalone Transfer path at line 1471/1476). The
-    /// Liquidation op ended up with BOTH the `CollateralBurn` AND its paired
-    /// ERC20 `Transfer user→0x0` in `op.scaled_events`. `dispatch_liquidation`
-    /// then applied both with no `override_transfer_with_paired_bt` (the
-    /// Liquidation path's intentional no-op for that override) → the user's
-    /// collateral balance was debited TWICE by the Burn delta (the p1198-class
-    /// 4.33× divergence — root-caused + math-verified on mainnet).
-    ///
-    /// Fix (per the orchestrator's directive): wire the already-ported
-    /// `is_part_of_burn` (line 2522) + `is_part_of_mint` (line 2548) filters
-    /// INTO this fn — match the standalone Transfer path's exact semantics
-    /// (same `user_address` + `token_address` matching, no value heuristic).
-    /// Mark the filtered events into `assigned_indices` so the standalone
-    /// Step-4e `create_transfer_operations` skips them (it would re-apply the
-    /// filter from `scaled_events` and skip — but pre-marking is the safest
-    /// mirror of the standalone pattern's `local_assigned` write-back).
     pub(super) fn collect_collateral_events<'b>(
         user: Address,
         collateral_a_token_address: Option<Address>,
         scaled_events: &'b [ScaledTokenEvent<'a>],
-        assigned_indices: &mut HashSet<u64>,
+        ownership: &EventOwnership,
+        assigned_indices: &HashSet<u64>,
     ) -> (
         Option<&'b ScaledTokenEvent<'a>>,
         Vec<&'b ScaledTokenEvent<'a>>,
@@ -256,68 +240,31 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 continue;
             }
             // Match collateral events only if they belong to this liquidation's
-            // collateral asset (parity: prevents incorrect matching when a user
-            // is liquidated multiple times with different collateral assets).
+            // collateral asset (prevents incorrect matching when a user is
+            // liquidated multiple times with different collateral assets).
             if let Some(expected) = collateral_a_token_address {
                 if ev.token_address != expected {
                     continue;
                 }
             }
-            if ev.event_type == ScaledTokenEventType::CollateralBurn && ev.user_address == user {
-                collateral_burn = Some(ev);
-            } else if (ev.event_type == ScaledTokenEventType::CollateralTransfer
-                || ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer)
-                && ev.user_address == user
-            {
-                // mirror the LC-op collateral-transfer filter
-                // Liquidation-op filter — in Liquidation
-                // ops, ALL ERC20 CollateralTransfers (`Erc20CollateralTransfer`
-                // variant — index=None, the standard ERC20 Transfer event emitted
-                // by the aToken) are SKIPPED. The user's collateral debit is
-                // captured by the Burn event + the protocol-fee balance move by
-                // the paired BalanceTransfer (`CollateralTransfer` variant —
-                // index=non-None, preserved below). Without this guard the
-                // `Erc20CollateralTransfer(user→treasury, fee)` emitted alongside
-                // the LiquidationCall over-debits the user / over-credits the
-                // treasury by exactly the `liquidationProtocolFee × bonus /
-                // (1+bonus)` share — empirically verified on Rust-written
-                // 16591070 prod DB for users 0x23dB (id 134) + 0x87A6 (id 1018)
-                // WETH positions (residuals byte-match the on-chain ERC20
-                // Transfer amounts; ratio = 0.476% = 0.10×0.05/1.05).
-                //
-                // Context confirmation (per orchestrator reminder (a)):
-                // `collect_collateral_events` is LC-only — sole caller is
-                // `create_liquidation_operation`; the unconditional skip CANNOT
-                // over-filter non-LC ERC20 Transfers.
-                //
-                // Marked `assigned` so the standalone Step-4e Transfer path
-                // (`create_transfer_operations`) doesn't re-collect it — same
-                // write-back as the 1cf6578d `is_part_of_burn` / `is_part_of_mint`
-                // guards below. The 1cf6578d ZERO-address guards below remain
-                // ACTIVE for the `CollateralTransfer` (BalanceTransfer) variant
-                // (target/from == ZERO is degenerate for BT events but defensive).
-                if ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer {
-                    assigned_indices.insert(ev.log_index);
-                    continue;
-                }
-                // Skip the burn-side pair ERC20 Transfer to ZERO (the
-                // Burn event itself is the sole operational debit), and the
-                // mint-side pair ERC20 Transfer from ZERO (the Mint event is
-                // the sole operational credit). Matches the standalone Transfer
-                // path's `is_part_of_burn` / `is_part_of_mint` filter exact
-                // semantics (user-address + token-address match — no value
-                // heuristic; the reference's matching contract).
-                if ev.target_address == Some(Address::ZERO)
-                    && is_part_of_burn(ev, scaled_events, assigned_indices)
+            match ownership.disposition(ev.log_index) {
+                Some(EventDisposition::SemanticBurn)
+                    if ev.event_type == ScaledTokenEventType::CollateralBurn
+                        && ev.user_address == user =>
                 {
-                    continue;
+                    collateral_burn = Some(ev);
                 }
-                if ev.from_address == Some(Address::ZERO)
-                    && is_part_of_mint(ev, scaled_events, assigned_indices)
+                // The scaled report of a collateral movement is the only transfer
+                // report a liquidation applies: the index-less ERC20 report of
+                // the same movement is its mirror, and a companion report belongs
+                // to its semantic event.
+                Some(EventDisposition::BalanceTransfer { .. })
+                    if ev.event_type == ScaledTokenEventType::CollateralTransfer
+                        && ev.user_address == user =>
                 {
-                    continue;
+                    collateral_transfers.push(ev);
                 }
-                collateral_transfers.push(ev);
+                _ => {}
             }
         }
         (collateral_burn, collateral_transfers)
@@ -342,6 +289,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         operation_id: u32,
         liquidation_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
+        ownership: &EventOwnership,
         all_events: &[&'a Log],
         assigned_indices: &mut HashSet<u64>,
     ) -> Result<Operation<'a>, ParseError> {
@@ -406,6 +354,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             user,
             collateral_a_token_address,
             scaled_events,
+            ownership,
             assigned_indices,
         );
         // A liquidation requires at least one collateral event.

@@ -1,4 +1,4 @@
-use super::util::{clone_scaled_event, is_part_of_burn, is_part_of_mint};
+use super::util::{clone_scaled_event, EventDisposition, EventOwnership};
 use super::{
     aave_event_decoder, addr_to_hex, parse_address, Address, DecodedAaveEvent, HashSet, Log,
     Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser,
@@ -302,72 +302,47 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         operations
     }
 
-    /// Unassigned transfer events → standalone `BALANCE_TRANSFER` (or
-    /// `STKAAVE_TRANSFER`) operations. Pairs ERC20 Transfer + `BalanceTransfer`
-    /// for the same movement.
+    /// Unassigned movement reports → standalone `BALANCE_TRANSFER` (or
+    /// `STKAAVE_TRANSFER`) operations.
+    ///
+    /// The carrier is the movement's index-less ERC20 `Transfer` report
+    /// ([`EventDisposition::StandaloneTransfer`]); the scaled
+    /// `BalanceTransfer` report of the same movement rides
+    /// `balance_transfer_events` so the apply path can use its scaled value and
+    /// liquidity index. A duplicate report of that movement
+    /// ([`EventDisposition::DuplicateCarrier`]) never emits, and a movement
+    /// whose scaled report an earlier operation already claimed (the
+    /// liquidation protocol-fee movement) belongs to that operation — emitting
+    /// an operation for either would apply the movement twice.
     pub(super) fn create_transfer_operations(
-        &self,
+        pool_revision: u32,
         scaled_events: &[ScaledTokenEvent<'a>],
-        assigned_indices: &mut HashSet<u64>,
+        ownership: &EventOwnership,
+        assigned_indices: &HashSet<u64>,
         next_op_id: &mut u32,
     ) -> Vec<Operation<'a>> {
         let mut operations: Vec<Operation<'a>> = Vec::new();
-        let mut local_assigned: HashSet<u64> = HashSet::new();
         for ev in scaled_events {
-            if assigned_indices.contains(&ev.log_index) || local_assigned.contains(&ev.log_index) {
+            if assigned_indices.contains(&ev.log_index) {
                 continue;
             }
-            let is_transfer = matches!(
-                ev.event_type,
-                ScaledTokenEventType::CollateralTransfer
-                    | ScaledTokenEventType::DebtTransfer
-                    | ScaledTokenEventType::DiscountTransfer
-                    | ScaledTokenEventType::Erc20CollateralTransfer
-                    | ScaledTokenEventType::Erc20DebtTransfer
-                    | ScaledTokenEventType::GhoDebtTransfer
+            let Some(EventDisposition::StandaloneTransfer { scaled_partner }) =
+                ownership.disposition(ev.log_index)
+            else {
+                continue;
+            };
+            assert!(
+                ev.index.is_none(),
+                "a standalone carrier is the index-less ERC20 Transfer report"
             );
-            if !is_transfer {
+            if scaled_partner.is_some_and(|partner| assigned_indices.contains(&partner)) {
                 continue;
             }
-            assert!(ev.index.is_none(), "Transfer events have no index");
-            // Skip transfers to/from zero that are part of mints/burns.
-            if ev.target_address == Some(Address::ZERO)
-                && is_part_of_burn(ev, scaled_events, &mut local_assigned)
-            {
-                continue;
-            }
-            if ev.from_address == Some(Address::ZERO)
-                && is_part_of_mint(ev, scaled_events, &mut local_assigned)
-            {
-                continue;
-            }
-            // Find matching BalanceTransfer for the same movement.
-            let mut balance_transfer_events: Vec<&'a Log> = Vec::new();
-            for bt_ev in scaled_events {
-                if assigned_indices.contains(&bt_ev.log_index)
-                    || local_assigned.contains(&bt_ev.log_index)
-                {
-                    continue;
-                }
-                if bt_ev.index.is_none() {
-                    continue;
-                }
-                if bt_ev.from_address != ev.from_address {
-                    continue;
-                }
-                if bt_ev.target_address != ev.target_address {
-                    continue;
-                }
-                if bt_ev.token_address != ev.token_address {
-                    continue;
-                }
-                if !Self::are_compatible_transfer_types(ev.event_type, bt_ev.event_type) {
-                    continue;
-                }
-                local_assigned.insert(bt_ev.log_index);
-                balance_transfer_events.push(bt_ev.log);
-                break;
-            }
+            let balance_transfer_events: Vec<&'a Log> = scaled_events
+                .iter()
+                .filter(|other| Some(other.log_index) == scaled_partner)
+                .map(|other| other.log)
+                .collect();
             let op_type = if ev.event_type == ScaledTokenEventType::DiscountTransfer {
                 OperationType::StkAaveTransfer
             } else {
@@ -378,7 +353,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             operations.push(Operation {
                 operation_id: op_id,
                 operation_type: op_type,
-                pool_revision: self.pool_revision,
+                pool_revision,
                 pool_event: None,
                 scaled_events: vec![clone_scaled_event(ev)],
                 transfer_events: Vec::new(),
@@ -388,7 +363,6 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 validation_errors: Vec::new(),
             });
         }
-        assigned_indices.extend(local_assigned.iter().copied());
         operations
     }
 }
