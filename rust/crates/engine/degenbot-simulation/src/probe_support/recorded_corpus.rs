@@ -7,26 +7,47 @@
 //! replay drives the read schedule and the recorded execution — never an EVM
 //! verdict.
 //!
-//! # Relevance: two provenances, one API
+//! # One schema version per corpus, declared on every row
 //!
-//! A row may also carry `relevance` — the candidate's PRODUCTION relevance set,
-//! derived by the simulation seam from the candidate's path and the deployment's
-//! settlement facts BEFORE it ran (see `degenbot_arbitrage::fanout_trace`'s
-//! migration notes). The field is additive: rows recorded before it existed parse
-//! unchanged with no relevance set.
+//! Every row carries a `v` key naming the schema it was written under
+//! ([`CorpusVersion`]), and one corpus pins exactly one version: [`load_corpus`]
+//! refuses a file that mixes versions, a row with no `v` key, and a `v` this
+//! reader does not know. The version is never inferred from which keys a row
+//! happens to carry — it is what tells a reader which questions the row can
+//! answer.
 //!
-//! [`row_relevance`] and [`anchor_relevance`] are the one door a replay or an
-//! analysis probe uses, and each answers with a [`RelevanceSource`] beside the
-//! addresses. A row that carries the field reports [`RelevanceSource::Production`].
-//! A legacy row can only offer its recorded read addresses — the POST-execution
-//! walk — so it reports [`RelevanceSource::RecordedReadOracle`]: those addresses
-//! are what the run turned out to read, an oracle the live run did not have when
-//! it had to decide what to snapshot, and no report may call them production
-//! relevance. An anchor's set is the union of its rows' production sets, and a
-//! single legacy row drops the whole anchor to the labelled fallback rather than
-//! reporting a partial production set as if it were complete.
+//! | Version | Rows carry | Answers |
+//! |---|---|---|
+//! | [`CorpusVersion::V1`] | the read walk | read-driven replay only |
+//! | [`CorpusVersion::V2`] | the read walk + `relevance` | read-driven replay, and relevance-scoped replay |
+//!
+//! `relevance` is the candidate's PRODUCTION relevance set, derived by the
+//! simulation seam from the candidate's path and the deployment's settlement
+//! facts BEFORE it ran (see `degenbot_arbitrage::fanout_trace`). Inside
+//! [`CorpusVersion::V2`] the field is not optional: a version-2 row without it is
+//! a malformed row, not an old one.
+//!
+//! # The consumer declares what it needs
+//!
+//! [`CorpusUse`] is the loader's argument, so a benchmark states its semantics
+//! where it opens the corpus instead of discovering them when a set comes up
+//! short:
+//!
+//! - [`CorpusUse::ReadDriven`] replays the read walk. A version-1 corpus
+//!   satisfies it; its rows simply have no relevance to read.
+//! - [`CorpusUse::RelevanceDependent`] scopes a snapshot by production relevance.
+//!   Only a version-2 corpus satisfies it — a version-1 corpus is refused
+//!   ([`CorpusError::ReadDrivenOnly`]) rather than served its reads.
+//!
+//! Recorded reads are what the run turned out to read: an oracle the live run did
+//! not have when it had to decide what to snapshot. No door here substitutes them
+//! for relevance — [`row_relevance`] and [`anchor_relevance`] answer
+//! [`CorpusError::RelevanceNotRecorded`] for a version-1 row — so a
+//! relevance-dependent benchmark over an old capture re-captures it, and a
+//! read-driven benchmark says so at its own load call.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use alloy::primitives::{Address, U256};
 use serde_json::Value;
@@ -37,6 +58,93 @@ pub const TRACE_TAG: &str = "fanout-trace ";
 /// The recorded corpus the benchmarks are defined over.
 pub const DEFAULT_TRACE: &str = "/tmp/fanout_trace.log";
 
+/// The key naming a row's schema version.
+pub const VERSION_KEY: &str = "v";
+
+/// The key carrying a row's production relevance set.
+pub const RELEVANCE_KEY: &str = "relevance";
+
+/// The fan-out trace row's schema version, declared on every row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CorpusVersion {
+    /// The read walk only: no pre-simulation relevance exists in the wire, so a
+    /// version-1 row answers a read-driven replay and nothing else.
+    V1,
+    /// The read walk beside the production `relevance` set the simulation seam
+    /// derived from the candidate's path and the deployment's settlement facts
+    /// before the candidate ran.
+    V2,
+}
+
+impl CorpusVersion {
+    /// The version every current capture writes.
+    pub const CURRENT: Self = Self::V2;
+
+    /// The integer the `v` key carries.
+    #[must_use]
+    pub const fn number(self) -> u64 {
+        match self {
+            Self::V1 => 1,
+            Self::V2 => 2,
+        }
+    }
+
+    /// The version a `v` value names, when this reader knows it.
+    #[must_use]
+    pub const fn from_number(number: u64) -> Option<Self> {
+        match number {
+            1 => Some(Self::V1),
+            2 => Some(Self::V2),
+            _ => None,
+        }
+    }
+
+    /// Whether the version records the production relevance set.
+    #[must_use]
+    pub const fn records_relevance(self) -> bool {
+        matches!(self, Self::V2)
+    }
+
+    /// The label a report prints beside the scope its numbers were measured
+    /// under.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::V1 => "v1-reads-only",
+            Self::V2 => "v2-production-relevance",
+        }
+    }
+}
+
+impl fmt::Display for CorpusVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "v{}", self.number())
+    }
+}
+
+/// What a consumer asks of a recorded corpus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CorpusUse {
+    /// The benchmark replays the recorded read walk. A version-1 corpus
+    /// satisfies it: there is no relevance to read.
+    ReadDriven,
+    /// The benchmark scopes a snapshot by the production relevance set. Only a
+    /// version-2 corpus satisfies it.
+    RelevanceDependent,
+}
+
+impl CorpusUse {
+    /// The label a report prints beside the semantics its numbers were measured
+    /// under.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ReadDriven => "read-driven",
+            Self::RelevanceDependent => "relevance-dependent",
+        }
+    }
+}
+
 /// One recorded row's read groups: an address and the slots the trace lists
 /// beside it.
 pub type ReadGroups = Vec<(Address, Vec<U256>)>;
@@ -44,9 +152,30 @@ pub type ReadGroups = Vec<(Address, Vec<U256>)>;
 /// One tracked read identity.
 pub type Key = (Address, U256);
 
-/// One recorded candidate: the read walk the simulation seam drained, the wall
-/// it measured, and the relevance set the seam derived before the candidate ran.
-#[derive(Clone, Debug)]
+/// One row's recorded relevance, exactly as the row's schema version declares it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowRelevance {
+    /// A version-1 row: the wire carries no pre-simulation set.
+    NotRecorded,
+    /// A version-2 row: the seam's pre-simulation production set.
+    Production(Vec<Address>),
+}
+
+impl RowRelevance {
+    /// The schema version this field IS — a row cannot claim a version its shape
+    /// contradicts.
+    #[must_use]
+    pub const fn version(&self) -> CorpusVersion {
+        match self {
+            Self::NotRecorded => CorpusVersion::V1,
+            Self::Production(_) => CorpusVersion::V2,
+        }
+    }
+}
+
+/// One recorded candidate: the read walk the simulation seam drained, the wall it
+/// measured, and the relevance its schema version records.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recorded {
     /// The anchor the candidate was simulated at.
     pub block: u64,
@@ -54,70 +183,455 @@ pub struct Recorded {
     pub sim_ns: u64,
     /// The candidate's recorded read walk, in recorded order.
     pub reads: ReadGroups,
-    /// The candidate's PRODUCTION relevance set, as the seam derived it from the
-    /// path and settlement facts before simulation.
+    /// The relevance the row's schema version records: the seam's pre-simulation
+    /// production set for a version-2 row, nothing for a version-1 row. Never a
+    /// set derived from [`Self::reads`].
+    pub relevance: RowRelevance,
+}
+
+impl Recorded {
+    /// The schema version this row was written under.
+    #[must_use]
+    pub const fn version(&self) -> CorpusVersion {
+        self.relevance.version()
+    }
+
+    /// The row's production relevance set.
     ///
-    /// `None` on a row recorded before the field existed — an absence, never an
-    /// empty set (a candidate with no relevant address records `Some(vec![])`).
-    pub relevance: Option<Vec<Address>>,
+    /// # Errors
+    ///
+    /// [`CorpusError::RelevanceNotRecorded`] for a version-1 row: its recorded
+    /// read addresses are what the run turned out to read — an oracle the live
+    /// run did not have when it had to decide what to snapshot — so they are
+    /// never served in place of the set.
+    pub fn production_relevance(&self) -> Result<&[Address], CorpusError> {
+        match &self.relevance {
+            RowRelevance::Production(addresses) => Ok(addresses),
+            RowRelevance::NotRecorded => {
+                Err(CorpusError::RelevanceNotRecorded { block: self.block })
+            }
+        }
+    }
 }
 
-/// Parse one log line's trace row (the substring after `fanout-trace `).
-#[must_use]
-pub fn parse_trace_line(line: &str) -> Option<Recorded> {
-    let start = line.find(TRACE_TAG)? + TRACE_TAG.len();
-    let value: Value = serde_json::from_str(line[start..].trim()).ok()?;
-    let reads = value
-        .get("reads")?
-        .as_array()?
-        .iter()
-        .filter_map(|entry| {
-            let mut parts = entry.as_str()?.split('|');
-            let address = parts.next()?.parse::<Address>().ok()?;
-            let slots = parts
-                .next()?
-                .split(',')
-                .filter(|slot| !slot.is_empty())
-                .filter_map(|slot| slot.parse::<U256>().ok())
-                .collect();
-            Some((address, slots))
-        })
-        .collect();
-    // The field is optional by construction: every row recorded before it
-    // existed parses to `None`, which is what keeps an old corpus readable.
-    let relevance = match value.get("relevance") {
-        Some(entries) => Some(
-            entries
-                .as_array()?
-                .iter()
-                .filter_map(|entry| entry.as_str()?.parse::<Address>().ok())
-                .collect(),
-        ),
-        None => None,
-    };
-    Some(Recorded {
-        block: value.get("block")?.as_u64()?,
-        sim_ns: value.get("sim_ns")?.as_u64()?,
-        reads,
-        relevance,
-    })
+/// Why a recorded corpus cannot serve what its consumer asked of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CorpusError {
+    /// A row carries no `v` key at all.
+    MissingVersion,
+    /// A row's `v` names a schema this reader does not know.
+    UnknownVersion {
+        /// The version key's rendered value.
+        found: String,
+    },
+    /// A row's keys contradict the version it declares.
+    VersionShape {
+        /// The version the row declares.
+        version: CorpusVersion,
+        /// How its keys contradict it.
+        detail: &'static str,
+    },
+    /// A tagged row whose fields do not parse.
+    Malformed {
+        /// Which field, and what was wrong with it.
+        detail: String,
+    },
+    /// A corpus spans more than one schema version.
+    MixedVersions {
+        /// The version the corpus started with.
+        first: CorpusVersion,
+        /// The version that appears later.
+        found: CorpusVersion,
+    },
+    /// The corpus carries no trace row at all.
+    NoRows,
+    /// The corpus file could not be read.
+    Unreadable {
+        /// The transport error.
+        detail: String,
+    },
+    /// A relevance question reached a version-1 row.
+    RelevanceNotRecorded {
+        /// The anchor the row was recorded at.
+        block: u64,
+    },
+    /// A relevance-dependent consumer asked for a version-1 corpus.
+    ReadDrivenOnly {
+        /// The corpus's version.
+        version: CorpusVersion,
+    },
 }
 
-/// Load every recorded row, failing loudly when the corpus is absent.
+impl fmt::Display for CorpusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingVersion => f.write_str(
+                "a trace row carries no `v` schema version — an unversioned capture cannot be \
+                 replayed; re-capture it, or stamp each row with `\"v\":1` (read-driven) or \
+                 `\"v\":2` (production relevance) once its shape is known",
+            ),
+            Self::UnknownVersion { found } => write!(
+                f,
+                "a trace row declares schema version {found}, which this reader does not know \
+                 (it reads v1 and v2)"
+            ),
+            Self::VersionShape { version, detail } => write!(f, "a {version} row {detail}"),
+            Self::Malformed { detail } => write!(f, "a trace row did not parse: {detail}"),
+            Self::MixedVersions { first, found } => write!(
+                f,
+                "a corpus must pin one schema: {first} started it and {found} appears later"
+            ),
+            Self::NoRows => write!(f, "no `{TRACE_TAG}` row"),
+            Self::Unreadable { detail } => write!(f, "read the recorded fan-out trace: {detail}"),
+            Self::RelevanceNotRecorded { block } => write!(
+                f,
+                "block {block}: the row is v1 and records no production relevance — a \
+                 relevance-dependent replay cannot substitute the reads the run turned out to make"
+            ),
+            Self::ReadDrivenOnly { version } => write!(
+                f,
+                "the corpus is {version} (reads only) and a relevance-dependent replay needs v2 \
+                 rows that recorded the pre-simulation set"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CorpusError {}
+
+/// A corpus-level failure, with the file and line it was found at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorpusLoadError {
+    /// The corpus file.
+    pub path: String,
+    /// The one-based line, when the failure is a row rather than the file.
+    pub line: Option<usize>,
+    /// What was wrong.
+    pub error: CorpusError,
+}
+
+impl fmt::Display for CorpusLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.line {
+            Some(line) => write!(f, "{} line {line}: {}", self.path, self.error),
+            None => write!(f, "{}: {}", self.path, self.error),
+        }
+    }
+}
+
+impl std::error::Error for CorpusLoadError {}
+
+/// A recorded corpus: rows that pin one schema version, checked against the
+/// semantics its consumer declared.
+#[derive(Clone, Debug)]
+pub struct Corpus {
+    version: CorpusVersion,
+    rows: Vec<Recorded>,
+}
+
+impl Corpus {
+    /// Pin a row slice to one schema version and to `used`'s semantics.
+    ///
+    /// # Errors
+    ///
+    /// [`CorpusError::MixedVersions`] when the rows disagree,
+    /// [`CorpusError::NoRows`] for an empty slice, and
+    /// [`CorpusError::ReadDrivenOnly`] when a relevance-dependent consumer asks
+    /// for version-1 rows.
+    pub fn from_rows(rows: Vec<Recorded>, used: CorpusUse) -> Result<Self, CorpusError> {
+        let version = Self::check(&rows, used)?;
+        Ok(Self { version, rows })
+    }
+
+    /// The version a row slice pins, gated against the semantics `used` declares —
+    /// for a reader that keeps its own rows instead of handing them over.
+    ///
+    /// # Errors
+    ///
+    /// [`CorpusError::MixedVersions`] when the rows disagree,
+    /// [`CorpusError::NoRows`] for an empty slice, and
+    /// [`CorpusError::ReadDrivenOnly`] when a relevance-dependent consumer asks
+    /// for version-1 rows.
+    pub fn check<'a>(
+        rows: impl IntoIterator<Item = &'a Recorded>,
+        used: CorpusUse,
+    ) -> Result<CorpusVersion, CorpusError> {
+        let version = corpus_version(rows)?;
+        if used == CorpusUse::RelevanceDependent && !version.records_relevance() {
+            return Err(CorpusError::ReadDrivenOnly { version });
+        }
+        Ok(version)
+    }
+
+    /// The schema version every row pins.
+    #[must_use]
+    pub const fn version(&self) -> CorpusVersion {
+        self.version
+    }
+
+    /// The corpus's rows, in file order.
+    #[must_use]
+    pub fn rows(&self) -> &[Recorded] {
+        &self.rows
+    }
+
+    /// Take the rows, dropping the version they were already gated by.
+    #[must_use]
+    pub fn into_rows(self) -> Vec<Recorded> {
+        self.rows
+    }
+
+    /// The label a report prints for the scope its numbers were measured under.
+    #[must_use]
+    pub const fn scope_label(&self) -> &'static str {
+        self.version.label()
+    }
+}
+
+/// The one version a row slice pins — for a caller holding rows rather than a
+/// loaded [`Corpus`].
 ///
 /// # Errors
 ///
-/// A missing file or a file with no trace rows is a corpus failure, never an
-/// empty replay.
-pub fn load_rows(path: &str) -> Result<Vec<Recorded>, String> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        format!("read the recorded fan-out trace {path}: {error} (this benchmark has no corpus without it)")
-    })?;
-    let rows: Vec<Recorded> = text.lines().filter_map(parse_trace_line).collect();
-    if rows.is_empty() {
-        return Err(format!("no `{TRACE_TAG}` rows in {path}"));
+/// [`CorpusError::MixedVersions`] when the rows disagree, and
+/// [`CorpusError::NoRows`] for an empty slice.
+pub fn corpus_version<'a>(
+    rows: impl IntoIterator<Item = &'a Recorded>,
+) -> Result<CorpusVersion, CorpusError> {
+    pin(rows.into_iter().map(Recorded::version))
+}
+
+/// Pin one schema version across a stream of declared versions.
+///
+/// The single owner of "one corpus pins one schema": every reader, including one
+/// that keeps its own row type, pins through here rather than re-deriving the
+/// rule.
+///
+/// # Errors
+///
+/// [`CorpusError::MixedVersions`] when a later version differs from the first,
+/// and [`CorpusError::NoRows`] for an empty stream.
+pub fn pin(
+    versions: impl IntoIterator<Item = CorpusVersion>,
+) -> Result<CorpusVersion, CorpusError> {
+    let mut pinned: Option<CorpusVersion> = None;
+    for version in versions {
+        match pinned {
+            None => pinned = Some(version),
+            Some(first) if first != version => {
+                return Err(CorpusError::MixedVersions {
+                    first,
+                    found: version,
+                });
+            }
+            Some(_) => {}
+        }
     }
-    Ok(rows)
+    pinned.ok_or(CorpusError::NoRows)
+}
+
+/// The schema version a parsed trace-row object declares, checked against the
+/// semantics `used` declares — for a reader that parses its own fields out of the
+/// same JSON object.
+///
+/// The version key, the version's relevance shape, and the consumer's
+/// requirement are all this module's rules, so a private parser cannot drift from
+/// the corpus reader: an unversioned object, an unknown version, keys that
+/// contradict the version, and a v1 object under a relevance-dependent consumer
+/// are each the same typed [`CorpusError`] here as at [`load_corpus`].
+///
+/// # Errors
+///
+/// [`CorpusError::MissingVersion`], [`CorpusError::UnknownVersion`],
+/// [`CorpusError::VersionShape`], [`CorpusError::Malformed`], or
+/// [`CorpusError::ReadDrivenOnly`].
+pub fn check_row(value: &Value, used: CorpusUse) -> Result<CorpusVersion, CorpusError> {
+    let version = declared_version(value)?;
+    parse_relevance(version, value)?;
+    if used == CorpusUse::RelevanceDependent && !version.records_relevance() {
+        return Err(CorpusError::ReadDrivenOnly { version });
+    }
+    Ok(version)
+}
+
+/// Load a corpus, refusing any file whose rows do not pin one known schema
+/// version and whose version cannot serve `used`.
+///
+/// The loader tracks the pinned version itself only to name the offending line;
+/// the gate is [`Corpus::from_rows`]'s.
+///
+/// # Errors
+///
+/// A missing file, a row with no `v` key, a row naming a version this reader
+/// does not know, a row whose keys contradict its version, mixed versions, a file
+/// with no trace row, and a relevance-dependent request over a version-1 corpus —
+/// each a typed [`CorpusError`] wrapped with the file and line.
+pub fn load_corpus(path: &str, used: CorpusUse) -> Result<Corpus, CorpusLoadError> {
+    let text = std::fs::read_to_string(path).map_err(|error| CorpusLoadError {
+        path: path.to_string(),
+        line: None,
+        error: CorpusError::Unreadable {
+            detail: error.to_string(),
+        },
+    })?;
+    let mut rows: Vec<Recorded> = Vec::new();
+    let mut pinned: Option<CorpusVersion> = None;
+    for (index, line) in text.lines().enumerate() {
+        let row = parse_trace_line(line).map_err(|error| CorpusLoadError {
+            path: path.to_string(),
+            line: Some(index + 1),
+            error,
+        })?;
+        let Some(row) = row else { continue };
+        match pinned {
+            None => pinned = Some(row.version()),
+            Some(first) if first != row.version() => {
+                return Err(CorpusLoadError {
+                    path: path.to_string(),
+                    line: Some(index + 1),
+                    error: CorpusError::MixedVersions {
+                        first,
+                        found: row.version(),
+                    },
+                });
+            }
+            Some(_) => {}
+        }
+        rows.push(row);
+    }
+    Corpus::from_rows(rows, used).map_err(|error| CorpusLoadError {
+        path: path.to_string(),
+        line: None,
+        error,
+    })
+}
+
+/// Parse one log line's trace row (the substring after `fanout-trace `).
+///
+/// A line with no trace tag is `Ok(None)`: a capture interleaves unrelated log
+/// output, and only a tagged line makes a schema promise.
+///
+/// # Errors
+///
+/// A tagged row this reader cannot stand behind: no `v` key, an unknown `v`,
+/// keys that contradict the declared version, or a field that does not parse.
+pub fn parse_trace_line(line: &str) -> Result<Option<Recorded>, CorpusError> {
+    let Some(start) = line.find(TRACE_TAG) else {
+        return Ok(None);
+    };
+    let value: Value =
+        serde_json::from_str(line[start + TRACE_TAG.len()..].trim()).map_err(|error| {
+            CorpusError::Malformed {
+                detail: error.to_string(),
+            }
+        })?;
+    let version = declared_version(&value)?;
+    Ok(Some(Recorded {
+        block: integer(&value, "block")?,
+        sim_ns: integer(&value, "sim_ns")?,
+        reads: parse_reads(&value)?,
+        relevance: parse_relevance(version, &value)?,
+    }))
+}
+
+/// The version a row declares. An unversioned row is refused, never inferred
+/// from the keys it happens to carry.
+fn declared_version(value: &Value) -> Result<CorpusVersion, CorpusError> {
+    let Some(raw) = value.get(VERSION_KEY) else {
+        return Err(CorpusError::MissingVersion);
+    };
+    let Some(number) = raw.as_u64() else {
+        return Err(CorpusError::UnknownVersion {
+            found: raw.to_string(),
+        });
+    };
+    CorpusVersion::from_number(number).ok_or_else(|| CorpusError::UnknownVersion {
+        found: raw.to_string(),
+    })
+}
+
+/// One integer field of a row.
+fn integer(value: &Value, key: &str) -> Result<u64, CorpusError> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| CorpusError::Malformed {
+            detail: format!("no integer `{key}`"),
+        })
+}
+
+/// A row's read walk: `address|slot,slot` per entry, an empty slot list a
+/// trailing `|`.
+fn parse_reads(value: &Value) -> Result<ReadGroups, CorpusError> {
+    let entries = value
+        .get("reads")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CorpusError::Malformed {
+            detail: "no `reads` array".to_string(),
+        })?;
+    entries
+        .iter()
+        .map(|entry| {
+            let text = entry.as_str().ok_or_else(|| CorpusError::Malformed {
+                detail: "a `reads` entry is not a string".to_string(),
+            })?;
+            let (address, slots) = text.split_once('|').ok_or_else(|| CorpusError::Malformed {
+                detail: format!("a `reads` entry carries no `|`: {text}"),
+            })?;
+            let address = address
+                .parse::<Address>()
+                .map_err(|error| CorpusError::Malformed {
+                    detail: format!("a `reads` address: {error}"),
+                })?;
+            let slots = slots
+                .split(',')
+                .filter(|slot| !slot.is_empty())
+                .map(|slot| {
+                    slot.parse::<U256>()
+                        .map_err(|error| CorpusError::Malformed {
+                            detail: format!("a `reads` slot: {error}"),
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((address, slots))
+        })
+        .collect()
+}
+
+/// The relevance the declared version requires, or the typed refusal.
+fn parse_relevance(version: CorpusVersion, value: &Value) -> Result<RowRelevance, CorpusError> {
+    let entries = value.get(RELEVANCE_KEY);
+    match (version.records_relevance(), entries) {
+        (false, None) => Ok(RowRelevance::NotRecorded),
+        (false, Some(_)) => Err(CorpusError::VersionShape {
+            version,
+            detail: "carries a `relevance` key its schema does not define",
+        }),
+        (true, None) => Err(CorpusError::VersionShape {
+            version,
+            detail: "records no `relevance` set its schema requires",
+        }),
+        (true, Some(entries)) => {
+            let entries = entries.as_array().ok_or_else(|| CorpusError::Malformed {
+                detail: "`relevance` is not an array".to_string(),
+            })?;
+            let addresses = entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .as_str()
+                        .ok_or_else(|| CorpusError::Malformed {
+                            detail: "a `relevance` entry is not a string".to_string(),
+                        })?
+                        .parse::<Address>()
+                        .map_err(|error| CorpusError::Malformed {
+                            detail: format!("a `relevance` address: {error}"),
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(RowRelevance::Production(addresses))
+        }
+    }
 }
 
 /// Group the rows into fan-outs: one per recorded anchor, in file order.
@@ -179,8 +693,12 @@ pub fn read_call_counts(rows: &[Recorded]) -> BTreeMap<Key, u64> {
     counts
 }
 
-/// The rows' distinct candidate addresses, in first-seen order — an anchor's
-/// relevance set for the carry-forward's new-write rule.
+/// The rows' distinct recorded read addresses, in first-seen order.
+///
+/// This is what the run turned out to READ — the oracle leg of a paired
+/// measurement (`relevance_pairs`), never production relevance: a replay that
+/// scoped a snapshot with it would be filtering by an address it could only
+/// know after the read.
 #[must_use]
 pub fn candidate_addresses(rows: &[Recorded]) -> Vec<Address> {
     let mut seen = BTreeSet::new();
@@ -195,111 +713,35 @@ pub fn candidate_addresses(rows: &[Recorded]) -> Vec<Address> {
     ordered
 }
 
-/// Where a replay's relevance set came from — printed beside every set a report
-/// scopes a snapshot with, so an oracle-backed number can never be read as a
-/// production-derived one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RelevanceSource {
-    /// The row carried the set the simulation seam derived from the candidate's
-    /// path and settlement facts BEFORE simulation ran. Also the default for an
-    /// empty row slice: a fan-out with no candidates has nothing missing.
-    #[default]
-    Production,
-    /// The row predates the field. The recorded read addresses stand in for the
-    /// set the live run never recorded: an ORACLE, because they are what the run
-    /// turned out to read, not what it knew before it read it.
-    RecordedReadOracle,
-}
-
-impl RelevanceSource {
-    /// The label a report prints.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Production => "production",
-            Self::RecordedReadOracle => "recorded-read-oracle",
-        }
-    }
-
-    /// Whether the set is the pre-simulation production derivation.
-    #[must_use]
-    pub const fn is_production(self) -> bool {
-        matches!(self, Self::Production)
-    }
-}
-
-/// A relevance set and its provenance.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Relevance {
-    /// The distinct, first-seen-ordered addresses the candidate's execution can
-    /// reach through its path (and, for a hooked V4 hop, the hook itself).
-    pub addresses: Vec<Address>,
-    /// Which derivation produced [`Self::addresses`].
-    pub source: RelevanceSource,
-}
-
-/// One recorded candidate's relevance set.
+/// One recorded candidate's production relevance set.
 ///
-/// A row carrying the additive field answers with it verbatim
-/// ([`RelevanceSource::Production`]); a legacy row answers with its recorded read
-/// ADDRESSES ([`RelevanceSource::RecordedReadOracle`]), which is the only thing it
-/// has and is labelled as the oracle it is.
-#[must_use]
-pub fn row_relevance(row: &Recorded) -> Relevance {
-    match &row.relevance {
-        Some(addresses) => Relevance {
-            addresses: addresses.clone(),
-            source: RelevanceSource::Production,
-        },
-        None => Relevance {
-            addresses: candidate_addresses(std::slice::from_ref(row)),
-            source: RelevanceSource::RecordedReadOracle,
-        },
-    }
+/// # Errors
+///
+/// [`CorpusError::RelevanceNotRecorded`] for a version-1 row — see
+/// [`Recorded::production_relevance`].
+pub fn row_relevance(row: &Recorded) -> Result<&[Address], CorpusError> {
+    row.production_relevance()
 }
 
-/// An anchor's relevance set: the deduped union of its rows' relevance sets.
+/// An anchor's production relevance set: the deduped union of its rows' sets,
+/// in row order.
 ///
-/// One legacy row makes the union incomplete, and an incomplete set is not
-/// reported as production: the whole anchor answers with every recorded read
-/// address of every row ([`RelevanceSource::RecordedReadOracle`]). Reporting the
-/// partial production union instead would scope a snapshot by a set the live run
-/// could not have had.
-#[must_use]
-pub fn anchor_relevance(rows: &[Recorded]) -> Relevance {
-    if rows.iter().all(|row| row.relevance.is_some()) {
-        let mut seen = BTreeSet::new();
-        let mut addresses = Vec::new();
-        for row in rows {
-            for address in row.relevance.iter().flatten() {
-                if seen.insert(*address) {
-                    addresses.push(*address);
-                }
+/// # Errors
+///
+/// [`CorpusError::RelevanceNotRecorded`] naming the first version-1 row: a
+/// partial union would scope a snapshot by a set the live run could not have
+/// had.
+pub fn anchor_relevance(rows: &[Recorded]) -> Result<Vec<Address>, CorpusError> {
+    let mut seen = BTreeSet::new();
+    let mut addresses = Vec::new();
+    for row in rows {
+        for address in row_relevance(row)? {
+            if seen.insert(*address) {
+                addresses.push(*address);
             }
         }
-        return Relevance {
-            addresses,
-            source: RelevanceSource::Production,
-        };
     }
-    Relevance {
-        addresses: candidate_addresses(rows),
-        source: RelevanceSource::RecordedReadOracle,
-    }
-}
-
-/// The corpus-wide provenance: [`RelevanceSource::Production`] only when every
-/// row carries the production field, so a report can say which kind of set its
-/// numbers were scoped by.
-#[must_use]
-pub fn corpus_relevance_source<'a>(
-    rows: impl IntoIterator<Item = &'a Recorded>,
-) -> RelevanceSource {
-    if rows.into_iter().all(|row| row.relevance.is_some()) {
-        RelevanceSource::Production
-    } else {
-        RelevanceSource::RecordedReadOracle
-    }
+    Ok(addresses)
 }
 
 /// The corpus's set analysis: the counts a corpus description pins, computed
@@ -614,106 +1056,368 @@ pub fn universe(rows: &[Recorded]) -> (BTreeSet<Key>, u64, u64) {
 mod tests {
     use super::*;
 
-    /// A row in the current format: the seam's pre-simulation relevance set
-    /// rides beside the post-read walk.
-    const NEW_ROW: &str = r#"DEBUG [sim] fanout-trace {"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1"],"relevance":["0x1111111111111111111111111111111111111111","0x2222222222222222222222222222222222222222"]}"#;
+    /// A version-2 row: the seam's pre-simulation set beside the read walk.
+    const PRODUCTION_ROW: &str = r#"DEBUG [sim] fanout-trace {"v":2,"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1"],"relevance":["0x1111111111111111111111111111111111111111","0x2222222222222222222222222222222222222222"]}"#;
 
-    /// A row recorded before the field existed — every earlier corpus.
-    const LEGACY_ROW: &str = r#"DEBUG [sim] fanout-trace {"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1","0x3333333333333333333333333333333333333333|"]}"#;
+    /// A version-1 row: the read walk only, which is all a read-driven replay may
+    /// consume from it.
+    const READS_ONLY_ROW: &str = r#"DEBUG [sim] fanout-trace {"v":1,"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1","0x3333333333333333333333333333333333333333|"]}"#;
+
+    /// A capture written before the version key existed: its schema is unknown,
+    /// so it is refused rather than guessed at.
+    const UNVERSIONED_ROW: &str = r#"DEBUG [sim] fanout-trace {"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":["0x1111111111111111111111111111111111111111|0x1"],"relevance":["0x1111111111111111111111111111111111111111"]}"#;
+
+    /// A row claiming a schema this reader has never seen.
+    const UNKNOWN_ROW: &str = r#"DEBUG [sim] fanout-trace {"v":3,"block":9,"cand":"1@1","sim_ns":4,"verdict":"result","gas":7,"reads":[]}"#;
 
     fn address(byte: u8) -> Address {
         Address::new([byte; 20])
     }
 
-    /// The new field parses into the row's production relevance set, and the
-    /// recorded read walk is left exactly as it was.
+    /// Parse one fixture row, failing loudly when the fixture itself is wrong.
+    fn parse(line: &str) -> Recorded {
+        parse_trace_line(line)
+            .expect("the fixture row parses")
+            .expect("the fixture line carries a row")
+    }
+
+    /// The typed refusal one fixture row produces.
+    fn refusal(line: &str) -> CorpusError {
+        parse_trace_line(line).expect_err("the fixture row is refused")
+    }
+
+    /// Write one fixture corpus and return its path.
+    fn corpus_file(name: &str, text: &str) -> String {
+        let path =
+            std::env::temp_dir().join(format!("fanout_corpus_{}_{name}.log", std::process::id()));
+        std::fs::write(&path, text).expect("the fixture corpus writes");
+        path.to_str().expect("a utf-8 temp path").to_string()
+    }
+
+    /// A version-2 row parses its production set verbatim, and the recorded read
+    /// walk is left exactly as it was.
     #[test]
-    fn a_current_row_parses_its_production_relevance_set_beside_the_reads() {
-        let row = parse_trace_line(NEW_ROW).expect("the row parses");
+    fn a_version_two_row_parses_its_production_relevance_set_beside_the_reads() {
+        let row = parse(PRODUCTION_ROW);
+        assert_eq!(row.version(), CorpusVersion::V2);
         assert_eq!(
             row.relevance,
-            Some(vec![address(0x11), address(0x22)]),
+            RowRelevance::Production(vec![address(0x11), address(0x22)]),
             "the production set is the row's own, in the seam's order"
         );
         assert_eq!(row.reads.len(), 1, "the read walk is unchanged: {row:?}");
         assert_eq!(
-            row_relevance(&row),
-            Relevance {
-                addresses: vec![address(0x11), address(0x22)],
-                source: RelevanceSource::Production,
-            },
-            "a row that carries the field reports it as production, verbatim"
+            row_relevance(&row).expect("a v2 row answers"),
+            [address(0x11), address(0x22)],
+            "the row answers with the set it recorded"
+        );
+        assert_eq!(CorpusVersion::CURRENT, CorpusVersion::V2);
+        assert_eq!(
+            CorpusVersion::CURRENT.number(),
+            2,
+            "the number is the wire contract"
         );
     }
 
-    /// A legacy row parses unchanged, and the only relevance a replay can
-    /// recover from it is the recorded-read ADDRESSES — reported as the oracle
-    /// fallback, never as production relevance.
+    /// A version-1 row parses its read walk and refuses every relevance question:
+    /// its reads are what the run turned out to read, not the set the live run had
+    /// before it read.
     #[test]
-    fn a_legacy_row_parses_unchanged_and_its_fallback_is_labelled_an_oracle() {
-        let row = parse_trace_line(LEGACY_ROW).expect("the legacy row still parses");
-        assert_eq!(row.relevance, None, "an absent field is absent, not empty");
+    fn a_version_one_row_parses_its_reads_and_refuses_every_relevance_question() {
+        let row = parse(READS_ONLY_ROW);
+        assert_eq!(row.version(), CorpusVersion::V1);
+        assert_eq!(
+            row.relevance,
+            RowRelevance::NotRecorded,
+            "a version-1 row records no set"
+        );
         assert_eq!(row.reads.len(), 2, "the read walk parses as before");
-        let relevance = row_relevance(&row);
         assert_eq!(
-            relevance.addresses,
-            vec![address(0x11), address(0x33)],
-            "the fallback is the recorded read addresses, first-seen order"
+            row_relevance(&row),
+            Err(CorpusError::RelevanceNotRecorded { block: 9 }),
+            "no door substitutes the recorded reads for the set"
         );
         assert_eq!(
-            relevance.source,
-            RelevanceSource::RecordedReadOracle,
-            "a post-read address set is an oracle, not production relevance"
+            anchor_relevance(std::slice::from_ref(&row)),
+            Err(CorpusError::RelevanceNotRecorded { block: 9 }),
+            "an anchor built over one version-1 row is refused too"
         );
-        assert_eq!(relevance.source.label(), "recorded-read-oracle");
+        assert!(
+            !CorpusVersion::V1.records_relevance(),
+            "the version itself declares what it cannot supply"
+        );
     }
 
-    /// An anchor's set is the union of its rows' production sets. One legacy row
-    /// makes the union untrustworthy — the whole anchor falls back, so a partial
-    /// set can never be mistaken for the complete one.
+    /// A row with no `v` key is refused, and the refusal names both remedies.
     #[test]
-    fn an_anchor_unions_production_sets_and_falls_back_as_a_whole_on_any_legacy_row() {
-        let first = parse_trace_line(NEW_ROW).expect("parses");
-        let mut second = first.clone();
-        second.relevance = Some(vec![address(0x22), address(0x44)]);
-        let union = anchor_relevance(&[first.clone(), second]);
+    fn an_unversioned_row_is_refused_and_names_the_offline_migration() {
+        let error = refusal(UNVERSIONED_ROW);
+        assert_eq!(error, CorpusError::MissingVersion);
+        let message = error.to_string();
+        assert!(
+            message.contains("`v`") && message.contains("re-capture"),
+            "the refusal says what to do instead of guessing: {message}"
+        );
+        assert!(
+            message.contains("\"v\":1") && message.contains("\"v\":2"),
+            "both stampable versions are named: {message}"
+        );
+    }
+
+    /// A row naming a schema this reader does not know is refused with the value
+    /// it found, never parsed as the nearest version.
+    #[test]
+    fn an_unknown_version_is_refused_naming_the_version_it_found() {
         assert_eq!(
-            union,
-            Relevance {
-                addresses: vec![address(0x11), address(0x22), address(0x44)],
-                source: RelevanceSource::Production,
-            },
+            refusal(UNKNOWN_ROW),
+            CorpusError::UnknownVersion {
+                found: "3".to_string()
+            }
+        );
+        assert!(
+            CorpusVersion::from_number(0).is_none(),
+            "zero is not a version"
+        );
+    }
+
+    /// The keys must match the declared version in both directions: a version-1
+    /// row cannot smuggle a set its schema has no room for, and a version-2 row
+    /// cannot omit the set its schema requires.
+    #[test]
+    fn a_row_whose_keys_contradict_its_version_is_refused() {
+        let v1_with_relevance = r#"fanout-trace {"v":1,"block":3,"sim_ns":1,"reads":[],"relevance":["0x1111111111111111111111111111111111111111"]}"#;
+        assert_eq!(
+            refusal(v1_with_relevance),
+            CorpusError::VersionShape {
+                version: CorpusVersion::V1,
+                detail: "carries a `relevance` key its schema does not define",
+            }
+        );
+        let v2_without_relevance = r#"fanout-trace {"v":2,"block":3,"sim_ns":1,"reads":[]}"#;
+        assert_eq!(
+            refusal(v2_without_relevance),
+            CorpusError::VersionShape {
+                version: CorpusVersion::V2,
+                detail: "records no `relevance` set its schema requires",
+            }
+        );
+    }
+
+    /// A malformed read entry is a typed row failure, never a silently dropped
+    /// read that would shrink a benchmark's denominator.
+    #[test]
+    fn a_malformed_read_entry_is_refused_instead_of_dropped() {
+        let line = r#"fanout-trace {"v":1,"block":3,"sim_ns":1,"reads":["0xnot-an-address|0x1"]}"#;
+        assert!(matches!(refusal(line), CorpusError::Malformed { .. }));
+        assert_eq!(
+            parse_trace_line("a line without a trace row").expect("unrelated lines are skipped"),
+            None,
+            "an unrelated log line carries no candidate"
+        );
+    }
+
+    /// The load's semantics decide which versions it accepts: a read-driven
+    /// benchmark declares itself and takes either version, while a
+    /// relevance-dependent one is refused a version-1 corpus outright.
+    #[test]
+    fn the_declared_use_decides_which_versions_a_corpus_may_carry() {
+        let v2_file = corpus_file("v2", &format!("{PRODUCTION_ROW}\n"));
+        let v1_file = corpus_file("v1", &format!("{READS_ONLY_ROW}\n{READS_ONLY_ROW}\n"));
+
+        let read_driven_v1 = load_corpus(&v1_file, CorpusUse::ReadDriven)
+            .expect("a read-driven benchmark takes a version-1 corpus");
+        assert_eq!(read_driven_v1.version(), CorpusVersion::V1);
+        assert_eq!(read_driven_v1.rows().len(), 2);
+        assert_eq!(read_driven_v1.scope_label(), "v1-reads-only");
+
+        let read_driven_v2 = load_corpus(&v2_file, CorpusUse::ReadDriven)
+            .expect("a read-driven benchmark takes a version-2 corpus too");
+        assert_eq!(read_driven_v2.version(), CorpusVersion::V2);
+
+        let relevance = load_corpus(&v2_file, CorpusUse::RelevanceDependent)
+            .expect("a version-2 corpus serves a relevance-dependent replay");
+        assert_eq!(relevance.scope_label(), "v2-production-relevance");
+        assert_eq!(
+            anchor_relevance(relevance.rows()).expect("every row recorded its set"),
+            vec![address(0x11), address(0x22)]
+        );
+
+        let error = load_corpus(&v1_file, CorpusUse::RelevanceDependent)
+            .expect_err("a version-1 corpus cannot serve a relevance-dependent replay");
+        assert_eq!(
+            error.error,
+            CorpusError::ReadDrivenOnly {
+                version: CorpusVersion::V1
+            }
+        );
+        assert!(
+            error.path.contains("fanout_corpus_") && error.line.is_none(),
+            "a corpus-level refusal names the file, not a line: {error}"
+        );
+        assert!(error.to_string().contains("v1"), "{error}");
+    }
+
+    /// One file pins one schema. A later row declaring another is refused with the
+    /// line that breaks it.
+    #[test]
+    fn a_file_mixing_versions_is_refused_at_the_line_that_breaks_it() {
+        let path = corpus_file("mixed", &format!("{PRODUCTION_ROW}\n{READS_ONLY_ROW}\n"));
+        let error = load_corpus(&path, CorpusUse::ReadDriven)
+            .expect_err("a mixed corpus is refused even by a read-driven load");
+        assert_eq!(
+            error.error,
+            CorpusError::MixedVersions {
+                first: CorpusVersion::V2,
+                found: CorpusVersion::V1,
+            }
+        );
+        assert_eq!(error.line, Some(2), "the breaking line is named: {error}");
+
+        let rows = vec![parse(PRODUCTION_ROW), parse(READS_ONLY_ROW)];
+        assert_eq!(
+            Corpus::from_rows(rows, CorpusUse::ReadDriven).expect_err("mixed rows are refused"),
+            CorpusError::MixedVersions {
+                first: CorpusVersion::V2,
+                found: CorpusVersion::V1,
+            }
+        );
+    }
+
+    /// A file with no row, or no file at all, is a corpus failure — never an empty
+    /// replay that would report zero of everything.
+    #[test]
+    fn a_missing_corpus_or_a_corpus_with_no_row_is_a_failure() {
+        let empty = corpus_file("empty", "no trace rows here\n");
+        let error = load_corpus(&empty, CorpusUse::ReadDriven).expect_err("no row is a failure");
+        assert_eq!(error.error, CorpusError::NoRows);
+        let missing = load_corpus("/tmp/no_such_fanout_corpus.log", CorpusUse::ReadDriven)
+            .expect_err("a missing file is a failure");
+        assert!(matches!(missing.error, CorpusError::Unreadable { .. }));
+        assert!(
+            load_corpus(&empty, CorpusUse::RelevanceDependent).is_err(),
+            "an empty corpus cannot serve either semantics"
+        );
+    }
+
+    /// An anchor's production set is the deduped union of its rows' sets, in row
+    /// order, and one version-1 row refuses the whole union rather than reporting
+    /// a partial set as complete.
+    #[test]
+    fn an_anchor_unions_its_production_sets_and_refuses_one_version_one_row() {
+        let first = parse(PRODUCTION_ROW);
+        let mut second = first.clone();
+        second.relevance = RowRelevance::Production(vec![address(0x22), address(0x44)]);
+        assert_eq!(
+            anchor_relevance(&[first.clone(), second]).expect("both rows carry their set"),
+            vec![address(0x11), address(0x22), address(0x44)],
             "the anchor's set is the deduped union, in row order"
         );
 
-        let legacy = parse_trace_line(LEGACY_ROW).expect("parses");
-        let mixed = anchor_relevance(&[first, legacy]);
+        let reads_only = parse(READS_ONLY_ROW);
         assert_eq!(
-            mixed.source,
-            RelevanceSource::RecordedReadOracle,
-            "one legacy row means the anchor's production set is incomplete"
-        );
-        assert_eq!(
-            mixed.addresses,
-            vec![address(0x11), address(0x33)],
-            "the fallback is every recorded read address of the anchor — 0x22 \
-             was relevant but never read, so no oracle can recover it"
+            anchor_relevance(&[first, reads_only]),
+            Err(CorpusError::RelevanceNotRecorded { block: 9 }),
+            "one version-1 row means the anchor's production set is incomplete"
         );
     }
 
-    /// The corpus-wide provenance: production only when no row needed the
-    /// fallback. A report can then say which kind of number it is printing.
+    /// A parsed row object is gated by the same rules as a loaded corpus, so a
+    /// reader that parses its own fields cannot drift: read-driven use takes
+    /// either version, relevance-dependent use refuses v1, and the version key
+    /// and relevance shape are still enforced.
     #[test]
-    fn the_corpus_relevance_source_reports_a_single_legacy_row() {
-        let current = parse_trace_line(NEW_ROW).expect("parses");
-        let legacy = parse_trace_line(LEGACY_ROW).expect("parses");
+    fn a_parsed_row_object_is_gated_by_the_same_rules_as_a_loaded_corpus() {
+        let object = |version: &str, relevance: &str| -> Value {
+            serde_json::from_str(&format!(
+                r#"{{"v":{version},"block":1,"sim_ns":1,"reads":[]{relevance}}}"#
+            ))
+            .expect("the fixture object parses")
+        };
+        let v2 = object("2", r#","relevance":[]"#);
+        let v1 = object("1", "");
+        let v1_with_relevance = object("1", r#","relevance":[]"#);
+        let v2_without_relevance = object("2", "");
+        let unversioned = serde_json::from_str::<Value>(r#"{"block":1,"sim_ns":1,"reads":[]}"#)
+            .expect("the fixture object parses");
+        let unknown = object("3", "");
+
         assert_eq!(
-            corpus_relevance_source(std::slice::from_ref(&current)),
-            RelevanceSource::Production
+            check_row(&v2, CorpusUse::ReadDriven).expect("v2 serves a read-driven replay"),
+            CorpusVersion::V2
         );
         assert_eq!(
-            corpus_relevance_source(&[current, legacy]),
-            RelevanceSource::RecordedReadOracle
+            check_row(&v1, CorpusUse::ReadDriven).expect("v1 serves a read-driven replay"),
+            CorpusVersion::V1
         );
+        assert_eq!(
+            check_row(&v1, CorpusUse::RelevanceDependent),
+            Err(CorpusError::ReadDrivenOnly {
+                version: CorpusVersion::V1
+            }),
+            "a v1 object cannot serve a relevance-dependent reader"
+        );
+        assert_eq!(
+            check_row(&unversioned, CorpusUse::ReadDriven),
+            Err(CorpusError::MissingVersion)
+        );
+        assert_eq!(
+            check_row(&unknown, CorpusUse::ReadDriven),
+            Err(CorpusError::UnknownVersion {
+                found: "3".to_string()
+            })
+        );
+        assert!(matches!(
+            check_row(&v1_with_relevance, CorpusUse::ReadDriven),
+            Err(CorpusError::VersionShape {
+                version: CorpusVersion::V1,
+                ..
+            })
+        ));
+        assert!(matches!(
+            check_row(&v2_without_relevance, CorpusUse::ReadDriven),
+            Err(CorpusError::VersionShape {
+                version: CorpusVersion::V2,
+                ..
+            })
+        ));
+    }
+
+    /// The one-schema-per-corpus rule has a single owner, and a private reader's
+    /// version stream pins through it: a mixed stream is the same typed refusal a
+    /// loaded corpus gives.
+    #[test]
+    fn a_version_stream_pins_through_the_one_owner_and_refuses_a_mix() {
+        assert_eq!(
+            pin([CorpusVersion::V2, CorpusVersion::V2]).expect("one version pins"),
+            CorpusVersion::V2
+        );
+        assert_eq!(
+            corpus_version(&[parse(PRODUCTION_ROW), parse(PRODUCTION_ROW)]).expect("pins"),
+            CorpusVersion::V2
+        );
+        assert_eq!(
+            pin([CorpusVersion::V1, CorpusVersion::V2]),
+            Err(CorpusError::MixedVersions {
+                first: CorpusVersion::V1,
+                found: CorpusVersion::V2,
+            })
+        );
+        assert_eq!(
+            pin(std::iter::empty::<CorpusVersion>()),
+            Err(CorpusError::NoRows)
+        );
+    }
+
+    /// The labels a report prints name the scope its numbers were measured under,
+    /// and the two versions cannot be confused for one another.
+    #[test]
+    fn the_version_labels_name_the_scope_a_report_prints() {
+        assert_eq!(CorpusVersion::V1.label(), "v1-reads-only");
+        assert_eq!(CorpusVersion::V2.label(), "v2-production-relevance");
+        assert_ne!(CorpusVersion::V1.label(), CorpusVersion::V2.label());
+        assert_eq!(CorpusUse::ReadDriven.label(), "read-driven");
+        assert_eq!(CorpusUse::RelevanceDependent.label(), "relevance-dependent");
+        assert_eq!(CorpusVersion::V1.to_string(), "v1");
+        assert_eq!(CorpusVersion::V2.to_string(), "v2");
     }
 }

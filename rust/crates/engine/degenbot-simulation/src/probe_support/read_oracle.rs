@@ -15,9 +15,11 @@
 //! candidate's path and the deployment's settlement facts BEFORE the candidate
 //! ran ([`row_relevance`]). Building a scope from the row's recorded reads
 //! instead would replay an oracle the live run never had: a captured read is
-//! only known after it happened. A legacy row has no such set, and its fallback
-//! is labelled [`RelevanceSource::RecordedReadOracle`] so a report can never
-//! print it as production relevance.
+//! only known after it happened. Only a version-2 corpus carries such a set, so
+//! this replay is a [`CorpusUse::RelevanceDependent`] consumer and a corpus that
+//! cannot supply the set is refused rather than replayed as an oracle.
+//!
+//! [`CorpusUse::RelevanceDependent`]: super::recorded_corpus::CorpusUse::RelevanceDependent
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,7 +27,8 @@ use alloy::primitives::{Address, U256};
 use serde_json::Value;
 
 use super::recorded_corpus::{
-    anchor_keys, parse_trace_line, row_relevance, Recorded, Relevance, RelevanceSource, TRACE_TAG,
+    anchor_keys, parse_trace_line, row_relevance, Corpus, CorpusError, CorpusUse, CorpusVersion,
+    Recorded, TRACE_TAG,
 };
 
 /// One tracked read identity.
@@ -53,27 +56,51 @@ fn candidate_of(line: &str) -> Option<String> {
 }
 
 /// Load every recorded row beside its candidate identity, failing loudly when
-/// the corpus is absent or carries no trace rows.
+/// the corpus is absent, cannot serve `used`, or carries no trace rows.
+///
+/// The pinned version is tracked here only to name the line that breaks a
+/// single-schema corpus; the gate is [`Corpus::check`]'s, the same one a
+/// relevance-dependent replay applies everywhere else.
 ///
 /// # Errors
 ///
-/// A missing file, or a file with no parseable `fanout-trace` row, is a corpus
-/// failure rather than an empty replay.
-pub fn load_tagged_rows(path: &str) -> Result<Vec<TaggedRow>, String> {
+/// A missing file, a row this reader refuses (no schema version, an unknown one,
+/// or keys that contradict it), a row with no `cand` field, a file with no
+/// parseable `fanout-trace` row, a corpus mixing schema versions, or a corpus
+/// that cannot serve `used` — a corpus failure, never an empty replay.
+pub fn load_tagged_rows(path: &str, used: CorpusUse) -> Result<Vec<TaggedRow>, String> {
     let text = std::fs::read_to_string(path).map_err(|error| {
         format!("read the recorded fan-out trace {path}: {error} (this replay has no corpus without it)")
     })?;
-    let rows: Vec<TaggedRow> = text
-        .lines()
-        .filter_map(|line| {
-            let row = parse_trace_line(line)?;
-            let candidate = candidate_of(line)?;
-            Some(TaggedRow { candidate, row })
-        })
-        .collect();
+    let mut rows: Vec<TaggedRow> = Vec::new();
+    let mut pinned: Option<CorpusVersion> = None;
+    for (index, line) in text.lines().enumerate() {
+        let row = parse_trace_line(line)
+            .map_err(|error| format!("{path} line {}: {error}", index + 1))?;
+        let Some(row) = row else { continue };
+        match pinned {
+            None => pinned = Some(row.version()),
+            Some(first) if first != row.version() => {
+                return Err(format!(
+                    "{path} line {}: {}",
+                    index + 1,
+                    CorpusError::MixedVersions {
+                        first,
+                        found: row.version(),
+                    }
+                ));
+            }
+            Some(_) => {}
+        }
+        let candidate = candidate_of(line)
+            .ok_or_else(|| format!("{path} line {}: the row carries no `cand` field", index + 1))?;
+        rows.push(TaggedRow { candidate, row });
+    }
     if rows.is_empty() {
         return Err(format!("no `{TRACE_TAG}` rows in {path}"));
     }
+    Corpus::check(rows.iter().map(|tagged| &tagged.row), used)
+        .map_err(|error| format!("{path}: {error}"))?;
     Ok(rows)
 }
 
@@ -83,8 +110,9 @@ pub fn load_tagged_rows(path: &str) -> Result<Vec<TaggedRow>, String> {
 pub struct SelectedRow {
     /// The candidate identity (`cand`) the row was recorded under.
     pub candidate: String,
-    /// The row's production relevance set, or its labelled oracle fallback.
-    pub relevance: Relevance,
+    /// The row's production relevance set, as the seam derived it before the
+    /// candidate ran. A selection never carries a set derived from the reads.
+    pub relevance: Vec<Address>,
     /// The row's distinct recorded read identities, sorted.
     pub keys: Vec<Key>,
 }
@@ -136,7 +164,7 @@ impl Selection {
         self.anchors
             .iter()
             .flat_map(|anchor| anchor.rows.iter())
-            .flat_map(|row| row.relevance.addresses.iter().copied())
+            .flat_map(|row| row.relevance.iter().copied())
             .collect()
     }
 
@@ -157,17 +185,6 @@ impl Selection {
             .into_iter()
             .map(|(address, _)| address)
             .collect()
-    }
-
-    /// Selected rows whose relevance set is the recorded-read oracle fallback
-    /// rather than the pre-simulation production derivation.
-    #[must_use]
-    pub fn oracle_rows(&self) -> usize {
-        self.anchors
-            .iter()
-            .flat_map(|anchor| anchor.rows.iter())
-            .filter(|row| row.relevance.source == RelevanceSource::RecordedReadOracle)
-            .count()
     }
 }
 
@@ -237,8 +254,10 @@ fn spread(len: usize, wanted: usize) -> Vec<usize> {
 ///
 /// # Errors
 ///
-/// A zero anchor or row budget, or a corpus with no row, has nothing to
-/// replay.
+/// A zero anchor or row budget, or a corpus with no row, has nothing to replay;
+/// and a selected row that records no production relevance is refused — this
+/// replay scopes a snapshot by the pre-simulation set, and a corpus that cannot
+/// supply it is re-captured, never replayed through its recorded reads.
 pub fn select(
     rows: &[TaggedRow],
     anchors_wanted: usize,
@@ -261,21 +280,21 @@ pub fn select(
     for pick in spread(blocks.len(), anchors_wanted) {
         let block = blocks[pick];
         let indices = &by_block[&block];
-        let rows = pick_rows(rows, indices, rows_per_anchor)
-            .into_iter()
-            .map(|index| {
-                let tagged = &rows[index];
-                SelectedRow {
-                    candidate: tagged.candidate.clone(),
-                    relevance: row_relevance(&tagged.row),
-                    keys: key_set(&tagged.row).into_iter().collect(),
-                }
-            })
-            .collect();
+        let mut picked: Vec<SelectedRow> = Vec::new();
+        for index in pick_rows(rows, indices, rows_per_anchor) {
+            let tagged = &rows[index];
+            picked.push(SelectedRow {
+                candidate: tagged.candidate.clone(),
+                relevance: row_relevance(&tagged.row)
+                    .map_err(|error| error.to_string())?
+                    .to_vec(),
+                keys: key_set(&tagged.row).into_iter().collect(),
+            });
+        }
         anchors.push(SelectedAnchor {
             block,
             fanout: indices.len(),
-            rows,
+            rows: picked,
         });
     }
     Ok(Selection { anchors })
@@ -427,11 +446,9 @@ pub fn selection_material(selection: &Selection) -> String {
         lines.push(format!("{}:{}", anchor.block, anchor.fanout));
         for row in &anchor.rows {
             lines.push(format!(
-                "  {} {} {}",
+                "  {} {}",
                 row.candidate,
-                row.relevance.source.label(),
                 row.relevance
-                    .addresses
                     .iter()
                     .map(|address| format!("{address:#x}"))
                     .collect::<Vec<_>>()

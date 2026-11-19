@@ -26,6 +26,17 @@ unattributed rather than assigned to a fan-out by block number — that is what
 keeps the inline hook re-quote arm's rows out of a dispatch fan-out's lane.
 `bal-head {...}` is a row family an old capture simply does not have.
 
+# The trace schema version
+
+Every `fanout-trace` row names the schema it was written under (`"v"`), and the
+version is never inferred from which keys a row happens to carry. This analysis
+computes relevance coverage, so it is relevance-DEPENDENT: it accepts v2 (the
+read walk beside the pre-simulation set) and raises `TraceSchemaError` for a v1
+row, an unversioned row, an unknown version, and a capture that mixes versions —
+a v1 row's recorded reads are an oracle, never the set the run had before it
+read. `_trace_row` takes `version` and `relevance` so a pin can hand-build each
+refused shape.
+
 The literals below are exactly what the emitters write: the Rust rows are pinned
 by `degenbot-arbitrage`'s `fanout_trace`/`sim_metrics` tests and
 `degenbot-simulation`'s `bal_heads::tests`, and the Python pins here consume the
@@ -42,6 +53,7 @@ import pytest
 from tests.repo_script import load_script
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from types import ModuleType
 
 
@@ -55,7 +67,7 @@ def analysis() -> ModuleType:
 
 
 TRACE_LINE = (
-    'DEBUG [sim] fanout-trace {"block":26382751,"cand":"47821@1","sim_ns":279587028,'
+    'DEBUG [sim] fanout-trace {"v":2,"block":26382751,"cand":"47821@1","sim_ns":279587028,'
     '"verdict":"none","gas":0,"reads":['
     '"0x556b9306565093c855aea9ae92a594704c2cd59e|0xd,0x10,0x11",'
     '"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2|0x1a2d"],'
@@ -116,7 +128,7 @@ LAB_ATTRIBUTED = (
 )
 
 TRACE_ATTRIBUTED = (
-    'DEBUG [sim] fanout-trace {"block":26382800,"cand":"47821@1","sim_ns":279587028,'
+    'DEBUG [sim] fanout-trace {"v":2,"block":26382800,"cand":"47821@1","sim_ns":279587028,'
     '"verdict":"none","gas":0,"reads":['
     '"0x556b9306565093c855aea9ae92a594704c2cd59e|0xd,0x10,0x11"],'
     '"relevance":["0x556b9306565093c855aea9ae92a594704c2cd59e"],"fanout":41}'
@@ -150,7 +162,7 @@ def test_a_trace_row_parses_its_block_candidate_verdict_and_read_walk(analysis: 
 
 def test_a_trace_row_with_an_empty_read_walk_still_parses(analysis: ModuleType) -> None:
     line = (
-        'DEBUG [sim] fanout-trace {"block":7,"cand":"42-1","sim_ns":9,"verdict":"result",'
+        'DEBUG [sim] fanout-trace {"v":2,"block":7,"cand":"42-1","sim_ns":9,"verdict":"result",'
         '"gas":3,"reads":[],"relevance":["0x1111111111111111111111111111111111111111"]}'
     )
 
@@ -262,18 +274,122 @@ def test_relevance_coverage_counts_the_pre_simulation_addresses_the_reads_carrie
     analysis: ModuleType,
 ) -> None:
     full = analysis.parse_trace_line(
-        'DEBUG [sim] fanout-trace {"block":1,"cand":"1@1","sim_ns":1,"verdict":"none","gas":0,'
-        '"reads":["0xaa|","0xbb|","0xcc|"],"relevance":["0xaa","0xbb","0xcc","0xdd"]}'
+        'DEBUG [sim] fanout-trace {"v":2,"block":1,"cand":"1@1","sim_ns":1,"verdict":"none",'
+        '"gas":0,"reads":["0xaa|","0xbb|","0xcc|"],"relevance":["0xaa","0xbb","0xcc","0xdd"]}'
     )
     assert full is not None
     assert analysis.relevance_coverage(full) == pytest.approx(0.75)
 
     no_relevance = analysis.parse_trace_line(
-        'DEBUG [sim] fanout-trace {"block":1,"cand":"1@1","sim_ns":1,"verdict":"none","gas":0,'
-        '"reads":["0xaa|"],"relevance":[]}'
+        'DEBUG [sim] fanout-trace {"v":2,"block":1,"cand":"1@1","sim_ns":1,"verdict":"none",'
+        '"gas":0,"reads":["0xaa|"],"relevance":[]}'
     )
     assert no_relevance is not None
     assert analysis.relevance_coverage(no_relevance) == 1.0
+
+
+def test_a_trace_row_without_a_schema_version_is_refused_with_both_remedies(
+    analysis: ModuleType,
+) -> None:
+    with pytest.raises(analysis.TraceSchemaError) as raised:
+        analysis.parse_trace_line(_trace_row(1, "1@1", 1, None, version=None))
+
+    message = str(raised.value)
+    assert '"v":1' in message
+    assert '"v":2' in message
+    assert "re-capture" in message, "the refusal says what to do instead of guessing"
+
+
+def test_an_unknown_schema_version_is_refused_naming_the_version_it_found(
+    analysis: ModuleType,
+) -> None:
+    with pytest.raises(analysis.TraceSchemaError) as raised:
+        analysis.parse_trace_line(_trace_row(1, "1@1", 1, None, version=3))
+
+    assert "3" in str(raised.value)
+
+
+def test_a_row_whose_keys_contradict_its_version_is_refused(analysis: ModuleType) -> None:
+    with pytest.raises(analysis.TraceSchemaError):
+        analysis.parse_trace_line(_trace_row(1, "1@1", 1, None, version=1, relevance=("0xaa",)))
+    with pytest.raises(analysis.TraceSchemaError):
+        analysis.parse_trace_line(_trace_row(1, "1@1", 1, None, version=2, relevance=None))
+
+
+def test_a_v2_rows_relevance_entries_must_be_strings(analysis: ModuleType) -> None:
+    with pytest.raises(analysis.TraceSchemaError) as raised:
+        analysis.parse_trace_line(
+            'DEBUG [sim] fanout-trace {"v":2,"block":1,"cand":"1@1","sim_ns":1,'
+            '"verdict":"none","gas":0,"reads":[],"relevance":["0xaa",7]}'
+        )
+
+    message = str(raised.value)
+    assert "non-string" in message, "a coerced entry would be a silently invented identity"
+
+
+def test_a_v1_row_parses_but_supplies_no_production_relevance(analysis: ModuleType) -> None:
+    row = analysis.parse_trace_line(_trace_row(1, "1@1", 1, None, version=1, relevance=None))
+
+    assert row is not None
+    assert row.version == analysis.TRACE_VERSION_V1
+    assert row.relevance is None, "an absent set is an absence, never an empty set"
+    with pytest.raises(analysis.TraceSchemaError):
+        row.production_relevance()
+    with pytest.raises(analysis.TraceSchemaError):
+        analysis.relevance_coverage(row)
+
+
+def test_a_capture_mixing_versions_is_refused_at_the_line_that_breaks_it(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    path = _write_capture(
+        tmp_path / "mixed.log",
+        selections=[],
+        traces=[
+            _trace_row(100, "1@1", 1, 41),
+            _trace_row(101, "2@1", 1, 41, version=1, relevance=None),
+        ],
+    )
+
+    with pytest.raises(analysis.TraceSchemaError) as raised:
+        analysis.scan_capture(path)
+
+    message = str(raised.value)
+    assert "line 2" in message
+    assert "one trace schema" in message
+
+
+def test_a_read_driven_capture_is_refused_by_this_relevance_dependent_analysis(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    path = _write_capture(
+        tmp_path / "reads-only.log",
+        selections=[],
+        traces=[_trace_row(100, "1@1", 1, 41, version=1, relevance=None)],
+    )
+
+    with pytest.raises(analysis.TraceSchemaError) as raised:
+        analysis.scan_capture(path)
+
+    message = str(raised.value)
+    assert "reads only" in message
+    assert "relevance-dependent" in message
+
+
+def test_a_v2_capture_pins_its_version_and_reads_the_production_set(
+    analysis: ModuleType, tmp_path: Path
+) -> None:
+    path = _write_capture(
+        tmp_path / "production.log",
+        selections=[],
+        traces=[_trace_row(100, "1@1", 1, 41, relevance=("0xaa", "0xbb"))],
+    )
+
+    capture = analysis.scan_capture(path)
+
+    assert capture.trace_version == analysis.TRACE_VERSION_V2
+    assert [row.version for row in capture.trace] == [analysis.TRACE_VERSION_V2]
+    assert capture.trace[0].production_relevance() == ("0xaa", "0xbb")
 
 
 def _write_capture(
@@ -318,17 +434,28 @@ def _trace_row(
     sim_ns: int,
     fanout: int | None,
     reads: Sequence[str] | None = None,
+    *,
+    version: int | None = 2,
+    relevance: Sequence[str] | None = (),
 ) -> str:
     """One `fanout-trace` row; `fanout=None` is the unkeyed (pre-key) shape.
 
     `reads` entries are access-list entries in the emitter's `address|slot,slot`
-    shape, in the order the walk named them.
+    shape, in the order the walk named them. `version=None` OMITS the schema key
+    and `relevance=None` omits the set, so a pin can hand-build exactly the row
+    shape it wants refused.
     """
     key = f',"fanout":{fanout}' if fanout is not None else ""
+    schema = f'"v":{version},' if version is not None else ""
     walk = ",".join(f'"{entry}"' for entry in (reads or ()))
+    if relevance is None:
+        set_field = ""
+    else:
+        cells = ",".join(f'"{entry}"' for entry in relevance)
+        set_field = f',"relevance":[{cells}]'
     body = (
-        f'{{"block":{block},"cand":"{cand}","sim_ns":{sim_ns},"verdict":"none",'
-        f'"gas":0,"reads":[{walk}],"relevance":[]{key}}}'
+        f'{{{schema}"block":{block},"cand":"{cand}","sim_ns":{sim_ns},"verdict":"none",'
+        f'"gas":0,"reads":[{walk}]{set_field}{key}}}'
     )
     return f"DEBUG [sim] fanout-trace {body}"
 

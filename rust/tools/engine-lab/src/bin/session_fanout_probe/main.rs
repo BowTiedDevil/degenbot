@@ -120,7 +120,7 @@ use degenbot_simulation::probe_support::wall_ledger;
 
 use modeled_chain::{ChainState, StubChain};
 use probe_report::identity_gate;
-use recorded_corpus::{group_by_anchor, load_rows, Recorded, DEFAULT_TRACE};
+use recorded_corpus::{group_by_anchor, load_corpus, CorpusUse, Recorded, DEFAULT_TRACE};
 use session_drive::{drive_lanes, extend_account, LanePlan, LaneTrace, LegFacts};
 use wall_ledger::{Digests, Node, ReadKind, WallLedger};
 
@@ -776,7 +776,9 @@ fn report_gate(observed: Vec<(String, Digests)>, candidates: usize) -> Result<()
 
 async fn run() -> Result<(), String> {
     let config = Config::from_env();
-    let rows = load_rows(&config.trace)?;
+    let rows = load_corpus(&config.trace, CorpusUse::ReadDriven)
+        .map_err(|error| error.to_string())?
+        .into_rows();
     let (keys, first, last) = recorded_corpus::universe(&rows);
     let chain = Arc::new(ChainState::build(&keys, first, last)?);
     let fanouts = group_by_anchor(rows);

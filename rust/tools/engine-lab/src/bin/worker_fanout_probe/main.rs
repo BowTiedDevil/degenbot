@@ -82,6 +82,12 @@ use degenbot_engine_lab::bench_corpus::{
     bench_evm, deploy, envelope, CorpusError, Deployed, BENCH_BASE_FEE, BENCH_BLOCK, DEPLOYER,
 };
 
+// The recorded fan-out corpus's schema contract is the simulation crate's probe
+// support: this probe parses the fields it needs (candidate, verdict, gas) out of
+// the row object, but the version gate and the one-schema-per-file rule are that
+// module's.
+use degenbot_simulation::probe_support::recorded_corpus::{self, CorpusUse, CorpusVersion};
+
 alloy::sol! {
     /// The harness stubs' funding + seed surface (the bench corpus's stubs).
     interface BenchToken {
@@ -1447,6 +1453,9 @@ fn main() {
 /// `sim_ns` is the seam's measured wall (encode + sequence + assess).
 #[derive(Clone)]
 struct Scripted {
+    /// The schema version the row declared, gated by
+    /// `recorded_corpus::check_row` at parse time.
+    version: CorpusVersion,
     block: u64,
     cand: String,
     sim_ns: u64,
@@ -1455,46 +1464,104 @@ struct Scripted {
     reads: Vec<(Address, Vec<Word>)>,
 }
 
+/// One integer field of a trace row.
+fn trace_integer(value: &serde_json::Value, key: &str) -> Result<u64, String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("a fanout-trace row carries no integer `{key}`"))
+}
+
+/// One string field of a trace row.
+fn trace_text(value: &serde_json::Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("a fanout-trace row carries no string `{key}`"))
+}
+
 /// Parse one log line's trace row (the substring after `fanout-trace `).
-fn parse_trace_line(line: &str) -> Option<Scripted> {
-    let start = line.find("fanout-trace ")? + "fanout-trace ".len();
-    let value: serde_json::Value = serde_json::from_str(line[start..].trim()).ok()?;
-    let reads = value
-        .get("reads")?
-        .as_array()?
+///
+/// This replay is read-driven, so it accepts both schema versions — and asks the
+/// corpus reader's own gate (`recorded_corpus::check_row`) rather than
+/// re-deriving one: a row with no `v` key, an unknown version, or keys that
+/// contradict the version it declares is refused instead of replayed. `None`
+/// means the line carries no trace row at all.
+fn parse_trace_line(line: &str) -> Result<Option<Scripted>, String> {
+    let Some(start) = line.find("fanout-trace ") else {
+        return Ok(None);
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(line[start + "fanout-trace ".len()..].trim())
+            .map_err(|error| format!("a fanout-trace row did not parse: {error}"))?;
+    let version = recorded_corpus::check_row(&value, CorpusUse::ReadDriven)
+        .map_err(|error| error.to_string())?;
+    let entries = value
+        .get("reads")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "a fanout-trace row carries no `reads` array".to_string())?;
+    let reads = entries
         .iter()
-        .filter_map(|entry| {
-            let mut parts = entry.as_str()?.split('|');
-            let address = parts.next()?.parse::<Address>().ok()?;
-            let slots = parts
-                .next()?
+        .map(|entry| {
+            let text = entry
+                .as_str()
+                .ok_or_else(|| "a `reads` entry is not a string".to_string())?;
+            let (address, slots) = text
+                .split_once('|')
+                .ok_or_else(|| format!("a `reads` entry carries no `|`: {text}"))?;
+            let address = address
+                .parse::<Address>()
+                .map_err(|error| format!("a `reads` address: {error}"))?;
+            let slots = slots
                 .split(',')
                 .filter(|slot| !slot.is_empty())
-                .filter_map(|slot| slot.parse::<Word>().ok())
-                .collect();
-            Some((address, slots))
+                .map(|slot| {
+                    slot.parse::<Word>()
+                        .map_err(|error| format!("a `reads` slot: {error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((address, slots))
         })
-        .collect();
-    Some(Scripted {
-        block: value.get("block")?.as_u64()?,
-        cand: value.get("cand")?.as_str()?.to_string(),
-        sim_ns: value.get("sim_ns")?.as_u64()?,
-        verdict: value.get("verdict")?.as_str()?.to_string(),
-        gas: value.get("gas")?.as_u64()?,
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Some(Scripted {
+        version,
+        block: trace_integer(&value, "block")?,
+        cand: trace_text(&value, "cand")?,
+        sim_ns: trace_integer(&value, "sim_ns")?,
+        verdict: trace_text(&value, "verdict")?,
+        gas: trace_integer(&value, "gas")?,
         reads,
-    })
+    }))
 }
 
 /// Load trace rows from a log or JSONL file, grouped into fan-outs: one per
 /// recorded block in file order, or fixed-size chunks when
 /// `WORKER_FANOUT_TRACE_CHUNK` names a size (the dispatch's bimodal batch
 /// shape — rolling ones plus capped bursts — is recoverable either way).
+///
+/// One file pins one schema version (`recorded_corpus::pin`): a mixed or
+/// unversioned file is refused rather than replayed, whatever the chunking knob
+/// says.
 fn load_trace_groups(path: &str) -> Result<Vec<Vec<Scripted>>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-    let rows: Vec<Scripted> = text.lines().filter_map(parse_trace_line).collect();
+    let mut rows: Vec<Scripted> = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let row = parse_trace_line(line)
+            .map_err(|error| format!("{path} line {}: {error}", index + 1))?;
+        if let Some(row) = row {
+            rows.push(row);
+        }
+    }
     if rows.is_empty() {
         return Err(format!("no fanout-trace rows in {path}"));
     }
+    let version = recorded_corpus::pin(rows.iter().map(|row| row.version))
+        .map_err(|error| format!("{path}: {error}"))?;
+    println!(
+        "trace schema: {} — a read-driven replay reads the walk from either version",
+        version.label()
+    );
     if let Some(size) = std::env::var("WORKER_FANOUT_TRACE_CHUNK")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())

@@ -31,6 +31,7 @@ use probe_report::{
 use real_coverage::{RealBlock, RealCoverage};
 use recorded_corpus::{
     anchor_profiles, classify_density, segments_by_density, shape, DensityRegime, Recorded,
+    RowRelevance,
 };
 use wall_ledger::{Span, WallBucket};
 
@@ -53,7 +54,7 @@ fn row(block: u64, reads: &[(u8, &[u64])]) -> Recorded {
                 )
             })
             .collect(),
-        relevance: None,
+        relevance: RowRelevance::NotRecorded,
     }
 }
 

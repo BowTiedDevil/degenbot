@@ -156,9 +156,9 @@ use probe_report::{
 };
 use real_coverage::RealCoverage;
 use recorded_corpus::{
-    anchor_keys, anchor_profiles, anchor_relevance, corpus_relevance_source, group_by_anchor,
-    load_rows, read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape,
-    DensityRegime, Recorded, Relevance, Segment, DEFAULT_TRACE,
+    anchor_keys, anchor_profiles, anchor_relevance, corpus_version, group_by_anchor, load_corpus,
+    read_call_counts, segments_by_density, shape, universe, AnchorProfile, CorpusShape, CorpusUse,
+    DensityRegime, Recorded, Segment, DEFAULT_TRACE,
 };
 use session_drive::{drive_lanes, LanePlan, LaneTrace, LegFacts, ReadLane};
 use wall_ledger::{
@@ -806,24 +806,24 @@ async fn drive_carry(
     // The snapshot's tracked identities: the working set carried forward and
     // every final write applied so far — the hit classification's denominator.
     let mut snapshot_keys: BTreeSet<Key> = BTreeSet::new();
-    println!(
-        "relevance scope: {} (the carry's seed set)",
-        corpus_relevance_source(fanouts.iter().flat_map(|(_, rows)| rows.iter())).label()
-    );
+    let scope = corpus_version(fanouts.iter().flat_map(|(_, rows)| rows.iter()))
+        .map_err(|error| error.to_string())?;
+    println!("relevance scope: {} (the carry's seed set)", scope.label());
     for number in first..=last {
-        // The anchor's relevance set, as the trace records it: the production
-        // union the seam derived before simulation, or the labelled recorded-read
-        // oracle fallback for a legacy row.
-        let relevance = anchors
-            .get(&number)
-            .map_or_else(Relevance::default, |rows| anchor_relevance(rows));
+        // The anchor's relevance set as the trace records it: the production union
+        // the seam derived before simulation. A version-1 corpus has no such set,
+        // and the load above refused it rather than replaying its reads.
+        let relevance = match anchors.get(&number) {
+            Some(rows) => anchor_relevance(rows).map_err(|error| error.to_string())?,
+            None => Vec::new(),
+        };
         let unit_start = ledger.spans().len();
         let unit_started = Instant::now();
         let (hub, report) = cache
             .advance_bal(
                 ReadAnchor::identified(number, mode.hash(number)?),
                 mode.parent_hash(number)?,
-                &relevance.addresses,
+                &relevance,
             )
             .await;
         let advance_wall = unit_started.elapsed();
@@ -1771,8 +1771,10 @@ async fn capture_fixture(
 )]
 async fn run() -> Result<(), String> {
     let config = Config::from_env()?;
-    let rows = load_rows(&config.trace)?;
-    let (keys, first, last) = universe(&rows);
+    let recorded = load_corpus(&config.trace, CorpusUse::RelevanceDependent)
+        .map_err(|error| error.to_string())?;
+    let (keys, first, last) = universe(recorded.rows());
+    let rows = recorded.into_rows();
     let corpus = shape(&rows);
     let profiles = anchor_profiles(&rows);
     let segments = segments_by_density(&rows);

@@ -12,6 +12,7 @@
 //!
 //! | Field | Meaning |
 //! |---|---|
+//! | `v` | the row's schema version ([`TRACE_SCHEMA_VERSION`]) |
 //! | `block` | the anchor the candidate was simulated at |
 //! | `cand` | the candidate identity |
 //! | `sim_ns` | the wall the seam measured for the candidate |
@@ -30,27 +31,24 @@
 //! happened, so a relevance set built from `reads` cannot filter the snapshot it
 //! was supposed to filter.
 //!
-//! # Migration notes (the additive `relevance` field)
+//! # The schema version
 //!
-//! Rows written before this field existed carry `block`, `cand`, `sim_ns`,
-//! `verdict`, `gas` and `reads` only. Adding a key is backward compatible for a
-//! reader that treats it as optional, and `recorded_corpus`'s parser does exactly
-//! that: a legacy row parses unchanged with no relevance set, and a consumer that
-//! needs one falls back to the row's recorded read ADDRESSES, labelled as the
-//! ORACLE fallback it is
-//! (`recorded_corpus::RelevanceSource::RecordedReadOracle`) — never reported as
-//! production relevance. No existing field changed meaning, so an old reader of an
-//! old corpus and an old reader of a new corpus both keep working; a new consumer
-//! of an old corpus gets the labelled fallback.
+//! Every row names the schema it was written under: `v` is the version the
+//! corpus reader knows (`degenbot_simulation::probe_support::recorded_corpus`'s
+//! `CorpusVersion`), and [`TRACE_SCHEMA_VERSION`] is the value this emitter
+//! writes. The version is a reader's only statement of which questions a capture
+//! can answer, so it is written explicitly and never inferred from which keys a
+//! row happens to carry.
 //!
-//! A later capture should read `relevance` for the candidate's address set and
-//! treat the fallback as a measurement artifact: the production set is knowable
-//! before simulation, so a snapshot scope built from it is what a live run would
-//! actually have carried. Re-capturing a corpus with this field is therefore a
-//! pure upgrade — the `reads` stream is unchanged, so every existing read-driven
-//! benchmark keeps its numbers.
+//! A version-2 row carries the `relevance` field. A version-1 capture — the shape
+//! written before that field existed — recorded the read walk only: the corpus
+//! reader serves it to a read-driven benchmark that declares itself, and refuses
+//! it to a relevance-dependent replay rather than substituting the recorded reads
+//! for the pre-simulation set. A capture with no `v` key at all is refused as
+//! well; re-capturing it (this emitter always stamps the current version) is the
+//! migration.
 //!
-//! # Migration notes (the additive `fanout` field)
+//! # The `fanout` key
 //!
 //! That field joins one candidate's row to the fan-out that simulated it:
 //! `degenbot-arbitrage` mints one identifier per dispatch and echoes the same
@@ -63,20 +61,26 @@
 //! - a row emitted by a caller outside any fan-out — the inline hook re-quote
 //!   arm (`degenbot-python`'s `simulation/inline_hook.rs`) — carries no `fanout`
 //!   key at all, so it can never be attributed to a fan-out that did not
-//!   simulate it, and its row shape is byte-identical to a pre-`fanout` row;
-//! - rows written before this field existed also carry no key. A reader that
-//!   treats it as optional parses both, and a consumer that needs attribution
-//!   (the OFF/ON live report) reports those rows as UNATTRIBUTED rather than
-//!   guessing from a block number.
+//!   simulate it;
+//! - a version-1 row carries no key either. A reader that treats it as optional
+//!   parses both, and a consumer that needs attribution (the OFF/ON live report)
+//!   reports those rows as UNATTRIBUTED rather than guessing from a block number.
 //!
-//! No existing field changed meaning: the key is appended last, so an old reader
-//! of a new row keeps working and a new reader of an old row gets "unattributed"
-//! instead of an error.
+//! The key is appended last, so no reader has to know a sentinel to avoid
+//! mis-attributing a row.
 
 use alloy::primitives::Address;
 use alloy::rpc::types::eth::AccessList;
 
 use degenbot_core::diag_trace;
+
+/// The schema version this emitter stamps on every row.
+///
+/// The corpus reader's vocabulary for it is
+/// `degenbot_simulation::probe_support::recorded_corpus::CorpusVersion`; the two
+/// are one wire contract, pinned by this module's tests. A row that records the
+/// `relevance` set below is a version-2 row.
+pub const TRACE_SCHEMA_VERSION: u64 = 2;
 
 /// Build one trace row. The `reads` array holds one string per access-list
 /// entry: `address|slot,slot` (an empty slot list is a trailing `|`), so the
@@ -85,7 +89,7 @@ use degenbot_core::diag_trace;
 ///
 /// `relevance` is the candidate's PRE-simulation relevance set — the seam hands
 /// over [`degenbot_simulation::sim::path_relevance_addresses`]'s output, never a
-/// derivation from `access_list` (see the module's migration notes). It renders
+/// derivation from `access_list` (see the schema-version notes above). It renders
 /// as a bare `0x`-hex array in the order the derivation produced.
 ///
 /// `fanout` is the fan-out that simulated the candidate, or `None` for a caller
@@ -137,7 +141,7 @@ pub fn fanout_trace_row(
     let mut row = String::with_capacity(128 + reads.len() + relevant.len());
     let _ = write!(
         row,
-        "fanout-trace {{\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}],\"relevance\":[{relevant}]"
+        "fanout-trace {{\"v\":{TRACE_SCHEMA_VERSION},\"block\":{block},\"cand\":\"{cand}\",\"sim_ns\":{sim_ns},\"verdict\":\"{verdict}\",\"gas\":{gas},\"reads\":[{reads}],\"relevance\":[{relevant}]"
     );
     if let Some(fanout) = fanout {
         let _ = write!(row, ",\"fanout\":{fanout}");
@@ -185,7 +189,7 @@ mod tests {
     use degenbot_executor::compute_simulation_warmup_slots;
     use degenbot_simulation::sim::{PrefetchFacts, SettlementWarmup};
 
-    use super::fanout_trace_row;
+    use super::{fanout_trace_row, TRACE_SCHEMA_VERSION};
 
     const EXECUTOR: Address = Address::new([0xaa; 20]);
     const WETH: Address = Address::new([0xbb; 20]);
@@ -240,7 +244,7 @@ mod tests {
         let relevance = [Address::repeat_byte(0x11), Address::repeat_byte(0x22)];
         let row = fanout_trace_row(7, "42-1", 9, "result", 3, &access_list, &relevance, None);
         let expected = concat!(
-            "fanout-trace {\"block\":7,\"cand\":\"42-1\",\"sim_ns\":9,\"verdict\":\"result\",",
+            "fanout-trace {\"v\":2,\"block\":7,\"cand\":\"42-1\",\"sim_ns\":9,\"verdict\":\"result\",",
             "\"gas\":3,\"reads\":[\"0x1111111111111111111111111111111111111111|0x1,0x2\",",
             "\"0x2222222222222222222222222222222222222222|\"],",
             "\"relevance\":[\"0x1111111111111111111111111111111111111111\",",
@@ -249,10 +253,46 @@ mod tests {
         assert_eq!(row, expected);
     }
 
+    /// The emitted schema version and the reader's current version are one wire
+    /// contract: the row this emitter writes is the row the current corpus reader
+    /// accepts as version 2.
+    #[test]
+    fn the_emitted_version_is_the_corpus_readers_current_version() {
+        let version = degenbot_simulation::probe_support::recorded_corpus::CorpusVersion::CURRENT;
+        assert_eq!(
+            TRACE_SCHEMA_VERSION,
+            version.number(),
+            "the emitter's stamp and the reader's current version cannot drift"
+        );
+        assert!(
+            version.records_relevance(),
+            "the current row shape records the production set"
+        );
+        let row = fanout_trace_row(
+            1,
+            "1@1",
+            0,
+            "none",
+            0,
+            &AccessList::default(),
+            &[Address::repeat_byte(0x55)],
+            None,
+        );
+        let parsed = degenbot_simulation::probe_support::recorded_corpus::parse_trace_line(&row)
+            .expect("the emitted row parses")
+            .expect("the emitted line carries a row");
+        assert_eq!(parsed.version(), version);
+        assert_eq!(
+            parsed.production_relevance().expect("a v2 row answers"),
+            [Address::repeat_byte(0x55)],
+            "the emitted set is the one the reader reads back"
+        );
+    }
+
     /// One fan-out's identifier rides the row as a last-key `fanout` field, and a
     /// caller OUTSIDE any fan-out (the inline hook re-quote arm) omits the key
-    /// entirely: its row is byte-identical to a pre-`fanout` row, so no reader
-    /// can mistake it for a dispatch fan-out's candidate.
+    /// entirely, so no reader can mistake it for a dispatch fan-out's
+    /// candidate.
     #[test]
     fn the_fanout_key_joins_a_row_to_its_dispatch_and_an_unattributed_caller_omits_it() {
         let access_list = AccessList(Vec::new());
@@ -303,7 +343,7 @@ mod tests {
         assert_eq!(
             row,
             concat!(
-                "fanout-trace {\"block\":1,\"cand\":\"7-2\",\"sim_ns\":0,\"verdict\":\"none\",",
+                "fanout-trace {\"v\":2,\"block\":1,\"cand\":\"7-2\",\"sim_ns\":0,\"verdict\":\"none\",",
                 "\"gas\":0,\"reads\":[],",
                 "\"relevance\":[\"0x3333333333333333333333333333333333333333\"]}"
             )

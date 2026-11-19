@@ -26,7 +26,7 @@ use read_oracle::{
     compare, fingerprint, load_tagged_rows, plant_one_wei, select, selection_material,
     write_overlap, ReadAnswer, ReadOrigin, TaggedRow,
 };
-use recorded_corpus::{parse_trace_line, RelevanceSource};
+use recorded_corpus::{parse_trace_line, CorpusUse, RowRelevance};
 
 /// An address for one fixture account.
 fn address(tag: u8) -> Address {
@@ -54,6 +54,9 @@ fn row(
             .collect()
     });
     let mut trace = json!({
+        // A row carrying the production set IS a version-2 row; one without it is
+        // a version-1 row, and the reader holds it to that.
+        "v": if relevance.is_some() { 2 } else { 1 },
         "block": block,
         "cand": candidate,
         "sim_ns": 1,
@@ -65,7 +68,9 @@ fn row(
     let line = format!("DEBUG [sim] fanout-trace {trace}");
     TaggedRow {
         candidate: candidate.to_string(),
-        row: parse_trace_line(&line).expect("the fixture row parses"),
+        row: parse_trace_line(&line)
+            .expect("the fixture row parses")
+            .expect("the fixture line carries a row"),
     }
 }
 
@@ -104,7 +109,6 @@ fn the_selection_spreads_anchors_and_keeps_each_rows_production_relevance() {
     );
     assert_eq!(selection.rows(), 6);
     assert_eq!(selection.distinct_candidates().len(), 6);
-    assert_eq!(selection.oracle_rows(), 0);
     for anchor in &selection.anchors {
         assert_eq!(anchor.rows.len(), 2);
         assert_eq!(
@@ -113,12 +117,7 @@ fn the_selection_spreads_anchors_and_keeps_each_rows_production_relevance() {
         );
         for selected in &anchor.rows {
             assert_eq!(
-                selected.relevance.source,
-                RelevanceSource::Production,
-                "a row carrying the field keeps its production derivation"
-            );
-            assert_eq!(
-                selected.relevance.addresses,
+                selected.relevance,
                 vec![address(u8::try_from(anchor.block - 99).unwrap())],
                 "the relevance set is the row's own, never its recorded read walk"
             );
@@ -142,50 +141,73 @@ fn the_selection_spreads_anchors_and_keeps_each_rows_production_relevance() {
     );
 }
 
-/// A legacy row has no production set, and the selection carries it only with
-/// the recorded-read oracle label — never as production relevance.
+/// A version-1 row records no production relevance, so a selection refuses it
+/// rather than scoping a snapshot with the reads the run turned out to make.
 #[test]
-fn a_legacy_row_is_selected_only_with_its_recorded_read_oracle_label() {
+fn a_version_one_row_is_refused_by_a_relevance_dependent_selection() {
     let pool = address(0x11);
     let rows = vec![row(7, "1@1", &[(pool, &[1, 2])], None)];
-    let selection = select(&rows, 1, 1).expect("the legacy row selects");
-    assert_eq!(selection.oracle_rows(), 1);
-    let selected = &selection.anchors[0].rows[0];
-    assert_eq!(
-        selected.relevance.source,
-        RelevanceSource::RecordedReadOracle
-    );
-    assert_eq!(
-        selected.relevance.addresses,
-        vec![pool],
-        "the fallback is the recorded read addresses"
+    let error = select(&rows, 1, 1).expect_err("a version-1 row has no set to scope a replay with");
+    assert!(
+        error.contains("block 7") && error.contains("v1"),
+        "the refusal names the row and what it lacks: {error}"
     );
 }
 
 /// The loader keeps every row beside the candidate identity the corpus model
-/// drops, and a file with no trace row fails instead of replaying nothing.
+/// drops, applies the same version gate as every other corpus reader, and
+/// refuses a file with no trace row instead of replaying nothing.
 #[test]
-fn the_loader_reads_every_row_beside_its_candidate_and_refuses_an_empty_corpus() {
+fn the_loader_reads_every_row_beside_its_candidate_and_applies_the_version_gate() {
     let path =
         std::env::temp_dir().join(format!("bal_real_read_oracle_{}.log", std::process::id()));
     let pool = address(0x22);
-    let text = format!(
+    let production = format!(
         "a line that is not a trace row\n\
-         DEBUG [sim] fanout-trace {{\"block\":5,\"cand\":\"42@1\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[\"{pool:#x}|0x1\"],\"relevance\":[\"{pool:#x}\"]}}\n\
-         DEBUG [sim] fanout-trace {{\"block\":6,\"cand\":\"43@2\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[\"{pool:#x}|0x2\"]}}\n"
+         DEBUG [sim] fanout-trace {{\"v\":2,\"block\":5,\"cand\":\"42@1\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[\"{pool:#x}|0x1\"],\"relevance\":[\"{pool:#x}\"]}}\n\
+         DEBUG [sim] fanout-trace {{\"v\":2,\"block\":6,\"cand\":\"43@2\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[\"{pool:#x}|0x2\"],\"relevance\":[]}}\n"
     );
-    std::fs::write(&path, text).expect("the fixture file writes");
-    let loaded =
-        load_tagged_rows(path.to_str().expect("a utf-8 temp path")).expect("the corpus loads");
+    std::fs::write(&path, production).expect("the fixture file writes");
+    let loaded = load_tagged_rows(
+        path.to_str().expect("a utf-8 temp path"),
+        CorpusUse::RelevanceDependent,
+    )
+    .expect("a version-2 corpus loads");
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded[0].candidate, "42@1");
     assert_eq!(loaded[1].candidate, "43@2");
     assert_eq!(loaded[1].row.block, 6);
-    assert_eq!(loaded[0].row.relevance, Some(vec![pool]));
+    assert_eq!(
+        loaded[0].row.relevance,
+        RowRelevance::Production(vec![pool])
+    );
+    assert_eq!(
+        loaded[1].row.relevance,
+        RowRelevance::Production(Vec::new()),
+        "a v2 row with no relevant address records an empty set, not an absence"
+    );
+
+    // One corpus pins one schema: the second row's version is refused at its own
+    // line, never merged into the first row's schema.
+    let mixed = "DEBUG [sim] fanout-trace {\"v\":2,\"block\":5,\"cand\":\"42@1\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[],\"relevance\":[]}\n\
+         DEBUG [sim] fanout-trace {\"v\":1,\"block\":6,\"cand\":\"43@2\",\"sim_ns\":1,\"verdict\":\"none\",\"gas\":0,\"reads\":[]}\n";
+    std::fs::write(&path, mixed).expect("the mixed fixture writes");
+    let error = load_tagged_rows(
+        path.to_str().expect("a utf-8 temp path"),
+        CorpusUse::ReadDriven,
+    )
+    .expect_err("a mixed corpus is refused even by a read-driven load");
+    assert!(
+        error.contains("line 2") && error.contains("one schema"),
+        "the refusal names the line that breaks the corpus: {error}"
+    );
 
     std::fs::write(&path, "no trace rows here\n").expect("the empty fixture writes");
-    let error = load_tagged_rows(path.to_str().expect("a utf-8 temp path"))
-        .expect_err("a corpus with no row is a failure");
+    let error = load_tagged_rows(
+        path.to_str().expect("a utf-8 temp path"),
+        CorpusUse::RelevanceDependent,
+    )
+    .expect_err("a corpus with no row is a failure");
     assert!(
         error.contains("no `fanout-trace "),
         "unexpected error: {error}"

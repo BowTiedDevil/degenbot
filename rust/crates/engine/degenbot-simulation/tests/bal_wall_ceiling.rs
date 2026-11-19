@@ -40,7 +40,7 @@ use probe_report::{
 use real_coverage::{fold_writes, RealBlock, RealCoverage};
 use recorded_corpus::{
     anchor_keys, candidate_addresses, group_by_anchor, parse_trace_line, read_call_counts,
-    universe, Recorded,
+    universe, Recorded, RowRelevance,
 };
 use wall_ledger::{
     completion_stats, reconcile, Node, ReadKind, Span, WallBucket, WallLedger, WallReport,
@@ -348,14 +348,17 @@ fn hit_classification_prefers_the_anchor_s_final_write_hits_over_carried_hits() 
 
 #[test]
 fn the_corpus_parser_reads_the_trace_row_and_ignores_unrelated_lines() {
-    let line = r#"DEBUG [sim] fanout-trace {"block":26375033,"cand":"45853@1","sim_ns":24848099,"reads":["0x000000000004444c5dc75cb358380d2e3de08a90|0x5f6d,0x83a1"]}"#;
-    let row = parse_trace_line(line).expect("the row parses");
+    let line = r#"DEBUG [sim] fanout-trace {"v":1,"block":26375033,"cand":"45853@1","sim_ns":24848099,"reads":["0x000000000004444c5dc75cb358380d2e3de08a90|0x5f6d,0x83a1"]}"#;
+    let row = parse_trace_line(line)
+        .expect("the row parses")
+        .expect("the line carries a row");
     assert_eq!(row.block, 26_375_033, "{row:?}");
     assert_eq!(row.sim_ns, 24_848_099, "{row:?}");
     assert_eq!(row.reads.len(), 1, "one read group: {row:?}");
     assert_eq!(row.reads[0].1.len(), 2, "two recorded slots: {row:?}");
-    assert!(
-        parse_trace_line("a line without a trace row").is_none(),
+    assert_eq!(
+        parse_trace_line("a line without a trace row").expect("unrelated lines are skipped"),
+        None,
         "unrelated lines carry no candidate"
     );
 }
@@ -367,19 +370,19 @@ fn rows_group_into_anchors_in_file_order_and_the_universe_is_their_identities() 
             block: 7,
             sim_ns: 1,
             reads: vec![(Address::new([0x11; 20]), vec![U256::from(1u64)])],
-            relevance: None,
+            relevance: RowRelevance::NotRecorded,
         },
         Recorded {
             block: 7,
             sim_ns: 1,
             reads: vec![(Address::new([0x22; 20]), vec![U256::from(2u64)])],
-            relevance: None,
+            relevance: RowRelevance::NotRecorded,
         },
         Recorded {
             block: 9,
             sim_ns: 1,
             reads: vec![(Address::new([0x11; 20]), vec![U256::from(1u64)])],
-            relevance: None,
+            relevance: RowRelevance::NotRecorded,
         },
     ];
     let groups = group_by_anchor(rows.clone());
@@ -412,13 +415,13 @@ fn read_call_counts_count_every_recorded_storage_read_of_an_anchor() {
             block: 7,
             sim_ns: 1,
             reads: vec![(address, vec![U256::from(1u64), U256::from(2u64)])],
-            relevance: None,
+            relevance: RowRelevance::NotRecorded,
         },
         Recorded {
             block: 7,
             sim_ns: 1,
             reads: vec![(address, vec![U256::from(1u64)])],
-            relevance: None,
+            relevance: RowRelevance::NotRecorded,
         },
     ];
     let counts = read_call_counts(&rows);

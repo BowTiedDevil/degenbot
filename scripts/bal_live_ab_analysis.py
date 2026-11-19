@@ -69,6 +69,20 @@ and a new reader of an old row both keep working.
 
 The re-read gap distribution below needs no such migration: it is derived from
 the `fanout-trace` read walks, which every capture of this family carries.
+
+# The trace schema version: this analysis is v2-only
+
+Every `fanout-trace` row names the schema it was written under (`"v"`), and that
+version is what says which questions the row can answer: a v1 row records the
+read walk only, a v2 row records the read walk beside the pre-simulation
+`relevance` set the simulation seam derived before the candidate ran. This report
+computes relevance coverage, so it is a RELEVANCE-DEPENDENT consumer and accepts
+v2 only. A v1 row, an unversioned row, an unknown version and a capture that
+mixes versions each raise `TraceSchemaError` naming the row or line, rather than
+the report reading "no relevant address" for a row that simply recorded no set: a
+captured read is only known after the read, so it is an oracle, never the set the
+run had when it had to decide what to snapshot. A read-driven question needs no
+version of this script — the read walks are the same in both schemas.
 """
 
 from __future__ import annotations
@@ -87,6 +101,13 @@ if TYPE_CHECKING:
 
 
 TRACE_MARKER = "fanout-trace "
+# The trace row's schema version, declared on every row: the version is never
+# inferred from which keys a row happens to carry. v1 records the read walk only;
+# v2 records it beside the pre-simulation `relevance` set. Mirrors
+# `degenbot_simulation::probe_support::recorded_corpus::CorpusVersion`.
+TRACE_VERSION_V1 = 1
+TRACE_VERSION_V2 = 2
+TRACE_VERSIONS = frozenset({TRACE_VERSION_V1, TRACE_VERSION_V2})
 SELECTION_MARKER = "fan-out storage selection "
 PREFETCH_MARKER = "storage prefetch "
 # The idle window, in blocks, an entry survives without a candidate READ — the
@@ -154,9 +175,30 @@ class TraceRow:
     gas: int
     addresses: tuple[str, ...]
     slots: int
-    relevance: tuple[str, ...]
+    relevance: tuple[str, ...] | None
+    version: int
     fanout: int | None = None
     identities: tuple[str, ...] = ()
+
+    def production_relevance(self) -> tuple[str, ...]:
+        """The row's pre-simulation relevance set.
+
+        Returns:
+            The set the seam derived before the candidate ran — `()` when the path
+            named no address, which is a measurement.
+
+        Raises:
+            TraceSchemaError: the row is v1 and records no set, so its recorded
+                reads are an oracle, never production relevance.
+        """
+        if self.relevance is None:
+            message = (
+                f"block {self.block}: the row is v1 and records no production relevance — "
+                "a relevance-dependent report cannot substitute the reads the run turned out "
+                "to make"
+            )
+            raise TraceSchemaError(message)
+        return self.relevance
 
 
 @dataclass(frozen=True)
@@ -290,6 +332,9 @@ class Capture:
     memos: list[MemoRow] = field(default_factory=list)
     cordons: list[tuple[int, str]] = field(default_factory=list)
     dropped_lines: int = 0
+    # The one trace schema version this capture pins. `None` until the first row;
+    # `scan_capture` refuses a capture that never pins one or pins two.
+    trace_version: int | None = None
     boot: str | None = None
     executor: str | None = None
     extract_rows: int | None = None
@@ -330,8 +375,77 @@ def read_identities(reads: Iterable[str]) -> tuple[str, ...]:
     return tuple(identities)
 
 
+class TraceSchemaError(ValueError):
+    """A trace row, or a capture's row set, this analysis cannot stand behind.
+
+    Raised for a row whose schema version is missing, unknown, or contradicts the
+    keys it carries, and for a capture that mixes versions or is v1 (reads only):
+    this report computes relevance coverage, so a row without a pre-simulation set
+    has no number to contribute and is never read as an empty set.
+    """
+
+
+def _trace_version(row: dict[str, object]) -> int:
+    """The schema version a row declares. An unversioned row is refused, not guessed.
+
+    Returns:
+        The declared version, one of `TRACE_VERSIONS`.
+
+    Raises:
+        TraceSchemaError: the row names no version, or one this analysis does not know.
+    """
+    if "v" not in row:
+        message = (
+            "a `fanout-trace` row carries no `v` schema version — an unversioned capture "
+            'cannot be replayed; re-capture it, or stamp each row with `"v":1` '
+            '(read-driven) or `"v":2` (production relevance) once its shape is known'
+        )
+        raise TraceSchemaError(message)
+    raw = row["v"]
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw not in TRACE_VERSIONS:
+        message = (
+            f"a `fanout-trace` row declares schema version {raw!r}, which this analysis does "
+            f"not know (it reads {sorted(TRACE_VERSIONS)})"
+        )
+        raise TraceSchemaError(message)
+    return raw
+
+
+def _trace_relevance(row: dict[str, object], version: int) -> tuple[str, ...] | None:
+    """The relevance a row's declared version records — `None` for v1, never `()`.
+
+    Raises:
+        TraceSchemaError: the row's keys contradict the version it declares.
+    """
+    entries = row.get("relevance")
+    if version == TRACE_VERSION_V1:
+        if entries is not None:
+            message = 'a v1 `fanout-trace` row carries a "relevance" key its schema does not define'
+            raise TraceSchemaError(message)
+        return None
+    if entries is None:
+        message = 'a v2 `fanout-trace` row records no "relevance" set its schema requires'
+        raise TraceSchemaError(message)
+    if not isinstance(entries, list):
+        message = 'a v2 `fanout-trace` row\'s "relevance" is not an array'
+        raise TraceSchemaError(message)
+    addresses: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, str):
+            message = f'a v2 `fanout-trace` row\'s "relevance" carries a non-string entry {entry!r}'
+            raise TraceSchemaError(message)
+        addresses.append(entry)
+    return tuple(addresses)
+
+
 def parse_trace_line(line: str) -> TraceRow | None:
-    """Parse one `fanout-trace {...}` row; `None` for any other line."""
+    """Parse one `fanout-trace {...}` row; `None` for any other line.
+
+    A line without the marker, or one truncated by the bounded console sink, is
+    `None` — `scan_capture` counts it as dropped. A row that parses but names no
+    schema version, an unknown one, or keys that contradict it raises
+    `TraceSchemaError`: that is a schema statement, not a lost line.
+    """
     body = _payload(line, TRACE_MARKER)
     if body is None or not body.startswith("{"):
         return None
@@ -339,6 +453,8 @@ def parse_trace_line(line: str) -> TraceRow | None:
         row = json.loads(body)
     except json.JSONDecodeError:
         return None
+    version = _trace_version(row)
+    relevance = _trace_relevance(row, version)
     reads: list[str] = row.get("reads", [])
     addresses = tuple(entry.split("|", 1)[0] for entry in reads)
     slots = 0
@@ -354,9 +470,10 @@ def parse_trace_line(line: str) -> TraceRow | None:
         gas=int(row["gas"]),
         addresses=addresses,
         slots=slots,
-        relevance=tuple(row.get("relevance", [])),
-        # Absent for a caller outside any fan-out (the inline hook re-quote arm)
-        # and for every pre-`fanout` row: both stay unattributed.
+        relevance=relevance,
+        version=version,
+        # Absent for a caller outside any fan-out (the inline hook re-quote arm):
+        # such a row stays unattributed.
         fanout=int(row["fanout"]) if "fanout" in row else None,
         identities=read_identities(reads),
     )
@@ -596,12 +713,50 @@ def regime_of(candidate_count: int) -> str:
 
 
 def relevance_coverage(row: TraceRow) -> float:
-    """Fraction of the pre-simulation relevance set the read walk carried."""
-    if not row.relevance:
+    """Fraction of the pre-simulation relevance set the read walk carried.
+
+    An EMPTY v2 set is a measurement — the candidate's path named no address — so
+    it reads as full coverage. A v1 row has no set at all, and no set is not an
+    empty one: substituting the recorded reads for it would report an oracle as
+    production relevance, so that row raises instead.
+
+    """
+    relevant = {address.lower() for address in row.production_relevance()}
+    if not relevant:
         return 1.0
     read_addresses = {address.lower() for address in row.addresses}
-    relevant = {address.lower() for address in row.relevance}
     return len(read_addresses & relevant) / len(relevant)
+
+
+def _gate_trace_version(pinned: int | None, version: int, line: int) -> int:
+    """Pin one trace schema version per capture and hold it to this report's semantics.
+
+    This analysis computes relevance coverage, so it is relevance-dependent: it
+    accepts v2 (reads + the pre-simulation set) and refuses a v1 capture rather
+    than reporting an absence as an empty set.
+
+    Returns:
+        The version the capture pins, unchanged for every later row.
+
+    Raises:
+        TraceSchemaError: the capture is v1, or a later row declares another version.
+    """
+    if pinned is None:
+        if version != TRACE_VERSION_V2:
+            message = (
+                f"line {line}: the capture's `fanout-trace` rows are v{version} (reads only) — "
+                "this analysis computes relevance coverage, so it is relevance-dependent and "
+                "needs v2 rows that recorded the pre-simulation set"
+            )
+            raise TraceSchemaError(message)
+        return version
+    if version != pinned:
+        message = (
+            f"line {line}: a capture must pin one trace schema: v{pinned} started it and "
+            f"v{version} appears later"
+        )
+        raise TraceSchemaError(message)
+    return pinned
 
 
 @dataclass(frozen=True)
@@ -796,6 +951,7 @@ def trace_identity(row: TraceRow) -> tuple[object, ...]:
         row.addresses,
         row.slots,
         row.relevance,
+        row.version,
     )
 
 
@@ -818,6 +974,9 @@ def scan_capture(
                 if row is None:
                     capture.dropped_lines += 1
                 else:
+                    capture.trace_version = _gate_trace_version(
+                        capture.trace_version, row.version, index
+                    )
                     capture.trace.append(
                         TraceRow(
                             line=index,
@@ -829,6 +988,7 @@ def scan_capture(
                             addresses=row.addresses,
                             slots=row.slots,
                             relevance=row.relevance,
+                            version=row.version,
                             fanout=row.fanout,
                             identities=row.identities,
                         )
@@ -1090,7 +1250,7 @@ def _read_table(capture: Capture) -> list[tuple[str, str]]:
         ),
         (
             "pre-simulation relevance per candidate",
-            _count_phrase(summarize([len(row.relevance) for row in capture.trace])),
+            _count_phrase(summarize([len(row.production_relevance()) for row in capture.trace])),
         ),
         (
             "relevance coverage (min / mean / p50 / max)",
@@ -1655,6 +1815,10 @@ def render_markdown(off: Capture, on: Capture) -> str:
         "The post-execution read walk `reads` is what the frame touched; `relevance`",
         "is the pre-simulation set the path and the deployment's settlement facts make",
         "relevant. Coverage below is the share of `relevance` the walk carried.",
+        "",
+        "Both captures are v2 production-relevance corpora: a v1 (reads-only) row, an",
+        "unversioned row, and a capture mixing versions are refused at parse time, so",
+        "every number here is scoped by a set the seam derived BEFORE the candidate ran",
         "",
         "The two sets answer different questions, so coverage below one is expected:",
         "`relevance` names every hop token and settlement address the path could touch,",

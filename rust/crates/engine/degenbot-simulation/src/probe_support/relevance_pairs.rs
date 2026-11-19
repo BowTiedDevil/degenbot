@@ -131,20 +131,20 @@ pub struct SetDifference {
 ///
 /// # Errors
 ///
-/// A row carrying no `relevance` field makes the production union incomplete,
-/// and an incomplete union reported as production relevance is exactly the
-/// fallback this pairing must never perform: the anchor is refused with the
-/// block named.
+/// A version-1 row records no production relevance, and a partial union reported
+/// as production relevance is exactly the fallback this pairing must never
+/// perform: the anchor is refused with the block and candidate named.
 pub fn pair_anchors(fanouts: &[(u64, Vec<Recorded>)]) -> Result<Vec<AnchorSets>, String> {
     let mut pairs = Vec::with_capacity(fanouts.len());
     for (block, rows) in fanouts {
         let mut seen: BTreeSet<Address> = BTreeSet::new();
         let mut production: Vec<Address> = Vec::new();
         for (index, row) in rows.iter().enumerate() {
-            let Some(addresses) = row.relevance.as_ref() else {
+            let Ok(addresses) = row.production_relevance() else {
                 return Err(format!(
-                    "block {block}: recorded candidate {index} carries no `relevance` field — \
-                     pairing it would report a recorded-read oracle as production relevance"
+                    "block {block}: recorded candidate {index} records no production relevance \
+                     (a version-1 row) — pairing it would report a recorded-read oracle as \
+                     production relevance"
                 ));
             };
             for address in addresses {

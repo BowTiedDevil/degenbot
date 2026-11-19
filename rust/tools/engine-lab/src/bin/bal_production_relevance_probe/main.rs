@@ -25,9 +25,10 @@
 //!
 //! # Gates
 //!
-//! 1. Every recorded row must carry `relevance` (the pairing refuses a legacy
-//!    row rather than reporting its read addresses as production relevance), and
-//!    every production-scoped replay prints `production` as its scope.
+//! 1. The corpus must be `"v":2` — every row records its production `relevance`
+//!    set (the pairing refuses a `"v":1` row rather than reporting its read
+//!    addresses as production relevance, and the load refuses a v1 corpus
+//!    outright), and every replay prints `v2-production-relevance` as its scope.
 //! 2. The production full-clone leg's per-anchor storage accounting must equal
 //!    the committed live `bal_carry_probe` accounting for the same stretch and
 //!    relevance sets — the offline replay reproduces the live pipeline's
@@ -98,8 +99,8 @@ use modeled_chain::{ChainState, Coverage, StubChain};
 use probe_report::{cross_check_live, identity_gate, storage_accounting, StorageAccounting};
 use real_coverage::RealCoverage;
 use recorded_corpus::{
-    anchor_keys, classify_density, corpus_relevance_source, group_by_anchor, load_rows, shape,
-    universe, CorpusShape, DensityRegime, Key, Recorded,
+    anchor_keys, classify_density, group_by_anchor, load_corpus, shape, universe, CorpusShape,
+    CorpusUse, DensityRegime, Key, Recorded,
 };
 use relevance_pairs::{
     fold_regimes, pair_anchors, re_reads, retention_delta, summarize, total, traced_accounting,
@@ -266,16 +267,15 @@ struct Corpus {
 }
 
 /// Load the corpus, refusing a trace the manager's assignment does not describe.
-fn load_corpus(trace: &str) -> Result<Corpus, String> {
-    let rows = load_rows(trace)?;
+fn load_pinned(trace: &str) -> Result<Corpus, String> {
+    let rows = load_corpus(trace, CorpusUse::RelevanceDependent)
+        .map_err(|error| error.to_string())?
+        .into_rows();
     let measured = shape(&rows);
     if measured != PINNED_SHAPE {
         return Err(format!(
             "the parsed corpus {measured:?} does not match the manager's pinned {PINNED_SHAPE:?}"
         ));
-    }
-    if !corpus_relevance_source(&rows).is_production() {
-        return Err("the corpus is not entirely production-scoped relevance".to_string());
     }
     let (keys, first, last) = universe(&rows);
     if (first, last) != RANGE {
@@ -1320,7 +1320,7 @@ async fn run_point(
 
 async fn run() -> Result<(), String> {
     let knobs = Knobs::from_env();
-    let corpus = load_corpus(&knobs.trace)?;
+    let corpus = load_pinned(&knobs.trace)?;
     let real = RealCoverage::load(&knobs.fixture)?;
     if real.first() > corpus.first || real.last() < corpus.last {
         return Err(format!(

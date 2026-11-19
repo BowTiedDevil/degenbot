@@ -35,7 +35,7 @@ use degenbot_simulation::probe_support::session_drive;
 
 use probe_report::StorageAccounting;
 use real_coverage::RealCoverage;
-use recorded_corpus::Recorded;
+use recorded_corpus::{Recorded, RowRelevance};
 use relevance_pairs::{
     fold_regimes, pair_anchors, re_reads, retention_delta, summarize, traced_accounting,
     write_split, AnchorReuse, RelevanceVariant, ReuseComparison,
@@ -47,7 +47,8 @@ fn address(tag: u8) -> Address {
     Address::new([tag; 20])
 }
 
-/// One recorded candidate reading `reads`, carrying `relevance` when given.
+/// One recorded candidate reading `reads`: a version-2 row when it carries the
+/// production `relevance` set, a version-1 row when it does not.
 fn row(block: u64, reads: &[(Address, &[u64])], relevance: Option<&[Address]>) -> Recorded {
     Recorded {
         block,
@@ -61,7 +62,9 @@ fn row(block: u64, reads: &[(Address, &[u64])], relevance: Option<&[Address]>) -
                 )
             })
             .collect(),
-        relevance: relevance.map(<[Address]>::to_vec),
+        relevance: relevance.map_or(RowRelevance::NotRecorded, |addresses| {
+            RowRelevance::Production(addresses.to_vec())
+        }),
     }
 }
 

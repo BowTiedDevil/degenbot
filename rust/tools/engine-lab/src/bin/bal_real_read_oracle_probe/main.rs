@@ -74,6 +74,8 @@ use degenbot_simulation::sim::ReadAnchor;
 
 use degenbot_simulation::probe_support::read_oracle;
 
+use degenbot_simulation::probe_support::recorded_corpus::CorpusUse;
+
 use read_oracle::{
     compare, fingerprint, load_tagged_rows, plant_one_wei, select, write_overlap, Key, Mismatch,
     ReadAnswer, ReadOrigin,
@@ -481,7 +483,7 @@ async fn run() -> Result<(), String> {
     let text = std::fs::read_to_string(&trace)
         .map_err(|error| format!("read the corpus {trace}: {error}"))?;
     let corpus_fingerprint = fingerprint(text.as_bytes());
-    let rows = load_tagged_rows(&trace)?;
+    let rows = load_tagged_rows(&trace, CorpusUse::RelevanceDependent)?;
     let first_block = rows.iter().map(|row| row.row.block).min();
     let last_block = rows.iter().map(|row| row.row.block).max();
     let anchors: BTreeSet<u64> = rows.iter().map(|row| row.row.block).collect();
@@ -498,8 +500,7 @@ async fn run() -> Result<(), String> {
     let selection_material = read_oracle::selection_material(&selection);
     println!(
         "selection: {} anchors x <= {} rows = {} rows, {} distinct (block,cand) candidates, \
-         {} relevance addresses, {} read addresses, {} read identities, {} oracle-fallback rows \
-         (fingerprint {})",
+         {} relevance addresses, {} read addresses, {} read identities (fingerprint {})",
         selection.anchors.len(),
         rows_per_anchor,
         selection.rows(),
@@ -507,20 +508,14 @@ async fn run() -> Result<(), String> {
         selection.relevance_addresses().len(),
         selection.read_addresses().len(),
         selection.keys().len(),
-        selection.oracle_rows(),
         fingerprint(selection_material.as_bytes())
     );
-    if selection.oracle_rows() != 0 {
-        println!(
-            "relevance scope: recorded-read-oracle for those rows — the corpus predates the \
-             production field and NO number here may be read as production relevance"
-        );
-    } else {
-        println!(
-            "relevance scope: production — every selected row carries the set the seam derived \
-             before the candidate ran"
-        );
-    }
+    // The selection refuses a row that records no production set, so one scope
+    // covers the whole run.
+    println!(
+        "relevance scope: production — every selected row carries the set the seam derived \
+         before the candidate ran"
+    );
 
     let generation_provider = AlloyProvider::new(&url, 3)
         .await
@@ -567,7 +562,7 @@ async fn run() -> Result<(), String> {
             let mut seen = BTreeSet::new();
             let mut addresses = Vec::new();
             for row in &anchor_selection.rows {
-                for address in &row.relevance.addresses {
+                for address in &row.relevance {
                     if seen.insert(*address) {
                         addresses.push(*address);
                     }
@@ -600,7 +595,7 @@ async fn run() -> Result<(), String> {
                 &generation_provider,
                 anchor,
                 parent_hash,
-                &row.relevance.addresses,
+                &row.relevance,
                 &row.keys,
                 &cold,
                 &seed_writes,
@@ -670,7 +665,7 @@ async fn run() -> Result<(), String> {
                 seed_parity(
                     &generation_provider,
                     hash,
-                    &anchor_selection.rows[0].relevance.addresses,
+                    &anchor_selection.rows[0].relevance,
                 )
                 .await?,
             );
@@ -683,7 +678,7 @@ async fn run() -> Result<(), String> {
                     &cold_provider,
                     anchor,
                     parent_hash,
-                    &row.relevance.addresses,
+                    &row.relevance,
                     &row.keys,
                     &cold,
                     &seed_writes,

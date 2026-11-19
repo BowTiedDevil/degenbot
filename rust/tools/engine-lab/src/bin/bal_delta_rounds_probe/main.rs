@@ -76,8 +76,8 @@ use degenbot_simulation::probe_support::wall_ledger;
 use modeled_chain::{ChainState, Coverage, StubChain};
 use real_coverage::RealCoverage;
 use recorded_corpus::{
-    anchor_relevance, classify_density, corpus_relevance_source, group_by_anchor, load_rows,
-    universe, DensityRegime, Key, Recorded, Relevance,
+    anchor_relevance, classify_density, corpus_version, group_by_anchor, load_corpus, universe,
+    CorpusUse, DensityRegime, Key, Recorded,
 };
 use session_drive::{drive_lanes, LanePlan, LaneTrace, LegFacts, ReadEvent, ReadLane};
 use wall_ledger::{
@@ -417,17 +417,17 @@ async fn drive_leg(
     plant.store(false, Ordering::Relaxed);
     for number in first..=last {
         // The anchor's relevance set: the production-derived union its trace rows
-        // carry, or the labelled recorded-read ORACLE fallback for a legacy
-        // corpus. Never re-derived here — a probe that guessed it would be
-        // measuring its own guess.
-        let relevance = by_anchor
-            .get(&number)
-            .map_or_else(Relevance::default, |rows| anchor_relevance(rows));
+        // carry. Never re-derived here — a probe that guessed it would be
+        // measuring its own guess — and a version-1 corpus has none, so the load
+        // refused it instead.
+        let relevance = match by_anchor.get(&number) {
+            Some(rows) => anchor_relevance(rows).map_err(|error| error.to_string())?,
+            None => Vec::new(),
+        };
         let full_hub: Option<Arc<ReadHub>> = match control.as_ref() {
             Some(control) => {
                 let (hub, charged) =
-                    advance_full(control, real, number, &relevance.addresses, &ledger, node)
-                        .await?;
+                    advance_full(control, real, number, &relevance, &ledger, node).await?;
                 bal_fetches = bal_fetches.saturating_add(charged);
                 accum.snapshot_final = hub.memoized_slots();
                 Some(hub)
@@ -437,7 +437,7 @@ async fn drive_leg(
         let delta_hub = match delta.as_ref() {
             Some(delta) => {
                 let (hub, _entries) =
-                    advance_delta(delta, real, number, &relevance.addresses, &ledger, node).await?;
+                    advance_delta(delta, real, number, &relevance, &ledger, node).await?;
                 bal_fetches = bal_fetches.saturating_add(1);
                 accum.snapshot_final = hub.snapshot_len();
                 accum.live_final = hub.live_len();
@@ -825,10 +825,9 @@ async fn run_point(
     );
     println!("## {name}");
     println!();
-    println!(
-        "relevance scope: {} (the carry's seed set)",
-        corpus_relevance_source(fanouts.iter().flat_map(|(_, rows)| rows.iter())).label()
-    );
+    let scope = corpus_version(fanouts.iter().flat_map(|(_, rows)| rows.iter()))
+        .expect("the corpus pins one version: the load checked it");
+    println!("relevance scope: {} (the carry's seed set)", scope.label());
     print_legs(&name, &record, knobs.idle);
 
     let mut mismatches = Vec::new();
@@ -867,7 +866,9 @@ async fn main() {
 
     let mut gate = Vec::new();
     for corpus in &knobs.corpora {
-        let rows = load_rows(corpus.trace).expect("the recorded corpus loads");
+        let rows = load_corpus(corpus.trace, CorpusUse::RelevanceDependent)
+            .expect("the recorded corpus loads")
+            .into_rows();
         let (keys, first, last) = universe(&rows);
         let fanouts = group_by_anchor(rows);
         let real = RealCoverage::load(corpus.fixture).expect("the committed capture parses");

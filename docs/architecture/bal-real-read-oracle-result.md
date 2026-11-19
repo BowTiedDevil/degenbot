@@ -19,18 +19,19 @@ committed.
 | --- | --- | --- |
 | `logs/bal_real_read_oracle_result.log` | live reth probe (`just bal-real-read-oracle-probe`, default knobs) | per-candidate storage-read parity over real read sets, exact-anchor value fidelity, seed-representation parity, the expiry path |
 | `logs/bal_real_read_oracle_plant.log` | live reth probe with `BAL_READ_ORACLE_PLANT_WEI=1` | the comparator goes red: 19 planted one-wei differences caught, nonzero exit |
-| `rust/crates/engine/degenbot-simulation/tests/bal_real_read_oracle.rs` | 13 offline tests | selection keeps each row's own production set, the comparator reads the generation's value, the one-wei plant fails it, a missing cold answer is a mismatch |
-| `rust/crates/engine/degenbot-simulation/examples/shared/read_oracle.rs` | shared selection/comparison arithmetic | the module both the probe and the suite use |
+| `rust/crates/engine/degenbot-simulation/tests/bal_real_read_oracle.rs` | 9 offline tests | selection keeps each row's own production set and refuses a v1 row, the comparator reads the generation's value, the one-wei plant fails it, a missing cold answer is a mismatch, the loader applies the corpus version gate |
+| `rust/crates/engine/degenbot-simulation/src/probe_support/read_oracle.rs` | shared selection/comparison arithmetic | the module both the probe and the suite use (`degenbot_simulation::probe_support::read_oracle`) |
 
 `logs/` is gitignored, so the two captures are local evidence beside the harness
 (`rust/tools/engine-lab/src/bin/bal_real_read_oracle_probe/main.rs`,
-`.../examples/shared/read_oracle.rs`, `.../tests/bal_real_read_oracle.rs`). Every figure
+`.../src/probe_support/read_oracle.rs`, `.../tests/bal_real_read_oracle.rs`). Every figure
 below was read back from those captures.
 
 ## Corpus and selection
 
 The corpus is the post-fix soak's trace stream, the first corpus whose rows carry the
-production `relevance` field beside the post-read walk:
+production `relevance` field beside the post-read walk — what the versioned schema calls a
+`"v":2` row; a `"v":1` row records the read walk only and cannot serve this replay:
 
 | fact | value |
 | --- | --- |
@@ -53,13 +54,17 @@ rows, 6 of 246 anchors.
 | distinct `(block, cand)` candidates | 12 |
 | distinct relevance addresses | 18 |
 | distinct read addresses / read identities | 20 / 402 |
-| rows using the recorded-read-oracle fallback | 0 |
+| rows that needed a recorded-read fallback | 0 (a v1 row is refused, so a selection cannot carry one) |
 
-Relevance scope is PRODUCTION for every selected row: the set the simulation seam derived
-from the candidate's path and the deployment's settlement facts before the candidate ran.
-No identity is invented, and the recorded read walk was never used as the relevance
-filter — the filter is the row's own pre-simulation set (`read_oracle::select` keeps the
-`Relevance` and its `RelevanceSource` label).
+Relevance scope is `v2-production-relevance` for every selected row: the set the
+simulation seam derived from the candidate's path and the deployment's settlement facts
+before the candidate ran. No identity is invented, and the recorded read walk is never used
+as the relevance filter — the filter is the row's own pre-simulation set. That is a schema
+guarantee rather than a label now: `read_oracle::select` refuses a row that records no
+production set (`CorpusError::RelevanceNotRecorded`), and `load_tagged_rows` refuses a v1
+corpus outright (`CorpusError::ReadDrivenOnly`), so a recorded-read oracle cannot enter a
+selection at all. The probe prints the corpus version
+(`recorded_corpus::CorpusVersion::label`) beside the scope its numbers were measured under.
 
 ## Per-anchor replay
 
