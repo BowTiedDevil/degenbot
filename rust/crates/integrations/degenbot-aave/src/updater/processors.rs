@@ -38,6 +38,7 @@
 
 use crate::{RayRounding, WadRayError};
 use alloy::primitives::{I256, U256};
+use core::cmp::Ordering;
 
 // ── the revision strategies (ports `processors/strategies.py`) ────────────
 
@@ -285,11 +286,30 @@ impl ScaledTokenProcessor {
     }
 
     /// Process a collateral (aToken) `Mint` event. Port of
-    /// `UnifiedCollateralProcessor::process_mint_event`. See the Python doc
-    /// (`processor.py:75-130`) for the branch logic — the three arms:
-    /// `balance_increase > value` (interest exceeds deposit → effective burn),
-    /// `value >= balance_increase` (standard deposit), `value ==
-    /// balance_increase` (pure interest accrual or matched deposit).
+    /// `UnifiedCollateralProcessor::process_mint_event`.
+    ///
+    /// `value` against `balance_increase` is the entire classification, and
+    /// each comparison outcome owns exactly one arm:
+    ///
+    /// - `value < balance_increase` ([`Ordering::Less`]) — the interest accrued
+    ///   since the last event exceeds the event's amount: the aToken contract
+    ///   mints the interest first and the transaction burns the rest, so a
+    ///   `WITHDRAW` / `REPAY_WITH_ATOKENS` Mint nets out to a *burn* of
+    ///   `balance_increase - value` at `HALF_UP`, flagged `is_repay`.
+    /// - `value > balance_increase` ([`Ordering::Greater`]) — the ordinary
+    ///   supply path (`_mintScaled`): a deposit of `value - balance_increase`,
+    ///   taken verbatim from the Pool-supplied `scaled_amount` when the
+    ///   enricher provided one and from a `ray_div` at the revision's mint
+    ///   rounding otherwise.
+    /// - `value == balance_increase` ([`Ordering::Equal`]) — the event carries
+    ///   no principal beyond its own interest: a **matched deposit** when the
+    ///   paired SUPPLY event supplied a `scaled_amount` (used verbatim), else
+    ///   **pure interest accrual**. The delta is the literal zero — accrual only
+    ///   advances the index — so this arm divides nothing and needs no usable
+    ///   `index`.
+    ///
+    /// Every arm reports the event's index as `new_index`; only the
+    /// withdrawal-interest arm sets `is_repay`.
     ///
     /// # Errors
     ///
@@ -300,48 +320,51 @@ impl ScaledTokenProcessor {
         &self,
         event: &ScaledTokenEventData,
     ) -> Result<ScaledTokenMintResult, ProcessorError> {
-        if event.balance_increase > event.value {
-            // Interest accrual exceeds deposit amount — emitted during withdraw
-            // (the aToken contract mints the interest first, then burns the
-            // withdrawal). Net effect: a burn of (balance_increase - value).
-            let requested_amount = event.balance_increase - event.value;
-            // Withdrawal-interest path uses HALF_UP (same for all revisions).
-            let raw = crate::ray_div(requested_amount, event.index, Some(RayRounding::HalfUp))?;
-            let balance_delta = negate_to_i256(raw)?;
-            Ok(ScaledTokenMintResult {
-                balance_delta,
-                new_index: event.index,
-                is_repay: true,
-            })
-        } else if event.value >= event.balance_increase {
-            // Standard deposit — emitted in `_mintScaled` during supply.
-            let balance_delta = if let Some(scaled) = event.scaled_amount {
-                // Use pre-calculated scaled amount from Pool contract (V4+).
-                to_i256(scaled)?
-            } else {
-                let requested_amount = event.value - event.balance_increase;
-                let raw = crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
-                to_i256(raw)?
-            };
-            Ok(ScaledTokenMintResult {
-                balance_delta,
-                new_index: event.index,
-                is_repay: false,
-            })
-        } else {
-            // value == balance_increase: deposit equals accrued interest, OR
-            // pure interest accrual (no deposit). If a scaled_amount is
-            // provided from a matched SUPPLY event, it's a deposit; else pure
-            // interest accrual (delta = 0, only the index updates).
-            let balance_delta = match event.scaled_amount {
-                Some(scaled) => to_i256(scaled)?,
-                None => I256::ZERO,
-            };
-            Ok(ScaledTokenMintResult {
-                balance_delta,
-                new_index: event.index,
-                is_repay: false,
-            })
+        match event.value.cmp(&event.balance_increase) {
+            Ordering::Less => {
+                // Interest accrual exceeds the event's amount — emitted during
+                // a withdrawal (the aToken contract mints the interest first,
+                // then burns the withdrawal). Net effect: a burn of
+                // (balance_increase - value).
+                let requested_amount = event.balance_increase - event.value;
+                // Withdrawal-interest path uses HALF_UP (same for all revisions).
+                let raw = crate::ray_div(requested_amount, event.index, Some(RayRounding::HalfUp))?;
+                Ok(ScaledTokenMintResult {
+                    balance_delta: negate_to_i256(raw)?,
+                    new_index: event.index,
+                    is_repay: true,
+                })
+            }
+            Ordering::Greater => {
+                // Standard deposit — emitted in `_mintScaled` during supply.
+                let balance_delta = if let Some(scaled) = event.scaled_amount {
+                    // Use pre-calculated scaled amount from Pool contract (V4+).
+                    to_i256(scaled)?
+                } else {
+                    let requested_amount = event.value - event.balance_increase;
+                    let raw =
+                        crate::ray_div(requested_amount, event.index, self.strategy.mint.into())?;
+                    to_i256(raw)?
+                };
+                Ok(ScaledTokenMintResult {
+                    balance_delta,
+                    new_index: event.index,
+                    is_repay: false,
+                })
+            }
+            Ordering::Equal => {
+                let balance_delta = match event.scaled_amount {
+                    // A matched deposit: use the Pool-supplied amount verbatim.
+                    Some(scaled) => to_i256(scaled)?,
+                    // Pure interest accrual: no balance moves, only the index.
+                    None => I256::ZERO,
+                };
+                Ok(ScaledTokenMintResult {
+                    balance_delta,
+                    new_index: event.index,
+                    is_repay: false,
+                })
+            }
         }
     }
 
@@ -623,5 +646,174 @@ mod tests {
         let s = collateral_strategy(99);
         assert_eq!(s.mint, RayDivMode::HalfUp);
         assert_eq!(s.burn, RayDivMode::HalfUp);
+    }
+
+    /// Build a collateral Mint event whose four decoded fields are set
+    /// independently, so a test can say which side of the comparison it means.
+    fn collateral_mint_event(
+        value: U256,
+        balance_increase: U256,
+        index: U256,
+        scaled_amount: Option<U256>,
+    ) -> ScaledTokenEventData {
+        ScaledTokenEventData {
+            value,
+            balance_increase,
+            index,
+            scaled_amount,
+        }
+    }
+
+    /// `value` against `balance_increase` is the whole classification: the
+    /// delta flips sign with the comparison and `is_repay` flips with it, so
+    /// one wei either side of equality brackets the zero-delta outcome.
+    #[test]
+    fn collateral_mint_comparison_outcomes_are_total() {
+        let proc = ScaledTokenProcessor::collateral(4);
+        let index = RAY;
+        let interest = U256::from(5u8) * RAY;
+        let cases = [
+            (interest - U256::from(1u8), -I256::ONE, true),
+            (interest, I256::ZERO, false),
+            (interest + U256::from(1u8), I256::ONE, false),
+        ];
+        for (value, expected_delta, expected_repay) in cases {
+            let event = collateral_mint_event(value, interest, index, None);
+            let result = proc.process_collateral_mint(&event).unwrap();
+            assert_eq!(result.balance_delta, expected_delta, "value = {value}");
+            assert_eq!(result.is_repay, expected_repay, "value = {value}");
+            assert_eq!(result.new_index, index, "value = {value}");
+        }
+    }
+
+    /// Equality with no `scaled_amount` is pure interest accrual: the delta is
+    /// the literal zero rather than a division result, at every revision.
+    #[test]
+    fn collateral_mint_equal_without_scaled_amount_is_pure_accrual() {
+        for revision in [1u32, 3, 4, 5, 99] {
+            let proc = ScaledTokenProcessor::collateral(revision);
+            let interest = U256::from(5u8) * RAY;
+            let event = collateral_mint_event(interest, interest, RAY, None);
+            let result = proc.process_collateral_mint(&event).unwrap();
+            assert_eq!(
+                result.balance_delta,
+                I256::ZERO,
+                "revision {revision}: accrual moves no balance"
+            );
+            assert!(
+                !result.is_repay,
+                "revision {revision}: accrual is not a repay"
+            );
+            assert_eq!(
+                result.new_index, RAY,
+                "revision {revision}: index still applies"
+            );
+        }
+    }
+
+    /// Pure accrual never divides, so it cannot fail on an unusable index: an
+    /// event whose `index` field did not decode (zero) still yields a zero
+    /// delta and passes the index through.
+    #[test]
+    fn collateral_mint_equal_accrual_is_index_independent() {
+        let proc = ScaledTokenProcessor::collateral(1);
+        let interest = U256::from(7u8) * RAY;
+        let event = collateral_mint_event(interest, interest, U256::ZERO, None);
+        let result = proc.process_collateral_mint(&event).unwrap();
+        assert_eq!(result.balance_delta, I256::ZERO);
+        assert!(!result.is_repay);
+        assert_eq!(result.new_index, U256::ZERO);
+    }
+
+    /// Equality with a `scaled_amount` is a matched deposit: the pre-computed
+    /// amount is used verbatim (no `ray_div`), never the accrual zero.
+    #[test]
+    fn collateral_mint_equal_with_scaled_amount_is_matched_deposit() {
+        let interest = U256::from(5u8) * RAY;
+        let matched = U256::from(3u8) * RAY + U256::from(1u8);
+        for revision in [1u32, 4, 5] {
+            let proc = ScaledTokenProcessor::collateral(revision);
+            let event = collateral_mint_event(interest, interest, RAY, Some(matched));
+            let result = proc.process_collateral_mint(&event).unwrap();
+            assert_eq!(
+                result.balance_delta,
+                I256::try_from(matched).unwrap(),
+                "revision {revision}: matched deposit uses the supplied scaled amount"
+            );
+            assert!(!result.is_repay, "revision {revision}");
+            assert_eq!(result.new_index, RAY, "revision {revision}");
+        }
+    }
+
+    /// One wei greater than the accrual is the deposit path: `value -
+    /// balance_increase` is divided, so the delta carries the mint rounding.
+    #[test]
+    fn collateral_mint_one_wei_greater_is_deposit() {
+        let proc = ScaledTokenProcessor::collateral(4);
+        let interest = U256::from(2u8) * RAY;
+        let event = collateral_mint_event(interest + U256::from(1u8), interest, RAY, None);
+        let result = proc.process_collateral_mint(&event).unwrap();
+        assert_eq!(result.balance_delta, I256::ONE);
+        assert!(!result.is_repay);
+    }
+
+    /// One wei LESS than the accrual is the withdrawal-interest path at every
+    /// revision: the same `HALF_UP` division, negated, flagged as a repay — and
+    /// it ignores `scaled_amount`, which belongs to the deposit side.
+    #[test]
+    fn collateral_mint_one_wei_less_is_withdrawal_interest() {
+        let interest = U256::from(2u8) * RAY;
+        let value = interest - U256::from(1u8);
+        for revision in [1u32, 3, 4, 5] {
+            let proc = ScaledTokenProcessor::collateral(revision);
+            let plain = proc
+                .process_collateral_mint(&collateral_mint_event(value, interest, RAY, None))
+                .unwrap();
+            assert_eq!(
+                plain.balance_delta,
+                -I256::ONE,
+                "revision {revision}: withdrawal interest is a one-wei burn"
+            );
+            assert!(plain.is_repay, "revision {revision}");
+            let with_scaled = proc
+                .process_collateral_mint(&collateral_mint_event(
+                    value,
+                    interest,
+                    RAY,
+                    Some(U256::from(9u8) * RAY),
+                ))
+                .unwrap();
+            assert_eq!(
+                with_scaled.balance_delta, plain.balance_delta,
+                "revision {revision}: the withdrawal-interest arm owes nothing to `scaled_amount`"
+            );
+        }
+    }
+
+    /// Collateral mint rounding is `HALF_UP` at every revision (the V4/V5 change
+    /// is on the burn side): 2 wei over a 3-ray index lands on 1 scaled wei,
+    /// where FLOOR would land on 0.
+    #[test]
+    fn collateral_mint_delta_rounding_is_half_up_at_every_revision() {
+        let index = U256::from(3u8) * RAY;
+        let requested = U256::from(2u8);
+        let floor = crate::ray_div(requested, index, Some(RayRounding::Floor)).unwrap();
+        let half_up = crate::ray_div(requested, index, Some(RayRounding::HalfUp)).unwrap();
+        assert_eq!(
+            floor,
+            U256::ZERO,
+            "floor leaves the 2 wei below one scaled unit"
+        );
+        assert_eq!(half_up, U256::ONE, "half-up carries it");
+        for revision in [1u32, 3, 4, 5, 99] {
+            let proc = ScaledTokenProcessor::collateral(revision);
+            let event = collateral_mint_event(requested, U256::ZERO, index, None);
+            let result = proc.process_collateral_mint(&event).unwrap();
+            assert_eq!(
+                result.balance_delta,
+                I256::ONE,
+                "revision {revision}: collateral mint divides HALF_UP"
+            );
+        }
     }
 }
