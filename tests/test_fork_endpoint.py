@@ -87,7 +87,13 @@ def _clock(*ticks: float):
 
 
 class _Spawn:
-    """A spawn callable failing a scripted number of times, then answering."""
+    """A spawn callable failing a scripted number of times, then answering.
+
+    The failure message mirrors the core ``ChildExit`` display for a forked
+    child that died during startup: the exit status, the fork target, and the
+    pointer at the inherited stderr. Fast death is the shape the retry policy
+    gives a second chance; nothing here classifies on the text.
+    """
 
     def __init__(self, *, failures: int) -> None:
         self.calls = 0
@@ -97,9 +103,9 @@ class _Spawn:
         self.calls += 1
         if self.calls <= self._failures:
             msg = (
-                "anvil spawn failed: timed out waiting for node to spawn; is the node binary "
-                "installed? (fork target https://hosted.example/v1/key; a fork child that exits "
-                "during startup is reported as a spawn timeout)"
+                "anvil exited before it was ready (exit status: 1) "
+                "(fork target https://hosted.example/v1/key); "
+                "the child's own reason is on the stderr above"
             )
             raise RuntimeError(msg)
         return "fork"

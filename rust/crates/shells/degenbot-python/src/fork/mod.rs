@@ -66,11 +66,12 @@ const DEFAULT_MNEMONIC: &str =
 
 /// Map a core [`ForkError`] to a `PyErr`.
 ///
-/// `PyRuntimeError` for everything (the legacy `AnvilError` was also a
-/// `RuntimeError` subclass). Specific subclasses (`Spawn`, `Connect`,
-/// `Rpc`) are reflected in the message text for now; if the Python
-/// companion shell gains typed exception subclasses (FF4-era), this mapping
-/// is the single place to upgrade them.
+/// One Python exception carries the whole fork surface: every variant becomes a
+/// `PyRuntimeError`, and the cause rides in its message, which the core error's
+/// `Display` renders per variant — a node program that could not be executed, a
+/// child that exited before readiness, an expired readiness deadline, another
+/// readiness failure, the fork transport runtime, the IPC connect, and a
+/// dev-RPC error each read as their own sentence.
 #[expect(clippy::needless_pass_by_value)] // `Result::map_err` requires the arg by value.
 fn map_fork_err(e: ForkError) -> PyErr {
     PyRuntimeError::new_err(e.to_string())

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use alloy::{
-    node_bindings::Anvil,
+    node_bindings::{Anvil, NodeError},
     primitives::{Address, Bytes, U256},
     providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
     rpc::types::anvil::{Forking, NodeInfo},
@@ -21,12 +21,80 @@ use alloy::{
 };
 use thiserror::Error;
 
+/// Where the spawned node's chain state comes from.
+///
+/// The spawn/readiness diagnostics name it: a forked child's startup waits on
+/// an upstream and an in-memory child's does not, so an operator reading a
+/// failure needs to know which shape they are looking at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkTarget {
+    /// No `fork_url` — a self-contained node, no upstream in the path.
+    InMemory,
+    /// `fork_url` — the upstream JSON-RPC endpoint the child forks from.
+    Upstream(String),
+}
+
+impl std::fmt::Display for ForkTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InMemory => f.write_str("in-memory node"),
+            Self::Upstream(url) => write!(f, "fork target {url}"),
+        }
+    }
+}
+
 /// Errors raised by [`AnvilFork`] lifecycle + dev-RPC operations.
+///
+/// Startup failures are one variant per cause the node-binding distinguishes —
+/// the program never ran, the child exited before readiness, or the readiness
+/// deadline expired — because each needs a different operator response.
 #[derive(Debug, Error)]
 pub enum ForkError {
-    /// `anvil` binary not found or failed to spawn.
-    #[error("anvil spawn failed: {0}")]
-    Spawn(String),
+    /// The node program could not be executed at all: no such file (a missing
+    /// `anvil`), a permission error, a bad working directory. Nothing ran.
+    #[error("anvil spawn failed ({fork_target}): could not execute the node program: {source}")]
+    Spawn {
+        fork_target: ForkTarget,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The child process exited before it reported readiness.
+    ///
+    /// A forked child whose upstream refuses the fork's genesis fetch (a hosted
+    /// endpoint answering HTTP 429, for instance) fails this way. The child's
+    /// own reason is on the stderr it inherits, which the node-binding does not
+    /// capture into this error.
+    #[error("{detail} ({fork_target}); the child's own reason is on the stderr above")]
+    ChildExit {
+        fork_target: ForkTarget,
+        detail: String,
+    },
+
+    /// The readiness deadline expired while the child was still alive.
+    #[error("anvil did not report readiness within {deadline_ms}ms ({fork_target})")]
+    SpawnTimeout {
+        fork_target: ForkTarget,
+        deadline_ms: u64,
+    },
+
+    /// The readiness wait failed for a reason that is neither the child exiting
+    /// nor the deadline expiring: a stdout read error, a missing stdout pipe,
+    /// an unparsable startup line.
+    #[error("anvil readiness failed ({fork_target}): {source}")]
+    Readiness {
+        fork_target: ForkTarget,
+        #[source]
+        source: NodeError,
+    },
+
+    /// The fork's dedicated transport runtime could not be built.
+    #[error("fork transport runtime failed to start ({fork_target}): {source}")]
+    Runtime {
+        fork_target: ForkTarget,
+        #[source]
+        source: std::io::Error,
+    },
 
     /// IPC connection to the spawned anvil node failed.
     #[error("IPC connect failed at {path}: {source}")]
@@ -38,6 +106,38 @@ pub enum ForkError {
     /// An anvil dev-RPC call returned an error.
     #[error("RPC error: {0}")]
     Rpc(String),
+}
+
+impl ForkError {
+    /// Classify a node-binding startup failure into the cause an operator acts on.
+    ///
+    /// The locked binding already separates the causes: `SpawnError` means the
+    /// program never ran, `Fatal` means the child exited before readiness (the
+    /// binding detects stdout EOF and waits for the child to reap its status),
+    /// and `Timeout` means the deadline passed with the child alive. Wrapping
+    /// those types and forwarding their own text preserves each cause; what the
+    /// binding cannot see — which fork target the child was fetching from, and
+    /// the deadline it was given — is carried here.
+    fn spawn_failure(source: NodeError, fork_target: ForkTarget, deadline_ms: u64) -> Self {
+        match source {
+            NodeError::SpawnError(source) => Self::Spawn {
+                fork_target,
+                source,
+            },
+            NodeError::Fatal(detail) => Self::ChildExit {
+                fork_target,
+                detail,
+            },
+            NodeError::Timeout => Self::SpawnTimeout {
+                fork_target,
+                deadline_ms,
+            },
+            source => Self::Readiness {
+                fork_target,
+                source,
+            },
+        }
+    }
 }
 
 impl From<alloy::transports::TransportError> for ForkError {
@@ -94,6 +194,12 @@ pub struct AnvilForkBuilder {
     code_overrides: Vec<(Address, Bytes)>,
     nonce_overrides: Vec<(Address, u64)>,
     storage_overrides: Vec<(Address, U256, U256)>,
+    /// Node program to spawn, overriding `anvil` in `$PATH` (test-only).
+    #[cfg(test)]
+    anvil_program: Option<PathBuf>,
+    /// Readiness deadline in milliseconds (test-only).
+    #[cfg(test)]
+    spawn_deadline_override: Option<u64>,
 }
 
 impl Default for AnvilForkBuilder {
@@ -119,6 +225,10 @@ impl Default for AnvilForkBuilder {
             code_overrides: Vec::new(),
             nonce_overrides: Vec::new(),
             storage_overrides: Vec::new(),
+            #[cfg(test)]
+            anvil_program: None,
+            #[cfg(test)]
+            spawn_deadline_override: None,
         }
     }
 }
@@ -264,7 +374,14 @@ impl AnvilForkBuilder {
     /// queued state overrides.
     ///
     /// # Errors
-    /// - [`ForkError::Spawn`] if the `anvil` binary is missing or fails to start.
+    /// - [`ForkError::Spawn`] if the node program cannot be executed (a missing
+    ///   `anvil`, a permission error).
+    /// - [`ForkError::ChildExit`] if the child exits before reporting readiness
+    ///   (a fork child whose upstream refuses the genesis fetch).
+    /// - [`ForkError::SpawnTimeout`] if the readiness deadline expires with the
+    ///   child still alive.
+    /// - [`ForkError::Readiness`] for any other readiness-wait failure.
+    /// - [`ForkError::Runtime`] if the fork's transport runtime cannot start.
     /// - [`ForkError::Connect`] if the IPC connection fails.
     /// - [`ForkError::Rpc`] if a queued state-override call fails.
     ///
@@ -284,9 +401,9 @@ impl AnvilForkBuilder {
             .map_or_else(default_ipc_path, |p| p.to_string_lossy().into_owned());
 
         let anvil = self.build_anvil(&ipc_path);
-        let instance = anvil
-            .try_spawn()
-            .map_err(|e| ForkError::Spawn(self.spawn_failure_context(&e)))?;
+        let instance = anvil.try_spawn().map_err(|source| {
+            ForkError::spawn_failure(source, self.fork_target(), self.readiness_deadline_ms())
+        })?;
 
         // Use the instance's resolved ipc_path (may differ from the requested
         // default if anvil picked its own).
@@ -308,7 +425,10 @@ impl AnvilForkBuilder {
                 binding: "pinned",
             },
         )
-        .map_err(|e| ForkError::Spawn(e.to_string()))?;
+        .map_err(|source| ForkError::Runtime {
+            fork_target: self.fork_target(),
+            source,
+        })?;
         // Connect INSIDE the dedicated runtime via spawn + oneshot: a
         // nested `block_on` here would panic (tokio forbids blocking from
         // within any async execution environment, `try_spawn` being one).
@@ -373,35 +493,58 @@ impl AnvilForkBuilder {
     /// state from the upstream, so the deadline is an upstream-latency budget,
     /// not a local process-spawn budget: a hosted endpoint with a configured
     /// compute-unit cap stretches every fetch, and a deep fork (a pinned block
-    /// or transaction hash) issues many of them. The deadline is therefore
-    /// deliberately far above any plausible local spawn cost — a stalling
-    /// upstream must not be reported as a missing binary — while staying under
-    /// the test suite's per-test budget (300s) that the fork lane spawns into.
+    /// or transaction hash) issues many of them. It is therefore deliberately
+    /// far above any plausible local spawn cost, while staying under the test
+    /// suite's per-test budget (300s) that the fork lane spawns into. Widening
+    /// it costs nothing on the failure path: a child that dies during startup
+    /// is reported as [`ForkError::ChildExit`] the moment it exits, not when
+    /// this deadline expires.
     const FORK_SPAWN_TIMEOUT_MS: u64 = 180_000;
 
-    /// Render a spawn failure with the fork target and the cause alloy's
-    /// message hides.
+    /// The readiness deadline this builder spawns under, in milliseconds.
     ///
-    /// alloy's readiness wait reads stdout until it sees the `Listening on`
-    /// line and only checks its deadline between lines, so a child that dies
-    /// during startup reads as an endless stream of empty lines and is
-    /// reported as "timed out waiting for node to spawn; is the node binary
-    /// installed?". That is the right message for a missing binary and the
-    /// wrong one for a fork child anvil killed itself: a hosted endpoint
-    /// refusing the fork's genesis fetch (HTTP 429 rate limit) exits at once,
-    /// and the reason reaches the operator only on the child's inherited
-    /// stderr. Name the target so the operator can tell the two apart.
-    fn spawn_failure_context(&self, err: &alloy::node_bindings::NodeError) -> String {
-        self.fork_url.as_deref().map_or_else(
-            || format!("{err} (in-memory node)"),
-            |target| {
-                format!(
-                    "{err} (fork target {target}; a fork child that exits during startup is \
-                     reported as a spawn timeout — anvil's own reason is on the stderr above, \
-                     and a rate-limited upstream (HTTP 429) fails this way)"
-                )
-            },
-        )
+    /// A forked spawn gets [`Self::FORK_SPAWN_TIMEOUT_MS`]; an in-memory spawn
+    /// keeps the node-binding's own default
+    /// ([`alloy::node_bindings::NODE_STARTUP_TIMEOUT`]), so its behavior is
+    /// unchanged.
+    fn readiness_deadline_ms(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(deadline_ms) = self.spawn_deadline_override {
+            return deadline_ms;
+        }
+
+        if self.fork_url.is_some() {
+            Self::FORK_SPAWN_TIMEOUT_MS
+        } else {
+            u64::try_from(alloy::node_bindings::NODE_STARTUP_TIMEOUT.as_millis())
+                .unwrap_or(u64::MAX)
+        }
+    }
+
+    /// Where the spawned child reads its chain state from.
+    fn fork_target(&self) -> ForkTarget {
+        self.fork_url
+            .clone()
+            .map_or(ForkTarget::InMemory, ForkTarget::Upstream)
+    }
+
+    /// Spawn `program` instead of `anvil` from `$PATH` (test-only).
+    ///
+    /// The readiness diagnostics are proven against scripted children through
+    /// this, so they do not depend on a real binary's startup behavior.
+    #[cfg(test)]
+    #[must_use]
+    pub fn anvil_program(mut self, program: impl Into<PathBuf>) -> Self {
+        self.anvil_program = Some(program.into());
+        self
+    }
+
+    /// Override the readiness deadline in milliseconds (test-only).
+    #[cfg(test)]
+    #[must_use]
+    pub const fn spawn_deadline_ms(mut self, deadline_ms: u64) -> Self {
+        self.spawn_deadline_override = Some(deadline_ms);
+        self
     }
 
     /// The anvil CLI flags governing the fork upstream's request rate.
@@ -420,12 +563,21 @@ impl AnvilForkBuilder {
     /// Build the `alloy::node_bindings::Anvil` builder from the configured
     /// params.
     fn build_anvil(&self, ipc_path: &str) -> Anvil {
-        let mut anvil = Anvil::new()
+        #[cfg(test)]
+        let program = self.anvil_program.as_ref();
+        #[cfg(not(test))]
+        let program: Option<&PathBuf> = None;
+
+        let mut anvil = program
+            .map_or_else(Anvil::new, Anvil::at)
             // Python default args:
             .arg("--auto-impersonate")
             .host(self.host.clone())
             .mnemonic(self.mnemonic.clone())
-            .ipc_path(ipc_path.to_string());
+            .ipc_path(ipc_path.to_string())
+            // The deadline is a property of the spawn shape, and the failure
+            // diagnostic reports the deadline the wait actually ran under.
+            .timeout(self.readiness_deadline_ms());
 
         if let Some(port) = self.port {
             anvil = anvil.port(port);
@@ -438,11 +590,6 @@ impl AnvilForkBuilder {
             for arg in self.fork_rate_args() {
                 anvil = anvil.arg(arg);
             }
-            // Alloy's 10s startup deadline covers local process spawn; a
-            // fork's startup also fetches fork metadata from the upstream,
-            // which under a hosted endpoint's latency (and a configured CUPS
-            // cap) needs a wider margin.
-            anvil = anvil.timeout(Self::FORK_SPAWN_TIMEOUT_MS);
         }
         if let Some(block) = self.fork_block {
             anvil = anvil.arg(format!("--fork-block-number={block}"));
@@ -1132,6 +1279,258 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("Pubsub service request channel closed")),
             "expected the clean 'request channel closed' shutdown event; captured: {events:?}"
+        );
+    }
+
+    // -- Spawn and readiness failure classification ----------------------
+    //
+    // A missing binary, a dead child, and an expired readiness deadline are
+    // three unrelated operator problems behind one spawn call, and each maps
+    // to its own variant: the mapping is proven directly on the upstream
+    // `NodeError` it classifies, and end-to-end against scripted children
+    // spawned through the node-binding's `program` capability (no external
+    // RPC, no dependence on a real anvil's startup timing).
+
+    use std::time::Instant;
+
+    use alloy::node_bindings::NodeError;
+
+    const FORK_URL: &str = "https://hosted.example/v1/key";
+
+    fn upstream_target() -> ForkTarget {
+        ForkTarget::Upstream(FORK_URL.to_string())
+    }
+
+    #[test]
+    fn process_spawn_failure_is_a_typed_spawn_not_a_timeout() {
+        let err = ForkError::spawn_failure(
+            NodeError::SpawnError(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            upstream_target(),
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+        );
+
+        let ForkError::Spawn {
+            fork_target,
+            source,
+        } = &err
+        else {
+            panic!("a spawn failure must stay ForkError::Spawn, got {err:?}");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(fork_target, &upstream_target());
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("anvil spawn failed"), "{rendered}");
+        assert!(rendered.contains(FORK_URL), "{rendered}");
+        assert!(!rendered.contains("timed out"), "{rendered}");
+    }
+
+    #[test]
+    fn child_exit_before_readiness_is_neither_missing_binary_nor_timeout() {
+        let err = ForkError::spawn_failure(
+            NodeError::Fatal("anvil exited before it was ready (exit status: 1)".to_string()),
+            upstream_target(),
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+        );
+
+        let ForkError::ChildExit {
+            fork_target,
+            detail,
+        } = &err
+        else {
+            panic!("a dead child must map to ForkError::ChildExit, got {err:?}");
+        };
+        assert_eq!(fork_target, &upstream_target());
+        assert!(detail.contains("exit status: 1"), "{detail}");
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("exited before it was ready"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("stderr"), "{rendered}");
+        assert!(!rendered.contains("timed out"), "{rendered}");
+        assert!(!rendered.contains("binary installed"), "{rendered}");
+    }
+
+    #[test]
+    fn readiness_deadline_is_a_typed_spawn_timeout() {
+        let err = ForkError::spawn_failure(
+            NodeError::Timeout,
+            upstream_target(),
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+        );
+
+        let ForkError::SpawnTimeout {
+            fork_target,
+            deadline_ms,
+        } = &err
+        else {
+            panic!("the readiness deadline must map to ForkError::SpawnTimeout, got {err:?}");
+        };
+        assert_eq!(fork_target, &upstream_target());
+        assert_eq!(*deadline_ms, AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS);
+        assert!(err.to_string().contains("180000ms"), "{err}");
+    }
+
+    #[test]
+    fn readiness_read_failure_keeps_the_alloy_source() {
+        let err = ForkError::spawn_failure(
+            NodeError::ReadLineError(std::io::Error::other("pipe closed mid-line")),
+            ForkTarget::InMemory,
+            u64::try_from(alloy::node_bindings::NODE_STARTUP_TIMEOUT.as_millis())
+                .expect("alloy's default startup deadline fits in u64"),
+        );
+
+        let ForkError::Readiness {
+            fork_target,
+            source,
+        } = &err
+        else {
+            panic!("a readiness I/O failure must map to ForkError::Readiness, got {err:?}");
+        };
+        assert_eq!(fork_target, &ForkTarget::InMemory);
+        assert!(matches!(source, NodeError::ReadLineError(_)), "{source:?}");
+        assert!(std::error::Error::source(&err).is_some(), "{err:?}");
+        assert!(err.to_string().contains("pipe closed mid-line"), "{err}");
+    }
+
+    #[test]
+    fn readiness_deadline_is_bounded_per_spawn_shape() {
+        assert_eq!(
+            AnvilForkBuilder::new().readiness_deadline_ms(),
+            u64::try_from(alloy::node_bindings::NODE_STARTUP_TIMEOUT.as_millis())
+                .expect("alloy's default startup deadline fits in u64"),
+            "an in-memory spawn keeps the node-binding's own startup deadline"
+        );
+        assert_eq!(
+            AnvilForkBuilder::new()
+                .fork_url(FORK_URL)
+                .readiness_deadline_ms(),
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS,
+            "a forked spawn widens the deadline to the upstream-latency budget"
+        );
+        // The lane's per-test budget: a deadline above it would be the test's
+        // own timeout rather than a fork-spawn verdict.
+        const { assert!(AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS < 300_000) };
+    }
+
+    /// Write an executable `#!/bin/sh` program standing in for the node binary.
+    fn scripted_node(body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "degenbot-fork-scripted-node-{}-{n}.sh",
+            std::process::id()
+        ));
+        std::fs::write(&path, body).expect("write scripted node");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("make scripted node executable");
+        path
+    }
+
+    #[tokio::test]
+    async fn missing_node_binary_fails_without_waiting_for_the_deadline() {
+        let missing = std::env::temp_dir().join("degenbot-fork-absent-anvil-binary");
+        let _ = std::fs::remove_file(&missing);
+
+        let started = Instant::now();
+        let Err(err) = AnvilForkBuilder::new()
+            .ipc_path(test_ipc_path())
+            .anvil_program(&missing)
+            .try_spawn()
+            .await
+        else {
+            panic!("a missing node binary cannot spawn");
+        };
+        let elapsed = started.elapsed();
+
+        let ForkError::Spawn { source, .. } = &err else {
+            panic!("a missing node binary must map to ForkError::Spawn, got {err:?}");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "nothing ran, so nothing should be waited for (took {elapsed:?})"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_exiting_on_a_refused_genesis_fetch_is_a_child_exit() {
+        // A forked child whose upstream refuses the genesis fetch (HTTP 429)
+        // exits at once. The binding sees stdout EOF and reports the child's
+        // exit status, while the child's own reason goes to the stderr it
+        // inherits — so the classification must not depend on reading that
+        // sentence.
+        let script = scripted_node(
+            "#!/bin/sh\n\
+             echo 'Error: server returned an error response: error code 429' >&2\n\
+             exit 1\n",
+        );
+
+        let started = Instant::now();
+        let Err(err) = AnvilForkBuilder::new()
+            .ipc_path(test_ipc_path())
+            // The forked shape: this child owns the full fork deadline.
+            .fork_url(FORK_URL)
+            .anvil_program(&script)
+            .try_spawn()
+            .await
+        else {
+            panic!("a child that exits during startup cannot spawn");
+        };
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&script);
+
+        let ForkError::ChildExit {
+            fork_target,
+            detail,
+        } = &err
+        else {
+            panic!("a dead child must map to ForkError::ChildExit, got {err:?}");
+        };
+        assert_eq!(fork_target, &upstream_target());
+        assert!(detail.contains("exit status"), "{detail}");
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "a dead child is reported when it dies, not at the {}-second fork deadline \
+             (took {elapsed:?})",
+            AnvilForkBuilder::FORK_SPAWN_TIMEOUT_MS / 1000
+        );
+        let rendered = err.to_string();
+        assert!(rendered.contains("stderr"), "{rendered}");
+        assert!(!rendered.contains("timed out"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn child_that_never_reports_readiness_hits_the_deadline() {
+        // The child must keep emitting complete stdout lines: the binding
+        // checks its deadline between lines, so a child that prints nothing
+        // blocks the wait instead of letting the deadline fire.
+        let script = scripted_node("#!/bin/sh\nwhile true; do echo .; sleep 0.05; done\n");
+
+        let started = Instant::now();
+        let Err(err) = AnvilForkBuilder::new()
+            .ipc_path(test_ipc_path())
+            .anvil_program(&script)
+            .spawn_deadline_ms(1_000)
+            .try_spawn()
+            .await
+        else {
+            panic!("a child that never reports readiness cannot spawn");
+        };
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&script);
+
+        let ForkError::SpawnTimeout { deadline_ms, .. } = &err else {
+            panic!("the readiness deadline must map to ForkError::SpawnTimeout, got {err:?}");
+        };
+        assert_eq!(*deadline_ms, 1_000);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "the deadline must bound the wait (took {elapsed:?})"
         );
     }
 }

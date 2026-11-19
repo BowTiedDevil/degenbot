@@ -1,12 +1,12 @@
 """Bounded retry for the fork lane's upstream endpoint.
 
 A forked ``anvil`` fetches its genesis state from the fork target *before* it
-reports readiness, and alloy reads a child that dies during that fetch as
-"timed out waiting for node to spawn": the readiness wait watches stdout for the
-``Listening on`` line and a dying child produces empty lines instead. A hosted
-endpoint's transient refusal therefore reaches the test as an opaque spawn
-timeout — a free-tier budget answering HTTP 429 is indistinguishable from a
-missing binary.
+reports readiness, so an endpoint that refuses that fetch (a free-tier budget
+answering HTTP 429) kills the child while it is still starting. The node
+binding reports that as a typed child-exit failure carrying the child's exit
+status, and the child's own reason stays on the stderr it inherits, which the
+binding does not capture. The spawn error names the cause and says nothing
+about the upstream's answer — no refusal sentence is attached to it.
 
 The refused request is anvil's, not the harness's, so no client-side retry can
 re-issue it. Two things the harness can do, and this module does:
@@ -16,11 +16,12 @@ re-issue it. Two things the harness can do, and this module does:
 * give the spawn one second chance when a failed spawn coincides with an
   unhealthy endpoint.
 
-The classification is evidence, never the message text: the spawn error's own
-``HTTP 429`` sentence is unconditional prose attached to every forked-spawn
-failure, so a second probe decides whether the upstream or the fork itself
-failed — an endpoint that answers while the spawn failed is the fork's problem
-(bad flags, a missing block) and retrying would only hide it.
+The classification is evidence, never the message text: a second probe decides
+whether the upstream or the fork itself failed — an endpoint that answers while
+the spawn failed is the fork's problem (bad flags, a missing block) and
+retrying would only hide it. Neither does the harness retry a spawn that was
+slow enough to have spent the deadline: only a fast child death leaves room in
+the test's budget for a second attempt.
 
 Scope is the test lane: production spawn failures stay loud and unretried.
 
