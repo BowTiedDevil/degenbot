@@ -893,6 +893,19 @@ class TestDexIdentityPresets:
         assert ident.fee_token1[1] == 10000
         assert ident.variant == "aerodrome-v2-volatile"
 
+    def test_aerodrome_v2_rows_have_no_init_hash_budget(self) -> None:
+        """Both Aerodrome rows answer a typed absence for ``init_hash``."""
+        from tests.helpers.seam import dex_identity
+
+        for variant in ("aerodrome-v2-volatile", "aerodrome-v2-stable"):
+            ident = dex_identity(variant)
+            assert ident is not None, f"preset missing for {variant}"
+            # Aerodrome pools are EIP-1167 clones addressed through the
+            # factory's `implementation_address`, so the row has no CREATE2
+            # init-hash budget: the seam answers `None`, never a zero digest a
+            # CREATE2 derivation would consume.
+            assert ident.init_hash is None, f"{variant} must carry no init-hash budget"
+
     def test_lookup_is_case_insensitive(self) -> None:
         from tests.helpers.seam import dex_identity
 
@@ -932,10 +945,14 @@ class TestDexIdentityPresets:
             # Every preset's deployer currently equals its factory (verified:
             # all V2 v2_deployments entries use deployer=None → "use factory").
             assert ident.deployer == ident.factory, f"deployer mismatch for {variant}"
-            # init_hash is a 0x-prefixed 64-hex string (or zero for Aerodrome,
-            # whose "different address generation" leaves it empty in Python too).
-            assert ident.init_hash.startswith("0x")
-            assert len(ident.init_hash) == 66
+            # A row with a CREATE2 init-hash budget answers a 0x-prefixed
+            # 64-hex digest; the Aerodrome rows answer the typed absence.
+            if variant.startswith("aerodrome-"):
+                assert ident.init_hash is None, f"{variant} must carry no init hash"
+            else:
+                assert ident.init_hash is not None, f"{variant} must carry an init hash"
+                assert ident.init_hash.startswith("0x")
+                assert len(ident.init_hash) == 66
 
     def test_view_is_frozen(self) -> None:
         """The DexIdentity view is read-only (frozen pyclass)."""
@@ -975,6 +992,33 @@ class TestDexIdentityPresets:
         # No reserves_abi kwarg → Standard shape (2-tuple).
         assert ident.reserves_abi == ["uint112", "uint112"]
 
+    def test_pyconstructor_accepts_a_typed_absence_for_init_hash(self) -> None:
+        """``init_hash=None`` builds a view for a variant with no hash budget."""
+        from tests.helpers.seam import DexIdentity
+
+        ident = DexIdentity(
+            factory="0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+            init_hash=None,
+            fee_token0=(0, 10000),
+            fee_token1=(0, 10000),
+            variant="aerodrome-v2-volatile",
+        )
+        assert ident.init_hash is None
+        assert ident.variant == "aerodrome-v2-volatile"
+
+    def test_pyconstructor_refuses_a_zero_init_hash(self) -> None:
+        """A zero digest is the sentinel the typed absence replaced — refused."""
+        from tests.helpers.seam import DexIdentity
+
+        with pytest.raises(ValueError, match="init_hash=None"):
+            DexIdentity(
+                factory="0x" + "aa" * 20,
+                init_hash="0x" + "00" * 32,
+                fee_token0=(997, 1000),
+                fee_token1=(997, 1000),
+                variant="uniswap-v2",
+            )
+
     def test_pyconstructor_pancakeswap_reserves_abi_and_unknown_variant(self) -> None:
         """PancakeStyle 3-tuple + unknown-variant ValueError paths."""
         from tests.helpers.seam import DexIdentity
@@ -994,7 +1038,7 @@ class TestDexIdentityPresets:
         with pytest.raises(ValueError):
             DexIdentity(
                 factory="0x" + "aa" * 20,
-                init_hash="0x" + "00" * 32,
+                init_hash="0x" + "ab" * 32,
                 fee_token0=(1, 2),
                 fee_token1=(1, 2),
                 variant="nonexistent-dex",

@@ -1421,7 +1421,7 @@ impl PyLiquidityPool {
             let mut ident = degenbot_uniswap::dex_identity::preset_for_variant(id.variant);
             ident.factory = id.factory;
             ident.deployer = id.deployer;
-            ident.init_hash = id.init_hash;
+            ident.init_hash = Some(id.init_hash);
             Some(crate::bot::dex_identity::PyDexIdentity::from_core(&ident))
         })
     }

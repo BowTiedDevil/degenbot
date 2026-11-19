@@ -33,7 +33,7 @@ class DexIdentity:
         cls,
         /,
         factory: str,
-        init_hash: str,
+        init_hash: str | None,
         fee_token0: tuple[SupportsIndex, SupportsIndex],
         fee_token1: tuple[SupportsIndex, SupportsIndex],
         variant: str,
@@ -84,9 +84,13 @@ class DexIdentity:
         `token1→token0` fee parameters: `(gamma_numer, fee_denom)`.
         """
     @property
-    def init_hash(self, /) -> str:
+    def init_hash(self, /) -> str | None:
         """
-        CREATE2 init code hash (lowercase hex with `0x` prefix, 64 hex chars).
+        CREATE2 init code hash (lowercase hex with `0x` prefix, 64 hex chars),
+        or `None` for a variant with no init-hash budget — the Aerodrome rows,
+        whose pools are EIP-1167 clones addressed through the factory's
+        `implementation_address`. `None` is a typed absence, never a zero
+        digest: a caller deriving a CREATE2 address must handle it explicitly.
         """
     @property
     def reserves_abi(self, /) -> list[str]:

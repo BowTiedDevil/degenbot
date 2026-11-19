@@ -1182,7 +1182,9 @@ async fn build_v2_reads_the_camelot_stable_fee_pair_from_the_pool() {
         dex_identity::CAMELOT_V2_STABLE.factory,
         mim,
         usdc,
-        dex_identity::CAMELOT_V2_STABLE.init_hash,
+        dex_identity::CAMELOT_V2_STABLE
+            .init_hash
+            .expect("the Camelot preset carries a measured CREATE2 init hash"),
     );
     assert_eq!(
         pool, measured,
@@ -1248,7 +1250,9 @@ async fn build_v2_refuses_a_camelot_stable_fee_that_retains_nothing() {
         dex_identity::CAMELOT_V2_STABLE.factory,
         tok0,
         tok1,
-        dex_identity::CAMELOT_V2_STABLE.init_hash,
+        dex_identity::CAMELOT_V2_STABLE
+            .init_hash
+            .expect("the Camelot preset carries a measured CREATE2 init hash"),
     );
 
     let mut f = FakeRpc::new();
@@ -1307,7 +1311,9 @@ async fn build_v2_surfaces_a_failed_camelot_fee_read() {
         dex_identity::CAMELOT_V2_STABLE.factory,
         tok0,
         tok1,
-        dex_identity::CAMELOT_V2_STABLE.init_hash,
+        dex_identity::CAMELOT_V2_STABLE
+            .init_hash
+            .expect("the Camelot preset carries a measured CREATE2 init hash"),
     );
 
     let mut f = FakeRpc::new();
@@ -1364,7 +1370,9 @@ async fn build_v2_keeps_the_preset_pair_for_camelot_volatile() {
         dex_identity::CAMELOT_V2_VOLATILE.factory,
         tok0,
         tok1,
-        dex_identity::CAMELOT_V2_VOLATILE.init_hash,
+        dex_identity::CAMELOT_V2_VOLATILE
+            .init_hash
+            .expect("the Camelot preset carries a measured CREATE2 init hash"),
     );
 
     // No `FEE_DENOMINATOR()` / `token*FeePercent()` responses: a read of any
@@ -1413,7 +1421,14 @@ async fn build_v2_assembles_register_params_from_onchain() {
 
     let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
+    let pool = compute_v2_address(
+        UNISWAP_V2.factory,
+        tok0,
+        tok1,
+        UNISWAP_V2
+            .init_hash
+            .expect("the Uniswap V2 preset carries a measured CREATE2 init hash"),
+    );
 
     let mut f = FakeRpc::new();
     f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));
@@ -1459,7 +1474,14 @@ async fn build_v2_refuses_an_unmeasured_init_hash_off_mainnet() {
     const BSC: u64 = 56;
     let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
+    let pool = compute_v2_address(
+        UNISWAP_V2.factory,
+        tok0,
+        tok1,
+        UNISWAP_V2
+            .init_hash
+            .expect("the Uniswap V2 preset carries a measured CREATE2 init hash"),
+    );
 
     let mut f = FakeRpc::new();
     f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));
@@ -4031,7 +4053,14 @@ async fn construction_door_v2_constructs_registers_and_reuses() {
 
     let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
+    let pool = compute_v2_address(
+        UNISWAP_V2.factory,
+        tok0,
+        tok1,
+        UNISWAP_V2
+            .init_hash
+            .expect("the Uniswap V2 preset carries a measured CREATE2 init hash"),
+    );
 
     let mut f = FakeRpc::new();
     f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));

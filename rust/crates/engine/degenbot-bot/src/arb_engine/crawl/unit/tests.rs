@@ -297,7 +297,13 @@ impl DbConstruction for V4Db {
 
 /// The CREATE2 address of a V2-style pair for `dex`'s factory + init hash.
 fn v2_address(dex: &dex_identity::DexIdentity, token0: Address, token1: Address) -> Address {
-    compute_v2_address(dex.factory, token0, token1, dex.init_hash)
+    compute_v2_address(
+        dex.factory,
+        token0,
+        token1,
+        dex.init_hash
+            .expect("the fixture preset carries a CREATE2 init hash"),
+    )
 }
 
 fn v2_hop() -> DiscoveredHop {

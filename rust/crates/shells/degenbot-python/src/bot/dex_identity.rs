@@ -59,7 +59,7 @@ fn fee_spec(pair: (u64, u64)) -> PyResult<FeeSpec> {
 pub struct PyDexIdentity {
     factory: String,
     deployer: String,
-    init_hash: String,
+    init_hash: Option<String>,
     fee_token0: (u64, u64),
     fee_token1: (u64, u64),
     reserves_abi: Vec<String>,
@@ -72,7 +72,7 @@ impl PyDexIdentity {
         Self {
             factory: address_to_checksum_string(&ident.factory),
             deployer: address_to_checksum_string(&ident.deployer),
-            init_hash: format!("{:#x}", ident.init_hash),
+            init_hash: ident.init_hash.map(|hash| format!("{hash:#x}")),
             // The Python view keeps the historical `(gamma, denominator)` tuple;
             // a per-pool marker projects as its own `(0, denominator)` shape.
             fee_token0: ident.fee_token0.as_pair(),
@@ -93,9 +93,13 @@ impl PyDexIdentity {
     /// presets via `dex_identity` or the `pool_type_registry`). Mirrors Polars'
     /// builder pattern for codec options — presets are the canonical source,
     /// but custom identities are constructable when needed.
+    ///
+    /// `init_hash=None` declares a variant with no CREATE2 init-hash budget
+    /// (Aerodrome's EIP-1167 clones); a zero digest is refused rather than
+    /// read as that absence, so the sentinel cannot re-enter through this door.
     fn build(
         factory: &str,
-        init_hash: &str,
+        init_hash: Option<&str>,
         fee_token0: (u64, u64),
         fee_token1: (u64, u64),
         variant: &str,
@@ -103,8 +107,21 @@ impl PyDexIdentity {
     ) -> PyResult<Self> {
         let factory_addr = parse_address(factory)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let init_hash_b256 = alloy::primitives::B256::from_str(init_hash)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let init_hash_b256 = match init_hash {
+            None => None,
+            Some(raw) => {
+                let parsed = alloy::primitives::B256::from_str(raw)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                if parsed == alloy::primitives::B256::ZERO {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "init_hash must be a real CREATE2 init code hash: pass \
+                         init_hash=None for a variant with no init-hash budget, never a \
+                         zero digest",
+                    ));
+                }
+                Some(parsed)
+            }
+        };
         let variant_enum = DexVariant::try_from(variant)
             .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         // `match` consumes `reserves_abi` (moves the Option); the inner Vec is
@@ -164,7 +181,7 @@ impl PyDexIdentity {
     #[pyo3(signature = (factory, init_hash, fee_token0, fee_token1, variant, reserves_abi=None))]
     fn new(
         factory: &str,
-        init_hash: &str,
+        init_hash: Option<&str>,
         fee_token0: (u64, u64),
         fee_token1: (u64, u64),
         variant: &str,
@@ -192,10 +209,14 @@ impl PyDexIdentity {
         &self.deployer
     }
 
-    /// CREATE2 init code hash (lowercase hex with `0x` prefix, 64 hex chars).
+    /// CREATE2 init code hash (lowercase hex with `0x` prefix, 64 hex chars),
+    /// or `None` for a variant with no init-hash budget — the Aerodrome rows,
+    /// whose pools are EIP-1167 clones addressed through the factory's
+    /// `implementation_address`. `None` is a typed absence, never a zero
+    /// digest: a caller deriving a CREATE2 address must handle it explicitly.
     #[getter]
-    fn init_hash(&self) -> &str {
-        &self.init_hash
+    fn init_hash(&self) -> Option<&str> {
+        self.init_hash.as_deref()
     }
 
     /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the

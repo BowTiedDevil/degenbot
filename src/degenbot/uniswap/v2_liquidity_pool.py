@@ -182,7 +182,18 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
 
         # Deployer/init_hash come from the dex preset (the only path now —
         # the handle carries the canonical deployment identity).
-        self.init_hash = dex.init_hash
+        init_hash = dex.init_hash
+        # The merged identity carries the registration's resolved CREATE2 init
+        # hash, so a preset with no init-hash budget (the Aerodrome EIP-1167
+        # clone rows answer `None`) cannot reach a registered pool's companion.
+        if init_hash is None:  # pragma: no cover
+            msg = (
+                "V2 pool handle resolves no CREATE2 init hash for variant "
+                f"{dex.variant!r}; a registered pool carries its deployment "
+                "row's resolved hash"
+            )
+            raise DegenbotValueError(message=msg)
+        self.init_hash = init_hash
         self.deployer = get_checksum_address(dex.deployer)
 
         # Camelot stable strategy + integer fee scale: read off the handle's

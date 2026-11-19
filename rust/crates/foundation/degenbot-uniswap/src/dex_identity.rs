@@ -253,8 +253,15 @@ pub struct DexIdentity {
     /// deployer — V2 presets here use `factory` for all (verified: every V2
     /// `v2_deployments` entry has `deployer=None` → "use factory").
     pub deployer: Address,
-    /// The CREATE2 init code hash (Solidity `keccak256(type.creationCode)`).
-    pub init_hash: B256,
+    /// The CREATE2 init code hash (Solidity `keccak256(type.creationCode)`),
+    /// or `None` for a variant with no init-hash budget.
+    ///
+    /// `None` is the typed absence, never a zero digest: the Aerodrome rows
+    /// deploy EIP-1167 clones, so a pool address derives from the factory's
+    /// `implementation_address` (the deployment row's clone resolution) rather
+    /// than from a CREATE2 init hash, and a zero digest is indistinguishable
+    /// from an unfilled placeholder to a derivation that consumes it.
+    pub init_hash: Option<B256>,
     /// `token0→token1` fee declaration: a retained ratio (`997/1000` for a
     /// 0.3% fee) or the per-pool marker for a deployment whose fee is read
     /// on-chain.
@@ -303,10 +310,7 @@ pub const fn preset_for_variant(variant: DexVariant) -> DexIdentity {
 }
 
 // ---------------------------------------------------------------------------
-// Presets — TDD RED placeholders (B256::ZERO / Address::ZERO / (0,0)).
-//
-// The test module below encodes the VERIFIED Python ClassVar values cross-
-// checked from `src/degenbot/`. Filling in the real values is the green step.
+// Presets
 // ---------------------------------------------------------------------------
 
 /// Uniswap factory (Ethereum mainnet, chain 1).
@@ -315,7 +319,9 @@ pub const fn preset_for_variant(variant: DexVariant) -> DexIdentity {
 pub const UNISWAP_V2: DexIdentity = DexIdentity {
     factory: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
     deployer: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
-    init_hash: b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"),
+    init_hash: Some(b256!(
+        "96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+    )),
     fee_token0: fee_spec_retained(997, 1000),
     fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
@@ -326,7 +332,9 @@ pub const UNISWAP_V2: DexIdentity = DexIdentity {
 pub const SUSHISWAP_V2: DexIdentity = DexIdentity {
     factory: address!("C0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
     deployer: address!("C0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"),
-    init_hash: b256!("e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"),
+    init_hash: Some(b256!(
+        "e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
+    )),
     fee_token0: fee_spec_retained(997, 1000),
     fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
@@ -337,7 +345,9 @@ pub const SUSHISWAP_V2: DexIdentity = DexIdentity {
 pub const PANCAKESWAP_V2: DexIdentity = DexIdentity {
     factory: address!("1097053Fd2ea711dad45caCcc45EfF7548fCB362"),
     deployer: address!("1097053Fd2ea711dad45caCcc45EfF7548fCB362"),
-    init_hash: b256!("57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"),
+    init_hash: Some(b256!(
+        "57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"
+    )),
     fee_token0: fee_spec_retained(9975, 10_000),
     fee_token1: fee_spec_retained(9975, 10_000),
     reserves_abi: ReservesAbi::PancakeswapStyle,
@@ -348,7 +358,9 @@ pub const PANCAKESWAP_V2: DexIdentity = DexIdentity {
 pub const SWAPBASED_V2: DexIdentity = DexIdentity {
     factory: address!("04C9f118d21e8B767D2e50C946f0cC9F6C367300"),
     deployer: address!("04C9f118d21e8B767D2e50C946f0cC9F6C367300"),
-    init_hash: b256!("b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea"),
+    init_hash: Some(b256!(
+        "b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea"
+    )),
     fee_token0: fee_spec_retained(997, 1000),
     fee_token1: fee_spec_retained(997, 1000),
     reserves_abi: ReservesAbi::Standard,
@@ -361,7 +373,9 @@ pub const SWAPBASED_V2: DexIdentity = DexIdentity {
 pub const CAMELOT_V2_VOLATILE: DexIdentity = DexIdentity {
     factory: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     deployer: address!("6EcCab422D763aC031210895C81787E87B43A652"),
-    init_hash: b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"),
+    init_hash: Some(b256!(
+        "a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+    )),
     fee_token0: fee_spec_retained(99_700, 100_000),
     fee_token1: fee_spec_retained(99_700, 100_000),
     reserves_abi: ReservesAbi::Standard,
@@ -379,7 +393,9 @@ pub const CAMELOT_V2_VOLATILE: DexIdentity = DexIdentity {
 pub const CAMELOT_V2_STABLE: DexIdentity = DexIdentity {
     factory: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     deployer: address!("6EcCab422D763aC031210895C81787E87B43A652"),
-    init_hash: b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"),
+    init_hash: Some(b256!(
+        "a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+    )),
     fee_token0: fee_spec_marker(100_000),
     fee_token1: fee_spec_marker(100_000),
     reserves_abi: ReservesAbi::Standard,
@@ -389,27 +405,28 @@ pub const CAMELOT_V2_STABLE: DexIdentity = DexIdentity {
 /// Aerodrome V2 volatile (canonical Base, chain 8453). Fee is per-pool
 /// on-chain (`getFee` over `FEE_DENOMINATOR=10000`), so the preset declares NO
 /// fee: it carries the per-pool marker with that denominator, and the
-/// Aerodrome door reads the live fee. Init hash is empty in the Python source
-/// (different address generation — documented here as zero with a
-/// `factory`-only budget; encoding/address-derivation for Aerodrome is carried
-/// by a different path).
+/// Aerodrome door reads the live fee. No init-hash budget (`init_hash: None`):
+/// Aerodrome pools are EIP-1167 clones, so their addresses derive from the
+/// factory's `implementation_address` rather than from a CREATE2 init hash.
+/// The `dex` getter replaces this with a registered pool's resolved hash, so a
+/// pool identity always answers one.
 pub const AERODROME_V2_VOLATILE: DexIdentity = DexIdentity {
     factory: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     deployer: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
-    init_hash: B256::ZERO,
+    init_hash: None,
     fee_token0: fee_spec_marker(10_000),
     fee_token1: fee_spec_marker(10_000),
     reserves_abi: ReservesAbi::Standard,
     variant: DexVariant::AerodromeV2Volatile,
 };
 
-/// Aerodrome V2 stable. Init hash is empty in the Python source (different
-/// address generation); the fee is per-pool on-chain, so the preset declares
-/// none — the marker carries Aerodrome's `FEE_DENOMINATOR` (`10_000`).
+/// Aerodrome V2 stable. The fee is per-pool on-chain, so the preset declares
+/// none — the marker carries Aerodrome's `FEE_DENOMINATOR` (`10_000`). Like
+/// the volatile row it has no init-hash budget: see [`AERODROME_V2_VOLATILE`].
 pub const AERODROME_V2_STABLE: DexIdentity = DexIdentity {
     factory: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
     deployer: address!("420DD381b31aEf6683db6B902084cB0FFECe40Da"),
-    init_hash: B256::ZERO,
+    init_hash: None,
     fee_token0: fee_spec_marker(10_000),
     fee_token1: fee_spec_marker(10_000),
     reserves_abi: ReservesAbi::Standard,
@@ -493,7 +510,9 @@ mod tests {
         assert_eq!(ident.deployer, ident.factory);
         assert_eq!(
             ident.init_hash,
-            b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f")
+            Some(b256!(
+                "96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+            ))
         );
         // Fraction(3, 1000) fee → RETAINED fraction (1000-3, 1000) = (997, 1000).
         // gamma_numer is the kept amount, NOT the fee.
@@ -514,7 +533,9 @@ mod tests {
         assert_eq!(ident.deployer, ident.factory);
         assert_eq!(
             ident.init_hash,
-            b256!("e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303")
+            Some(b256!(
+                "e18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303"
+            ))
         );
         assert_eq!(ident.fee_token0.as_pair(), (997, 1000)); // 3/1000 fee
         assert_eq!(ident.fee_token1.as_pair(), (997, 1000));
@@ -534,7 +555,9 @@ mod tests {
         assert_eq!(ident.deployer, ident.factory);
         assert_eq!(
             ident.init_hash,
-            b256!("57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d")
+            Some(b256!(
+                "57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"
+            ))
         );
         // Fraction(25, 10000) fee → RETAINED fraction (9975, 10_000).
         assert_eq!(ident.fee_token0.as_pair(), (9975, 10_000));
@@ -558,7 +581,9 @@ mod tests {
         assert_eq!(ident.deployer, ident.factory);
         assert_eq!(
             ident.init_hash,
-            b256!("b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea")
+            Some(b256!(
+                "b64118b4e99d4a4163453838112a1695032df46c09f7f09064d4777d2767f8ea"
+            ))
         );
         // Swapbased inherits UniswapV2Pool.FEE = Fraction(3, 1000).
         assert_eq!(ident.fee_token0.as_pair(), (997, 1000));
@@ -580,7 +605,9 @@ mod tests {
         assert_eq!(ident.deployer, ident.factory);
         assert_eq!(
             ident.init_hash,
-            b256!("a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1")
+            Some(b256!(
+                "a856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+            ))
         );
         assert_eq!(ident.fee_token0.as_pair(), (99_700, 100_000));
         assert_eq!(ident.fee_token1.as_pair(), (99_700, 100_000));
@@ -611,6 +638,10 @@ mod tests {
             address!("420DD381b31aEf6683db6B902084cB0FFECe40Da")
         );
         assert_eq!(ident.deployer, ident.factory);
+        // No init-hash budget: the row's pools are EIP-1167 clones, so the
+        // absence is typed rather than a zero digest a CREATE2 derivation
+        // would consume as a real preimage hash.
+        assert_eq!(ident.init_hash, None);
         // Acceptance criterion (aerodrome/pools.py FEE_DENOMINATOR=10000).
         assert_eq!(ident.fee_token0.denominator(), 10_000);
         assert_eq!(ident.fee_token1.denominator(), 10_000);
@@ -627,6 +658,7 @@ mod tests {
         let volatile = AERODROME_V2_VOLATILE;
         assert_eq!(stable.factory, volatile.factory);
         assert_eq!(stable.deployer, volatile.deployer);
+        assert_eq!(stable.init_hash, None);
         assert_eq!(stable.fee_token0.denominator(), 10_000);
         assert_eq!(stable.fee_token1.denominator(), 10_000);
         assert_eq!(stable.fee_token0.ratio(), None);
