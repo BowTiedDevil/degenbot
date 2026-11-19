@@ -38,7 +38,7 @@ use crate::arb_engine::crawl::admission::{CrawlLedger, DiscoveredHop, Registrati
 use crate::arb_engine::crawl::discovery::{
     CrawlDiscoveryError, DiscoveredPath, DiscoverySource, Edition,
 };
-use crate::arb_engine::crawl::flights::BuildFlights;
+use crate::arb_engine::crawl::flights::CrawlFlights;
 use crate::arb_engine::crawl::policy::CrawlPathPolicy;
 use crate::arb_engine::crawl::receipt::{CrawlReceipt, StageSplit};
 use crate::arb_engine::EngineStages;
@@ -534,7 +534,7 @@ fn harness_with_arm(
         Arc::clone(driver.stages()),
         Arc::clone(driver.verify()),
         Arc::new(CrawlLedger::new()),
-        Arc::new(BuildFlights::new()),
+        Arc::new(CrawlFlights::new()),
         Arc::new(config.admission_settings()),
     ));
     let host = CrawlHost {

@@ -6,7 +6,7 @@
 //! 1. **memo** — the ledger's stable-refusal memo, asked pre-build per hop;
 //! 2. **build** — each hop through [`Bot::construct_pool`] (the route,
 //!    identity, get-or-register, refusal fold), single-flighted per pool
-//!    ([`BuildFlights`]), so concurrent candidates share one construction;
+//!    ([`CrawlFlights`]), so concurrent candidates share one construction;
 //! 3. **eligibility** — direction resolution, the rejected-path memo read, the
 //!    policy verdict ([`CrawlPathPolicy::evaluate`] over a
 //!    [`PathCompositionView`] built from registered state), then the one
@@ -63,7 +63,7 @@ use degenbot_substrate::PoolLookup;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 use crate::arb_engine::crawl::flights::{
-    BuildFlights, FlightEnter, FlightKey, FlightOutcome, FlightTarget,
+    CrawlFlights, FlightEnter, FlightKey, FlightOutcome, FlightTarget,
 };
 use crate::arb_engine::crawl::policy::{
     oracle_verdict, registered_hop_facts, BatchPolicyOracle, CrawlPathPolicy, PathCompositionView,
@@ -305,7 +305,7 @@ pub struct RegistrationAdmission {
     /// The shared negative memos.
     ledger: Arc<CrawlLedger>,
     /// The in-flight build table.
-    flights: Arc<BuildFlights>,
+    flights: Arc<CrawlFlights>,
     /// The admission-wide policy values.
     settings: Arc<AdmissionSettings>,
 }
@@ -319,7 +319,7 @@ impl RegistrationAdmission {
         stages: Arc<EngineStages>,
         verify: Arc<VerifyLifecycle>,
         ledger: Arc<CrawlLedger>,
-        flights: Arc<BuildFlights>,
+        flights: Arc<CrawlFlights>,
         settings: Arc<AdmissionSettings>,
     ) -> Self {
         Self {
@@ -353,7 +353,7 @@ impl RegistrationAdmission {
 
     /// The in-flight build table.
     #[must_use]
-    pub fn flights(&self) -> &Arc<BuildFlights> {
+    pub fn flights(&self) -> &Arc<CrawlFlights> {
         &self.flights
     }
 

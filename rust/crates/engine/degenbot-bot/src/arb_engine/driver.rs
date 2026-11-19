@@ -68,7 +68,7 @@ use crate::arb_engine::crawl::admission::{CrawlLedger, RegistrationAdmission};
 use crate::arb_engine::crawl::controller::{
     CrawlConfig, CrawlConfigError, CrawlController, CrawlHandle, CrawlHost, SnapshotArm,
 };
-use crate::arb_engine::crawl::flights::BuildFlights;
+use crate::arb_engine::crawl::flights::CrawlFlights;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
 use crate::arb_engine::pump_session::{
     ConnectedSession, CrawlExit, CrawlTeardown, LiveLoop, MovePayload, PumpDecline, PumpEvent,
@@ -1238,7 +1238,7 @@ impl EngineDriver {
             Arc::clone(&self.stages),
             Arc::clone(&self.verify),
             Arc::new(CrawlLedger::new()),
-            Arc::new(BuildFlights::new()),
+            Arc::new(CrawlFlights::new()),
             Arc::new(config.admission_settings()),
         ));
         let host = CrawlHost {
@@ -1849,7 +1849,7 @@ mod tests {
             Arc::clone(driver.stages()),
             Arc::clone(driver.verify()),
             Arc::new(CrawlLedger::new()),
-            Arc::new(BuildFlights::new()),
+            Arc::new(CrawlFlights::new()),
             Arc::new(config.admission_settings()),
         ));
         let host = CrawlHost {

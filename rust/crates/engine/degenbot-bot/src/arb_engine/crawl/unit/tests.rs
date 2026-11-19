@@ -32,7 +32,7 @@ use super::{run_crawl_unit, CrawlUnit, CrawlUnitHost};
 use crate::arb_engine::crawl::admission::{
     AdmissionSettings, CrawlAbort, CrawlLedger, DiscoveredHop, RegistrationAdmission,
 };
-use crate::arb_engine::crawl::flights::BuildFlights;
+use crate::arb_engine::crawl::flights::CrawlFlights;
 use crate::arb_engine::crawl::policy::{CrawlPathPolicy, TokenFilter};
 use crate::arb_engine::crawl::receipt::{CrawlReceipt, UnitStage};
 use crate::arb_engine::EngineStages;
@@ -407,7 +407,7 @@ struct Harness {
     verify: Arc<VerifyLifecycle>,
     io: Arc<ConstructionIo>,
     ledger: Arc<CrawlLedger>,
-    flights: Arc<BuildFlights>,
+    flights: Arc<CrawlFlights>,
     admission: RegistrationAdmission,
 }
 
@@ -444,7 +444,7 @@ impl Harness {
             },
         ));
         let ledger = Arc::new(CrawlLedger::new());
-        let flights = Arc::new(BuildFlights::new());
+        let flights = Arc::new(CrawlFlights::new());
         let admission = RegistrationAdmission::new(
             Arc::clone(&bot),
             Arc::clone(&io),

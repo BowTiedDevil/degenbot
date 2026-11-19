@@ -320,7 +320,10 @@ pub mod crawl {
         SnapshotArm,
     };
     pub use crate::arb_engine::crawl::discovery::DiscoveredPath;
-    pub use crate::arb_engine::crawl::flights::BuildFlights;
+    pub use crate::arb_engine::crawl::flights::{
+        BuildFlights, FlightEnter, FlightGuard, FlightKey, FlightOutcome, FlightSlotHandle,
+        FlightTarget,
+    };
     pub use crate::arb_engine::crawl::policy::{
         BatchPolicyOracle, CrawlPathPolicy, DuplicatePoolPolicy, HopBounds, LiquidityFloor,
         LiquidityProxy, OracleError, PathPolicyVerdict, PolicyCandidate, PolicyRefusal,

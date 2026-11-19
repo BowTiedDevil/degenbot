@@ -32,6 +32,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
+use degenbot_bot::crawl::{FlightEnter, FlightKey, FlightOutcome};
+
 use crate::bot::engine::{hex_string_to_pool_id, refusal_err, SpecViolationError};
 use crate::bot::errmap::{
     map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_connect_err,
@@ -162,10 +164,9 @@ pub struct PyBot {
     /// guard, not a bare handle: the guard owns the quiescence its canary needs,
     /// so the commit cannot run while a tick-map assembly still holds a clone.
     db: Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>>,
-    /// PRG-1: the engine-internal single-flight build table —
-    /// claims collapsed into the Rust build path (was the `PoolBuildClaims`
-    /// FFI peer + the Python `(family, key)` claim driver).
-    flights: build_flights::BuildFlights,
+    /// The single-flight build table: the core's, instantiated with this
+    /// driver's failure payload (the leader's exact exception value).
+    flights: build_flights::PythonBuildFlights,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
@@ -206,20 +207,13 @@ impl PyBot {
         Arc::clone(&self.db)
     }
 
-    // ===================== PRG-1 build-flight seam ==================
+    // ===================== the build-flight seam ==================
 
-    /// Re-raise a single-flight peer's published failure: the exception value
-    /// the leader raised, converted back into a `PyErr` under the caller's
-    /// GIL token.
-    fn py_err_from_exc(py: Python<'_>, exc: Py<pyo3::exceptions::PyBaseException>) -> pyo3::PyErr {
-        pyo3::PyErr::from_value(exc.into_bound(py).into_any())
-    }
-
-    /// Run one pool build under the engine-internal single flight (PRG-1):
+    /// Run one pool build under the single flight, whose table is the core's:
     /// `precheck` answers from the `BotState` registry of record, `lead` runs
     /// the full build choreography (fetch → register) exactly once under the
-    /// `(family, chain_id, key)` claim, and concurrent peers park GIL-free on
-    /// the claim and wake with the published result (id or failure).
+    /// flight key's claim, and concurrent peers park GIL-free on the claim and
+    /// wake with the published result (id, or the leader's exact exception).
     ///
     /// Publication is strictly after the leader's `BotState` insertion, so a
     /// `Built` wake never precedes the registry. A lead whose claim window
@@ -230,7 +224,7 @@ impl PyBot {
     fn run_flight<T>(
         &self,
         py: Python<'_>,
-        key: &build_flights::FlightKey,
+        key: FlightKey,
         mut precheck: impl FnMut() -> PyResult<Option<T>>,
         lead: impl FnOnce() -> PyResult<(u64, T)>,
     ) -> PyResult<T> {
@@ -240,24 +234,21 @@ impl PyBot {
                 return Ok(payload);
             }
             match self.flights.enter(key) {
-                build_flights::FlightEnter::Lead(guard) => {
+                FlightEnter::Lead(mut guard) => {
                     let outcome = lead();
-                    match outcome {
-                        Ok((pool_id, payload)) => {
-                            guard.publish_built(pool_id);
-                            return Ok(payload);
-                        }
+                    match &outcome {
+                        Ok((pool_id, _)) => guard.publish(FlightOutcome::Built(*pool_id)),
                         Err(err) => {
-                            guard.publish_failed(py, &err);
-                            return Err(err);
+                            guard.publish(FlightOutcome::Failed(build_flights::failure(py, err)));
                         }
                     }
+                    return outcome.map(|(_, payload)| payload);
                 }
-                build_flights::FlightEnter::Peer(slot) => {
+                FlightEnter::Peer(peer) => {
                     // Park GIL-free; `Built` re-answers through `precheck`, a
                     // failure re-raises the leader's exact exception.
-                    if let build_flights::Parked::Failed(exc) = slot.wait(py) {
-                        return Err(Self::py_err_from_exc(py, exc));
+                    if let FlightOutcome::Failed(failure) = build_flights::wait(py, peer) {
+                        return Err(build_flights::rethrow(py, &failure));
                     }
                 }
             }
@@ -495,28 +486,6 @@ impl PyBot {
         }
     }
 
-    /// The single-flight key family for a construction request — the concurrency
-    /// class a build of this family+address takes part in.
-    fn flight_family_of(family: RequestFamily, variant: Option<&str>) -> u8 {
-        match (family, variant) {
-            (RequestFamily::ConstantProduct, Some("aerodrome")) => {
-                build_flights::flight_family::AERODROME
-            }
-            (RequestFamily::ConstantProduct, _) => build_flights::flight_family::V2,
-            (RequestFamily::ConcentratedLiquidity, _) => build_flights::flight_family::V3,
-            (RequestFamily::ManagedV4, _) => build_flights::flight_family::V4,
-            (RequestFamily::Weighted, _) => build_flights::flight_family::BALANCER_WEIGHTED,
-            (RequestFamily::Stableswap, Some("balancer_stable")) => {
-                build_flights::flight_family::BALANCER_STABLE
-            }
-            // Curve + the refused-at-the-boundary unmodeled share the legacy
-            // wildcard's class.
-            (RequestFamily::Stableswap | RequestFamily::Unmodeled, _) => {
-                build_flights::flight_family::CURVE
-            }
-        }
-    }
-
     /// The registry-of-record identity echo for an already-registered
     /// address-keyed pool — the flight pre-check AND the door's registry-GET
     /// race answer read the SAME shaping. The pair-keyed families echo their
@@ -665,7 +634,7 @@ impl PyBot {
             bot: Arc::new(Bot::new(chain_id)),
             pump: parking_lot::Mutex::new(None),
             db: Arc::new(parking_lot::Mutex::new(None)),
-            flights: build_flights::BuildFlights::default(),
+            flights: build_flights::table(),
         }
     }
 
@@ -1748,29 +1717,14 @@ impl PyBot {
         let (construction, pair_echo) =
             Self::translate_construction_request(request, family, addr, db_ref)?;
         let family_tag = construction.family();
-        // The V4 family is `(pool_manager, pool_id)`-keyed — two pools on one
-        // manager are distinct single flights (the retired verb's key shape).
-        let flight_target = if matches!(family, RequestFamily::ManagedV4) {
-            format!(
-                "{}:{}",
-                addr.to_checksum(None).to_lowercase(),
-                request
-                    .pool_id
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_lowercase()
-            )
-        } else {
-            addr.to_checksum(None).to_lowercase()
-        };
-        let key = build_flights::FlightKey(
-            Self::flight_family_of(family, variant),
-            self.bot.chain_id(),
-            flight_target,
-        );
+        // The flight identity is the construction's own: the address it
+        // registers under, or a V4 `(PoolManager, pool_id)` pair (one manager
+        // hosts many pools, so the pair — never the manager alone — is the
+        // identity).
+        let key = build_flights::flight_key(&construction, self.bot.chain_id());
         self.run_flight(
             py,
-            &key,
+            key,
             // The registry-of-record pre-check for the address-keyed
             // families. A registered V4 pool is answered by the core door's
             // get half (the same typed result as the fresh build, and its
