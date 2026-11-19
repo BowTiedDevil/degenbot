@@ -41,8 +41,8 @@ use degenbot_math::concentrated_liquidity::tick_math::{
 /// genuinely illiquid). `Sparse` means no snapshot data exists for this pool
 /// — solver results may contain errors or phantom profits.
 ///
-/// Moved from `solvers/arb_engine/mod.rs` to live with V3 state under
-/// ADR-003; re-exported from `arb_engine` for back-compat with callers.
+/// Home is V3 state under ADR-003; `degenbot_pools` re-exports it as the
+/// crate-root product surface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PoolTickCoverage {
     /// Snapshot provided complete tick data. Solver results are trustworthy.

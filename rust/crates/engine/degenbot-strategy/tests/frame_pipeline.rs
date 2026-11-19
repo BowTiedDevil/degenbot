@@ -1764,8 +1764,8 @@ use alloy::primitives::Bytes;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::mock::{Asserter, MockTransport};
+use degenbot_eventhub::PendingTx;
 use degenbot_execution::{CandidateId, DeploymentId};
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, SubmissionSlot};
 use degenbot_strategy::frame_pipeline::{
@@ -1879,8 +1879,8 @@ fn bid_artifacts(bid_wei: U256) -> FrameArtifacts {
     }
 }
 
-fn submit_event(hash_byte: u8, nonce: u64) -> BackrunFeedEvent {
-    BackrunFeedEvent {
+fn submit_event(hash_byte: u8, nonce: u64) -> PendingTx {
+    PendingTx {
         chain_id: 1,
         from: Address::with_last_byte(7),
         to: Some(Address::with_last_byte(9)),

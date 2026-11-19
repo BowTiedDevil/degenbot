@@ -1,6 +1,7 @@
 //! Backrun feed client spec.
 //!
-//! Seam: `degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig, BackrunFeedEvent}`
+//! Seam: `degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig}` over the
+//! hub's `degenbot_eventhub::PendingTx` frame
 //! and `BackrunFeedStatus`. Tests drive a local mock WS server and assert on
 //! wire behavior: the subscribe handshake, typed event parse, chain-id gate,
 //! reconnect-on-drop, silent-socket watchdog, ring eviction, parse resilience.
@@ -180,7 +181,7 @@ async fn drain_until(
     feed: &BackrunFeed,
     want: usize,
     timeout: Duration,
-) -> Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent> {
+) -> Vec<degenbot_eventhub::PendingTx> {
     let mut acc: Vec<_> = Vec::new();
     let deadline = Instant::now() + timeout;
     loop {

@@ -77,9 +77,9 @@ use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_core::errors::ProviderError;
+use degenbot_eventhub::PendingTx;
 use degenbot_execution::{CandidateId, DeploymentId};
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle;
 use degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner;
@@ -608,7 +608,7 @@ pub async fn build_block_handle<'a>(
 /// event fields, or the bare event). Malformed lines are SKIPPED — the
 /// capture is best-effort by contract and a dry-run must process the rest.
 #[must_use]
-pub fn load_fixture_frames(path: &std::path::Path) -> Vec<BackrunFeedEvent> {
+pub fn load_fixture_frames(path: &std::path::Path) -> Vec<PendingTx> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -640,7 +640,7 @@ fn quantity(value: &serde_json::Value) -> Option<U256> {
     }
 }
 
-fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
+fn parse_frame_line(line: &str, now: u64) -> Option<PendingTx> {
     let obj = serde_json::from_str::<serde_json::Value>(line)
         .ok()?
         .take_object()?;
@@ -655,7 +655,7 @@ fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
             .and_then(|n| u64::try_from(n).ok())
     };
     let address_field = |k: &str| string_field(k).and_then(|s| s.parse().ok());
-    Some(BackrunFeedEvent {
+    Some(PendingTx {
         chain_id: uint_field("chain_id").unwrap_or(1),
         from: address_field("from")?,
         to: address_field("to"),
@@ -1107,7 +1107,7 @@ impl BundleSimCaps {
 /// sim of the backrun alone asks the wrong question: a legitimate backrun's
 /// profit exists ONLY after the target lands.
 fn sim_transactions(
-    ev: &BackrunFeedEvent,
+    ev: &PendingTx,
     exec: Address,
     owner: Address,
     cd: &Bytes,
@@ -1188,7 +1188,7 @@ async fn negotiate_shape(
 /// reads as "the bundle reverted", and neither is re-probed.
 pub async fn simulate_candidate(
     sim_provider: &AlloyProvider,
-    ev: &BackrunFeedEvent,
+    ev: &PendingTx,
     exec: Address,
     owner: Address,
     cd: &Bytes,
@@ -1318,7 +1318,7 @@ pub fn nonce_blocked(outcome: &SubmitOutcome) -> bool {
 pub async fn dispatch_frame(
     cfg: &BackrunConfig,
     pl: &PipelineConfig,
-    ev: &BackrunFeedEvent,
+    ev: &PendingTx,
     head: u64,
     artifacts: FrameArtifacts,
     submit: FrameSubmit<'_>,
@@ -1636,7 +1636,7 @@ pub async fn process_frame<S: PendingTxReaction>(
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<Evm2BlockSimHandle<'_>>,
-    ev: &BackrunFeedEvent,
+    ev: &PendingTx,
     head: u64,
     spent: U256,
 ) -> FrameArtifacts {
@@ -1674,7 +1674,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
     handle: &mut Option<Evm2BlockSimHandle<'_>>,
-    ev: &BackrunFeedEvent,
+    ev: &PendingTx,
     prefix: &[ReplayableTx],
     head: u64,
     spent: U256,
@@ -2057,7 +2057,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy::primitives::{Address, Bytes, B256, U256};
-    use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+    use degenbot_eventhub::PendingTx;
     use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 
     use super::simulate_candidate;
@@ -2162,8 +2162,8 @@ mod tests {
 
     /// A minimal frame: the gate reads only `from`/`to`/`data`/`value`/`gas`/
     /// `max_fee_per_gas`.
-    fn sim_frame() -> BackrunFeedEvent {
-        BackrunFeedEvent {
+    fn sim_frame() -> PendingTx {
+        PendingTx {
             chain_id: 1,
             from: Address::repeat_byte(0x11),
             to: Some(Address::repeat_byte(0x22)),

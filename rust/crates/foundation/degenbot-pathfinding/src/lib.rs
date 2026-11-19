@@ -40,7 +40,7 @@ pub use directions::{
     ResolvedDirections,
 };
 pub use graph::{
-    Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec, UnknownVariant,
+    EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind, SearchSpec, UnknownVariant,
     MAX_HOP_DEPTH,
 };
 pub use plan::{prepare_traversal_plan, TraversalSpec};

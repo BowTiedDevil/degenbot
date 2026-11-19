@@ -4,8 +4,9 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 
 /// One unsigned pending transaction revealed by the `MEVBlocker` auction.
 ///
-/// Field-for-field the frame `degenbot-rpc::backrun_feed` parses today; the
-/// hub re-exports it as `BackrunFeedEvent` so no consumer's frame shape moved.
+/// One frame of the `degenbot-rpc` backrun feed: the feed parses the
+/// `MEVBlocker` notification into this vocabulary and rings it as
+/// [`HubEvent::PendingTx`](crate::HubEvent::PendingTx).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingTx {
     /// The chain the frame is pinned to (the feed enforces one chain id).

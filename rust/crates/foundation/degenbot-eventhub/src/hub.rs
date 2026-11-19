@@ -512,46 +512,17 @@ impl Hub {
 
     /// Take the consumer end of a named source channel — once only.
     ///
+    /// The hand-off is the depth-tallying [`NamedReceiver`], so every value a
+    /// consumer takes is counted and [`Self::named_pending`] sees the channel
+    /// drain. A consumer that needs the bare [`mpsc::UnboundedReceiver`] takes
+    /// it from [`NamedReceiver::into_inner`], which gives up the tally.
+    ///
     /// # Errors
     ///
     /// [`HubError::NamedNotRegistered`] when no channel is registered under
     /// `name`; [`HubError::NamedTypeMismatch`] when `T` is not the payload the
     /// channel was minted with.
     pub fn take_named_receiver<T: Send + 'static>(
-        &self,
-        name: &'static str,
-    ) -> Result<Option<mpsc::UnboundedReceiver<T>>, HubError> {
-        let mut named = self.named.lock();
-        let entry = named
-            .get_mut(name)
-            .ok_or(HubError::NamedNotRegistered(name))?;
-        let Some(boxed) = entry.receiver.get_mut().take() else {
-            return Ok(None);
-        };
-        match boxed.downcast::<NamedReceiver<T>>() {
-            Ok(rx) => Ok(Some(rx.into_inner())),
-            Err(other) => {
-                *entry.receiver.get_mut() = Some(other);
-                Err(HubError::NamedTypeMismatch(name))
-            }
-        }
-    }
-
-    /// Take the consumer end of a named source channel as a depth-tallying
-    /// [`NamedReceiver`] — once only.
-    ///
-    /// The companion of [`Self::take_named_receiver`]: that handoff keeps the
-    /// raw [`mpsc::UnboundedReceiver`] shape for existing consumers, while
-    /// this one returns the wrapper whose `recv` / `try_recv` feed
-    /// [`Self::named_pending`]. A channel can be handed out by exactly one of
-    /// the two.
-    ///
-    /// # Errors
-    ///
-    /// [`HubError::NamedNotRegistered`] when no channel is registered under
-    /// `name`; [`HubError::NamedTypeMismatch`] when `T` is not the payload the
-    /// channel was minted with.
-    pub fn take_named_counting_receiver<T: Send + 'static>(
         &self,
         name: &'static str,
     ) -> Result<Option<NamedReceiver<T>>, HubError> {
@@ -585,9 +556,8 @@ impl Hub {
     /// a value can be received before the matching send is tallied (or the
     /// reverse); the reported depth may therefore trail or lead the exact
     /// queue length by the number of values in flight, and saturates at zero
-    /// rather than underflowing. The raw escape hatches
-    /// ([`NamedSender::into_inner`] / [`Self::take_named_receiver`]) move
-    /// values without touching the tally.
+    /// rather than underflowing. The raw escape hatches ([`NamedSender::into_inner`] /
+    /// [`NamedReceiver::into_inner`]) move values without touching the tally.
     #[must_use]
     pub fn named_pending(&self, name: &'static str) -> Option<u64> {
         self.named.lock().get(name).map(NamedChannel::pending)
@@ -970,9 +940,7 @@ mod tests {
         let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<u64>();
         // Post shape: the same primitive registered as a named hub source.
         let mut hub = Hub::new();
-        let hub_tx = hub
-            .add_named_unbounded_source::<u64>(NAMED_TEST_CHANNEL)
-            .into_inner();
+        let hub_tx = hub.add_named_unbounded_source::<u64>(NAMED_TEST_CHANNEL);
         let mut hub_rx = hub
             .take_named_receiver::<u64>(NAMED_TEST_CHANNEL)
             .expect("registered")
@@ -984,6 +952,11 @@ mod tests {
                 assert!(hub_tx.send(value).is_ok());
             }
         }
+        assert_eq!(
+            hub.named_pending(NAMED_TEST_CHANNEL),
+            Some(BURSTS * PER_BURST),
+            "the hub hand-off tallies every in-flight value"
+        );
         let mut raw_seen = Vec::new();
         while let Ok(value) = raw_rx.try_recv() {
             raw_seen.push(value);
@@ -997,6 +970,11 @@ mod tests {
             usize::try_from(BURSTS * PER_BURST).expect("fits in usize")
         );
         assert_eq!(hub_seen, raw_seen);
+        assert_eq!(
+            hub.named_pending(NAMED_TEST_CHANNEL),
+            Some(0),
+            "draining the hub hand-off returns the depth tally to zero"
+        );
     }
 
     #[test]
@@ -1047,7 +1025,7 @@ mod tests {
             tx.send(i).expect("sends");
         }
         let mut rx = hub
-            .take_named_counting_receiver::<u64>(NAME)
+            .take_named_receiver::<u64>(NAME)
             .expect("registered")
             .expect("fresh channel");
         assert_eq!(hub.named_pending(NAME), Some(5));
@@ -1082,7 +1060,7 @@ mod tests {
         let mut hub = Hub::new();
         let tx = hub.add_named_unbounded_source::<u64>(NAME);
         let mut rx = hub
-            .take_named_counting_receiver::<u64>(NAME)
+            .take_named_receiver::<u64>(NAME)
             .expect("registered")
             .expect("fresh channel");
         tx.send(11).expect("sends");

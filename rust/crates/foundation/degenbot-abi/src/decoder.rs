@@ -22,7 +22,7 @@
 //! (e.g., decoding Transfer events from historical blocks).
 
 use crate::abi_types::cached::get_cached_types;
-use crate::abi_types::AbiValue;
+use crate::abi_types::value::AbiValue;
 use degenbot_core::errors::AbiDecodeError;
 
 // =============================================================================
@@ -122,7 +122,8 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_types::{AbiType, AbiValue};
+/// use degenbot_abi::abi_types::type_::AbiType;
+/// use degenbot_abi::abi_types::value::AbiValue;
 /// use degenbot_abi::decoder::decode_for_types;
 /// use alloy::primitives::U256;
 ///
@@ -139,7 +140,7 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 /// Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn decode_for_types(
-    types: &[crate::abi_types::AbiType],
+    types: &[crate::abi_types::type_::AbiType],
     data: &[u8],
 ) -> Result<Vec<AbiValue>, AbiDecodeError> {
     if types.is_empty() {
@@ -150,7 +151,7 @@ pub fn decode_for_types(
         return Err(AbiDecodeError::EmptyData);
     }
 
-    let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
+    let cached = crate::abi_types::cached::CachedAbiTypes::from_abi_types(types)?;
     cached.decode(data)
 }
 
@@ -433,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_decode_for_types_basic() {
-        use crate::abi_types::AbiType;
+        use crate::abi_types::type_::AbiType;
 
         // Encode uint256 and bool
         let mut data = Vec::new();
@@ -464,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_decode_for_types_matches_decode_rust() {
-        use crate::abi_types::AbiType;
+        use crate::abi_types::type_::AbiType;
 
         // Create test data
         let mut data = Vec::new();
@@ -492,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_decode_for_types_empty() {
-        use crate::abi_types::AbiType;
+        use crate::abi_types::type_::AbiType;
 
         let types: Vec<AbiType> = vec![];
         let decoded = decode_for_types(&types, &[]).expect("empty types should succeed");

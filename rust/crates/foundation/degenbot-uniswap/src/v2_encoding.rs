@@ -11,7 +11,7 @@
 
 use alloy::primitives::{Address, U256};
 
-use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::encoder::encode_rust;
 use degenbot_core::errors::AbiDecodeError;
 

@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_eventhub::PendingTx;
 use degenbot_strategy::gap_quarantine::MissingWire;
 use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, Quarantine, QuarantineDecision,
@@ -46,10 +46,10 @@ fn now_ms() -> u64 {
 
 const SENDER: Address = Address::new([0x7; 20]);
 
-fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> BackrunFeedEvent {
+fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> PendingTx {
     let mut raw = [0u8; 32];
     raw[0] = hash_byte;
-    BackrunFeedEvent {
+    PendingTx {
         chain_id: 1,
         from: SENDER,
         to: Some(Address::with_last_byte(9)),

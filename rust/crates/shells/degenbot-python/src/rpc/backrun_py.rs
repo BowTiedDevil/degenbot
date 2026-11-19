@@ -8,10 +8,11 @@
 use std::time::Duration;
 
 use crate::prelude::*;
-use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig, BackrunFeedEvent};
+use degenbot_eventhub::PendingTx;
+use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
 use pyo3::types::PyDict;
 
-fn ev_to_dict(py: Python<'_>, ev: &BackrunFeedEvent) -> PyResult<Py<PyAny>> {
+fn ev_to_dict(py: Python<'_>, ev: &PendingTx) -> PyResult<Py<PyAny>> {
     let to: Py<PyAny> = match ev.to {
         Some(a) => a.to_string().into_pyobject(py)?.unbind().into_any(),
         None => py.None().into_any(),

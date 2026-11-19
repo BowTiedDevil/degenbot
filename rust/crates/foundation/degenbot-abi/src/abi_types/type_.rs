@@ -81,7 +81,7 @@ impl AbiType {
     /// # Example
     ///
     /// ```
-    /// use degenbot_abi::abi_types::AbiType;
+    /// use degenbot_abi::abi_types::type_::AbiType;
     ///
     /// let ty = AbiType::Address;
     /// assert_eq!(ty.type_str(), "address");

@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_eventhub::PendingTx;
 use serde::{Deserialize, Serialize};
 
 /// The identity every parked frame carries, wire or not: the hash the chain
@@ -129,8 +129,8 @@ impl CompleteFrame {
     /// frame carries every wire field by construction, so no sentinel or
     /// fallback value can stand in for one.
     #[must_use]
-    pub fn to_event(&self) -> BackrunFeedEvent {
-        BackrunFeedEvent {
+    pub fn to_event(&self) -> PendingTx {
+        PendingTx {
             chain_id: self.wire.chain_id,
             from: self.identity.from,
             to: self.wire.to,
@@ -177,7 +177,7 @@ impl ParkedFrame {
     /// Park a feed event as a complete frame: every wire field came from the
     /// feed, so none is a fabricated default.
     #[must_use]
-    pub fn from_event(event: &BackrunFeedEvent, expected_at_capture: u64) -> Self {
+    pub fn from_event(event: &PendingTx, expected_at_capture: u64) -> Self {
         Self::Complete(Box::new(CompleteFrame {
             identity: FrameIdentity {
                 hash: event.hash,
@@ -857,8 +857,8 @@ mod tests {
 
     const HASH: B256 = b256!("0000000000000000000000000000000000000000000000000000000000000001");
 
-    fn event(hash: B256, nonce: u64) -> BackrunFeedEvent {
-        BackrunFeedEvent {
+    fn event(hash: B256, nonce: u64) -> PendingTx {
+        PendingTx {
             chain_id: 1,
             from: SENDER,
             to: None,

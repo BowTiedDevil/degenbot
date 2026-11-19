@@ -60,7 +60,7 @@ use serde::{Deserialize, Serialize};
 use crate::gap_quarantine::{
     CompleteFrame, DegradedFrame, FrameIdentity, FrameWire, MissingWire, NonceConsumed, ParkedFrame,
 };
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_eventhub::PendingTx;
 
 /// Fixed journal filename under the durable-state root.
 pub const JOURNAL_FILE_NAME: &str = "backrun-quarantine.jsonl";
@@ -197,7 +197,7 @@ pub struct WireFields {
 impl WireFields {
     /// Encode the wire half of one feed event.
     #[must_use]
-    pub fn encode(event: &BackrunFeedEvent) -> Self {
+    pub fn encode(event: &PendingTx) -> Self {
         Self {
             chain_id: event.chain_id,
             to: event.to.map(|a| a.to_string()),
@@ -301,7 +301,7 @@ pub struct ParkRecord {
 impl ParkRecord {
     /// Build a complete park record from the event that produced the gap.
     #[must_use]
-    pub fn new(event: &BackrunFeedEvent, expected_nonce: u64, parked_at_unix_ms: u64) -> Self {
+    pub fn new(event: &PendingTx, expected_nonce: u64, parked_at_unix_ms: u64) -> Self {
         Self {
             hash: event.hash,
             sender: Some(event.from),
@@ -1077,10 +1077,10 @@ mod tests {
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
     }
 
-    fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> BackrunFeedEvent {
+    fn event(hash_byte: u8, nonce: u64, received_unix_ms: u64) -> PendingTx {
         let mut raw = [0u8; 32];
         raw[0] = hash_byte;
-        BackrunFeedEvent {
+        PendingTx {
             chain_id: 1,
             from: Address::with_last_byte(7),
             to: Some(Address::with_last_byte(9)),

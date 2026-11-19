@@ -751,7 +751,7 @@ fn parked(hash_byte: u8) -> ParkedFrame {
     let mut raw = [0u8; 32];
     raw[0] = hash_byte;
     ParkedFrame::from_event(
-        &degenbot_rpc::backrun_feed::BackrunFeedEvent {
+        &degenbot_eventhub::PendingTx {
             chain_id: 1,
             from: Address::with_last_byte(7),
             to: None,

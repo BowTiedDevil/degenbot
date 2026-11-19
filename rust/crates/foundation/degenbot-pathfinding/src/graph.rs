@@ -13,8 +13,8 @@
 //! indices: parallel pools between the same unordered token pair collapse
 //! into one bundle, and the walk tracks a use count per bundle instead of
 //! a visited set over pools, so no edge exploration hashes. Each
-//! `CompactEdge` is 8 bytes (two `u32`) versus the 24-byte `Edge`,
-//! improving cache density for the hot DFS loop.
+//! `CompactEdge` is 8 bytes (two `u32`) versus a `(u64, u64, PoolKind)`
+//! edge, improving cache density for the hot DFS loop.
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
@@ -196,19 +196,6 @@ impl TryFrom<&str> for PoolKind {
                 known: Self::KNOWN_KINDS.iter().map(|(name, _)| *name).collect(),
             })
     }
-}
-
-/// A pool edge in the external (database) form. Retained for API
-/// compatibility; the internal adjacency list uses the compact [`CompactEdge`]
-/// (8 bytes, two `u32` indices) for cache density.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Edge {
-    /// The token ID this edge leads to.
-    pub neighbor: u64,
-    /// The pool ID providing this liquidity connection.
-    pub pool_id: u64,
-    /// Which pool-table family this pool belongs to.
-    pub pool_kind: PoolKind,
 }
 
 /// A key uniquely identifying a pool within a traversal.

@@ -2,7 +2,7 @@
 //!
 //! Parses signatures like `"transfer(address,uint256) returns (uint256)"`.
 
-use crate::abi_types::{AbiType, AbiTypeError};
+use crate::abi_types::type_::{AbiType, AbiTypeError};
 use std::iter::Peekable;
 use std::str::Chars;
 

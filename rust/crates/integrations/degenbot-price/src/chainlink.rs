@@ -21,8 +21,8 @@ use crate::decode::{as_int, as_u128, as_uint};
 use crate::error::{FeedDataReason, PriceError, PriceResult};
 use alloy::primitives::{Address, I256, U256};
 #[cfg(test)]
-use degenbot_abi::abi_types::AbiType;
-use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::abi_types::type_::AbiType;
+use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_rpc::contract::Contract;
 use degenbot_rpc::provider::AlloyProvider;
 use std::sync::Arc;

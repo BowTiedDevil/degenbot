@@ -15,7 +15,8 @@
 )]
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_abi::abi_types::{AbiType, AbiValue};
+use degenbot_abi::abi_types::type_::AbiType;
+use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::encoder::encode_for_types;
 use degenbot_price::{ChainlinkPriceFeed, FeedDataReason, PriceError};
 use degenbot_rpc::offline::{OfflineProvider, RecordedBlock};

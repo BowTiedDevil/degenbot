@@ -1,6 +1,6 @@
 //! `PyO3` bindings for the contract module.
 
-use crate::abi_types::AbiValue;
+use crate::abi_types::value::AbiValue;
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::prelude::*;
 use crate::rpc::provider::PyAlloyProvider;
@@ -215,7 +215,7 @@ fn decode_return_data(
     data: &[u8],
     output_types: &Bound<'_, PyList>,
 ) -> PyResult<Vec<String>> {
-    use crate::abi_types::AbiType;
+    use crate::abi_types::type_::AbiType;
     use crate::contract::decode_return_data as decode_impl;
 
     // Extract types from Python list (copy before releasing GIL)

@@ -27,8 +27,8 @@ use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
 use alloy::sol_types::SolCall as _;
+use degenbot_eventhub::PendingTx;
 use degenbot_executor::composers::ICommandExecutor::executeCall;
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun, ObserveReason};
 use degenbot_strategy::backrun_strategy::BackrunStrategy;
@@ -154,7 +154,7 @@ fn bid_config() -> (BackrunConfig, PipelineConfig) {
 /// pending frame the feed carries, sized to genuinely dislocate the
 /// canonical pair, so a backrun cycle clears the envelope floor on the
 /// replayed post-state.
-fn dislocating_frame(value_eth: u128, nonce: u64) -> BackrunFeedEvent {
+fn dislocating_frame(value_eth: u128, nonce: u64) -> PendingTx {
     let data = hex_str_to_bytes(concat!(
         "0x7ff36ab5",
         // amountOutMin = 0
@@ -179,7 +179,7 @@ fn dislocating_frame(value_eth: u128, nonce: u64) -> BackrunFeedEvent {
 /// pool, not the fixture sender) has nowhere near this balance, so the
 /// transfer reverts, the frame's replay reports `Reverted`, and the
 /// pipeline must observe with the truthful reason — never compose a bid.
-fn reverting_frame(nonce: u64) -> BackrunFeedEvent {
+fn reverting_frame(nonce: u64) -> PendingTx {
     let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
     data.extend_from_slice(&[0u8; 12]);
     data.extend_from_slice(FRAME_SENDER.as_slice());
@@ -191,11 +191,11 @@ fn reverting_frame(nonce: u64) -> BackrunFeedEvent {
     frame_event(U256::ZERO, Bytes::from(data), nonce)
 }
 
-fn frame_event(value: U256, data: Bytes, nonce: u64) -> BackrunFeedEvent {
+fn frame_event(value: U256, data: Bytes, nonce: u64) -> PendingTx {
     // Derived from the payload so the trace filter key is stable and
     // unique per fixture invocation.
     let hash = keccak256(data.clone());
-    BackrunFeedEvent {
+    PendingTx {
         chain_id: 1,
         from: FRAME_SENDER,
         to: Some(UNISWAP_V2_ROUTER),

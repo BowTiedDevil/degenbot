@@ -11,7 +11,7 @@
 
 use crate::error::PriceError;
 use alloy::primitives::{I256, U256};
-use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::abi_types::value::AbiValue;
 
 /// Extract an unsigned integer (`uintN`) slot as a `U256`.
 ///

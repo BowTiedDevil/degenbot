@@ -121,7 +121,8 @@ impl AavePriceOracle {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use degenbot_abi::abi_types::{AbiType, AbiValue};
+    use degenbot_abi::abi_types::type_::AbiType;
+    use degenbot_abi::abi_types::value::AbiValue;
     use degenbot_abi::decoder::decode_for_types;
     use degenbot_abi::encoder::encode_for_types;
 

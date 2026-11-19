@@ -7,7 +7,7 @@
 )]
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
-use degenbot_rpc::backrun_feed::BackrunFeedEvent;
+use degenbot_eventhub::PendingTx;
 use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
 use degenbot_simulation::sim::frame_replay::{PredStatus, ReplayableTx, ScratchBlock};
 use degenbot_simulation::RunVerdict;
@@ -317,8 +317,8 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-fn event(hash_byte: u8, nonce: u64) -> BackrunFeedEvent {
-    BackrunFeedEvent {
+fn event(hash_byte: u8, nonce: u64) -> PendingTx {
+    PendingTx {
         chain_id: 1,
         from: Address::with_last_byte(7),
         to: Some(Address::with_last_byte(9)),

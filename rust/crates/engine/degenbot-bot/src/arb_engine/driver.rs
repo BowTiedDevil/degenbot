@@ -746,7 +746,7 @@ impl EngineDriver {
         }
         match self
             .hub
-            .take_named_counting_receiver::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
+            .take_named_receiver::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
         {
             Ok(Some(rx)) => Ok(EventHandoff::new(
                 SessionStream::new(rx.into_inner()),

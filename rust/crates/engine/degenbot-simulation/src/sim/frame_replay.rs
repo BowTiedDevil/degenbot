@@ -15,9 +15,9 @@ use alloy::primitives::{Address, Bytes, U256};
 use crate::sim::RunVerdict;
 
 /// One externally-received signed transaction, recovered-signer-as-data.
-/// Field set mirrors the backrun feed frame (`degenbot-rpc::backrun_feed`
-/// `BackrunFeedEvent`) minus transport metadata (hash, arrival time,
-/// access list) the replay does not consume.
+/// Field set mirrors the backrun feed frame (`degenbot_eventhub::PendingTx`)
+/// minus transport metadata (hash, arrival time, access list) the replay does
+/// not consume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayableTx {
     /// The recovered signer (data, not an act — the caller recovers).

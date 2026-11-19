@@ -149,10 +149,10 @@ impl<T> NamedSender<T> {
 
 /// The consumer half of a named hub channel, tallying receives.
 ///
-/// Obtained from [`crate::Hub::take_named_counting_receiver`]; the
-/// compatibility handoff [`crate::Hub::take_named_receiver`] still yields the
-/// raw [`mpsc::UnboundedReceiver`]. `recv` / `try_recv` delegate to that raw
-/// receiver, so ordering and close-on-sender-drop are unchanged.
+/// Obtained from [`crate::Hub::take_named_receiver`]. `recv` / `try_recv`
+/// delegate to the underlying [`mpsc::UnboundedReceiver`], so ordering and
+/// close-on-sender-drop are those of the primitive; each successful take also
+/// feeds [`crate::Hub::named_pending`].
 pub struct NamedReceiver<T> {
     rx: mpsc::UnboundedReceiver<T>,
     counters: Arc<NamedCounters>,

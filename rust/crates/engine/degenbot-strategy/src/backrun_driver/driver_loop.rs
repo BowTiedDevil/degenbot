@@ -237,7 +237,7 @@ pub(super) fn record_gap_park(
 /// blocked frame re-enters once per head advance — never a spin — and writes
 /// one park line, not one per pass.
 pub(super) fn park_blocked_frame(
-    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    ev: &degenbot_eventhub::PendingTx,
     quarantine: &mut Quarantine,
     journal: Option<&mut QuarantineJournal>,
     memo: &mut GapParkMemo,
@@ -275,7 +275,7 @@ pub(super) fn park_blocked_frame(
     reason = "capture -> pipeline -> dispatch reads top-to-bottom"
 )]
 pub(super) async fn run_frame(
-    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    ev: &degenbot_eventhub::PendingTx,
     prefix: &[ReplayableTx],
     rt: &mut MarketContext,
     strategy: &mut BackrunStrategy,
@@ -1039,7 +1039,7 @@ struct LoopBoot {
     signer: Option<TxSigner>,
     gap_probe: crate::gap_probe::GapProbe,
     sim_provider: Arc<AlloyProvider>,
-    fixture_frames: Option<Vec<degenbot_rpc::backrun_feed::BackrunFeedEvent>>,
+    fixture_frames: Option<Vec<degenbot_eventhub::PendingTx>>,
     namespace_root: Option<PathBuf>,
     /// The hosted pending-tx stream this arm drains: the typed view over the
     /// arm's own source kind's hub ring, minted by the process's hosted

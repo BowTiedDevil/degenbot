@@ -116,13 +116,13 @@ pub fn get_cached_types(types: &[&str]) -> Result<Arc<CachedAbiTypes>, AbiDecode
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_types::CachedAbiTypes;
+/// use degenbot_abi::abi_types::cached::CachedAbiTypes;
 ///
 /// // Parse once
 /// let cached = CachedAbiTypes::new(&["address", "address", "uint256"])?;
 ///
 /// // Encode values
-/// use degenbot_abi::abi_types::AbiValue;
+/// use degenbot_abi::abi_types::value::AbiValue;
 /// use alloy::primitives::U256;
 /// let values = vec![
 ///     AbiValue::Address([0u8; 20]),
@@ -165,7 +165,7 @@ impl CachedAbiTypes {
     /// # Example
     ///
     /// ```
-    /// use degenbot_abi::abi_types::CachedAbiTypes;
+    /// use degenbot_abi::abi_types::cached::CachedAbiTypes;
     ///
     /// let cached = CachedAbiTypes::new(&["address", "uint256"])?;
     ///
@@ -286,8 +286,8 @@ impl CachedAbiTypes {
     /// # Example
     ///
     /// ```
-    /// use degenbot_abi::abi_types::CachedAbiTypes;
-    /// use degenbot_abi::abi_types::AbiValue;
+    /// use degenbot_abi::abi_types::cached::CachedAbiTypes;
+    /// use degenbot_abi::abi_types::value::AbiValue;
     /// use alloy::primitives::U256;
     ///
     /// let cached = CachedAbiTypes::new(&["address", "uint256"])?;

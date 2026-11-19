@@ -2,9 +2,10 @@
 //!
 //! Connects to `<wss://searchers.mevblocker.io>`, subscribes to
 //! `mevblocker_partialPendingTransactions`, and delivers typed
-//! [`BackrunFeedEvent`]s through a hub-owned bounded ring (the hub's
-//! `DropOldestCounted` policy) drained by [`BackrunFeed::drain`]; the
-//! `dropped_ring` counter is the hub channel's eviction count.
+//! [`PendingTx`](degenbot_eventhub::PendingTx) frames through a hub-owned
+//! bounded ring (the hub's `DropOldestCounted` policy) drained by
+//! [`BackrunFeed::drain`]; the `dropped_ring` counter is the hub channel's
+//! eviction count.
 //!
 //! Wire behavior (docs.mevblocker.io, searcher onboarding):
 //! - subscribe: `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe",
@@ -34,7 +35,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
+use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent, PendingTx};
 
 use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
 
@@ -80,13 +81,6 @@ impl BackrunFeedConfig {
     }
 }
 
-/// One unsigned pending tx revealed by the `MEVBlocker` auction.
-///
-/// The hub's [`PendingTx`](degenbot_eventhub::PendingTx) vocabulary, re-exported
-/// under the feed's historical name so consumers (the driver's frame
-/// signature included) are unchanged by the ring's move onto the hub.
-pub use degenbot_eventhub::PendingTx as BackrunFeedEvent;
-
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BackrunFeedStatus {
     pub connected: bool,
@@ -112,7 +106,7 @@ struct Shared {
 }
 
 impl Shared {
-    fn push(&self, ev: BackrunFeedEvent) {
+    fn push(&self, ev: PendingTx) {
         self.accepted.fetch_add(1, Ordering::Relaxed);
         self.last_event_unix_ms
             .store(now_unix_ms(), Ordering::Relaxed);
@@ -235,7 +229,7 @@ impl BackrunFeed {
     /// The hub ring only ever carries [`HubEvent::PendingTx`]; a stray other
     /// variant is warned about (never silently discarded).
     #[must_use]
-    pub fn drain(&self) -> Vec<BackrunFeedEvent> {
+    pub fn drain(&self) -> Vec<PendingTx> {
         self.ring
             .drain()
             .into_iter()
@@ -442,7 +436,7 @@ async fn session(
     }
 }
 
-fn parse_event(v: &Json, expected_chain: u64, s: &Shared) -> Option<BackrunFeedEvent> {
+fn parse_event(v: &Json, expected_chain: u64, s: &Shared) -> Option<PendingTx> {
     let Some(chain_id) = hex_u64(v.get("chainId")) else {
         s.count(Count::RejectedParse);
         return None;
@@ -494,7 +488,7 @@ fn parse_event(v: &Json, expected_chain: u64, s: &Shared) -> Option<BackrunFeedE
             v
         }
     };
-    Some(BackrunFeedEvent {
+    Some(PendingTx {
         chain_id,
         from,
         to,

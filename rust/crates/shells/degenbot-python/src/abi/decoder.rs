@@ -7,7 +7,7 @@
 //! `#[pyfunction]` entry points registered in [`crate`]'s `#[pymodule]`.
 
 use crate::prelude::*;
-use degenbot_abi::abi_types::AbiValue;
+use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::decoder::{decode_rust, decode_single_rust};
 use errors::AbiDecodeError;
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
@@ -160,7 +160,7 @@ mod tests {
 
     use super::*;
     use alloy::primitives::U256;
-    use degenbot_abi::abi_types::AbiValue;
+    use degenbot_abi::abi_types::value::AbiValue;
 
     #[test]
     fn test_abi_value_to_python_roundtrip() {

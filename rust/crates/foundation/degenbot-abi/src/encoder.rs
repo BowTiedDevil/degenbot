@@ -16,7 +16,8 @@
 //!    Python objects to `AbiValue` and encode them.
 
 use crate::abi_types::cached::get_cached_types;
-use crate::abi_types::{AbiType, AbiValue};
+use crate::abi_types::type_::AbiType;
+use crate::abi_types::value::AbiValue;
 use degenbot_core::errors::AbiDecodeError;
 
 // =============================================================================
@@ -118,7 +119,8 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_types::{AbiType, AbiValue};
+/// use degenbot_abi::abi_types::type_::AbiType;
+/// use degenbot_abi::abi_types::value::AbiValue;
 /// use degenbot_abi::encoder::encode_for_types;
 /// use alloy::primitives::U256;
 ///
@@ -147,7 +149,7 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
     }
 
     // Build CachedAbiTypes from pre-parsed AbiType values (uses cache internally)
-    let cached = crate::abi_types::CachedAbiTypes::from_abi_types(types)?;
+    let cached = crate::abi_types::cached::CachedAbiTypes::from_abi_types(types)?;
     cached.encode(values)
 }
 
@@ -180,7 +182,7 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
 ///
 /// ```
 /// use degenbot_abi::encoder::encode_packed_rust;
-/// use degenbot_abi::abi_types::AbiValue;
+/// use degenbot_abi::abi_types::value::AbiValue;
 /// use alloy::primitives::U256;
 ///
 /// let types = ["address", "address", "bool"];
@@ -470,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_encode_for_types() {
-        use crate::abi_types::AbiType;
+        use crate::abi_types::type_::AbiType;
 
         let types = vec![AbiType::Uint(256), AbiType::Bool];
         let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
@@ -487,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_encode_for_types_arrays() {
-        use crate::abi_types::AbiType;
+        use crate::abi_types::type_::AbiType;
 
         let types = vec![AbiType::Array(Box::new(AbiType::Uint(256)))];
         let values = vec![AbiValue::Array(vec![

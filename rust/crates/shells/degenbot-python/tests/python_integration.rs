@@ -13,7 +13,7 @@
 #![expect(clippy::unwrap_used, clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
-use degenbot_rs::abi_types::AbiValue;
+use degenbot_rs::abi_types::value::AbiValue;
 use degenbot_rs::conversion::alloy::abi_value_from_python;
 use pyo3::prelude::*;
 
