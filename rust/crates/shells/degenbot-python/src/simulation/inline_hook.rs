@@ -922,51 +922,86 @@ fn quote_leg_at_anchor(
     }
 }
 
+/// Drive an awaitable leg quote to completion on the hook's OWN runtime from a
+/// SYNCHRONOUS call site — whatever runtime the caller happens to sit in.
+///
+/// [`HookedLegReQuote`] is a sync seam: the clamp drives it from fleet worker
+/// seats (plain OS threads) and from the detached-merge sidecar, and a
+/// Python-driven cycle can reach it from a task on the ambient runtime. Neither
+/// `Runtime::block_on` (which panics inside ANY runtime context — "cannot start
+/// a runtime from within a runtime") nor `block_in_place` (multi-thread hosts
+/// only) is a runtime-agnostic driver, and branching on `Handle::try_current()`
+/// instead makes the CALLER's thread decide whether the leg is priced at all —
+/// a leg's exactness may not depend on who asked.
+///
+/// This edge instead spawns the quote onto `runtime` — spawning onto a runtime
+/// is legal from any thread, inside or outside another runtime — and waits for
+/// its answer on a plain channel. Only the calling thread parks, which is what
+/// a sync edge is; nothing is driven nested, no ambient handle is consulted,
+/// and the caller's runtime flavor cannot reach the quote. `None` = the quote
+/// task unwound (or the runtime shut down), so there is no answer to report.
+fn drive_sim_quote<F>(runtime: &tokio::runtime::Runtime, quote: F) -> Option<HookedLegAnswer>
+where
+    F: Future<Output = HookedLegAnswer> + Send + 'static,
+{
+    let (answers, answer_rx) = std::sync::mpsc::channel();
+    // The caller's span (the merge's cycle span) does not survive the runtime
+    // hop on its own: tokio carries task context, never the tracing
+    // thread-local — re-enter it so a quote's diagnostics join the caller's
+    // trace instead of forking an orphan root.
+    let parent = tracing::Span::current();
+    runtime.spawn(async move {
+        let _guard = parent.enter();
+        let answer = quote.await;
+        // The only way this send fails is the receiver already gone, and the
+        // only way the receiver sees `Err` is this task unwinding before it
+        // sends: one drop, one meaning.
+        let _ = answers.send(answer);
+    });
+    answer_rx.recv().ok()
+}
+
 impl HookedLegReQuote for InlineSimHook {
     fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
         let provider = Arc::clone(&self.provider);
         let warm_cache = Arc::clone(&self.warm_cache);
         let memo = self.memo_for_block(anchor.block);
         let leg = leg.clone();
-        let drive = move || -> HookedLegAnswer {
-            let provider_inner = Arc::clone(&provider);
-            let warm_inner = Arc::clone(&warm_cache);
-            let memo_inner = Arc::clone(&memo);
-            let leg_inner = leg.clone();
-            // The sync quote BLOCKS on the anchor-pinned DB (the evm2 sync DB
-            // bridge, `BlockingAsyncDb`, bridges the async provider via
-            // `block_in_place`), so it runs on the runtime's blocking pool —
-            // the same thread/runtime matrix `simulate_path` documents.
-            self.sim_runtime.block_on(async move {
-                tokio::task::spawn_blocking(move || {
-                    quote_leg_at_anchor(
-                        &provider_inner,
-                        &warm_inner,
-                        &memo_inner,
-                        anchor,
-                        &leg_inner,
-                    )
-                })
-                .await
-                .ok()
-                .unwrap_or(HookedLegAnswer::Unavailable)
+        // The sync quote BLOCKS on the anchor-pinned DB (the evm2 sync DB
+        // bridge, `BlockingAsyncDb`, bridges the async provider via
+        // `block_in_place`), so it runs on the runtime's BLOCKING pool — the
+        // same thread/runtime matrix `simulate_path` documents. Being polled by
+        // this runtime's worker is what installs the ambient handle
+        // `BlockingAsyncDb::new` captures; the quote itself reads no engine
+        // state (the module rule on [`HookedLegReQuote`]).
+        let quote = async move {
+            match tokio::task::spawn_blocking(move || {
+                quote_leg_at_anchor(&provider, &warm_cache, &memo, anchor, &leg)
             })
-        };
-        // Fail-soft on an ambient runtime: the clamp's call sites are std
-        // threads (solve bins, the merge sidecar), where `block_on` is the
-        // driving edge. Driving a second runtime from inside an async context
-        // is not, so an ambient runtime reports "no tier at this point" and
-        // the leg stays approximate rather than risking a panic.
-        match tokio::runtime::Handle::try_current() {
-            Ok(_) => {
-                op_info!(
-                    domain = sim,
-                    "hooked leg re-quote skipped: ambient runtime (no tier at this point)"
-                );
-                HookedLegAnswer::Unavailable
+            .await
+            {
+                Ok(answer) => answer,
+                Err(join) => {
+                    // A panicking quote frame is a local failure, not a pool
+                    // fact: the leg keeps its approximation (ADR-090 fail-soft).
+                    op_info!(
+                        domain = sim,
+                        block = anchor.block,
+                        error = %join,
+                        "hooked leg re-quote task failed — no exact figure"
+                    );
+                    HookedLegAnswer::Unavailable
+                }
             }
-            Err(_) => drive(),
-        }
+        };
+        drive_sim_quote(&self.sim_runtime, quote).unwrap_or_else(|| {
+            op_info!(
+                domain = sim,
+                block = anchor.block,
+                "hooked leg re-quote task did not answer — no exact figure"
+            );
+            HookedLegAnswer::Unavailable
+        })
     }
 }
 #[cfg(test)]
@@ -1141,6 +1176,113 @@ mod tests {
             .expect("inline-sim runtime must self-register in the census");
         assert_eq!(row.count, rt.metrics().num_workers());
         assert_eq!(row.thread_name, "degenbot-inline-sim-{n}");
+    }
+
+    /// The re-quote driving edge is runtime-agnostic: THE SAME quote answers
+    /// identically from a plain std thread, from a task on a current-thread
+    /// runtime, and from a task on a multi-thread runtime.
+    ///
+    /// This is the exactness invariant: a hooked leg's price may not depend on
+    /// the thread that asks for it, because the clamp is reachable from fleet
+    /// worker seats, from the detached-merge sidecar, AND from a task on the
+    /// driver's ambient runtime. Both in-runtime arms assert the ambient runtime
+    /// really is present, so neither can pass by drifting back off-runtime.
+    #[test]
+    fn a_driven_leg_quote_answers_identically_on_every_caller_runtime_flavor() {
+        use degenbot_bot::arb_engine::{HookedLegAnswer, HookedLegQuote};
+
+        let sim_runtime = super::build_inline_sim_runtime();
+        // Both halves of the figure the clamp and the admission floor consume,
+        // plus a measured hook-carried charge: every field must survive the hop.
+        let answer = HookedLegAnswer::Exact(HookedLegQuote {
+            amount_out: super::U256::from(1_234_567_u64),
+            gas: 184_500,
+            hook_fee: Some(degenbot_pools::HookFeeReading::Measured { pips: 3_000 }),
+        });
+        let quote = || async move { answer };
+
+        // 1. A plain std thread — the fleet worker seat and the merge sidecar.
+        let off_runtime = super::drive_sim_quote(&sim_runtime, quote()).expect("std-thread drive");
+
+        // 2. Inside a CURRENT-THREAD runtime: `block_on` on a second runtime
+        //    panics there, and `block_in_place` does not exist at all.
+        let current = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+        let inside_current = current
+            .block_on(async {
+                assert!(
+                    tokio::runtime::Handle::try_current().is_ok(),
+                    "the current-thread runtime must be ambient for this arm to mean anything"
+                );
+                super::drive_sim_quote(&sim_runtime, quote())
+            })
+            .expect("current-thread-runtime drive");
+
+        // 3. Inside a MULTI-THREAD runtime — the driver's ambient runtime.
+        let multi = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime");
+        let inside_multi = multi
+            .block_on(async {
+                assert!(
+                    tokio::runtime::Handle::try_current().is_ok(),
+                    "the multi-thread runtime must be ambient for this arm to mean anything"
+                );
+                super::drive_sim_quote(&sim_runtime, quote())
+            })
+            .expect("multi-thread-runtime drive");
+
+        assert_eq!(off_runtime, answer);
+        assert_eq!(
+            inside_current, off_runtime,
+            "a current-thread caller must price the leg exactly like a std thread"
+        );
+        assert_eq!(
+            inside_multi, off_runtime,
+            "a multi-thread caller must price the leg exactly like a std thread"
+        );
+    }
+
+    /// The typed answer classes cross the hop untouched: a chain REFUSAL stays
+    /// `Refused` (a pool fact the search tier records) and a tier with no fact
+    /// stays `Unavailable` — never the other way around, and never a
+    /// caller-context-shaped `Unavailable` for a leg that can be priced.
+    #[test]
+    fn the_driving_edge_preserves_every_typed_answer_class() {
+        use degenbot_bot::arb_engine::HookedLegAnswer;
+
+        let sim_runtime = super::build_inline_sim_runtime();
+        for answer in [HookedLegAnswer::Refused, HookedLegAnswer::Unavailable] {
+            let driven = super::drive_sim_quote(&sim_runtime, async move { answer })
+                .expect("typed answer crosses the runtime hop");
+            assert_eq!(driven, answer);
+        }
+    }
+
+    /// An unwinding quote answers NOTHING — never a hang, and never a fabricated
+    /// pool fact: the caller's fail-soft branch decides the leg's stage.
+    #[test]
+    fn an_unwinding_quote_answers_nothing() {
+        let sim_runtime = super::build_inline_sim_runtime();
+        let driven = super::drive_sim_quote(&sim_runtime, async {
+            // The unwind IS the fixture's signal (the edge must report no
+            // answer, not hang and not invent one).
+            #[expect(
+                clippy::panic,
+                reason = "an unwinding quote task is the no-answer contract under test"
+            )]
+            {
+                panic!("quote body unwinds");
+            }
+        });
+        assert!(
+            driven.is_none(),
+            "an unwound quote task must answer nothing, got {driven:?}"
+        );
     }
 }
 
