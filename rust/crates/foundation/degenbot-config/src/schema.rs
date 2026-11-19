@@ -480,7 +480,7 @@ crate::config_schema! {
 
     pump PumpConfig {
         pump_debounce_ms [ms] = 50, env = "DEGENBOT_PUMP_DEBOUNCE_MS", def = "50",
-            doc = "Publish-debounce settle window in ms (`> 0`; bad values historically fall back to 50 at the site).";
+            doc = "Publish-debounce settle window in ms. 0 is refused when the configuration loads: a zero-length window publishes before the block's logs have finished applying.";
         early_slice_ms [ms] = 25, env = "DEGENBOT_EARLY_SLICE_MS", def = "25",
             doc = "Early-slice window in ms; `0` valid and disables the slice (settle-only parity).";
         streaming_delivery [bool] = true, env = "DEGENBOT_STREAMING_DELIVERY", def = "true",
@@ -500,13 +500,13 @@ crate::config_schema! {
         quiesce_mode [enum QuiesceMode Fixed Adaptive] = QuiesceMode::Adaptive, env = "DEGENBOT_PUMP_QUIESCE_MODE", def = "adaptive",
             doc = "Settle-window mode: `fixed` = constant pump.pump_debounce_ms debounce; `adaptive` = EWMA trailing-quiesce estimator (never below quiesce_floor_ms, never above quiesce_ceil_ms; late-admit budget overruns hold at the ceiling).";
         quiesce_floor_ms [ms] = 2, env = "DEGENBOT_PUMP_QUIESCE_FLOOR_MS", def = "2",
-            doc = "Adaptive mode: lower bound (ms) of the trailing settle window (clamped >= 1; a 0/garbage value never collapses the window to zero).";
+            doc = "Adaptive mode: lower bound (ms) of the trailing settle window. 0 is refused when the configuration loads, because a window that collapses to zero publishes before the block's logs have finished applying.";
         quiesce_ceil_ms [ms] = 20, env = "DEGENBOT_PUMP_QUIESCE_CEIL_MS", def = "20",
-            doc = "Adaptive mode: upper bound (ms) of the trailing settle window; the estimator never grows beyond it (inherits the debounce parse contract: unset/zero/invalid falls back, never 0).";
+            doc = "Adaptive mode: upper bound (ms) of the trailing settle window; the estimator never grows beyond it. 0, and a ceiling below quiesce_floor_ms, are refused when the configuration loads.";
         quiesce_margin_ms [f64] = 3.0, env = "DEGENBOT_PUMP_QUIESCE_MARGIN_MS", def = "3.0",
-            doc = "Adaptive mode: safety multiplier over the silence-gap EWMA (W = EWMA × margin, then floor/ceiling clamp).";
+            doc = "Adaptive mode: safety multiplier over the silence-gap EWMA (W = EWMA × margin, then floor/ceiling clamp). Must be a finite number greater than 0; anything else is refused when the configuration loads.";
         quiesce_ewma_alpha [f64] = 0.1, env = "DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA", def = "0.1",
-            doc = "Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory); clamped to (0, 1].";
+            doc = "Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory). Must be a finite fraction in (0, 1]; anything else is refused when the configuration loads.";
         quiesce_late_budget [u64] = 120, env = "DEGENBOT_PUMP_QUIESCE_LATE_BUDGET", def = "120",
             doc = "Adaptive-mode runtime backstop: more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains.";
     }
@@ -870,6 +870,7 @@ impl BotConfig {
                 crate::resolvers::DEFAULT_CHAIN_ID_ENV
             ));
         }
+        validate_pump(&self.pump, &mut problems);
         for (path, env, hops) in [
             (
                 "strategy.mevblocker_backrun.cycle_max_hops",
@@ -894,6 +895,77 @@ impl BotConfig {
         } else {
             Err(crate::error::ConfigError::of(problems))
         }
+    }
+}
+
+/// The pump's settle-window ranges: the key kinds parse these values — `[ms]`
+/// is a `u64`, so `0` parses, and the `[f64]` kind parses `0`, negatives, and
+/// the non-finite spellings (`nan`, `inf`) — but the trailing-quiesce
+/// estimator cannot serve them. A zero-length window publishes before a
+/// block's logs have finished applying, a ceiling under its floor inverts the
+/// window rule, and a zero or non-finite multiplier/smoothing constant makes
+/// the projection meaningless. Each is refused here, naming the key and its
+/// env name, instead of being silently re-clamped wherever the window is
+/// armed: the estimator receives exactly what the operator declared.
+///
+/// `early_slice_ms` is deliberately absent: `0` is its declared off posture
+/// (settle-only parity), not a defect.
+fn validate_pump(pump: &PumpConfig, problems: &mut Vec<String>) {
+    for (path, env, value, role) in [
+        (
+            "pump.pump_debounce_ms",
+            "DEGENBOT_PUMP_DEBOUNCE_MS",
+            pump.pump_debounce_ms,
+            "the settle window",
+        ),
+        (
+            "pump.quiesce_floor_ms",
+            "DEGENBOT_PUMP_QUIESCE_FLOOR_MS",
+            pump.quiesce_floor_ms,
+            "the adaptive floor",
+        ),
+        (
+            "pump.quiesce_ceil_ms",
+            "DEGENBOT_PUMP_QUIESCE_CEIL_MS",
+            pump.quiesce_ceil_ms,
+            "the adaptive ceiling",
+        ),
+    ] {
+        if value == 0 {
+            problems.push(format!(
+                "{path} ({env}) is 0; {role} is a positive duration in ms \u{2014} set it \
+                 to 1 or more (unset takes the declared default)"
+            ));
+        }
+    }
+    if pump.quiesce_ceil_ms < pump.quiesce_floor_ms {
+        problems.push(format!(
+            "pump.quiesce_ceil_ms (DEGENBOT_PUMP_QUIESCE_CEIL_MS) is {}, below \
+             pump.quiesce_floor_ms (DEGENBOT_PUMP_QUIESCE_FLOOR_MS) at {}; the ceiling \
+             bounds the same window the floor bounds from below \u{2014} raise the ceiling \
+             to {} or more, or lower the floor",
+            pump.quiesce_ceil_ms, pump.quiesce_floor_ms, pump.quiesce_floor_ms
+        ));
+    }
+    let margin_ok = pump.quiesce_margin_ms.is_finite() && pump.quiesce_margin_ms > 0.0;
+    if !margin_ok {
+        problems.push(format!(
+            "pump.quiesce_margin_ms (DEGENBOT_PUMP_QUIESCE_MARGIN_MS) is {}; the safety \
+             multiplier over the silence-gap EWMA must be a finite number greater than 0 \
+             \u{2014} set it above 0 (unset takes the declared default)",
+            pump.quiesce_margin_ms
+        ));
+    }
+    let alpha_ok = pump.quiesce_ewma_alpha.is_finite()
+        && pump.quiesce_ewma_alpha > 0.0
+        && pump.quiesce_ewma_alpha <= 1.0;
+    if !alpha_ok {
+        problems.push(format!(
+            "pump.quiesce_ewma_alpha (DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA) is {}; the EWMA \
+             smoothing constant over per-block silence gaps is a fraction in (0, 1] \
+             \u{2014} set it above 0 and at most 1 (unset takes the declared default)",
+            pump.quiesce_ewma_alpha
+        ));
     }
 }
 
@@ -1918,6 +1990,204 @@ mod tests {
         BotConfig::default()
             .validate()
             .expect("the declared default 4 is valid");
+    }
+
+    /// The pump durations are ranges a scalar parser cannot express: `[ms]` is
+    /// a `u64`, so a zero parses. Each is refused at the load, naming both the
+    /// TOML path and the env name.
+    #[test]
+    fn pump_zero_durations_are_refused_by_key_and_env_name() {
+        for (field, path, env) in [
+            (
+                "pump_debounce_ms",
+                "pump.pump_debounce_ms",
+                "DEGENBOT_PUMP_DEBOUNCE_MS",
+            ),
+            (
+                "quiesce_floor_ms",
+                "pump.quiesce_floor_ms",
+                "DEGENBOT_PUMP_QUIESCE_FLOOR_MS",
+            ),
+            (
+                "quiesce_ceil_ms",
+                "pump.quiesce_ceil_ms",
+                "DEGENBOT_PUMP_QUIESCE_CEIL_MS",
+            ),
+        ] {
+            let mut config = BotConfig::default();
+            config
+                .assign("pump", field, "0")
+                .expect("the raw value parses as u64");
+            let error = config
+                .validate()
+                .expect_err("a zero-length settle window must refuse");
+            let message = error.to_string();
+            assert!(
+                message.contains(path) && message.contains(env),
+                "the refusal names the key and its env name: {message}"
+            );
+            assert!(
+                message.contains("positive duration") && message.contains("1 or more"),
+                "the refusal names the remedy: {message}"
+            );
+            // A zero ceiling also crosses the floor, so it reports both
+            // facts; a zero debounce/floor reports the one.
+            let expected = if field == "quiesce_ceil_ms" { 2 } else { 1 };
+            assert_eq!(error.problems.len(), expected, "{message}");
+        }
+    }
+
+    /// The ceiling bounds the same window the floor bounds from below, so a
+    /// ceiling under the floor is refused with both keys named. Equal bounds
+    /// are a legal single-point window.
+    #[test]
+    fn pump_ceiling_below_floor_is_refused_naming_both_keys() {
+        let mut config = BotConfig::default();
+        config
+            .assign("pump", "quiesce_floor_ms", "20")
+            .expect("parses as u64");
+        config
+            .assign("pump", "quiesce_ceil_ms", "5")
+            .expect("parses as u64");
+        let error = config
+            .validate()
+            .expect_err("a crossed settle window must refuse");
+        let message = error.to_string();
+        assert!(
+            message.contains("pump.quiesce_ceil_ms")
+                && message.contains("DEGENBOT_PUMP_QUIESCE_CEIL_MS")
+                && message.contains("pump.quiesce_floor_ms")
+                && message.contains("DEGENBOT_PUMP_QUIESCE_FLOOR_MS"),
+            "the refusal names both bounds: {message}"
+        );
+        assert!(
+            message.contains("lower the floor"),
+            "the refusal names the remedy: {message}"
+        );
+
+        let mut equal = BotConfig::default();
+        equal
+            .assign("pump", "quiesce_floor_ms", "7")
+            .expect("parses as u64");
+        equal
+            .assign("pump", "quiesce_ceil_ms", "7")
+            .expect("parses as u64");
+        equal
+            .validate()
+            .expect("floor == ceil is a legal single-point window");
+    }
+
+    /// The two float constants are fractions the parser accepts in garbage
+    /// spellings (`0`, negatives, `nan`, `inf`). The load refuses each, and the
+    /// legal extremes reach the typed tree exactly as written.
+    #[test]
+    fn pump_float_constants_are_range_checked_at_the_boundary() {
+        for raw in ["0", "-1", "nan", "inf"] {
+            let mut margin = BotConfig::default();
+            margin
+                .assign("pump", "quiesce_margin_ms", raw)
+                .expect("parses as f64");
+            let error = margin
+                .validate()
+                .expect_err("a non-positive or non-finite margin must refuse");
+            let message = error.to_string();
+            assert!(
+                message.contains("pump.quiesce_margin_ms")
+                    && message.contains("DEGENBOT_PUMP_QUIESCE_MARGIN_MS"),
+                "the refusal names the key and its env name: {message}"
+            );
+        }
+        for raw in ["0", "-0.1", "1.5", "nan", "inf"] {
+            let mut alpha = BotConfig::default();
+            alpha
+                .assign("pump", "quiesce_ewma_alpha", raw)
+                .expect("parses as f64");
+            let error = alpha
+                .validate()
+                .expect_err("an alpha outside (0, 1] must refuse");
+            let message = error.to_string();
+            assert!(
+                message.contains("pump.quiesce_ewma_alpha")
+                    && message.contains("DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA"),
+                "the refusal names the key and its env name: {message}"
+            );
+        }
+
+        let mut extremes = BotConfig::default();
+        extremes
+            .assign("pump", "quiesce_floor_ms", "1")
+            .expect("parses as u64");
+        extremes
+            .assign("pump", "quiesce_ceil_ms", "1")
+            .expect("parses as u64");
+        extremes
+            .assign("pump", "quiesce_margin_ms", "0.001")
+            .expect("parses as f64");
+        extremes
+            .assign("pump", "quiesce_ewma_alpha", "1")
+            .expect("parses as f64");
+        extremes.validate().expect("the legal extremes are valid");
+        assert_eq!(extremes.pump.quiesce_floor_ms, 1);
+        assert_eq!(extremes.pump.quiesce_ceil_ms, 1);
+        assert!((extremes.pump.quiesce_margin_ms - 0.001).abs() < f64::EPSILON);
+        assert!((extremes.pump.quiesce_ewma_alpha - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// `early_slice_ms = 0` is the declared off posture, not a defect: the
+    /// pump range rules deliberately leave it alone.
+    #[test]
+    fn early_slice_zero_stays_valid() {
+        let mut config = BotConfig::default();
+        config
+            .assign("pump", "early_slice_ms", "0")
+            .expect("parses as u64");
+        config.validate().expect("0 disables the early slice");
+        assert_eq!(config.pump.early_slice_ms, 0);
+    }
+
+    /// Absent pump keys keep their declared defaults, and the defaults pass the
+    /// same validation every loaded value faces.
+    #[test]
+    fn absent_pump_keys_keep_their_validated_defaults() {
+        let config = BotConfig::default();
+        config.validate().expect("the declared defaults are valid");
+        assert_eq!(config.pump.pump_debounce_ms, 50);
+        assert_eq!(config.pump.quiesce_floor_ms, 2);
+        assert_eq!(config.pump.quiesce_ceil_ms, 20);
+        assert!((config.pump.quiesce_margin_ms - 3.0).abs() < f64::EPSILON);
+        assert!((config.pump.quiesce_ewma_alpha - 0.1).abs() < f64::EPSILON);
+    }
+
+    /// Every pump problem lands in ONE error alongside the other semantic
+    /// refusals: the loader reports all of them, not the first.
+    #[test]
+    fn pump_problems_aggregate_with_the_other_semantic_refusals() {
+        let mut config = BotConfig::default();
+        for (section, field, raw) in [
+            ("pump", "pump_debounce_ms", "0"),
+            ("pump", "quiesce_floor_ms", "0"),
+            ("pump", "quiesce_margin_ms", "-2"),
+            ("pump", "quiesce_ewma_alpha", "2"),
+            ("session", "chain_id", "0"),
+            ("strategy.mevblocker_backrun", "cycle_max_hops", "1"),
+        ] {
+            config
+                .assign(section, field, raw)
+                .expect("the raw value parses into its declared kind");
+        }
+        let error = config.validate().expect_err("six refusals aggregate");
+        assert_eq!(error.problems.len(), 6, "{error}");
+        let message = error.to_string();
+        for needle in [
+            "pump.pump_debounce_ms",
+            "pump.quiesce_floor_ms",
+            "pump.quiesce_margin_ms",
+            "pump.quiesce_ewma_alpha",
+            "session.chain_id",
+            "strategy.mevblocker_backrun.cycle_max_hops",
+        ] {
+            assert!(message.contains(needle), "missing {needle}: {message}");
+        }
     }
 
     #[test]

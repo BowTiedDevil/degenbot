@@ -1342,13 +1342,16 @@ pub struct QuiesceParams {
     /// Fixed-mode window; also the adaptive fallback when the estimator
     /// cannot produce a value.
     pub fixed_ms: u64,
-    /// Adaptive floor ms (clamped ≥ 1).
+    /// Adaptive floor ms (the configuration load refuses 0).
     pub floor_ms: u64,
-    /// Adaptive ceiling ms (never exceeded, even under straggler regimes).
+    /// Adaptive ceiling ms (never exceeded, even under straggler regimes;
+    /// the load refuses a ceiling below `floor_ms`).
     pub ceil_ms: u64,
-    /// Safety multiplier over the silence-gap EWMA.
+    /// Safety multiplier over the silence-gap EWMA (a finite value > 0; the
+    /// load refuses anything else, so the estimator never re-clamps it).
     pub margin: f64,
-    /// EWMA smoothing constant over per-block max silence gaps.
+    /// EWMA smoothing constant over per-block max silence gaps (a finite
+    /// value in (0, 1]; the load refuses anything else).
     pub alpha: f64,
 }
 
@@ -1369,25 +1372,29 @@ impl Default for QuiesceParams {
 impl QuiesceParams {
     /// The parameters a test (or a fallback driver) that mirrors the
     /// historical 50 ms debounce posture needs.
+    ///
+    /// The window is used exactly as given: a zero is refused by the
+    /// configuration load that owns the key, never repaired here.
     #[must_use]
     pub fn fixed(fixed_ms: u64) -> Self {
         Self {
-            fixed_ms: fixed_ms.max(1),
+            fixed_ms,
             ..Self::default()
         }
     }
 
     /// Snapshot the `pump.quiesce_*` schema keys. `fixed_ms` is
-    /// the pump's live debounce — the fixed-mode window AND the adaptive
-    /// fallback contract (the debounce's "never 0" parse rule carries over).
-    /// The FSM stays I/O-free: it never reads the ambient config stance
-    /// itself; the driver copies this snapshot in via `set_quiesce_params`.
+    /// the pump's live debounce — the fixed-mode window. Every value here was
+    /// validated at the configuration boundary, so it is copied through as
+    /// written and never re-clamped. The FSM stays I/O-free: it never reads
+    /// the ambient config stance itself; the driver copies this snapshot in
+    /// via `set_quiesce_params`.
     #[must_use]
     pub fn from_schema(config: &degenbot_config::BotConfig, fixed_ms: u64) -> Self {
         let pump = &config.pump;
         Self {
             mode: pump.quiesce_mode,
-            fixed_ms: fixed_ms.max(1),
+            fixed_ms,
             floor_ms: pump.quiesce_floor_ms,
             ceil_ms: pump.quiesce_ceil_ms,
             margin: pump.quiesce_margin_ms,
@@ -1452,39 +1459,29 @@ impl QuiesceEstimator {
         }
     }
 
-    /// Sanitized bounds: the window is never zero or crossed, the multiplier
-    /// is never negative/non-finite, the smoothing constant stays in (0, 1].
-    fn bounds(&self) -> (u64, u64, f64, f64) {
-        // floor >= 1; ceil >= floor (a 0/garbage ceil falls back, never 0).
-        let floor = self.params.floor_ms.max(1);
-        let ceil = self.params.ceil_ms.max(floor);
-        let margin = if self.params.margin.is_finite() {
-            self.params.margin.max(0.0)
-        } else {
-            0.0
-        };
-        let alpha = if self.params.alpha.is_finite() {
-            self.params.alpha.clamp(f64::EPSILON, 1.0)
-        } else {
-            1.0
-        };
-        (floor, ceil, margin, alpha)
-    }
-
-    /// The currently-armed settle window in ms.
+    /// The currently-armed settle window in ms: the window rule applied to
+    /// the parameters exactly as the configuration load validated them
+    /// (`floor >= 1`, `ceil >= floor`, a finite `margin > 0`, an `alpha` in
+    /// `(0, 1]`). The only clamp is the rule itself — `W = clamp(EWMA ×
+    /// margin, floor, ceil)` — so nothing is re-imposed at the site.
     fn window_ms(&self) -> u64 {
-        let (floor, ceil, margin, _alpha) = self.bounds();
+        let QuiesceParams {
+            floor_ms,
+            ceil_ms,
+            margin,
+            ..
+        } = self.params;
         match self.params.mode {
             // Fixed mode ignores the estimator entirely (today's behavior).
-            QuiesceMode::Fixed => self.params.fixed_ms.max(1),
+            QuiesceMode::Fixed => self.params.fixed_ms,
             QuiesceMode::Adaptive => {
                 if self.held_at_ceil || !self.seeded {
                     // Pre-seed and backstop both arm at the ceiling: an
                     // unknown regime defaults to conservative coverage and
                     // descends as observations accumulate.
-                    return ceil;
+                    return ceil_ms;
                 }
-                f64_ms_to_u64(self.ewma_ms * margin).clamp(floor, ceil)
+                f64_ms_to_u64(self.ewma_ms * margin).clamp(floor_ms, ceil_ms)
             }
         }
     }
@@ -1500,7 +1497,7 @@ impl QuiesceEstimator {
         }
         let g = f64::from(u32::try_from(max_gap_ms).unwrap_or(u32::MAX));
         if self.seeded {
-            let alpha = self.bounds().3;
+            let alpha = self.params.alpha;
             self.ewma_ms = alpha * g + (1.0 - alpha) * self.ewma_ms;
         } else {
             // Seed fully: the first settled block anchors the estimator.
@@ -1554,14 +1551,20 @@ impl StageMachine {
     /// Swap in quiesce-estimator parameters (driver, at pump startup). The
     /// estimator state resets with the new parameters — operator tuning is
     /// a stance, not a mid-stream instrument nudge.
+    ///
+    /// `params` is expected to be a load-validated snapshot (`floor >= 1`,
+    /// `ceil >= floor`, finite `margin > 0`, `alpha` in `(0, 1]`): the
+    /// estimator applies those values as given instead of repairing them, so
+    /// an unvalidated snapshot that crosses floor and ceiling is a
+    /// programming error, not a value this layer quietly fixes.
     pub fn set_quiesce_params(&mut self, params: QuiesceParams) {
         self.quiesce = QuiesceEstimator::new(params);
     }
 
     /// The currently-armed settle (quiesce) window in ms — the value the
-    /// driver arms its settle timers with. Fixed mode returns the fixed
-    /// window (the `pump_debounce_ms` contract); adaptive mode the clamped
-    /// EWMA projection.
+    /// driver arms its settle timers with. Fixed mode returns the declared
+    /// `pump_debounce_ms`; adaptive mode the EWMA projection held within the
+    /// declared floor/ceiling.
     #[must_use]
     pub fn settle_window_ms(&self) -> u64 {
         self.quiesce.window_ms()
@@ -1912,13 +1915,20 @@ mod quiesce_estimator_contract {
         );
     }
 
-    /// The `pump_debounce_ms` parse contract carried over: a fixed window
-    /// never collapses to 0.
+    /// The fixed window is the declared `pump.pump_debounce_ms` as written:
+    /// a zero window is refused where the key is loaded, so the estimator
+    /// never re-clamps the value it is handed.
     #[test]
-    fn fixed_mode_window_never_collapses_to_zero() {
-        let mut fsm = StageMachine::new(0, 0);
-        fsm.set_quiesce_params(params(QuiesceMode::Fixed, |p| p.fixed_ms = 0));
-        assert_eq!(fsm.settle_window_ms(), 1);
+    fn fixed_mode_window_is_the_declared_debounce_exactly() {
+        for declared in [1, 15, 50, 250] {
+            let mut fsm = StageMachine::new(0, 0);
+            fsm.set_quiesce_params(params(QuiesceMode::Fixed, |p| p.fixed_ms = declared));
+            assert_eq!(
+                fsm.settle_window_ms(),
+                declared,
+                "a validated debounce is used as declared"
+            );
+        }
     }
 
     /// The FIRST observation seeds the EWMA fully (no
@@ -1983,21 +1993,46 @@ mod quiesce_estimator_contract {
         );
     }
 
-    /// Garbage config (zero floor, crossed ceiling, zero alpha) degenerates
-    /// to a valid, nonzero, monotone window — never NaN or 0.
+    /// The multiplier and smoothing constant reach the estimator exactly as
+    /// declared (no re-clamping to a stand-in): a sub-unit margin scales the
+    /// EWMA down and a sub-unit alpha smooths it, both at their own values.
     #[test]
-    fn unsanitized_config_degenerates_safely() {
+    fn declared_multiplier_and_alpha_are_used_exactly() {
         let mut fsm = StageMachine::new(0, 0);
         fsm.set_quiesce_params(adaptive(|p| {
-            p.floor_ms = 0;
-            p.ceil_ms = 0;
-            p.alpha = 0.0;
-            p.margin = f64::NAN;
+            p.floor_ms = 1;
+            p.ceil_ms = 100;
+            p.alpha = 0.25;
+            p.margin = 0.5;
         }));
-        fsm.observe_settle_gap(9, 100);
-        let w = fsm.settle_window_ms();
-        assert!(w >= 1, "window must stay >= 1ms, got {w}");
-        assert!(fsm.quiesce_ewma_ms().is_finite(), "EWMA must stay finite");
+        // Seed the EWMA at 40 ms, then blend a 0 ms gap: 0.25 × 0 + 0.75 × 40.
+        fsm.observe_settle_gap(40, 100);
+        fsm.observe_settle_gap(0, 200);
+        assert!(
+            (fsm.quiesce_ewma_ms() - 30.0).abs() < f64::EPSILON,
+            "alpha 0.25 is the smoothing constant as declared, got {}",
+            fsm.quiesce_ewma_ms()
+        );
+        assert_eq!(
+            fsm.settle_window_ms(),
+            15,
+            "30 × the declared margin 0.5, not a clamped stand-in"
+        );
+    }
+
+    /// A single-point window (`floor == ceil`) is a legal setting, not a
+    /// crossed one: the rule pins the window there whatever the estimate.
+    #[test]
+    fn equal_floor_and_ceiling_pin_the_window() {
+        let mut fsm = StageMachine::new(0, 0);
+        fsm.set_quiesce_params(adaptive(|p| {
+            p.floor_ms = 7;
+            p.ceil_ms = 7;
+        }));
+        fsm.observe_settle_gap(1, 100);
+        assert_eq!(fsm.settle_window_ms(), 7);
+        fsm.observe_settle_gap(10_000, 200);
+        assert_eq!(fsm.settle_window_ms(), 7, "the ceiling is the floor");
     }
 
     /// Late-admit contract: exceeding the late-admit budget in a sliding

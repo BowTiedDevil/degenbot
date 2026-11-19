@@ -202,19 +202,27 @@ Decompose the pre-solve gap first — `degenbot.epoch.run` root fields (recorded
 `header_to_first_log_us` (header → first relevant log), `log_burst_us`
 (first → last relevant log, i.e. the apply work), `settle_wait_us` (last log →
 settle decision). The settle wait is the publish debounce — it costs roughly
-`DEBOUNCE_MS` (the full window) on every block; it buys coalescing of
-same-block log bursts at the price of that fixed tail.
+`pump.pump_debounce_ms` (the full window) on every block; it buys coalescing
+of same-block log bursts at the price of that fixed tail.
 
 2026-09-04 baseline (block-25906841 session): `settle_wait_us` pinned at
 ~51 ms on 24 of 28 blocks while `log_burst_us` spanned 1.3–27.5 ms — the 50 ms
 debounce fired long after each burst was fully applied, making it a fixed
 ~50 ms per-block tax on header_to_publish (the ADR-041 epoch race; the
 retired drain-era `degenbot_header_to_solved` endpoint measured the solve
-edge). The window is operator-tunable via
-`DEGENBOT_PUMP_DEBOUNCE_MS` (parse contract `BlockPump::debounce_ms_cfg`:
-unset/zero/invalid falls back to 50 ms, so a bad value can never collapse the
-window to zero). Live A/B at 15 ms settled the same bursts at ~16 ms with no
-change in bursts and still exactly one solve cycle per block.
+edge). The window is operator-tunable through the typed schema key
+`pump.pump_debounce_ms` (`DEGENBOT_PUMP_DEBOUNCE_MS`, declared default 50 ms),
+which the configuration load validates: a zero fails the load naming the key
+and its env var, and a value that does not parse into the key's declared kind
+fails the load naming the key — so a bad value can neither collapse the window
+to zero nor be silently replaced by the default. The load-time value is
+snapshotted into `QuiesceParams::from_schema` (`fixed_ms`, from
+`stance::config().pump.pump_debounce_ms` in
+`bot_core/block_pump/lifecycle.rs`) and is the fixed-mode window
+`StageMachine::settle_window_ms` arms as-is (adaptive mode arms the
+estimator's floor/ceiling-bounded window instead); no site-level clamp
+remains. Live A/B at 15 ms settled the same bursts at ~16 ms with no change in
+bursts and still exactly one solve cycle per block.
 
 Trade-off when lowering: a same-block log straggling past the window starts a
 second solve cycle for that block (extra solve cost + an extra publish). The
