@@ -63,6 +63,21 @@ def _word_uint(value: int) -> str:
     return f"{value:064x}"
 
 
+def _get_dy_key(to: str, dx: int) -> str:
+    """The ``get_dy(0, 1, dx)`` ``int128``-prototype key: the builder's quote probe.
+
+    A funded pool must answer one whole coin 0 to stay buildable; an unrecorded
+    call is an offline revert, which is the probe's no-swap-path verdict.
+    """
+    calldata = (
+        _selector("get_dy(int128,int128,uint256)")[2:]
+        + _word_uint(0)
+        + _word_uint(1)
+        + _word_uint(dx)
+    )
+    return f"{to.lower()}:0x{calldata}"
+
+
 # Metapool: a 2-coin pool whose second coin is the 3Crv LP token, sitting on
 # the canonical tripool base. Driven with one registry to exercise the
 # base-pool + underlying-coins + lp-token detection.
@@ -106,6 +121,8 @@ def _metapool_cassette_json() -> str:
         _call_key(META, "admin_fee()"): _word_uint(500_000_000),
         _call_key(META_COIN0, "decimals()"): _word_uint(6),
         _call_key(THREE_CRV_LP, "decimals()"): _word_uint(18),
+        # The quote probe: one whole 6-decimal coin 0 in, an answer out.
+        _get_dy_key(META, 10**6): _word_uint(999_000),
         # Metapool: is_meta → true; base pool via the pool's own base_pool();
         # underlying coins; LP token from the registry.
         _call_key_word_arg(REGISTRY, "is_meta(address)", META): _word_uint(1),
@@ -151,6 +168,8 @@ def _lending_cassette_json() -> str:
         _call_key(LPOOL, "admin_fee()"): _word_uint(500_000_000),
         _call_key(CTOKEN0, "decimals()"): _word_uint(8),  # wrapped token decimals
         _call_key(LP_COIN1, "decimals()"): _word_uint(18),
+        # The quote probe: one whole (wrapped-decimals) coin 0 in, an answer out.
+        _get_dy_key(LPOOL, 10**8): _word_uint(999_000),
         # cToken detection on coin0 → positive; coin1 reverts (not lending).
         _call_key(CTOKEN0, "isCToken()"): _word_uint(1),
         _call_key(CTOKEN0, "underlying()"): _word_address(UNDERLYING0),
@@ -186,6 +205,8 @@ def _plain_cassette_json() -> str:
         _call_key(POOL, "admin_fee()"): _word_uint(500_000_000),
         _call_key(COIN0, "decimals()"): _word_uint(6),
         _call_key(COIN1, "decimals()"): _word_uint(6),
+        # The quote probe: one whole 6-decimal coin 0 in, an answer out.
+        _get_dy_key(POOL, 10**6): _word_uint(999_000),
     }
     return json.dumps({
         "chain_id": 1,
@@ -245,6 +266,8 @@ def _plain_full_cassette_json() -> str:
         # Crypto probes → fee_gamma 0 (not crypto) + separate offpeg_fee.
         _call_key(POOL, "fee_gamma()"): _word_uint(0),
         _call_key(POOL, "offpeg_fee_multiplier()"): _word_uint(0),
+        # The quote probe: one whole 6-decimal coin 0 in, an answer out.
+        _get_dy_key(POOL, 10**6): _word_uint(999_000),
         # Lending probes → not a cToken/yToken.
         _call_key(COIN0, "isCToken()"): _word_uint(0),
         _call_key(COIN0, "token()"): _word_address(ZERO),
@@ -471,6 +494,8 @@ def _metapool_build_cassette_json() -> str:
         _call_key(META, "fee()"): _word_uint(1_000_000),
         _call_key(META, "admin_fee()"): _word_uint(500_000_000),
         _call_key(META, "base_pool()"): _word_address(TRIPOOL),
+        # The quote probe, one whole coin 0 per pool: a funded pool answers it.
+        _get_dy_key(META, 10**6): _word_uint(999_000),
         _call_key(META_COIN0, "decimals()"): _word_uint(6),
         _call_key(META_COIN0, "name()"): _str_word("Meta Coin"),
         _call_key(META_COIN0, "symbol()"): _str_word("MCO"),
@@ -496,6 +521,7 @@ def _metapool_build_cassette_json() -> str:
         _call_key(TRIPOOL, "A()"): _word_uint(3000),
         _call_key(TRIPOOL, "fee()"): _word_uint(1_000_000),
         _call_key(TRIPOOL, "admin_fee()"): _word_uint(500_000_000),
+        _get_dy_key(TRIPOOL, 10**18): _word_uint(999_000_000_000_000_000),
         _call_key(DAI, "decimals()"): _word_uint(18),
         _call_key(DAI, "name()"): _str_word("Dai Stablecoin"),
         _call_key(DAI, "symbol()"): _str_word("DAI"),

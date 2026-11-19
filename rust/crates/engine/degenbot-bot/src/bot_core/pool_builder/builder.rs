@@ -40,7 +40,8 @@ use degenbot_pools::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_rpc::abi::{
     self, BalancerPoolId, ContractRead, IAerodromeFactory, IBalancerPool, IBalancerVault,
-    IPoolIdentity, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix, V2Reserves, V4Slot0,
+    ICurvePool, ICurvePoolInt128, IPoolIdentity, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix,
+    V2Reserves, V4Slot0,
 };
 use degenbot_rpc::erc20;
 use degenbot_rpc::tick_bootstrap::fetch_tick_word_via;
@@ -1102,7 +1103,7 @@ async fn balancer_scaling_factor(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
 /// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
-/// pool in [`BROKEN_BALANCER_V2_POOLS`] or
+/// pool whose own `getSwapEnabled()` reports swaps disabled, or
 /// [`SpecRefusal::BalancerComposableWeighted`] for a pool whose own BPT is
 /// among the Vault tokens, or [`PoolBuilderError::Decoding`] for a token
 /// reporting more than 18 decimals.
@@ -1112,7 +1113,7 @@ pub async fn build_balancer_weighted(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterBalancerWeightedPoolParams, PoolBuilderError> {
-    if BROKEN_BALANCER_V2_POOLS.contains(&address) {
+    if !balancer_swap_enabled(io, address, block).await? {
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
@@ -1186,7 +1187,7 @@ pub async fn build_balancer_weighted(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
 /// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
-/// pool in [`BROKEN_BALANCER_V2_POOLS`] or
+/// pool whose own `getSwapEnabled()` reports swaps disabled, or
 /// [`SpecRefusal::BalancerRateProviderUnreadable`] for a pool whose rate
 /// provider reverts, or [`PoolBuilderError::Decoding`] for a token reporting
 /// more than 18 decimals.
@@ -1197,7 +1198,7 @@ pub async fn build_balancer_stable(
     block: Option<u64>,
     invariant_version_override: Option<u8>,
 ) -> Result<RegisterBalancerStablePoolParams, PoolBuilderError> {
-    if BROKEN_BALANCER_V2_POOLS.contains(&address) {
+    if !balancer_swap_enabled(io, address, block).await? {
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
@@ -1525,33 +1526,109 @@ pub(crate) async fn bootstrap_tick_map(
     }
 }
 
-/// The Curve V1 pools known to be broken beyond repair: stale or disabled
-/// deployments whose getters will not return (a `coins(i)`/`balances(i)`
-/// that reverts, an empty `A()`, or a permanently wedged rate path). The
-/// build refuses them up front with [`SpecRefusal::CurveBrokenPool`] rather
-/// than dying mid-discovery on whichever read breaks first.
-pub const BROKEN_CURVE_V1_POOLS: &[Address] = &[
-    alloy::primitives::address!("110cc323ca53d622469EdD217387E2E6B33F1dF5"),
-    alloy::primitives::address!("1F71f05CF491595652378Fe94B7820344A551B8E"),
-    alloy::primitives::address!("28B0Cf1baFB707F2c6826d10caf6DD901a6540C5"),
-    alloy::primitives::address!("3685646651FCcC80e7CCE7Ee24c5f47Ed9b434ac"),
-    alloy::primitives::address!("4029f7DcBdF6059ed80DA6856526E7510D64fA21"),
-    alloy::primitives::address!("69ACcb968B19a53790f43e57558F5E443A91aF22"),
-    alloy::primitives::address!("84997FAFC913f1613F51Bb0E2b5854222900514B"),
-    alloy::primitives::address!("9CA41a2DaB3CEE15308998868ca644e2e3be5C59"),
-    alloy::primitives::address!("A77d09743F77052950C4eb4e6547E9665299BecD"),
-    alloy::primitives::address!("D652c40fBb3f06d6B58Cb9aa9CFF063eE63d465D"),
-];
+/// The `get_dy` probe's minimum amount, in coin-0 wei.
+///
+/// One whole coin 0 (`10**decimals`) is the semantic probe amount, but a
+/// zero-decimal coin makes that a single wei, where the pools' own rounded
+/// `get_dy` arithmetic can underflow on a working pool (measured: a live pool
+/// reverts at one wei and answers from a thousand).
+const QUOTE_PROBE_MINIMUM: u64 = 1_000;
 
-/// The Balancer V2 pools known to be broken beyond repair: deployments whose
-/// swaps are disabled at the contract level (BAL#327 `SWAPS_DISABLED`), so the
-/// pool would register and then revert on every swap simulation. The build
-/// refuses them up front with [`SpecRefusal::BalancerBrokenPool`], on both
-/// Balancer arms, so a caller's family guess can never route around the
-/// verdict.
-pub const BROKEN_BALANCER_V2_POOLS: &[Address] = &[alloy::primitives::address!(
-    "753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
-)];
+/// Whether a funded Curve deployment answers a swap quote at all.
+///
+/// A pool that holds balances yet answers no `get_dy` under either ABI vintage
+/// has no swap path — a wedged invariant cache, a decommissioned deployment —
+/// so every simulated swap against it would revert; the build refuses it with
+/// [`SpecRefusal::CurveBrokenPool`]. Both prototypes are tried because a pool's
+/// execute-side vintage is independent of its coin getter's: mainnet pools that
+/// answer `coins(uint256)` quote through `get_dy(int128,int128,uint256)`.
+///
+/// The caller derives the probe amount as one whole coin 0 from its decimals;
+/// [`QUOTE_PROBE_MINIMUM`] floors it, so a zero-decimal coin is still judged by
+/// the pool's swap path rather than by rounding.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] for a transport fault, which is not a fact
+/// about the pool.
+async fn curve_quotes(
+    io: &ConstructionIo,
+    address: Address,
+    amount: U256,
+    block: Option<u64>,
+) -> Result<bool, PoolBuilderError> {
+    let amount = amount.max(U256::from(QUOTE_PROBE_MINIMUM));
+
+    match io
+        .read(
+            address,
+            ICurvePoolInt128::get_dyCall {
+                i: 0i128,
+                j: 1i128,
+                dx: amount,
+            },
+            block,
+        )
+        .await
+    {
+        Ok(_) => return Ok(true),
+        Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {}
+        Err(error) => return Err(PoolBuilderError::Rpc(error)),
+    }
+
+    match io
+        .read(
+            address,
+            ICurvePool::get_dyCall {
+                i: U256::ZERO,
+                j: U256::from(1u64),
+                dx: amount,
+            },
+            block,
+        )
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {
+            Ok(false)
+        }
+        Err(error) => Err(PoolBuilderError::Rpc(error)),
+    }
+}
+
+/// Whether a Balancer V2 pool's own `getSwapEnabled()` flag reports swaps on.
+///
+/// A decoded `false` is the pool's verdict that swaps are disabled at the
+/// contract (`BAL#327`): it would register and then revert on every swap
+/// simulation, so both arms refuse it with [`SpecRefusal::BalancerBrokenPool`]
+/// before assembling params — a capability the chain reports, never a
+/// remembered address.
+///
+/// The flag is probed, not required: vintages older than `ComposableStablePool`
+/// (`WeightedPool2Tokens`, `MetaStablePool`) do not expose the getter at all, so
+/// a revert or an undecodable answer says nothing about swaps and the pool keeps
+/// its `true` verdict.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] for a transport fault, which is not a fact
+/// about the pool.
+async fn balancer_swap_enabled(
+    io: &ConstructionIo,
+    address: Address,
+    block: Option<u64>,
+) -> Result<bool, PoolBuilderError> {
+    match io
+        .read(address, IBalancerPool::getSwapEnabledCall {}, block)
+        .await
+    {
+        Ok(enabled) => Ok(enabled),
+        Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {
+            Ok(true)
+        }
+        Err(error) => Err(PoolBuilderError::Rpc(error)),
+    }
+}
 
 /// A revert on a REQUIRED read is the contract's own verdict that it does
 /// not implement the call (a decommissioned V1 pool whose `A()`/`fee()`
@@ -1581,9 +1658,10 @@ fn required_read(err: ProviderError) -> PoolBuilderError {
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure, or
-/// [`PoolBuilderError::Spec`] naming why the pool is unbuildable: a pool in
-/// [`BROKEN_CURVE_V1_POOLS`] ([`SpecRefusal::CurveBrokenPool`]), fewer than 2
-/// coins ([`SpecRefusal::CurveTooFewCoins`]), a `coins()`/`balances()` length
+/// [`PoolBuilderError::Spec`] naming why the pool is unbuildable: a zero `A()`
+/// or a funded pool that answers no swap quote
+/// ([`SpecRefusal::CurveBrokenPool`]), fewer than 2 coins
+/// ([`SpecRefusal::CurveTooFewCoins`]), a `coins()`/`balances()` length
 /// disagreement ([`SpecRefusal::CurveCoinsBalancesMismatch`]), a required getter
 /// revert ([`SpecRefusal::CurveRequiredReadReverted`]), or a coin that cannot
 /// serve an ERC-20 read ([`SpecRefusal::NoCodeCoin`] /
@@ -1596,14 +1674,17 @@ pub async fn build_curve_pool(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterCurvePoolParams, PoolBuilderError> {
-    if BROKEN_CURVE_V1_POOLS.contains(&address) {
-        return Err(PoolBuilderError::Spec(SpecRefusal::CurveBrokenPool));
-    }
-
     let coins = curve_choreography::discover_curve_coins(io, address, block).await;
     let params = curve_choreography::fetch_curve_pool_params(io, address, block)
         .await
         .map_err(required_read)?;
+
+    // A zero `A()` is the pool's own answer that its amplified invariant cannot
+    // price anything: a dead deployment, refused by a read every pool must
+    // serve, never by a remembered address.
+    if params.a_coefficient == 0 {
+        return Err(PoolBuilderError::Spec(SpecRefusal::CurveBrokenPool));
+    }
     let ramping = curve_choreography::detect_curve_a_ramping(io, address, block).await;
     let crypto = curve_choreography::detect_curve_crypto_params(io, address, block).await;
     let lp_token =
@@ -1663,6 +1744,25 @@ pub async fn build_curve_pool(
             Err(err) => return Err(err),
         }
     }
+
+    // A pool that still reports balances but answers no swap quote has no swap
+    // path — the wedge the archive's broken-deployment list stood for — so it is
+    // refused by its own behaviour rather than remembered by address. An
+    // unfunded pool has no swap to price and stays buildable: liquidity is not
+    // the builder's gate. The probe asks for one whole coin 0, floored at
+    // `QUOTE_PROBE_MINIMUM` inside `curve_quotes`.
+    if coins.balances.iter().any(|balance| !balance.is_zero())
+        && !curve_quotes(
+            io,
+            address,
+            U256::from(10u64).pow(U256::from(token_decimals[0])),
+            block,
+        )
+        .await?
+    {
+        return Err(PoolBuilderError::Spec(SpecRefusal::CurveBrokenPool));
+    }
+
     let lending = curve_choreography::detect_curve_lending_tokens(
         io,
         &coins.token_addresses,

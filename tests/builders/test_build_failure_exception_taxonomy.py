@@ -64,7 +64,8 @@ TOKEN1 = "0x" + "b1" * 20
 VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8"
 POOL_ID = "11" * 32
 BLOCK = 100
-# `BROKEN_BALANCER_V2_POOLS[0]` — swaps disabled at the contract (BAL#327).
+# A Balancer weighted pool whose own `getSwapEnabled()` reports swaps disabled
+# at the contract (BAL#327).
 BROKEN_POOL = "0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
 
 _ONE = 10**18
@@ -112,6 +113,7 @@ def _blocks(
     *,
     pool: str = POOL,
     token0_decimals: int = 18,
+    swap_enabled: bool = True,
     omit: str | None = None,
 ) -> dict[str, dict]:
     """One recorded block serving the reads a weighted-pool build makes."""
@@ -130,6 +132,8 @@ def _blocks(
             [TOKEN0, TOKEN1], [_ONE, 2 * _ONE]
         ),
         _call_key(pool, "getSwapFeePercentage()"): _word_uint(10**16),
+        # The pool's own swap gate: the only input to the broken-pool verdict.
+        _call_key(pool, "getSwapEnabled()"): _word_uint(int(swap_enabled)),
         _call_key(TOKEN0, "decimals()"): _word_uint(token0_decimals),
         _call_key(TOKEN1, "decimals()"): _word_uint(18),
     }
@@ -215,7 +219,7 @@ def test_decode_fault_raises_pool_build_decode_error(tmp_path: pathlib.Path) -> 
 
 def test_spec_refusal_still_raises_spec_violation_error(tmp_path: pathlib.Path) -> None:
     """The spec arm keeps its class and names its reason as data."""
-    bot = _bot(tmp_path, _blocks(pool=BROKEN_POOL))
+    bot = _bot(tmp_path, _blocks(pool=BROKEN_POOL, swap_enabled=False))
 
     with pytest.raises(SpecViolationError) as exc_info:
         bot.build_pool(BROKEN_POOL, state_block=BLOCK)
@@ -238,7 +242,11 @@ def test_spec_refusal_still_raises_spec_violation_error(tmp_path: pathlib.Path) 
             BuildFailureKind.Rpc,
         ),
         (_blocks(token0_decimals=20), POOL, BuildFailureKind.Decoding),
-        (_blocks(pool=BROKEN_POOL), BROKEN_POOL, BuildFailureKind.Spec),
+        (
+            _blocks(pool=BROKEN_POOL, swap_enabled=False),
+            BROKEN_POOL,
+            BuildFailureKind.Spec,
+        ),
     ],
     ids=["transport", "decode", "spec"],
 )

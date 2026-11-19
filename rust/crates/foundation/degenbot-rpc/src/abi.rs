@@ -226,6 +226,7 @@ alloy::sol! {
         function getNormalizedWeights() external view returns (uint256[] memory);
         function getRateProviders() external view returns (address[] memory);
         function getRate() external view returns (uint256);
+        function getSwapEnabled() external view returns (bool);
     }
 
     /// Balancer V2 singleton Vault interface (pool-token reads).
@@ -240,6 +241,7 @@ alloy::sol! {
     interface ICurvePool {
         function coins(uint256 i) external view returns (address);
         function balances(uint256 i) external view returns (uint256);
+        function get_dy(uint256 i, uint256 j, uint256 dx) external view returns (uint256);
         function admin_balances(uint256 i) external view returns (uint256);
         function price_scale(uint256 k) external view returns (uint256);
         function A() external view returns (uint256);
@@ -264,12 +266,13 @@ alloy::sol! {
         function base_pool() external view returns (address);
     }
 
-    /// Curve `StableSwap` coin/balance reads under the `int128` prototype
+    /// Curve `StableSwap` coin/balance/quote reads under the `int128` prototype
     /// (older pools). Kept as a separate interface so the overloaded
-    /// `coins`/`balances` names land in distinct `SolCall` types.
+    /// `coins`/`balances`/`get_dy` names land in distinct `SolCall` types.
     interface ICurvePoolInt128 {
         function coins(int128 i) external view returns (address);
         function balances(int128 i) external view returns (uint256);
+        function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256);
     }
 
     /// Curve registry / factory read interface (LP token, metapool, coins).

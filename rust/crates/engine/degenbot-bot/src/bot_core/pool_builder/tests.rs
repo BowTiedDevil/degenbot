@@ -2215,40 +2215,99 @@ async fn build_balancer_stable_override_outranks_the_shape() {
     }
 }
 
-/// A known-broken Balancer V2 pool is refused before any RPC: the `FakeRpc`
-/// carries no responses because the gate fires before the first read.
+/// A Balancer V2 pool whose own `getSwapEnabled()` answers `false` has swaps
+/// disabled at the contract (`BAL#327`): it would register and then revert on
+/// every swap simulation, so the arm refuses it by that flag — before any other
+/// pool read (`FakeRpc` carries the flag and nothing else).
 #[tokio::test]
-async fn build_balancer_weighted_rejects_a_known_broken_pool() {
-    let io = io_with(FakeRpc::new());
-    for broken in builder::BROKEN_BALANCER_V2_POOLS {
-        assert!(
-            matches!(
-                builder::build_balancer_weighted(VAULT, *broken, &io, Some(1)).await,
-                Err(builder::PoolBuilderError::Spec(
-                    SpecRefusal::BalancerBrokenPool
-                ))
-            ),
-            "known-broken pool built: {broken}"
-        );
-    }
+async fn build_balancer_weighted_refuses_a_swaps_disabled_pool() {
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"getSwapEnabled()"),
+        enc(DynSolValue::Bool(false)),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_weighted(VAULT, TO, &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::BalancerBrokenPool
+        ))
+    ));
 }
 
-/// The same known-broken pool is refused on the stable arm too — the gate is a
-/// property of the pool, not of the family the caller guessed.
+/// The same flag is refused on the stable arm: the verdict is a property of the
+/// pool, not of the family the caller guessed.
 #[tokio::test]
-async fn build_balancer_stable_rejects_a_known_broken_pool() {
-    let io = io_with(FakeRpc::new());
-    for broken in builder::BROKEN_BALANCER_V2_POOLS {
-        assert!(
-            matches!(
-                builder::build_balancer_stable(VAULT, *broken, &io, Some(1), None).await,
-                Err(builder::PoolBuilderError::Spec(
-                    SpecRefusal::BalancerBrokenPool
-                ))
-            ),
-            "known-broken pool built: {broken}"
-        );
-    }
+async fn build_balancer_stable_refuses_a_swaps_disabled_pool() {
+    let mut f = balancer_stable_fakes(&[T0, T1]);
+    f.set(
+        abi::selector(b"getSwapEnabled()"),
+        enc(DynSolValue::Bool(false)),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_stable(VAULT, TO, &io, Some(1), None).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::BalancerBrokenPool
+        ))
+    ));
+}
+
+/// A pool that answers the flag with `true` proceeds to its own reads: the probe
+/// refuses only when the chain reports swaps off. The remaining reads carry no
+/// canned answers here, so the build fails after the probe — the assertion is
+/// that the flag raised no broken-pool verdict.
+#[tokio::test]
+async fn build_balancer_weighted_proceeds_when_the_pool_reports_swaps_enabled() {
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"getSwapEnabled()"),
+        enc(DynSolValue::Bool(true)),
+    );
+    let io = io_with(f);
+    let failure = builder::build_balancer_weighted(VAULT, TO, &io, Some(1))
+        .await
+        .expect_err("an unanswered build cannot succeed");
+    assert!(
+        !matches!(
+            failure,
+            builder::PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool)
+        ),
+        "the enabled flag raised a broken-pool verdict: {failure:?}"
+    );
+}
+
+/// Older vintages (`WeightedPool2Tokens`, `MetaStablePool`) do not expose
+/// `getSwapEnabled()` at all: a getter that reverts says nothing about swaps, so
+/// the pool keeps its `true` verdict and builds.
+#[tokio::test]
+async fn build_balancer_stable_proceeds_when_the_swap_flag_getter_reverts() {
+    // `balancer_stable_fakes` scripts every read the arm issues except the flag,
+    // which therefore reverts (the `FakeRpc` default).
+    let io = io_with(balancer_stable_fakes(&[T0, T1]));
+    builder::build_balancer_stable(VAULT, TO, &io, Some(1), None)
+        .await
+        .expect("a pool without the getter is not swaps-disabled");
+}
+
+/// A transport fault on the flag is not a fact about the pool: it surfaces as
+/// the arm's `Rpc` error instead of a broken-pool verdict.
+#[tokio::test]
+async fn build_balancer_weighted_propagates_a_swap_flag_transport_fault() {
+    let mut f = FakeRpc::new();
+    f.set_error(
+        abi::selector(b"getSwapEnabled()"),
+        ProviderError::Timeout {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_weighted(VAULT, TO, &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Rpc(
+            ProviderError::Timeout { .. }
+        ))
+    ));
 }
 
 /// A token whose `decimals()` answers nothing (no runtime code — self-destructed
@@ -2790,6 +2849,13 @@ async fn build_curve_pool_assembles_plain_pool_params() {
         enc(DynSolValue::Uint(U256::from(6u64), 256)),
     );
 
+    // The pool prices a swap: the quote probe needs an answer to stay buildable
+    // (a funded pool that cannot quote is a broken deployment).
+    f.set(
+        abi::selector(b"get_dy(int128,int128,uint256)"),
+        enc(DynSolValue::Uint(U256::from(1u64), 256)),
+    );
+
     let io = io_with(f);
     let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(123))
         .await
@@ -2831,22 +2897,184 @@ async fn build_curve_pool_assembles_plain_pool_params() {
     assert_eq!(p.use_lending, vec![false, false]);
 }
 
-#[tokio::test]
-async fn build_curve_pool_rejects_a_known_broken_v1_pool() {
-    // A known-broken V1 pool is refused before any RPC: the FakeRpc needs no
-    // responses because discovery never runs.
-    let io = io_with(FakeRpc::new());
-    for broken in builder::BROKEN_CURVE_V1_POOLS {
-        assert!(
-            matches!(
-                builder::build_curve_pool(1, *broken, &[REGISTRY], &io, Some(1)).await,
-                Err(builder::PoolBuilderError::Spec(
-                    SpecRefusal::CurveBrokenPool
-                ))
-            ),
-            "known-broken pool built: {broken}"
+/// `FakeRpc` answers for one two-coin Curve pool: coins, balances, the required
+/// immutable params, and 18-decimal coins. The swap-quote answer is the caller's
+/// to script — whether the pool can quote at all is what the capability verdict
+/// turns on.
+fn curve_pool_fakes(balances: [u64; 2]) -> FakeRpc {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000011");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000012");
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
+    // Coin index 2 reverts (no response) → discovery stops at two coins.
+    for (index, balance) in balances.iter().enumerate() {
+        f.set_full(
+            abi::ICurvePool::balancesCall {
+                i: U256::from(index as u64),
+            }
+            .abi_encode(),
+            enc(DynSolValue::Uint(U256::from(*balance), 256)),
         );
     }
+    f.set(
+        abi::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set(
+        abi::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    f.set(
+        abi::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18u64), 256)),
+    );
+    f
+}
+
+/// An `A()` of zero is the pool's own answer that its amplified invariant cannot
+/// price anything: the build refuses a dead deployment by its read, not by a
+/// remembered address.
+#[tokio::test]
+async fn build_curve_pool_refuses_a_zero_amplification_deployment() {
+    let mut f = curve_pool_fakes([1_000_000, 2_000_000]);
+    f.set(
+        abi::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveBrokenPool
+        ))
+    ));
+}
+
+/// A pool that still reports balances but answers no swap quote under either
+/// `get_dy` prototype has no swap path (a wedged invariant cache, a
+/// decommissioned deployment): every simulated swap against it would revert, so
+/// the build refuses it by that behaviour — the class the family's address list
+/// stood for.
+#[tokio::test]
+async fn build_curve_pool_refuses_a_funded_pool_that_cannot_quote() {
+    let io = io_with(curve_pool_fakes([1_000_000, 2_000_000]));
+    assert!(matches!(
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveBrokenPool
+        ))
+    ));
+}
+
+/// The quote verdict is about a funded pool: an empty pool has no swap to price,
+/// so it stays buildable (liquidity is not the builder's gate).
+#[tokio::test]
+async fn build_curve_pool_keeps_an_unfunded_pool_that_cannot_quote() {
+    let io = io_with(curve_pool_fakes([0, 0]));
+    let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1))
+        .await
+        .expect("an unfunded pool builds");
+    assert_eq!(p.balances, vec![U256::ZERO, U256::ZERO]);
+}
+
+/// A pool whose quoting entry point is the `uint256` prototype (the `int128` one
+/// reverts) is healthy, not broken: the probes try both vintages.
+#[tokio::test]
+async fn build_curve_pool_accepts_a_quote_under_either_prototype() {
+    let mut f = curve_pool_fakes([1_000_000, 2_000_000]);
+    f.set(
+        abi::selector(b"get_dy(uint256,uint256,uint256)"),
+        enc(DynSolValue::Uint(U256::from(1u64), 256)),
+    );
+    let io = io_with(f);
+    let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1))
+        .await
+        .expect("a quoting pool builds");
+    assert_eq!(p.tokens.len(), 2);
+}
+
+/// A zero-decimal coin 0 makes `10**decimals` one wei, where the pools' own
+/// rounded `get_dy` arithmetic can underflow on a WORKING pool. The probe's
+/// minimum keeps the verdict about the swap path: the only recorded answer below
+/// is for the floored amount, so a one-wei probe would revert and refuse.
+#[tokio::test]
+async fn build_curve_pool_probes_a_zero_decimal_coin_at_the_minimum_amount() {
+    let mut f = curve_pool_fakes([1_000_000, 2_000_000]);
+    f.set(
+        abi::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    // The recorded calldata IS the assertion — `dx` is the floored amount.
+    f.set_full(
+        abi::ICurvePoolInt128::get_dyCall {
+            i: 0i128,
+            j: 1i128,
+            dx: U256::from(1_000u64),
+        }
+        .abi_encode(),
+        enc(DynSolValue::Uint(U256::from(999u64), 256)),
+    );
+
+    let io = io_with(f);
+    let p = builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1))
+        .await
+        .expect("a zero-decimal pool that quotes builds");
+    assert_eq!(p.tokens.len(), 2);
+}
+
+/// A transport fault on the SECOND prototype is still a fault: the first
+/// prototype's revert must not be promoted into a broken-pool verdict before the
+/// retry has had its say.
+#[tokio::test]
+async fn build_curve_pool_propagates_a_second_prototype_transport_fault() {
+    let mut f = curve_pool_fakes([1_000_000, 2_000_000]);
+    f.set_error(
+        abi::selector(b"get_dy(uint256,uint256,uint256)"),
+        ProviderError::Timeout {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Rpc(
+            ProviderError::Timeout { .. }
+        ))
+    ));
+}
+
+/// A transport fault during the quote probe is not a fact about the pool: it
+/// surfaces as the arm's `Rpc` error instead of a broken-pool verdict.
+#[tokio::test]
+async fn build_curve_pool_propagates_a_quote_probe_transport_fault() {
+    let mut f = curve_pool_fakes([1_000_000, 2_000_000]);
+    f.set_error(
+        abi::selector(b"get_dy(int128,int128,uint256)"),
+        ProviderError::Timeout {
+            message: "blip".to_owned(),
+        },
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(1, TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Rpc(
+            ProviderError::Timeout { .. }
+        ))
+    ));
 }
 
 #[tokio::test]
@@ -3050,6 +3278,13 @@ async fn build_curve_pool_translates_the_all_es_coin_to_the_native_asset() {
     f.set(
         abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(6u64), 256)),
+    );
+
+    // The pool prices a swap: the quote probe needs an answer to stay buildable
+    // (a funded pool that cannot quote is a broken deployment).
+    f.set(
+        abi::selector(b"get_dy(int128,int128,uint256)"),
+        enc(DynSolValue::Uint(U256::from(1u64), 256)),
     );
 
     let io = io_with(f);
@@ -4065,6 +4300,13 @@ async fn construction_door_curve_constructs_registers_and_reuses() {
     f.set(
         abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(6u64), 256)),
+    );
+
+    // The pool prices a swap: the quote probe needs an answer to stay buildable
+    // (a funded pool that cannot quote is a broken deployment).
+    f.set(
+        abi::selector(b"get_dy(int128,int128,uint256)"),
+        enc(DynSolValue::Uint(U256::from(1u64), 256)),
     );
     let io = io_with(f);
     let bot = Bot::new(1);
