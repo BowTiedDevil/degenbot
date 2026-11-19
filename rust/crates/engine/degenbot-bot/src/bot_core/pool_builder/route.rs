@@ -342,6 +342,14 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
             address,
             detail: "no identity selector answered".to_owned(),
         },
+
+        // The factory has no measured CREATE2 init hash on this chain: the same
+        // loud-abort class as a factory with no preset, because the deployment
+        // identity this build would have to store does not exist.
+        PoolBuilderError::UnverifiedInitHash(refusal) => ConstructionRefusal::UnsupportedFamily {
+            address,
+            detail: refusal.to_string(),
+        },
         // The identity verdict's divergence keeps the loud-abort class
         // (ADR-055 D4) and crosses as the identity refusal it is, so the use
         // site renders it exactly as the direct build entries do.

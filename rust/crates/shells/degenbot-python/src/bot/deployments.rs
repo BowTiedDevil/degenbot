@@ -79,32 +79,62 @@ fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
     ))
 }
 
-/// Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
-/// with a documented fallback. Returns the JSON row's `init_hash` when shipped
-/// with a CREATE2 init hash; otherwise the Uniswap V3 mainnet fallback (the
-/// retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A).
+/// Resolve the CREATE2 init code hash a V3 ``(chain_id, factory)`` registration
+/// stores, from the embedded canonical `deployments.json`.
+///
+/// A shipped row answers its *measured* hash as a lowercase `0x`-prefixed hex
+/// string: its own `init_hash`, or — for an EIP-1167 clone row, whose pools are
+/// minimal-proxy clones — the clone's init code hash derived from its verified
+/// `implementation_address` (the Aerodrome V2/V3 rows). A measured hash is
+/// admitted on every chain. An unshipped ``(chain, factory)`` has no measured
+/// hash: the call answers the documented Uniswap V3 mainnet default on chain 1
+/// (the measured mainnet) and on the chain-0 placeholder ``Bot()`` registers
+/// under (the ad-hoc/offline path — no network exists there), as an ASSUMED
+/// hash; every real other network is refused, because a pool identity must come
+/// from a shipped record. Address lookup is case-insensitive.
+///
+/// # Errors
+/// ``ValueError`` if `factory` is not a valid hex address, or if the
+/// ``(chain, factory)`` has no verifiable CREATE2 init hash on that chain
+/// (unshipped off the admitted chains, or a row with no address-derived
+/// identity, i.e. a Balancer row carrying neither an init hash nor a clone
+/// implementation).
 #[pyfunction]
 fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(format!(
-        "{:#x}",
-        core_deployments::resolve_v3_init_hash(chain_id, addr)
-    ))
+    core_deployments::admit_init_hash(
+        chain_id,
+        addr,
+        core_deployments::resolve_v3_init_hash(chain_id, addr),
+    )
+    .map(|init_hash| format!("{init_hash:#x}"))
+    .map_err(|refusal| pyo3::exceptions::PyValueError::new_err(refusal.to_string()))
 }
 
-/// Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
-/// with a documented fallback. Returns the JSON row's `init_hash` when shipped
-/// with a CREATE2 init hash; otherwise the Uniswap V2 mainnet fallback (the
-/// retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A).
+/// Resolve the CREATE2 init code hash a V2 ``(chain_id, factory)`` registration
+/// stores — the V2 twin of ``resolve_v3_init_hash``: a shipped row's measured
+/// hash (its own, or the EIP-1167 clone hash its `implementation_address`
+/// names) on every chain, the documented Uniswap V2 mainnet default (an ASSUMED
+/// hash) for an unshipped ``(chain, factory)`` on chain 1 and the chain-0
+/// placeholder only, and a ``ValueError`` refusal on every real other network.
+///
+/// # Errors
+/// ``ValueError`` if `factory` is not a valid hex address, or if the
+/// ``(chain, factory)`` has no verifiable CREATE2 init hash on that chain
+/// (unshipped off the admitted chains, or a row with no address-derived
+/// identity, i.e. a Balancer row).
 #[pyfunction]
 fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(format!(
-        "{:#x}",
-        core_deployments::resolve_v2_init_hash(chain_id, addr)
-    ))
+    core_deployments::admit_init_hash(
+        chain_id,
+        addr,
+        core_deployments::resolve_v2_init_hash(chain_id, addr),
+    )
+    .map(|init_hash| format!("{init_hash:#x}"))
+    .map_err(|refusal| pyo3::exceptions::PyValueError::new_err(refusal.to_string()))
 }
 
 /// Register the `init_hash_for` / `deployer_for` free functions on the

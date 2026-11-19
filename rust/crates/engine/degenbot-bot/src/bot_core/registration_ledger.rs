@@ -599,6 +599,9 @@ impl RefusalKind {
                 phase,
                 failure: BuildFailure::Db(inner.to_string()),
             },
+            PoolBuilderError::UnverifiedInitHash(refusal) => {
+                Self::unverified_init_hash(family, phase, refusal.to_string())
+            }
             PoolBuilderError::MissingIdentity { message } => Self::BuildRefused {
                 family,
                 phase,
@@ -680,6 +683,26 @@ impl RefusalKind {
         phase: RegistrationPhase,
     ) -> Self {
         Self::MissingConstructionIo { family, phase }
+    }
+
+    /// An unverified deployment identity: the `(chain, factory)` has no
+    /// measured CREATE2 init hash, so no identity may be completed from it.
+    /// The fact is a shipped-row check that cannot run and that nothing may
+    /// repair by inventing a hash — the fatal verify class, at whatever phase
+    /// raised it.
+    #[must_use]
+    pub fn unverified_init_hash(
+        family: Option<RegisteredPoolFamily>,
+        phase: RegistrationPhase,
+        detail: String,
+    ) -> Self {
+        Self::VerifyFailed {
+            family,
+            phase,
+            fatal: true,
+            origin: VerifyOrigin::Other,
+            detail,
+        }
     }
 
     /// A build refusal the taxonomy names for a shape no builder ever saw.

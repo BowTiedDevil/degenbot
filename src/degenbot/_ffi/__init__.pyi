@@ -3648,8 +3648,10 @@ class Pool:
         not a V2 pool. The Python companion reads this to recover deployer /
         init-hash without taking constructor args. Protocol-const fields
         (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
-        `init_hash` come from the identity (the verified values stored at
-        registration).
+        `init_hash` come from the identity — the values the register entry
+        resolved and admitted, i.e. a shipped row's measured init hash, or the
+        mainnet default admitted for an unshipped `(chain, factory)` on chain 1
+        and the chain-0 placeholder.
         """
     @property
     def dex_name(self, /) -> str | None:
@@ -3715,11 +3717,15 @@ class Pool:
     @property
     def init_hash(self, /) -> str:
         """
-        The CREATE2 init code hash this pool's address was verified against
-        (Fork A). The JSON row's `init_hash` when shipped, else the Uniswap
-        mainnet fallback (V2 or V3 const). V2 and V3 pools carry this; other
-        registered families return an empty string; raises if the id is not
-        registered.
+        The CREATE2 init code hash this pool's identity carries, resolved from
+        its `(chain, factory)` deployment row: the row's *measured* hash — its
+        own `init_hash`, or the init code hash of the EIP-1167 clone its
+        `implementation_address` names (the Aerodrome rows) — or, for an
+        unshipped `(chain, factory)`, the documented Uniswap mainnet default,
+        which registration admits on chain 1 and the chain-0 placeholder only.
+        A value reported for any real network is therefore always measured. V2
+        and V3 pools carry this; other registered families return an empty
+        string; raises if the id is not registered.
         """
     def journal_len(self, /) -> int:
         """

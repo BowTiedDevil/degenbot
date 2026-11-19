@@ -2,9 +2,18 @@
 
 The factory ``address`` / ``deployer`` / ``pool_init_hash`` for every V2/V3
 ``*ExchangeDeployment`` are the single source of truth in
-``registry/deployments.json`` (verified on-chain by the cast harness in
+``registry/deployments.json`` (every row's CREATE2 fields are verified on-chain
+by the cast harness in
 ``tests/registry/test_deployment_onchain_verification.py``, and cross-checked
 against these constants by ``tests/registry/test_deployments_single_source.py``).
+A row carrying an ``init_hash`` is a *measured* value, and so is an EIP-1167
+clone row: its ``implementation_address`` names the master contract its pools
+clone, so the row's init code hash is the minimal-proxy bytecode's keccak. A row
+carrying neither (the Balancer rows) has no address-derived identity. Neither the
+constants here nor the Rust resolvers invent a hash for a ``(chain, factory)`` the
+JSON does not ship: that lookup answers the documented Uniswap mainnet default on
+chain 1 and on the chain-0 placeholder the offline/ad-hoc ``Bot()`` registers
+under, and raises on every real other network.
 The V2/V3 constants below are *built* from the loaded ``DeploymentRecord`` via
 :func:`_v2` / :func:`_v3`, so the deployer + init_hash can never drift from the
 JSON — only the factory address is a literal here, and it doubles as the
@@ -376,6 +385,12 @@ def __getattr__(name: str) -> _DeploymentConstant:
     fns (``resolve_deployer``, ``resolve_v2_init_hash``, ``resolve_v3_init_hash``)
     are available immediately as module-level imports; only the typed
     constants need the heavy chain, so they build on first access.
+
+    The two ``resolve_*_init_hash`` fns answer a shipped row's measured hash;
+    for an unshipped ``(chain, factory)`` they answer the documented Uniswap
+    mainnet default on chain 1 and on the chain-0 placeholder only, and raise
+    ``ValueError`` on every real other network, so a foreign chain never
+    carries a guessed mainnet identity.
 
     Returns:
         The lazily-built deployment constant.

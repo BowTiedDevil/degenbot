@@ -111,6 +111,12 @@ pub enum PoolBuilderError {
     /// conflict.
     #[error("tick map assembly failure: {0}")]
     TickAssembly(#[from] degenbot_substrate::tick_assembly::TickMapAssemblyError),
+    /// The `(chain, factory)` has no measured CREATE2 init hash and the chain is
+    /// neither mainnet nor the chain-0 placeholder: there is no truthful value
+    /// to store on the identity, so the build refuses rather than carrying the
+    /// Uniswap mainnet default.
+    #[error("{0}")]
+    UnverifiedInitHash(#[from] degenbot_uniswap::deployments::UnverifiedInitHash),
 }
 
 /// Sentinels returned when an ERC-20 metadata field cannot be resolved,
@@ -754,8 +760,9 @@ fn camelot_stable_fee(
 /// Reads immutable data (`factory()`/`token0()`/`token1()`), `getReserves()`,
 /// resolves the [`DexIdentity`] preset via the built-in factory match + stable
 /// read, verifies the CREATE2 address, and resolves deployment
-/// deployer/`init_hash` — producing a [`RegisterV2PoolParams`] ready for
-/// `BotState::register_v2_pool` with no Python round-trip.
+/// deployer/`init_hash` through the deployment table's admission policy —
+/// producing a [`RegisterV2PoolParams`] ready for `BotState::register_v2_pool`
+/// with no Python round-trip.
 ///
 /// A Camelot solidly-stable pool's fee is per-pool state, so this reads the
 /// pool's own `token0FeePercent()` / `token1FeePercent()` over its
@@ -767,9 +774,11 @@ fn camelot_stable_fee(
 ///
 /// Returns [`PoolBuilderError::UnknownVariant`] for an unregistered factory,
 /// [`PoolBuilderError::Identity`] on a CREATE2 mismatch (when the factory ships
-/// in the JSON), [`PoolBuilderError::CamelotStableFee`] when a stable pool's
-/// fee configuration cannot be read into a non-zero retained gamma, or an
-/// RPC/spec error.
+/// in the JSON), [`PoolBuilderError::UnverifiedInitHash`] when the
+/// `(chain, factory)` has no measured init hash on a real other network,
+/// [`PoolBuilderError::CamelotStableFee`] when a stable pool's fee
+/// configuration cannot be read into a non-zero retained gamma, or an RPC/spec
+/// error.
 pub async fn build_v2(
     chain_id: u64,
     address: Address,
@@ -807,7 +816,11 @@ pub(crate) async fn build_v2_with_factory(
         .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
-    let init_hash: B256 = deployments::resolve_v2_init_hash(chain_id, imm.factory);
+    let init_hash: B256 = deployments::admit_init_hash(
+        chain_id,
+        imm.factory,
+        deployments::resolve_v2_init_hash(chain_id, imm.factory),
+    )?;
 
     let stable_swap = matches!(id.variant, DexVariant::CamelotV2Stable);
     // `stableSwap()` rides the fee read: the species and the fee configuration
@@ -1886,13 +1899,16 @@ async fn fetch_erc20_decimals(
 /// Reads immutable data (`factory()`/`token0()`/`token1()`/`fee()`/
 /// `tickSpacing()`), `slot0()` + `liquidity()`, seeds a Sparse tick map via the
 /// Chain-arm bootstrap, verifies the CREATE2 address, and resolves deployment
-/// deployer/`init_hash` — producing a [`RegisterV3PoolParams`] ready for
+/// deployer/`init_hash` through the deployment table's admission policy —
+/// producing a [`RegisterV3PoolParams`] ready for
 /// `BotState::register_v3_pool` with no Python round-trip.
 ///
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Identity`] on a CREATE2 mismatch (when the
-/// factory ships in the JSON) or an RPC/decode error.
+/// factory ships in the JSON), [`PoolBuilderError::UnverifiedInitHash`] when the
+/// `(chain, factory)` has no measured init hash on a real other network, or an
+/// RPC/decode error.
 pub async fn build_v3(
     chain_id: u64,
     address: Address,
@@ -1957,7 +1973,11 @@ pub(crate) async fn build_v3_with_factory(
     .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
     let deployer = deployments::resolve_deployer(chain_id, imm.factory);
-    let init_hash: B256 = deployments::resolve_v3_init_hash(chain_id, imm.factory);
+    let init_hash: B256 = deployments::admit_init_hash(
+        chain_id,
+        imm.factory,
+        deployments::resolve_v3_init_hash(chain_id, imm.factory),
+    )?;
     // Family-aware slot layout: the Pancake V3 fork's
     // divergent storage layout (liquidity@5, ticks@6) — resolved from the
     // deployment table; the FFI layer can override for non-JSON pools.

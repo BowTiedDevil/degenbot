@@ -60,8 +60,12 @@ pub enum IdentityDivergence {
 /// # Errors
 ///
 /// [`IdentityDivergence::Create2`] when the declared address disagrees with
-/// the recomputed one. A `(chain_id, factory)` row the deployment table does
-/// not ship verifies as a match (the ad-hoc path).
+/// the recomputed one. A `(chain_id, factory)` whose resolution answers an
+/// unverified init-hash provenance (no shipped row, or a row with no
+/// address-derived identity) has nothing to check the declared address against
+/// and verifies as a match — the ad-hoc path, whose init hash the register entry
+/// admits on chain 1 and the chain-0 placeholder only. An EIP-1167 clone row is
+/// checked by its own guard (`verify_aerodrome_*_pool_address`), not this one.
 pub fn verify_v2_create2(
     chain_id: u64,
     factory: Address,

@@ -168,11 +168,24 @@ impl Bot {
         // Derived identity completes at the request interior: the deployer +
         // init hash are a pure function of (chain_id, factory), so a caller
         // never has to carry them (the request's carried values, if any, are
-        // overwritten with the resolved ones).
+        // overwritten with the resolved ones). The init hash crosses through the
+        // deployment table's one admission policy: a shipped row's measured
+        // hash on any chain, the documented mainnet default on mainnet and the
+        // chain-0 placeholder only.
         params.deployer =
             degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), params.factory);
-        params.init_hash =
-            degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), params.factory);
+        params.init_hash = degenbot_uniswap::deployments::admit_init_hash(
+            self.chain_id(),
+            params.factory,
+            degenbot_uniswap::deployments::resolve_v2_init_hash(self.chain_id(), params.factory),
+        )
+        .map_err(|refusal| {
+            RefusalKind::unverified_init_hash(
+                Some(RegisteredPoolFamily::V2),
+                RegistrationPhase::Identity,
+                refusal.to_string(),
+            )
+        })?;
         RefusalKind::from_registration_verdict(
             self.state_arc()
                 .write_at(LockSite::Orchestrator)
@@ -248,8 +261,18 @@ impl Bot {
         // `register_v2_request`).
         params.deployer =
             degenbot_uniswap::deployments::resolve_deployer(self.chain_id(), params.factory);
-        params.init_hash =
-            degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), params.factory);
+        params.init_hash = degenbot_uniswap::deployments::admit_init_hash(
+            self.chain_id(),
+            params.factory,
+            degenbot_uniswap::deployments::resolve_v3_init_hash(self.chain_id(), params.factory),
+        )
+        .map_err(|refusal| {
+            RefusalKind::unverified_init_hash(
+                Some(RegisteredPoolFamily::V3),
+                RegistrationPhase::Identity,
+                refusal.to_string(),
+            )
+        })?;
         RefusalKind::from_registration_verdict(
             self.state_arc()
                 .write_at(LockSite::Orchestrator)
@@ -1282,6 +1305,121 @@ mod tests {
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             known_bitmap_words: Vec::new(),
+        }
+    }
+
+    // --- the init-hash admission boundary --------------------------------
+
+    /// BSC: no `deployments.json` row names any of its factories, so every
+    /// `(56, factory)` is an unmeasured deployment identity.
+    const BSC: u64 = 56;
+
+    /// The chain-56 boundary refuses: an unshipped factory has no measured
+    /// CREATE2 init hash, so the register entry stores nothing rather than
+    /// carrying the Uniswap mainnet default onto a foreign chain.
+    #[test]
+    #[expect(clippy::panic)] // the refusal shape is the assertion; a wrong arm must stop the test loudly
+    fn register_v2_refuses_an_unmeasured_init_hash_off_mainnet() {
+        let bot = Bot::new(BSC);
+        let err = register_v2(&bot, Address::from([0x11u8; 20]), adhoc_factory())
+            .expect_err("chain 56 has no measured init hash for an unshipped factory");
+        let detail = match err {
+            RefusalKind::VerifyFailed {
+                family,
+                phase,
+                fatal,
+                origin,
+                detail,
+            } => {
+                assert_eq!(family, Some(RegisteredPoolFamily::V2));
+                assert_eq!(phase, RegistrationPhase::Identity);
+                assert!(fatal, "an unmeasured identity is permanent, not retryable");
+                assert_eq!(origin, crate::bot_core::VerifyOrigin::Other);
+                detail
+            }
+            other => panic!("expected the unverified-init-hash refusal, got {other:?}"),
+        };
+        assert!(
+            detail.contains("56"),
+            "the refusal names the chain: {detail}"
+        );
+        assert!(
+            detail.contains(&adhoc_factory().to_string()),
+            "the refusal names the factory: {detail}"
+        );
+        assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
+    }
+
+    /// The V3 twin of the chain-56 refusal.
+    #[test]
+    fn register_v3_refuses_an_unmeasured_init_hash_off_mainnet() {
+        let bot = Bot::new(BSC);
+        let err = bot
+            .register(v3_request(
+                Address::from([0x11u8; 20]),
+                hashbrown::HashMap::new(),
+            ))
+            .expect_err("chain 56 has no measured init hash for an unshipped factory");
+        assert!(
+            matches!(
+                err,
+                RefusalKind::VerifyFailed {
+                    family: Some(RegisteredPoolFamily::V3),
+                    phase: RegistrationPhase::Identity,
+                    fatal: true,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
+    }
+
+    /// The other direction of the same policy: on mainnet and on the offline
+    /// placeholder the documented Uniswap mainnet default IS admitted for an
+    /// ad-hoc factory, and the request's carried (zeroed) value is overwritten
+    /// by the resolution.
+    #[test]
+    fn register_v2_adhoc_stores_the_admitted_mainnet_default_on_both_admitted_chains() {
+        for chain_id in [1, degenbot_uniswap::deployments::PLACEHOLDER_CHAIN_ID] {
+            let bot = Bot::new(chain_id);
+            let pool_id = register_v2(&bot, Address::from([0x11u8; 20]), adhoc_factory())
+                .expect("the ad-hoc path registers on an admitted chain");
+            let core = bot.state_arc();
+            let state = core.read_at(LockSite::Core);
+            let identity = state
+                .pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id)
+                .expect("the V2 identity is registered");
+            assert_eq!(
+                identity.init_hash,
+                degenbot_uniswap::deployments::UNISWAP_V2_MAINNET_INIT_HASH,
+                "chain {chain_id}"
+            );
+            assert_eq!(identity.deployer, adhoc_factory(), "chain {chain_id}");
+        }
+    }
+
+    /// The V3 twin: the same two chains admit the V3 mainnet default.
+    #[test]
+    fn register_v3_adhoc_stores_the_admitted_mainnet_default_on_both_admitted_chains() {
+        for chain_id in [1, degenbot_uniswap::deployments::PLACEHOLDER_CHAIN_ID] {
+            let bot = Bot::new(chain_id);
+            let pool_id = bot
+                .register(v3_request(
+                    Address::from([0x11u8; 20]),
+                    hashbrown::HashMap::new(),
+                ))
+                .expect("the ad-hoc path registers on an admitted chain");
+            let core = bot.state_arc();
+            let state = core.read_at(LockSite::Core);
+            let identity = state
+                .pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)
+                .expect("the V3 identity is registered");
+            assert_eq!(
+                identity.init_hash,
+                degenbot_uniswap::deployments::UNISWAP_V3_MAINNET_INIT_HASH,
+                "chain {chain_id}"
+            );
         }
     }
 }

@@ -71,7 +71,9 @@ def _py_pool(bot: Bot, pool_id: int):
 
 
 class TestV3HandleIdentity:
-    """`Pool` exposes the verified V3 deployer + init_hash."""
+    """`Pool` exposes the V3 deployer + init_hash resolution stored at
+    registration: a shipped row's measured values, or the chain-1-only mainnet
+    default an ad-hoc `(chain, factory)` is admitted with."""
 
     def test_uniswap_v3_init_hash_off_handle(self) -> None:
         bot = Bot(chain_id=1)
@@ -91,7 +93,8 @@ class TestV3HandleIdentity:
         assert pool.init_hash == PANCAKESWAP_V3_INIT_HASH
 
     def test_non_json_pool_falls_back_to_mainnet_init_hash(self) -> None:
-        """A non-JSON V3 factory defaults to the mainnet fallback init_hash."""
+        """A non-JSON V3 factory registers with the admitted chain-1 default
+        (unverified — the deployment table ships no row for it)."""
         bot = Bot(chain_id=1)
         ad_hoc_factory = "0x" + "77" * 20
         pid = _register_v3(bot, "0x" + "88" * 20, ad_hoc_factory)

@@ -51,40 +51,187 @@ use degenbot_core::address_utils;
 use crate::create2;
 use crate::dex_identity::DexName;
 
-/// The canonical Uniswap V3 mainnet CREATE2 init code hash — the fallback
-/// for non-`JSON` V3 pools (the documented default the retired Python `ClassVar`
-/// `UNISWAP_V3_MAINNET_POOL_INIT_HASH` carried).
+/// The measurement behind [`InitHashProvenance::AssumedMainnet`] for V3: the
+/// canonical Uniswap V3 mainnet CREATE2 init code hash, i.e. the default the
+/// retired Python `ClassVar` `UNISWAP_V3_MAINNET_POOL_INIT_HASH` carried.
 ///
-/// Used only when `register_v3_pool` is called for a `(chain, factory)` that is
-/// NOT in the shipped `deployments.json` (test/ad-hoc pools). JSON-registered
-/// pools read the per-row verified init hash from the deployment record
-/// (covering the `PancakeSwap` V3 separate-deployer case). Keeping this as a
-/// Rust `const` retires the second Python copy without dropping the fallback
-/// semantics non-JSON pools rely on.
+/// The value is measured for the Uniswap V3 mainnet factory alone. A
+/// `(chain, factory)` the shipped `deployments.json` does not name resolves to
+/// it as an ASSUMED hash — admitted by [`admit_init_hash`] on
+/// [`MAINNET_CHAIN_ID`] and the [`PLACEHOLDER_CHAIN_ID`] ad-hoc path, refused
+/// on every real network. JSON-registered pools read their row's verified init
+/// hash instead (covering the `PancakeSwap` V3 separate-deployer case).
 pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54");
 
-/// The canonical Uniswap V2 mainnet CREATE2 init code hash — the fallback for
-/// non-`JSON` V2 pools (the retired Python `ClassVar`
-/// `UNISWAP_V2_MAINNET_POOL_INIT_HASH`). Used only when `register_v2_pool` is
-/// called for a `(chain, factory)` NOT in the shipped `deployments.json`
-/// (test/ad-hoc pools). JSON-registered pools read the per-row verified init
-/// hash from the deployment record. Rust `const` retires the Python copy
+/// The measurement behind [`InitHashProvenance::AssumedMainnet`] for V2: the
+/// canonical Uniswap V2 mainnet CREATE2 init code hash, i.e. the default the
+/// retired Python `ClassVar` `UNISWAP_V2_MAINNET_POOL_INIT_HASH` carried.
+///
+/// The value is measured for the Uniswap V2 mainnet factory alone; a
+/// `(chain, factory)` the shipped `deployments.json` does not name resolves to
+/// it as an ASSUMED hash (see [`UNISWAP_V3_MAINNET_INIT_HASH`] for the
+/// admission policy). JSON-registered pools read their row's verified init
+/// hash from the deployment record.
 pub const UNISWAP_V2_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f");
 
-/// Resolve the CREATE2 init code hash for a V2 `(chain_id, factory)` pair,
-/// with a documented fallback.
-///
-/// Returns the JSON row's `init_hash` when shipped with a CREATE2 init hash;
-/// otherwise [`UNISWAP_V2_MAINNET_INIT_HASH`] (the retired Python `ClassVar`'s
-/// documented default for non-`JSON` V2 pools). The V2 builder stores this on
-/// the identity; the `dex` getter merges it.
+/// The one chain the documented mainnet init-hash default belongs to.
+pub const MAINNET_CHAIN_ID: u64 = 1;
+
+/// The chain every offline/ad-hoc consumer registers under: `Bot()` builds a
+/// `PyBot::new(chain_id = 0)` (also the bare-engine session scope), and the
+/// test fixtures register synthetic factories on it. No network exists at
+/// chain 0, so a CREATE2 address can never be misderived against a real
+/// deployment there — which is exactly what makes the documented mainnet
+/// default harmless on it.
+pub const PLACEHOLDER_CHAIN_ID: u64 = 0;
+
+/// Whether `chain_id` is one the documented mainnet default is admitted on: the
+/// chain the Uniswap hashes were measured for, or the offline placeholder.
 #[must_use]
-pub fn resolve_v2_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
+pub const fn admits_assumed_default(chain_id: u64) -> bool {
+    chain_id == MAINNET_CHAIN_ID || chain_id == PLACEHOLDER_CHAIN_ID
+}
+
+/// The provenance of a resolved CREATE2 init code hash.
+///
+/// A bare hash cannot say whether it was measured or guessed, and a guessed
+/// hash derives a wrong pool address with no signal anywhere downstream.
+/// Resolution answers this type instead; [`admit_init_hash`] is the one place
+/// an unverified outcome may cross into a pool identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InitHashProvenance {
+    /// The shipped `deployments.json` row measures this hash: verbatim from its
+    /// `init_hash`, or derived from its verified `implementation_address` for an
+    /// EIP-1167 clone row (the clone bytecode is that deployment's init code).
+    Record(B256),
+    /// No shipped row names this `(chain, factory)`: the value is the
+    /// documented Uniswap mainnet default the retired Python `ClassVar`
+    /// carried, not a measurement of this deployment.
+    AssumedMainnet(B256),
+    /// The shipped row carries neither an `init_hash` nor an EIP-1167
+    /// `implementation_address` (the Balancer rows): its pools are not
+    /// address-derived at all, so there is no init hash to resolve.
+    NoCreate2,
+}
+
+impl InitHashProvenance {
+    /// The hash this provenance carries, if any.
+    #[must_use]
+    pub fn init_hash(self) -> Option<B256> {
+        match self {
+            Self::Record(init_hash) | Self::AssumedMainnet(init_hash) => Some(init_hash),
+            Self::NoCreate2 => None,
+        }
+    }
+
+    /// Whether the hash is the shipped row's measurement (the verified case).
+    #[must_use]
+    pub fn is_verified(self) -> bool {
+        matches!(self, Self::Record(_))
+    }
+}
+
+/// A resolved init hash that must not reach a pool identity: the
+/// `(chain, factory)` has no shipped record and the chain is not the one the
+/// documented mainnet default belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnverifiedInitHash {
+    /// The chain the resolution asked about.
+    pub chain_id: u64,
+    /// The factory the resolution asked about.
+    pub factory: Address,
+    /// What resolution answered.
+    pub provenance: InitHashProvenance,
+}
+
+impl std::fmt::Display for UnverifiedInitHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let source = match self.provenance {
+            InitHashProvenance::Record(_) => "a shipped deployment record",
+            InitHashProvenance::AssumedMainnet(_) => {
+                "no shipped deployment row, so only the Uniswap mainnet default \
+                 the retired Python `ClassVar` carried"
+            }
+            InitHashProvenance::NoCreate2 => {
+                "a shipped deployment row with neither a CREATE2 init hash nor an \
+                 EIP-1167 clone implementation"
+            }
+        };
+        write!(
+            f,
+            "refusing to store an unverified CREATE2 init hash for chain {} factory {}: \
+             {source} — the mainnet default is admitted on chain {MAINNET_CHAIN_ID} and the \
+             chain-{PLACEHOLDER_CHAIN_ID} placeholder only, so a real network's pool identity \
+             must come from a shipped deployment record",
+            self.chain_id, self.factory
+        )
+    }
+}
+
+impl std::error::Error for UnverifiedInitHash {}
+
+/// The one admission policy for a resolved init-hash provenance.
+///
+/// [`InitHashProvenance::Record`] passes through: a shipped row's hash is
+/// measured, so a consumer may store it on the chain that row names (and the
+/// register-time CREATE2 verify round-trips it).
+///
+/// [`InitHashProvenance::AssumedMainnet`] is admitted on the two chains the
+/// default is truthful on (see [`admits_assumed_default`]): [`MAINNET_CHAIN_ID`],
+/// where those Uniswap hashes were measured, and [`PLACEHOLDER_CHAIN_ID`], the
+/// offline/ad-hoc scope no real deployment exists on. Every real network refuses.
+///
+/// [`InitHashProvenance::NoCreate2`] never admits: a row with neither an init
+/// hash nor a clone implementation (the Balancer rows) has no address-derived
+/// identity to complete, and inventing the mainnet guess for it is the silent
+/// default this policy removes.
+///
+/// # Errors
+///
+/// [`UnverifiedInitHash`] naming the chain and factory.
+pub fn admit_init_hash(
+    chain_id: u64,
+    factory: Address,
+    provenance: InitHashProvenance,
+) -> Result<B256, UnverifiedInitHash> {
+    match provenance {
+        InitHashProvenance::Record(init_hash) => Ok(init_hash),
+        InitHashProvenance::AssumedMainnet(init_hash) if admits_assumed_default(chain_id) => {
+            Ok(init_hash)
+        }
+        InitHashProvenance::AssumedMainnet(_) | InitHashProvenance::NoCreate2 => {
+            Err(UnverifiedInitHash {
+                chain_id,
+                factory,
+                provenance,
+            })
+        }
+    }
+}
+
+/// Resolve the CREATE2 init code hash provenance for a V2 `(chain_id, factory)`
+/// pair.
+///
+/// A shipped row answers [`InitHashProvenance::Record`] with its measured hash —
+/// its own `init_hash`, or the init code hash of the EIP-1167 clone its
+/// `implementation_address` names (the Aerodrome V2/V3 rows deploy pools as
+/// minimal-proxy clones of that implementation). A row carrying neither (the
+/// Balancer rows) answers [`InitHashProvenance::NoCreate2`]; an unshipped
+/// `(chain, factory)` answers
+/// [`InitHashProvenance::AssumedMainnet`] carrying
+/// [`UNISWAP_V2_MAINNET_INIT_HASH`]. A consumer storing the value on an
+/// identity goes through [`admit_init_hash`], the one place the unverified
+/// outcomes are allowed to cross.
+#[must_use]
+pub fn resolve_v2_init_hash(chain_id: u64, factory: Address) -> InitHashProvenance {
     match lookup(chain_id, factory) {
-        Some(rec) => rec.init_hash.unwrap_or(UNISWAP_V2_MAINNET_INIT_HASH),
-        None => UNISWAP_V2_MAINNET_INIT_HASH,
+        Some(record) => match measured_init_hash(record) {
+            Some(init_hash) => InitHashProvenance::Record(init_hash),
+            None => InitHashProvenance::NoCreate2,
+        },
+        None => InitHashProvenance::AssumedMainnet(UNISWAP_V2_MAINNET_INIT_HASH),
     }
 }
 
@@ -100,19 +247,17 @@ pub fn resolve_deployer(chain_id: u64, factory: Address) -> Address {
     lookup(chain_id, factory).map_or(factory, DeploymentRecord::effective_deployer)
 }
 
-/// Resolve the CREATE2 init code hash for a V3 `(chain_id, factory)` pair,
-/// with a documented fallback.
-///
-/// Returns the JSON row's `init_hash` when the `(chain, factory)` shipped with
-/// a CREATE2 init hash; otherwise [`UNISWAP_V3_MAINNET_INIT_HASH`] (the
-/// retired Python `ClassVar`'s documented default for non-`JSON` V3 pools). This
-/// is the value the V3 builder stores on the identity; the companion reads it
-/// off the handle.
+/// Resolve the CREATE2 init code hash provenance for a V3 `(chain_id, factory)`
+/// pair — the V3 twin of [`resolve_v2_init_hash`], carrying
+/// [`UNISWAP_V3_MAINNET_INIT_HASH`] as its assumed default.
 #[must_use]
-pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
+pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> InitHashProvenance {
     match lookup(chain_id, factory) {
-        Some(rec) => rec.init_hash.unwrap_or(UNISWAP_V3_MAINNET_INIT_HASH),
-        None => UNISWAP_V3_MAINNET_INIT_HASH,
+        Some(record) => match measured_init_hash(record) {
+            Some(init_hash) => InitHashProvenance::Record(init_hash),
+            None => InitHashProvenance::NoCreate2,
+        },
+        None => InitHashProvenance::AssumedMainnet(UNISWAP_V3_MAINNET_INIT_HASH),
     }
 }
 
@@ -168,8 +313,10 @@ struct Root {
 /// A parsed deployment row with the CREATE2-critical fields typed.
 ///
 /// Carries the effective deployer (`None` → "use factory" is applied in
-/// [`effective_deployer`]) and the init-hash (also optional — Balancer /
-/// Aerodrome rows have no CREATE2). Kept separate from
+/// [`effective_deployer`]) and the row's own `init_hash` (optional: an EIP-1167
+/// clone row derives its init code hash from its
+/// [`implementation_address`](Self::implementation_address) instead, and a
+/// Balancer row has no address-derived identity at all). Kept separate from
 /// [`crate::dex_identity::DexIdentity`] because this is JSON-sourced
 /// per-row data (chain-specific, exhaustive over shipped deployments),
 /// whereas `DexIdentity` is the compile-time preset table for the
@@ -183,8 +330,11 @@ pub struct DeploymentRecord {
     /// The separate CREATE2 deployer, if the JSON specifies one. `None`
     /// means "use [`factory`](Self::factory)" — see [`effective_deployer`].
     pub deployer: Option<Address>,
-    /// The CREATE2 init code hash, if the row has CREATE2 address
-    /// generation. `None` for Aerodrome/Balancer (no CREATE2).
+    /// The CREATE2 init code hash as the JSON spells it. `None` when the row
+    /// does not measure it directly: the EIP-1167 clone rows (Aerodrome) derive
+    /// their hash from [`implementation_address`](Self::implementation_address),
+    /// and the Balancer rows have no address-derived identity at all. Read it
+    /// through [`measured_init_hash`] rather than this field.
     pub init_hash: Option<B256>,
     /// The EIP-1167 master implementation contract Aerodrome factories
     /// clone when deriving a pool address (V2 stable/volatile + V3
@@ -230,6 +380,23 @@ pub fn dex_name_from_label(label: &str) -> Option<DexName> {
     } else {
         None
     }
+}
+
+/// The row's measured CREATE2 init code hash.
+///
+/// A standard CREATE2 row measures it directly (`init_hash`). An EIP-1167 clone
+/// row (the Aerodrome V2/V3 deployments) sets no `init_hash` because its init
+/// code is generated per pool: it is the minimal-proxy bytecode pinned to the
+/// row's verified `implementation_address`, whose keccak is
+/// [`create2::eip1167_init_code_hash`]. A row with neither measures nothing —
+/// its pools are not address-derived.
+#[must_use]
+fn measured_init_hash(record: &DeploymentRecord) -> Option<B256> {
+    record.init_hash.or_else(|| {
+        record
+            .implementation_address
+            .map(create2::eip1167_init_code_hash)
+    })
 }
 
 impl DeploymentRecord {
@@ -498,12 +665,18 @@ impl std::error::Error for AddressMismatch {}
 /// Recompute the V2 CREATE2 address for a pool registration against the
 /// JSON-sourced deployer + init hash.
 ///
-/// `Ok(())` if the address matches, OR if verification is not applicable:
-/// the `(chain_id, factory)` is not in the shipped JSON (manual/ad-hoc
-/// registration — verification skipped), or the row carries no CREATE2 init
-/// hash (Balancer — not a CREATE2 pool). `Err(AddressMismatch)` if the JSON
-/// has the row with a CREATE2 init hash but the recomputed address differs
-/// from `expected`.
+/// `Ok(())` if the address matches, OR if the standard-salt check does not
+/// apply: resolution answered an unverified provenance — no shipped row (the
+/// manual/ad-hoc path) or a row with no address-derived identity (Balancer) —
+/// or the row is an EIP-1167 clone (its address is derived from its
+/// `implementation_address`, which [`verify_aerodrome_v2_pool_address`] checks).
+/// `Err(AddressMismatch)` when the row is a standard CREATE2 row and the
+/// recomputed address differs from `expected`.
+///
+/// The applicability condition is read off [`resolve_v2_init_hash`] plus the
+/// row's clone shape rather than re-derived from `init_hash`, so "this guard has
+/// something to check" and "the row's identity is a standard CREATE2 hash" are
+/// the same fact.
 ///
 /// This is the load-bearing guard covering the `PancakeSwap` V3
 /// separate-deployer case: the deployer is resolved per `(chain, factory)`,
@@ -511,10 +684,10 @@ impl std::error::Error for AddressMismatch {}
 ///
 /// # Errors
 ///
-/// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
-/// the shipped JSON with a CREATE2 `init_hash` AND the recomputed address
-/// differs from `expected`. Returns `Ok(())` (no error) for non-applicable
-/// cases (not in JSON / no CREATE2 row).
+/// Returns `Err(AddressMismatch)` only for a standard CREATE2 row whose
+/// recomputed address differs from `expected`. Returns `Ok(())` (no error) for
+/// the unverified cases (no shipped row / no address-derived identity) and for
+/// the EIP-1167 clone rows the clone guard owns.
 #[must_use = "the verification result must be checked before registration proceeds"]
 pub fn verify_v2_pool_address(
     chain_id: u64,
@@ -523,13 +696,18 @@ pub fn verify_v2_pool_address(
     token0: Address,
     token1: Address,
 ) -> Result<(), AddressMismatch> {
-    let Some(rec) = lookup(chain_id, factory) else {
-        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    let InitHashProvenance::Record(init_hash) = resolve_v2_init_hash(chain_id, factory) else {
+        // Unverified (no shipped row, or a row with no address-derived
+        // identity): there is nothing to check the declared address against.
+        return Ok(());
     };
-    let Some(init_hash) = rec.init_hash else {
-        return Ok(()); // row has no CREATE2 (e.g. Balancer) → skip
-    };
-    let deployer = rec.effective_deployer();
+    if implementation_address(chain_id, factory).is_some() {
+        // An EIP-1167 clone row derives its pool address from its
+        // `implementation_address` rather than the standard V2 salt, so the
+        // clone's own guard ([`verify_aerodrome_v2_pool_address`]) owns it.
+        return Ok(());
+    }
+    let deployer = resolve_deployer(chain_id, factory);
     let computed = create2::compute_v2_address(deployer, token0, token1, init_hash);
     if computed == expected {
         Ok(())
@@ -590,13 +768,16 @@ pub fn verify_v3_pool_address(
     token1: Address,
     fee: u32,
 ) -> Result<(), AddressMismatch> {
-    let Some(rec) = lookup(chain_id, factory) else {
-        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    let InitHashProvenance::Record(init_hash) = resolve_v3_init_hash(chain_id, factory) else {
+        // Unverified — see `verify_v2_pool_address`.
+        return Ok(());
     };
-    let Some(init_hash) = rec.init_hash else {
-        return Ok(()); // row has no CREATE2 → skip
-    };
-    let deployer = rec.effective_deployer();
+    if implementation_address(chain_id, factory).is_some() {
+        // An EIP-1167 clone row — see `verify_v2_pool_address`; the clone's
+        // own guard ([`verify_aerodrome_v3_pool_address`]) owns the check.
+        return Ok(());
+    }
+    let deployer = resolve_deployer(chain_id, factory);
     let computed = create2::compute_v3_address(deployer, token0, token1, fee, init_hash);
     if computed == expected {
         Ok(())
@@ -624,12 +805,13 @@ pub fn verify_v3_pool_address(
 // `_verified_address` second copy.
 //
 // Semantics:
-// - `Ok(())` if the (chain, factory) is in the JSON AND the recomputed CREATE2
-//   matches; OR the (chain, factory) is NOT in the JSON (verification skipped —
-//   preserves the manual/ad-hoc registration path); OR the row has no CREATE2
-//   (init_hash is null, e.g. Balancer — not a CREATE2 pool).
-// - `Err(AddressMismatch)` if the (chain, factory) is in the JSON with a
-//   CREATE2 init hash but the recomputed address != expected.
+// - `Ok(())` if the (chain, factory) resolves to a `Record` init hash AND the
+//   recomputed CREATE2 matches; OR resolution answered an unverified provenance
+//   (not in the JSON — the manual/ad-hoc path — or a row with no address-derived
+//   identity, e.g. Balancer); OR the row is an EIP-1167 clone row, whose address
+//   the clone guard checks instead.
+// - `Err(AddressMismatch)` if resolution answered `Record` for a standard
+//   CREATE2 row but the recomputed address != expected.
 
 /// Recompute an Aerodrome V2 EIP-1167 clone address for a pool registration
 /// against the JSON-sourced deployer + implementation address. Mirrors
@@ -791,7 +973,10 @@ mod tests {
             .expect("v3 row present");
         assert_eq!(v3.pool_type.as_deref(), Some("pancakeswap-v3"));
         assert_eq!(v3.effective_deployer(), PANCAKESWAP_V3_MAINNET_DEPLOYER);
-        assert_eq!(v3.init_hash, None, "empty init_hash means no CREATE2");
+        assert_eq!(
+            v3.init_hash, None,
+            "an empty init_hash parses to None (the row shape decides the provenance)"
+        );
 
         assert!(table
             .get(1, address!("1234567890123456789012345678901234567890"))
@@ -1021,8 +1206,8 @@ mod tests {
         // consumer can derive a pool address with no Python (ADR-005).
         let rec = lookup(8453, AERODROME_V2_BASE_FACTORY).expect("Aerodrome V2 Base present");
         assert_eq!(rec.factory, AERODROME_V2_BASE_FACTORY);
-        // Aerodrome has no CREATE2 init-hash path — the EIP-1167 clone key
-        // replaces it.
+        // Aerodrome sets no `init_hash`: its pools are EIP-1167 clones, so the
+        // row's init code hash derives from the implementation address.
         assert!(rec.init_hash.is_none());
         assert_eq!(
             rec.implementation_address,
@@ -1132,5 +1317,519 @@ mod tests {
             false,
         )
         .is_ok());
+    }
+
+    // --- init-hash provenance: one resolve/verify/admission policy ---------
+
+    /// A factory no shipped row names, on any chain.
+    const AD_HOC_FACTORY: Address = address!("1234567890123456789012345678901234567890");
+
+    /// BSC — no `deployments.json` row names any of its factories.
+    const BSC: u64 = 56;
+
+    /// The Uniswap V2 factory as shipped on Base (a CREATE2 row off mainnet).
+    const UNISWAP_V2_BASE_FACTORY: Address = address!("8909Dc15e40173Ff4699343b6eB8132c65e18eC6");
+
+    /// The Uniswap V3 factory as shipped on Base.
+    const UNISWAP_V3_BASE_FACTORY: Address = address!("33128a8fC17869897dcE68Ed026d694621f6FDfD");
+
+    /// A chain-1 row that declares no CREATE2 derivation (Balancer weighted).
+    const BALANCER_WEIGHTED_FACTORY: Address = address!("8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9");
+
+    /// An unshipped `(chain, factory)` resolves the documented mainnet default
+    /// as ASSUMED, and the boundary refuses to store it off chain 1 — the
+    /// silent mainnet guess on a foreign chain is the defect this policy
+    /// removes.
+    #[test]
+    fn an_unshipped_factory_on_a_foreign_chain_refuses_instead_of_guessing() {
+        let v2 = resolve_v2_init_hash(BSC, AD_HOC_FACTORY);
+        assert_eq!(
+            v2,
+            InitHashProvenance::AssumedMainnet(UNISWAP_V2_MAINNET_INIT_HASH)
+        );
+        assert!(
+            !v2.is_verified(),
+            "the mainnet default is assumed, never verified"
+        );
+
+        let refusal = admit_init_hash(BSC, AD_HOC_FACTORY, v2)
+            .expect_err("chain 56 has no measured init hash");
+        assert_eq!(refusal.chain_id, BSC);
+        assert_eq!(refusal.factory, AD_HOC_FACTORY);
+        let rendered = refusal.to_string();
+        assert!(
+            rendered.contains("56"),
+            "the refusal names the chain: {rendered}"
+        );
+        assert!(
+            rendered.contains(&AD_HOC_FACTORY.to_string()),
+            "the refusal names the factory: {rendered}"
+        );
+
+        // A preset factory address on a chain the JSON does not ship it on is
+        // the same case: unshipped is unshipped.
+        let v3 = resolve_v3_init_hash(BSC, UNISWAP_V2_MAINNET_FACTORY);
+        assert_eq!(
+            v3,
+            InitHashProvenance::AssumedMainnet(UNISWAP_V3_MAINNET_INIT_HASH)
+        );
+        assert!(admit_init_hash(BSC, UNISWAP_V2_MAINNET_FACTORY, v3).is_err());
+    }
+
+    /// The measured mainnet chain and the offline placeholder both admit the
+    /// default — as an ASSUMED value, never as a verified record.
+    #[test]
+    fn the_ad_hoc_path_admits_the_assumed_default_on_mainnet_and_the_placeholder() {
+        for chain_id in [MAINNET_CHAIN_ID, PLACEHOLDER_CHAIN_ID] {
+            let v2 = resolve_v2_init_hash(chain_id, AD_HOC_FACTORY);
+            assert_eq!(
+                v2,
+                InitHashProvenance::AssumedMainnet(UNISWAP_V2_MAINNET_INIT_HASH),
+                "chain {chain_id}"
+            );
+            assert!(!v2.is_verified(), "chain {chain_id}");
+            assert_eq!(
+                admit_init_hash(chain_id, AD_HOC_FACTORY, v2),
+                Ok(UNISWAP_V2_MAINNET_INIT_HASH),
+                "chain {chain_id}"
+            );
+
+            let v3 = resolve_v3_init_hash(chain_id, AD_HOC_FACTORY);
+            assert_eq!(
+                v3,
+                InitHashProvenance::AssumedMainnet(UNISWAP_V3_MAINNET_INIT_HASH),
+                "chain {chain_id}"
+            );
+            assert!(!v3.is_verified(), "chain {chain_id}");
+            assert_eq!(
+                admit_init_hash(chain_id, AD_HOC_FACTORY, v3),
+                Ok(UNISWAP_V3_MAINNET_INIT_HASH),
+                "chain {chain_id}"
+            );
+        }
+
+        // The refusal names what IS admitted, so an operator reading it knows
+        // where the default belongs.
+        let rendered = admit_init_hash(
+            BSC,
+            AD_HOC_FACTORY,
+            resolve_v2_init_hash(BSC, AD_HOC_FACTORY),
+        )
+        .expect_err("a real foreign chain refuses")
+        .to_string();
+        assert!(
+            rendered.contains(&MAINNET_CHAIN_ID.to_string())
+                && rendered.contains(&format!("chain-{PLACEHOLDER_CHAIN_ID}")),
+            "the refusal names the admitted chains: {rendered}"
+        );
+    }
+
+    /// A row with neither an init hash nor a clone implementation (Balancer) has
+    /// no hash to admit anywhere — not even on the chains that admit the
+    /// assumed default, nor on the chain its row names.
+    #[test]
+    fn a_no_create2_row_never_yields_a_guessed_hash() {
+        // The row's own chain resolves it as the NoCreate2 shape it is...
+        let provenance = resolve_v2_init_hash(MAINNET_CHAIN_ID, BALANCER_WEIGHTED_FACTORY);
+        assert_eq!(provenance, InitHashProvenance::NoCreate2);
+        assert_eq!(provenance.init_hash(), None);
+
+        // ...and whatever a consumer's lookup answered (the row on its own
+        // chain, an unshipped pair elsewhere), the CREATE2-completing boundary
+        // refuses a no-address-derived provenance on EVERY chain.
+        for chain_id in [MAINNET_CHAIN_ID, 8453, BSC, PLACEHOLDER_CHAIN_ID] {
+            assert!(
+                admit_init_hash(
+                    chain_id,
+                    BALANCER_WEIGHTED_FACTORY,
+                    InitHashProvenance::NoCreate2
+                )
+                .is_err(),
+                "chain {chain_id} must refuse a no-CREATE2 provenance"
+            );
+        }
+    }
+
+    /// An EIP-1167 clone row IS a CREATE2 deployment: its measured init code
+    /// hash is the clone bytecode pinned to its verified implementation, so
+    /// resolution answers `Record` and admission lets it through on EVERY chain
+    /// — including real foreign networks, because the value is measured.
+    #[test]
+    fn an_eip1167_clone_row_resolves_its_clone_init_code_hash() {
+        for (chain_id, factory, implementation) in [
+            (
+                8453,
+                AERODROME_V2_BASE_FACTORY,
+                AERODROME_V2_POOL_IMPLEMENTATION,
+            ),
+            (
+                8453,
+                AERODROME_V3_BASE_FACTORY,
+                AERODROME_V3_POOL_IMPLEMENTATION,
+            ),
+        ] {
+            let expected = create2::eip1167_init_code_hash(implementation);
+            let where_ = format!("chain {chain_id} factory {factory}");
+
+            assert_eq!(
+                resolve_v2_init_hash(chain_id, factory),
+                InitHashProvenance::Record(expected),
+                "{where_}"
+            );
+            assert_eq!(
+                resolve_v3_init_hash(chain_id, factory),
+                InitHashProvenance::Record(expected),
+                "{where_}"
+            );
+            assert!(
+                resolve_v2_init_hash(chain_id, factory).is_verified(),
+                "a clone row's hash is measured, not assumed: {where_}"
+            );
+
+            // Measured → admitted on every chain, the row's own included.
+            for admitted_on in [chain_id, BSC, MAINNET_CHAIN_ID, PLACEHOLDER_CHAIN_ID] {
+                assert_eq!(
+                    admit_init_hash(
+                        admitted_on,
+                        factory,
+                        resolve_v2_init_hash(chain_id, factory)
+                    ),
+                    Ok(expected),
+                    "{where_} on chain {admitted_on}"
+                );
+            }
+        }
+    }
+
+    /// Every shipped clone row resolves through its `implementation_address`,
+    /// and no other row shape does.
+    #[test]
+    fn every_shipped_clone_row_resolves_through_its_implementation() {
+        let mut checked = 0;
+        for record in records() {
+            let Some(implementation) = record.implementation_address else {
+                continue;
+            };
+            let where_ = format!("chain {} factory {}", record.chain_id, record.factory);
+            let expected = create2::eip1167_init_code_hash(implementation);
+            assert_eq!(
+                resolve_v2_init_hash(record.chain_id, record.factory),
+                InitHashProvenance::Record(expected),
+                "{where_}"
+            );
+            assert_eq!(
+                resolve_v3_init_hash(record.chain_id, record.factory),
+                InitHashProvenance::Record(expected),
+                "{where_}"
+            );
+            assert_eq!(
+                record.init_hash, None,
+                "a clone row sets no init_hash: {where_}"
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked, 2,
+            "the shipped clone rows are the two Aerodrome ones"
+        );
+    }
+
+    /// Every shipped row carrying an init hash resolves to exactly that hash,
+    /// on its own chain, as a verified record.
+    #[test]
+    fn every_shipped_create2_row_resolves_as_its_record() {
+        let mut checked = 0;
+        for record in records() {
+            let Some(init_hash) = record.init_hash else {
+                continue;
+            };
+            let where_ = format!("chain {} factory {}", record.chain_id, record.factory);
+            assert_eq!(
+                resolve_v2_init_hash(record.chain_id, record.factory),
+                InitHashProvenance::Record(init_hash),
+                "{where_}"
+            );
+            assert_eq!(
+                resolve_v3_init_hash(record.chain_id, record.factory),
+                InitHashProvenance::Record(init_hash),
+                "{where_}"
+            );
+            assert_eq!(
+                admit_init_hash(
+                    record.chain_id,
+                    record.factory,
+                    InitHashProvenance::Record(init_hash)
+                ),
+                Ok(init_hash),
+                "{where_}"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 15,
+            "expected the shipped CREATE2 rows to be walked, walked {checked}"
+        );
+    }
+
+    /// Resolution's answer, reduced to its kind for a matrix row.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Provenance {
+        Record,
+        AssumedMainnet,
+        NoCreate2,
+    }
+
+    fn provenance_kind(provenance: InitHashProvenance) -> Provenance {
+        match provenance {
+            InitHashProvenance::Record(_) => Provenance::Record,
+            InitHashProvenance::AssumedMainnet(_) => Provenance::AssumedMainnet,
+            InitHashProvenance::NoCreate2 => Provenance::NoCreate2,
+        }
+    }
+
+    /// What the CREATE2 guard did with a deliberately-wrong declared address:
+    /// [`VerifyVerdict::Enforced`] means it compared (and refused the nonsense
+    /// address), [`VerifyVerdict::Skipped`] means the address passed untouched.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum VerifyVerdict {
+        Enforced,
+        Skipped,
+    }
+
+    /// One cell of the resolve / verify / admission agreement matrix.
+    struct AgreementCell {
+        label: &'static str,
+        chain_id: u64,
+        factory: Address,
+        provenance: Provenance,
+        verify: VerifyVerdict,
+        admitted: bool,
+    }
+
+    /// The address no CREATE2 derivation can produce.
+    const NONSENSE_ADDRESS: Address = address!("0000000000000000000000000000000000000001");
+
+    fn v2_verdict(chain_id: u64, factory: Address) -> VerifyVerdict {
+        if verify_v2_pool_address(chain_id, factory, NONSENSE_ADDRESS, WETH, DAI).is_ok() {
+            VerifyVerdict::Skipped
+        } else {
+            VerifyVerdict::Enforced
+        }
+    }
+
+    fn v3_verdict(chain_id: u64, factory: Address) -> VerifyVerdict {
+        if verify_v3_pool_address(chain_id, factory, NONSENSE_ADDRESS, WETH, DAI, 500).is_ok() {
+            VerifyVerdict::Skipped
+        } else {
+            VerifyVerdict::Enforced
+        }
+    }
+
+    /// Assert every cell of the agreement matrix: resolution's provenance, the
+    /// guard's verdict, and the boundary's admission are one policy.
+    fn assert_agreement(
+        cells: &[AgreementCell],
+        resolve: fn(u64, Address) -> InitHashProvenance,
+        verdict: fn(u64, Address) -> VerifyVerdict,
+    ) {
+        for cell in cells {
+            let provenance = resolve(cell.chain_id, cell.factory);
+            assert_eq!(
+                provenance_kind(provenance),
+                cell.provenance,
+                "{}: resolution answered {provenance:?}",
+                cell.label
+            );
+            assert_eq!(
+                verdict(cell.chain_id, cell.factory),
+                cell.verify,
+                "{}: the CREATE2 guard's verdict",
+                cell.label
+            );
+
+            let admitted = admit_init_hash(cell.chain_id, cell.factory, provenance);
+            assert_eq!(
+                admitted.is_ok(),
+                cell.admitted,
+                "{}: admission answered {admitted:?}",
+                cell.label
+            );
+
+            // The agreement invariant: this guard compares exactly the rows
+            // whose address is derived with the standard salt, i.e. measured
+            // (a record) and not an EIP-1167 clone — the clone's own guard owns
+            // the clone rows.
+            assert_eq!(
+                provenance.is_verified()
+                    && implementation_address(cell.chain_id, cell.factory).is_none(),
+                cell.verify == VerifyVerdict::Enforced,
+                "{}: resolution and verification disagree",
+                cell.label
+            );
+
+            match admitted {
+                Ok(init_hash) => {
+                    assert_eq!(
+                        Some(init_hash),
+                        provenance.init_hash(),
+                        "{}: an admitted value is the resolved one",
+                        cell.label
+                    );
+                    assert!(
+                        provenance.is_verified() || admits_assumed_default(cell.chain_id),
+                        "{}: an unverified hash crossed the boundary off the admitted chains",
+                        cell.label
+                    );
+                }
+                Err(refusal) => assert_eq!(
+                    (refusal.chain_id, refusal.factory),
+                    (cell.chain_id, cell.factory),
+                    "{}: the refusal names the cell it refused",
+                    cell.label
+                ),
+            }
+        }
+    }
+
+    /// The table-driven cross-check: (row-with-hash | eip1167-clone-row |
+    /// unshipped) x (mainnet | the offline placeholder | real foreign chains),
+    /// for both CREATE2 families. The chain-0 and chain-56 columns can only be
+    /// `unshipped` — the JSON ships no row on either — so the `row` categories
+    /// are read on Base, the shipped non-mainnet network. The no-CREATE2 shape
+    /// (a row with neither an init hash nor a clone implementation, i.e.
+    /// Balancer) is exercised by
+    /// [`a_no_create2_row_never_yields_a_guessed_hash`], because its rows are
+    /// keyed to chain 1 and the standard-salt guard skips them either way.
+    #[test]
+    fn v2_resolve_verify_and_admission_agree_on_one_policy() {
+        let cells = [
+            AgreementCell {
+                label: "v2 row-with-hash / chain 1",
+                chain_id: 1,
+                factory: UNISWAP_V2_MAINNET_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Enforced,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v2 row-without-hash / chain 1",
+                chain_id: 1,
+                factory: BALANCER_WEIGHTED_FACTORY,
+                provenance: Provenance::NoCreate2,
+                verify: VerifyVerdict::Skipped,
+                admitted: false,
+            },
+            AgreementCell {
+                label: "v2 unshipped / chain 1",
+                chain_id: 1,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v2 row-with-hash / chain 8453",
+                chain_id: 8453,
+                factory: UNISWAP_V2_BASE_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Enforced,
+                admitted: true,
+            },
+            AgreementCell {
+                // An EIP-1167 clone row: measured (Record) and admitted, but
+                // the standard-salt guard skips it — its address derives from
+                // the implementation, which the clone guard checks.
+                label: "v2 eip1167-clone / chain 8453",
+                chain_id: 8453,
+                factory: AERODROME_V2_BASE_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v2 unshipped / chain 0 (placeholder)",
+                chain_id: PLACEHOLDER_CHAIN_ID,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v2 unshipped / chain 56",
+                chain_id: BSC,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: false,
+            },
+        ];
+        assert_agreement(&cells, resolve_v2_init_hash, v2_verdict);
+    }
+
+    /// The V2 table above, over the V3 family: the salt differs (tokens + fee)
+    /// but the policy is the same one. The table's no-CREATE2 rows are protocol
+    /// rows, not family rows, so the chain-1 row serves both.
+    #[test]
+    fn v3_resolve_verify_and_admission_agree_on_one_policy() {
+        let cells = [
+            AgreementCell {
+                label: "v3 row-with-hash / chain 1",
+                chain_id: 1,
+                factory: UNISWAP_V3_MAINNET_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Enforced,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v3 row-without-hash / chain 1",
+                chain_id: 1,
+                factory: BALANCER_WEIGHTED_FACTORY,
+                provenance: Provenance::NoCreate2,
+                verify: VerifyVerdict::Skipped,
+                admitted: false,
+            },
+            AgreementCell {
+                label: "v3 unshipped / chain 1",
+                chain_id: 1,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v3 row-with-hash / chain 8453",
+                chain_id: 8453,
+                factory: UNISWAP_V3_BASE_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Enforced,
+                admitted: true,
+            },
+            AgreementCell {
+                // The V3 clone row, as above.
+                label: "v3 eip1167-clone / chain 8453",
+                chain_id: 8453,
+                factory: AERODROME_V3_BASE_FACTORY,
+                provenance: Provenance::Record,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v3 unshipped / chain 0 (placeholder)",
+                chain_id: PLACEHOLDER_CHAIN_ID,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: true,
+            },
+            AgreementCell {
+                label: "v3 unshipped / chain 56",
+                chain_id: BSC,
+                factory: AD_HOC_FACTORY,
+                provenance: Provenance::AssumedMainnet,
+                verify: VerifyVerdict::Skipped,
+                admitted: false,
+            },
+        ];
+        assert_agreement(&cells, resolve_v3_init_hash, v3_verdict);
     }
 }

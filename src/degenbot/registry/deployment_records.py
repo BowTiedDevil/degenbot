@@ -45,8 +45,10 @@ Field semantics:
 - ``factory``: EIP-55 checksummed factory address.
 - ``deployer``: CREATE2 deployer. ``null`` → ``factory`` (the
   ``register()`` default).
-- ``init_hash``: CREATE2 init code hash. ``null`` / ``""`` → no CREATE2
-  (Aerodrome, Balancer).
+- ``init_hash``: CREATE2 init code hash. ``null`` / ``""`` means the row does
+  not measure it directly: an EIP-1167 clone row names its master contract in
+  ``implementation_address`` and its init code hash is that clone's (Aerodrome),
+  while a row with neither is not address-derived at all (Balancer).
 """
 
 from __future__ import annotations

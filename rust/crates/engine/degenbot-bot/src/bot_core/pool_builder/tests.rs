@@ -1446,6 +1446,90 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
 
+/// A factory address the deployment table does not ship on the built chain has
+/// no measured CREATE2 init hash: the build refuses rather than handing back
+/// register params that carry the Uniswap mainnet default onto that chain.
+#[tokio::test]
+async fn build_v2_refuses_an_unmeasured_init_hash_off_mainnet() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity::UNISWAP_V2;
+
+    // The Uniswap V2 factory address is shipped on mainnet and Base, never on
+    // BSC — so `(56, factory)` is an unmeasured deployment identity.
+    const BSC: u64 = 56;
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
+
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(1_000u64), 112),
+            DynSolValue::Uint(U256::from(2_000u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    let io = io_with(f);
+
+    match builder::build_v2(BSC, pool, &io, Some(18_000_000)).await {
+        Err(builder::PoolBuilderError::UnverifiedInitHash(refusal)) => {
+            assert_eq!(refusal.chain_id, BSC);
+            assert_eq!(refusal.factory, UNISWAP_V2.factory);
+        }
+        other => panic!("expected the unverified-init-hash refusal, got {other:?}"),
+    }
+}
+
+/// The V3 twin: the same unmeasured `(56, factory)` refuses at the V3 build.
+#[tokio::test]
+async fn build_v3_refuses_an_unmeasured_init_hash_off_mainnet() {
+    // The Uniswap V3 factory address, unshipped on BSC.
+    const FACTORY: Address =
+        alloy::primitives::address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+    const BSC: u64 = 56;
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
+
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(FACTORY));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::selector(b"liquidity()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(
+        abi::selector(b"tickBitmap(int16)"),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+
+    match builder::build_v3(BSC, pool, None, &io, Some(9_000_000)).await {
+        Err(builder::PoolBuilderError::UnverifiedInitHash(refusal)) => {
+            assert_eq!(refusal.chain_id, BSC);
+            assert_eq!(refusal.factory, FACTORY);
+        }
+        other => panic!("expected the unverified-init-hash refusal, got {other:?}"),
+    }
+}
+
 /// The V2-reserve refusal names its reason, and it enforces the on-chain
 /// `uint112` bound.
 ///
