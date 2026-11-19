@@ -224,9 +224,13 @@ Phases 1–4 shipped with their gates green (`degenbot-simulation` feature
    divergence observer wired into the evm2 `BotStateDb`. The
    balance/base-fee relaxations are `Version` runtime flags — two revm
    compile-time feature-matrix entries are already dead on this side. The
-   sequence overlay is evm2's internal accepted state; a base-fee
-   rejection restarts the whole sequence (validation-only, so state and
-   cold-read accounting are preserved).
+   sequence overlay is evm2's internal accepted state, so the base-fee
+   fallback is a per-attempt validation-only retry: the same EVM swaps onto
+   the disabled-check `Version`
+   (`Evm::set_block_and_execution_config_within_spec`), which preserves the
+   accepted overlay and the read cache, so committed predecessor state and
+   the cold-read accounting carry into the retried attempt and no committed
+   prefix re-executes.
 4. `Evm2SimSession::run_sequence` — the called-out risk materialized:
    `State::checkpoint`/`rollback` covers the JOURNAL only (commits to the
    accepted overlay escape it, and the warmed cache keeps serving written

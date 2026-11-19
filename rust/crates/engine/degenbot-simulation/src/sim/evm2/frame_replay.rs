@@ -19,10 +19,10 @@
 //!   `EvmState` re-application. The overlay drops with the EVM when the
 //!   call returns, so the ext receives reads only — the same isolation as
 //!   revm's throwaway `CacheDB`. Because the overlay is EVM-internal, the
-//!   base-fee fallback cannot rebuild mid-sequence: a fee-cap rejection
-//!   restarts the WHOLE sequence with the check disabled (validation-only
-//!   — execution semantics are unchanged, and re-reads hit the ext's warmed
-//!   caches, so cold-read accounting is preserved).
+//!   base-fee fallback swaps the SAME EVM onto the validation-only config
+//!   ([`disable_base_fee_check`]) and retries only the rejected attempt:
+//!   committed predecessors execute once, the overlay is never rebuilt, and
+//!   the cold-read accounting stays the priced run's.
 //!
 //! # Program residency
 //!
@@ -43,7 +43,7 @@ use alloy::consensus::transaction::Recovered;
 use alloy::consensus::TxEip1559;
 use alloy::primitives::{Address, Bytes, TxKind, B256, U256};
 
-use ::evm2::env::BlockEnvExt;
+use ::evm2::env::{BlockEnv, BlockEnvExt};
 use ::evm2::ethereum::{ethereum_tx_registry, RecoveredTxEnvelope, TxEnvelope};
 use ::evm2::evm::{Database, Db, DynDatabase, ExecutedTx};
 use ::evm2::registry::{HandlerError, HandlerResult};
@@ -253,27 +253,24 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
         let reads_before = self.counter.reads();
         // One persistent EVM: predecessor commits accumulate in its internal
         // accepted overlay, reads fall through to the ext (warming its
-        // caches), the overlay drops on return. A fee-cap rejection restarts
-        // the whole sequence with the check disabled (see the module doc).
+        // caches), the overlay drops on return. A fee-cap rejection retries
+        // only the rejected attempt on the validation-only config (see
+        // `disable_base_fee_check`), so the overlay is never rebuilt.
+        let mut evm = build_frame_evm(Db::new(&mut self.ext), &self.block, self.jit.as_ref());
         let mut disable_base_fee = false;
-        'restart: loop {
-            let mut evm = build_frame_evm(
-                Db::new(&mut self.ext),
-                &self.block,
-                disable_base_fee,
-                self.jit.as_ref(),
-            );
-            let mut predecessors = Vec::with_capacity(prefix.len());
-            let mut predecessor_gas = Vec::with_capacity(prefix.len());
-            for predecessor in prefix {
+        let mut predecessors = Vec::with_capacity(prefix.len());
+        let mut predecessor_gas = Vec::with_capacity(prefix.len());
+        for predecessor in prefix {
+            loop {
                 match settle(evm.transact(&envelope(predecessor)), true) {
                     Ok(settled) => {
                         predecessors.push(settled.status.into());
                         predecessor_gas.push(settled.gas_used);
+                        break;
                     }
                     Err(FrameAbort::BaseFeeRejected) if !disable_base_fee => {
                         disable_base_fee = true;
-                        continue 'restart;
+                        disable_base_fee_check(&mut evm, &self.block);
                     }
                     Err(FrameAbort::BaseFeeRejected) => {
                         return Err(SequenceReplayError::Predecessor {
@@ -286,6 +283,7 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
                     Err(FrameAbort::OtherError(ReplayFrameError::AlreadySettled { .. })) => {
                         predecessors.push(PredStatus::AlreadyMined);
                         predecessor_gas.push(0);
+                        break;
                     }
                     Err(FrameAbort::OtherError(source)) => {
                         return Err(SequenceReplayError::Predecessor {
@@ -295,11 +293,13 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
                     }
                 }
             }
-            let settled = match settle(evm.transact(&envelope(frame)), false) {
-                Ok(settled) => settled,
+        }
+        let settled = loop {
+            match settle(evm.transact(&envelope(frame)), false) {
+                Ok(settled) => break settled,
                 Err(FrameAbort::BaseFeeRejected) if !disable_base_fee => {
                     disable_base_fee = true;
-                    continue 'restart;
+                    disable_base_fee_check(&mut evm, &self.block);
                 }
                 Err(FrameAbort::BaseFeeRejected) => {
                     return Err(SequenceReplayError::Frame(ReplayFrameError::Mispriced {
@@ -309,23 +309,23 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
                 Err(FrameAbort::OtherError(source)) => {
                     return Err(SequenceReplayError::Frame(source));
                 }
-            };
-            let base_fee_source = if disable_base_fee {
-                BaseFeeSource::DisabledFallback
-            } else {
-                BaseFeeSource::Projected
-            };
-            return Ok(Evm2SequenceOutcome {
-                predecessors,
-                predecessor_gas,
-                frame: outcome(
-                    settled,
-                    self.counter.reads().saturating_sub(reads_before),
-                    started.elapsed(),
-                    base_fee_source,
-                ),
-            });
-        }
+            }
+        };
+        let base_fee_source = if disable_base_fee {
+            BaseFeeSource::DisabledFallback
+        } else {
+            BaseFeeSource::Projected
+        };
+        Ok(Evm2SequenceOutcome {
+            predecessors,
+            predecessor_gas,
+            frame: outcome(
+                settled,
+                self.counter.reads().saturating_sub(reads_before),
+                started.elapsed(),
+                base_fee_source,
+            ),
+        })
     }
 }
 
@@ -373,29 +373,40 @@ impl From<HandlerError> for FrameAbort {
     }
 }
 
-/// Build the scratch frame EVM over `db` with the runtime relaxations:
-/// `BALANCE_CHECK` always off (a replay never cares about sender funds),
-/// `BASE_FEE_CHECK` off only for the fallback attempt.
-fn build_frame_evm<'a>(
-    db: impl DynDatabase + 'a,
-    block: &ScratchBlock,
-    disable_base_fee: bool,
-    jit: Option<&FrameInterpreterRunner>,
-) -> Evm<'a, BaseEvmTypes> {
+/// The scratch block as the frame EVM's block environment.
+fn frame_block(block: &ScratchBlock) -> BlockEnv<BaseEvmTypes> {
+    BlockEnvExt {
+        basefee: U256::from(block.base_fee_next),
+        number: U256::from(block.number),
+        timestamp: U256::from(block.timestamp),
+        ..Default::default()
+    }
+}
+
+/// The frame EVM's runtime relaxations: `BALANCE_CHECK` always off (a replay
+/// never cares about sender funds), `BASE_FEE_CHECK` off only for the
+/// validation-only attempt.
+fn frame_config(disable_base_fee: bool) -> ExecutionConfig<BaseEvmTypes> {
     let mut version = Version::new(FRAME_SPEC);
     version.features.remove(EvmFeatures::BALANCE_CHECK);
     if disable_base_fee {
         version.features.remove(EvmFeatures::BASE_FEE_CHECK);
     }
+    ExecutionConfig::for_spec_and_version(FRAME_SPEC, version)
+}
+
+/// Build the scratch frame EVM over `db` — validation-only relaxations off,
+/// the attempt that rejects swaps itself onto them through
+/// [`disable_base_fee_check`].
+fn build_frame_evm<'a>(
+    db: impl DynDatabase + 'a,
+    block: &ScratchBlock,
+    jit: Option<&FrameInterpreterRunner>,
+) -> Evm<'a, BaseEvmTypes> {
     let mut evm = Evm::new_with_execution_config(
-        ExecutionConfig::for_spec_and_version(FRAME_SPEC, version),
+        frame_config(false),
         FRAME_SPEC,
-        BlockEnvExt {
-            basefee: U256::from(block.base_fee_next),
-            number: U256::from(block.number),
-            timestamp: U256::from(block.timestamp),
-            ..Default::default()
-        },
+        frame_block(block),
         ethereum_tx_registry(FRAME_SPEC),
         db,
         Precompiles::base(FRAME_SPEC),
@@ -404,6 +415,17 @@ fn build_frame_evm<'a>(
         evm.set_shared_interpreter_runner(Arc::clone(runner));
     }
     evm
+}
+
+/// Swap a running scratch EVM onto the validation-only configuration (base-fee
+/// validation off) so the rejected attempt can be retried in place.
+///
+/// The swap replaces the runtime feature set and re-states the same block
+/// environment; the accepted overlay, the read cache, and the interpreter
+/// runner survive it, so the retried attempt observes exactly the state the
+/// priced attempt did and nothing else re-executes.
+fn disable_base_fee_check(evm: &mut Evm<'_, BaseEvmTypes>, block: &ScratchBlock) {
+    evm.set_block_and_execution_config_within_spec(frame_block(block), frame_config(true));
 }
 
 /// The EIP-1559 envelope for a [`ReplayableTx`] (the revm side's `tx_env`
@@ -510,37 +532,29 @@ fn settle(
     })
 }
 
-/// One attempt of the plain `replay` verb: a fresh EVM over `&mut ext`,
-/// transact + discard.
-fn run_frame<Ext: Database>(
-    ext: &mut Ext,
-    block: &ScratchBlock,
-    tx: &ReplayableTx,
-    disable_base_fee: bool,
-    jit: Option<&FrameInterpreterRunner>,
-) -> Result<Settled, FrameAbort> {
-    let mut evm = build_frame_evm(Db::new(ext), block, disable_base_fee, jit);
-    settle(evm.transact(&envelope(tx)), false)
-}
-
 /// The projection ritual (the revm side's `run_frame_with_fallback`):
 /// projected base fee first, the disabled-check retry once on a fee-cap
-/// rejection.
+/// rejection — the retry runs on the SAME EVM, so the rejected attempt's reads
+/// are not forwarded twice.
 fn run_frame_with_fallback<Ext: Database>(
     ext: &mut Ext,
     block: &ScratchBlock,
     tx: &ReplayableTx,
     jit: Option<&FrameInterpreterRunner>,
 ) -> Result<(Settled, BaseFeeSource), ReplayFrameError> {
-    match run_frame(ext, block, tx, false, jit) {
+    let mut evm = build_frame_evm(Db::new(ext), block, jit);
+    match settle(evm.transact(&envelope(tx)), false) {
         Ok(settled) => Ok((settled, BaseFeeSource::Projected)),
-        Err(FrameAbort::BaseFeeRejected) => match run_frame(ext, block, tx, true, jit) {
-            Ok(settled) => Ok((settled, BaseFeeSource::DisabledFallback)),
-            Err(FrameAbort::BaseFeeRejected) => Err(ReplayFrameError::Mispriced {
-                raw: "base-fee projection rejected (fallback also failed)".into(),
-            }),
-            Err(FrameAbort::OtherError(e)) => Err(e),
-        },
+        Err(FrameAbort::BaseFeeRejected) => {
+            disable_base_fee_check(&mut evm, block);
+            match settle(evm.transact(&envelope(tx)), false) {
+                Ok(settled) => Ok((settled, BaseFeeSource::DisabledFallback)),
+                Err(FrameAbort::BaseFeeRejected) => Err(ReplayFrameError::Mispriced {
+                    raw: "base-fee projection rejected (fallback also failed)".into(),
+                }),
+                Err(FrameAbort::OtherError(e)) => Err(e),
+            }
+        }
         Err(FrameAbort::OtherError(e)) => Err(e),
     }
 }

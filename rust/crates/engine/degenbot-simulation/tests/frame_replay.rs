@@ -133,10 +133,13 @@ const HALTER_CODE: &[u8] = &[0xFE];
 
 type TestExt = ::evm2::evm::CacheDB<::evm2::evm::Db<Evm2CountingFrameDb<InMemoryDB>>>;
 
-/// The scratch ext with the counter embedded BELOW its persistent cache (the
-/// production shape): only true cold fetches are counted.
-fn scratch() -> Evm2ScratchEvm<TestExt> {
-    let counter = std::sync::Arc::new(FrameRpcCounter::default());
+/// The probe ext with the counter ABOVE the ext cache: a read the frame EVM
+/// forwards is counted even when the ext serves it warm, so an attempt that
+/// re-executes already-committed work shows up as extra reads.
+type ProbeExt = Evm2CountingFrameDb<::evm2::evm::CacheDB<::evm2::evm::Db<InMemoryDB>>>;
+
+/// The parent-state fixtures every scratch starts from.
+fn seeded_db() -> InMemoryDB {
     let mut db = InMemoryDB::default();
     db.insert_account_info(
         &SENDER,
@@ -158,10 +161,27 @@ fn scratch() -> Evm2ScratchEvm<TestExt> {
             AccountInfo::default().with_code(Bytecode::new_raw(Bytes::copy_from_slice(code))),
         );
     }
+    db
+}
+
+/// The scratch ext with the counter embedded BELOW its persistent cache (the
+/// production shape): only true cold fetches are counted.
+fn scratch() -> Evm2ScratchEvm<TestExt> {
+    let counter = std::sync::Arc::new(FrameRpcCounter::default());
     let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CountingFrameDb::new(
-        db,
+        seeded_db(),
         std::sync::Arc::clone(&counter),
     )));
+    Evm2ScratchEvm::with_counter(ext, block_env(), counter)
+}
+
+/// The scratch whose counter sits ABOVE the ext cache (see [`ProbeExt`]).
+fn probe_scratch() -> Evm2ScratchEvm<ProbeExt> {
+    let counter = std::sync::Arc::new(FrameRpcCounter::default());
+    let ext = Evm2CountingFrameDb::new(
+        ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(seeded_db())),
+        std::sync::Arc::clone(&counter),
+    );
     Evm2ScratchEvm::with_counter(ext, block_env(), counter)
 }
 
@@ -659,6 +679,128 @@ fn underpriced_predecessor_falls_back_and_commits() {
         nonce_of(&sequence.frame, SENDER),
         Some(9),
         "the underpriced predecessor consumed its nonce"
+    );
+}
+
+/// A base-fee rejection retries the REJECTED attempt only: a priced prefix and
+/// an underpriced one settle to the same statuses, the same accepted state, and
+/// the same forwarded reads. The read count is the single-execution proof — a
+/// prefix replayed a second time forwards its reads again.
+#[test]
+fn base_fee_fallback_settles_the_prefix_once() {
+    let prefix = |underpriced: bool| {
+        let mut second = tx(MERGE, &slot_word(1), 8);
+        if underpriced {
+            second.max_fee_per_gas = BASE_FEE_GWEI / 2;
+        }
+        vec![tx(MERGE, &slot_word(0), 7), second]
+    };
+    let frame = tx(MERGE, &[], 9);
+
+    let mut projected_scratch = probe_scratch();
+    let projected = projected_scratch
+        .replay_sequence(&prefix(false), &frame)
+        .expect("projected sequence executes");
+    assert_eq!(
+        projected.frame.base_fee_source,
+        BaseFeeSource::Projected,
+        "the priced prefix validates against the projection"
+    );
+
+    let mut fallback_scratch = probe_scratch();
+    let fallback = fallback_scratch
+        .replay_sequence(&prefix(true), &frame)
+        .expect("fallback sequence executes");
+    assert_eq!(
+        fallback.frame.base_fee_source,
+        BaseFeeSource::DisabledFallback,
+        "the underpriced predecessor trips the fallback"
+    );
+    assert_eq!(
+        fallback.predecessors, projected.predecessors,
+        "the fallback keeps every predecessor's disposition"
+    );
+    assert_eq!(
+        fallback.predecessor_gas, projected.predecessor_gas,
+        "the fallback keeps every predecessor's gas"
+    );
+    assert_eq!(
+        fallback.frame.rpc_reads, projected.frame.rpc_reads,
+        "the fallback retried only the rejected attempt: a replayed prefix would forward its reads twice"
+    );
+    assert_eq!(
+        fallback.frame.gas_used, projected.frame.gas_used,
+        "the frame settles identically over the preserved overlay"
+    );
+    assert_eq!(
+        fallback.frame.status, projected.frame.status,
+        "the frame's verdict is unchanged by the retry"
+    );
+    assert_eq!(
+        slot_of(&fallback.frame, MERGE, U256::from(2u64)),
+        Some(U256::from(0x54)),
+        "the frame sums BOTH predecessor writes across the fallback"
+    );
+    assert_eq!(
+        nonce_of(&fallback.frame, SENDER),
+        Some(10),
+        "each predecessor executed its nonce bump exactly once"
+    );
+}
+
+/// A rejected frame retries over the accepted overlay a priced run builds: the
+/// prefix writes stay readable, and the sender's nonce reflects one bump per
+/// step — never a second pass over the prefix.
+#[test]
+fn underpriced_frame_retries_over_the_accepted_prefix() {
+    let mut underpriced = tx(MERGE, &[], 9);
+    underpriced.max_fee_per_gas = BASE_FEE_GWEI / 2;
+
+    let mut scratch = scratch();
+    let sequence = scratch
+        .replay_sequence(
+            &[tx(MERGE, &slot_word(0), 7), tx(MERGE, &slot_word(1), 8)],
+            &underpriced,
+        )
+        .expect("sequence executes");
+    assert_eq!(
+        sequence.predecessors,
+        vec![PredStatus::Success, PredStatus::Success]
+    );
+    assert_eq!(
+        sequence.frame.base_fee_source,
+        BaseFeeSource::DisabledFallback,
+        "the frame's own rejection is attributed to the frame"
+    );
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
+    assert_eq!(
+        slot_of(&sequence.frame, MERGE, U256::from(2u64)),
+        Some(U256::from(0x54)),
+        "the retried frame reads the predecessors' accepted writes"
+    );
+    assert_eq!(nonce_of(&sequence.frame, SENDER), Some(10));
+}
+
+/// The retry never changes a failure verdict: an underpriced frame whose nonce
+/// the prefix already consumed still surfaces `AlreadySettled`, attributed to
+/// the frame, exactly as the priced path classifies it.
+#[test]
+fn underpriced_frame_after_the_prefix_keeps_the_already_settled_verdict() {
+    let mut underpriced = tx(MERGE, &[], 7);
+    underpriced.max_fee_per_gas = BASE_FEE_GWEI / 2;
+    let mut scratch = scratch();
+    let err = scratch
+        .replay_sequence(&[tx(MERGE, &slot_word(0), 7)], &underpriced)
+        .expect_err("the consumed nonce is not replayable");
+    assert!(
+        matches!(
+            err,
+            SequenceReplayError::Frame(ReplayFrameError::AlreadySettled {
+                frame: 7,
+                parent: 8
+            })
+        ),
+        "the fallback retry reclassified the frame's failure: {err:?}"
     );
 }
 
