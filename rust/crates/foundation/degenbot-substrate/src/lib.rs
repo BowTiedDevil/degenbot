@@ -33,6 +33,7 @@ pub mod driver_spawn;
 pub mod epoch;
 pub mod epoch_delta;
 pub mod executor_hop;
+pub mod lane_authority;
 pub mod log_dispatcher;
 pub mod nonce;
 pub mod path_info;

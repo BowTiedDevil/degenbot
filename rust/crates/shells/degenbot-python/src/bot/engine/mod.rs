@@ -87,6 +87,14 @@ pub struct PyArbEngine {
     /// `parking_lot::RwLock`, written only by the warm cache's own TTL
     /// re-fetch path).
     warm_code_cache: Arc<parking_lot::RwLock<degenbot_simulation::WarmCodeCacheInner>>,
+
+    /// The settlement lane this boot minted, filed under the host's own lane
+    /// namespace. The submission seam resolves its lane here (never from a
+    /// process-wide slot), so a second engine in the same process boots its
+    /// own registration and stamps through its own authority. Dropping the
+    /// engine drops the stake, removing exactly this host's filing.
+    #[cfg(feature = "submission")]
+    settlement: crate::submission::settlement_lane::SettlementLaneHome,
 }
 
 impl Drop for PyArbEngine {
@@ -176,6 +184,44 @@ impl PyArbEngine {
     /// `attach`, which moves the claim into `resume`.
     pub(crate) fn take_handoff(&self) -> Option<EventHandoff> {
         self.handoff.lock().take()
+    }
+
+    /// The settlement lane for one submission from `account`, resolved from
+    /// the registration this engine's boot filed under its own lane namespace.
+    ///
+    /// `claims` states whether the engine may issue a nonce: a submitting
+    /// engine claims the operator account, a dry-run engine only reads its
+    /// lane.
+    ///
+    /// # Errors
+    ///
+    /// The registry's refusal: no settlement lane filed for this host, a lane
+    /// that signs for a different operator account, or another lane already
+    /// stamping this account.
+    #[cfg(feature = "submission")]
+    pub(crate) fn settlement_lane(
+        &self,
+        account: Address,
+        operator_nonce: u64,
+        claims: bool,
+    ) -> Result<
+        Arc<degenbot_substrate::nonce::NonceLane<degenbot_submission::SubmissionLedger>>,
+        degenbot_submission::LaneRefusal,
+    > {
+        self.settlement.lane(account, operator_nonce, claims)
+    }
+
+    /// The host's own settlement-lane registry (the teardown tests read what
+    /// the boot filed and what its drop removes).
+    #[cfg(all(test, feature = "submission"))]
+    pub(crate) fn settlement_lanes(&self) -> Arc<degenbot_submission::SettlementLanes> {
+        Arc::clone(self.settlement.lanes())
+    }
+
+    /// The scope this engine's boot filed its settlement lane under.
+    #[cfg(all(test, feature = "submission"))]
+    pub(crate) fn settlement_lane_scope(&self) -> degenbot_submission::LaneScope {
+        self.settlement.scope().clone()
     }
 
     /// The cross-block warm bytecode cache arc (Option A) — the

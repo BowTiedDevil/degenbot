@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 
 pub mod dispatcher;
 pub mod params;
+pub mod settlement_lane;
 pub mod signer;
 pub mod sim_pipeline;
 pub mod submit;

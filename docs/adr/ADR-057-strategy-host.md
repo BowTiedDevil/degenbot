@@ -192,6 +192,17 @@ the process-global journal root. This is what lets two drivers on one host write
 run artifacts without colliding; the host stays free of the submission crate's
 file vocabulary.
 
+The namespace is also the identity a strategy's nonce lane is filed under: the
+settlement boot files the `NonceLane` it minted under `<state_root>/settlement`
+in the process's one `LaneRegistry` (composed once and handed to every engine
+boot), so the lane's owner and the arm's artifact scope are one declaration. A
+submission resolves that lane through the filing's stake — the engine handle it
+was handed, never a process-wide lookup — and the stake is the registration's
+lifetime: dropping the engine removes only its own. Because the registry is
+process-scoped while the lookup names one filing, two engines signing distinct
+accounts stay isolated and a second lane can never claim an account another lane
+already stamps.
+
 ### D7 — Deferred, deliberately
 
 - **Shadow-feedback between drivers.** v1 is exclusion-only: reconciliation
@@ -263,9 +274,10 @@ table exists to disagree with it:
   chain nonce at boot and refreshes it per head (`backrun_driver.rs`), exactly
   as the hosted boot does.
 - The Python settlement seam no longer computes a nonce. It forwards the
-  submission-time chain read and resolves its lane from the host boot; a
-  host-less process mints a process-local lane with a loud deprecation rather
-  than a parallel reservation table (`degenbot-python/src/submission/submit.rs`).
+  submission-time chain read and resolves its lane from the registration its
+  engine's boot filed under the host lane namespace; a host that filed none
+  refuses loudly rather than minting a parallel reservation table
+  (`degenbot-python/src/submission/settlement_lane.rs`).
 
 Issuance, broadcast promotion, landing, tombstone, and the reorg rewind are all
 authority writes. The one deliberate counterweight is the monitor's expiry
@@ -305,11 +317,13 @@ their callers, never written by a second site.
   `instruments::pipeline()` counters emitted in the same branches are a
   telemetry projection of the same events, not a second result store; dry-run
   is counted but not profit-summed by construction.
-- **The Python settlement lane (`SETTLEMENT_LANE`).** The process-global slot
-  is written exactly once at host boot (`install_settlement_lane`) and read by
-  the settlement submit path; a host-less process mints a process-local lane
-  with a loud deprecation instead. One installation per process, justified by
-  the settlement arm being the Python-driven half of that single process.
+- **The settlement lane registration.** Each engine boot files one lane in its
+  own `LaneRegistry` (`SettlementLaneHome::boot`) and the submit seam resolves
+  it through that engine handle: the filing is written once per host and read by
+  every submission that host signs, and a host that filed none refuses rather
+  than minting a second reservation table. The registry keys a filing by its
+  host scope and binds it to the operator account the signing key proves, so one
+  account never gets two authorities.
 - **`HostHub<T>` / `mint`.** The hub-and-channels pair keeps the naive
   cross-hub attach inexpressible; the closure's
   register-on-the-hub-it-was-handed guarantee stays a documented convention

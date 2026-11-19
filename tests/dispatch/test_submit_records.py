@@ -138,6 +138,7 @@ class TestDispatchAndSubmitWrapper:
             dispatcher=None,
             provider=None,
             context=SubmitContext(
+                engine=None,  # type: ignore[arg-type]
                 signer=None,  # type: ignore[arg-type]
                 operator_nonce=0,
                 current_block=0,

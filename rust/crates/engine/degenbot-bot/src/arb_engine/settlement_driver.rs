@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
+use tracing::Instrument;
 
 use crate::arb_engine::driver::EngineDriver;
 use crate::arb_engine::pump_session::PumpPhase;
@@ -26,12 +27,22 @@ use crate::arb_engine::session_end::SessionEndCause;
 /// The settlement arm's spawn factory: the pump session's lifetime in the
 /// host's driver vocabulary.
 ///
-/// The lane namespace is accepted and unused. The pump keeps the
-/// process-global run-artifact root it has always written, and scoping
-/// settlement's submission lane to a host namespace is a separate decision.
+/// The host hands the factory the arm's lane namespace at the driving edge, and
+/// that namespace is the identity the boot filed the arm's submission lane
+/// under (`LaneNamespace::under(state_root, settlement)`): one declaration names
+/// both the artifact scope and the lane's owner, so this factory takes no
+/// artifact root of its own. The pump keeps the process-global run-artifact root
+/// it has always written — the lane namespace scopes the nonce lane, not the
+/// pump's journal.
 #[must_use]
 pub fn settlement_spawn(driver: Arc<EngineDriver>) -> DriverSpawnFactory {
-    Box::new(move |_lane| Box::pin(drive(driver)))
+    Box::new(move |lane| {
+        let label = lane
+            .as_ref()
+            .map(|namespace| namespace.root().display().to_string());
+        let span = tracing::info_span!("degenbot.settlement.drive", lane = ?label);
+        Box::pin(drive(driver).instrument(span))
+    })
 }
 
 /// The settlement driver loop: gate on an armed block clock, then await the

@@ -181,8 +181,16 @@ _Avoid_: "nonce lane", "private-lane reservation".
 **Lane namespace**:
 A driver's run-artifact root (`<state_root>/<strategy>`, with `session/` and
 `quarantine/` subdirectories) that keeps two drivers on one host from colliding on a
-shared path.
+shared path, and the host identity a lane registration is filed under.
 _Avoid_: "lane root", "strategy directory", "sandbox".
+
+**Lane registration**:
+The filing of one host's nonce lane under its **lane namespace** and strategy in the
+process's lane registry, bound to the single operator account the submit seam proves from
+its signing key. A lookup names the filing's **stake**, so a peer host's lane is never a
+fallback, and the account rule is registry-wide: one account has one authority, so a
+second lane claiming it is refused. The stake is the registration's lifetime.
+_Avoid_: "process-global lane", "nonce lane slot", "shared lane table".
 
 **Submission ledger**:
 The per-strategy record of every signed submission — nonce, followed target, bundle hash,

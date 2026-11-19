@@ -105,9 +105,15 @@ impl PyArbEngine {
         // that mint → register → attach → install order; this shell resolved
         // the plane's values above it.
         // A boot the host refuses (or a hosted source the hub cannot mint)
-        // fails the constructor before the engine is handed to Python.
-        let session = super::strategy::boot_session(Arc::clone(&bot), Arc::clone(&stages))
+        // fails the constructor before the engine is handed to Python. The boot
+        // also files the settlement lane under this host's own lane namespace,
+        // and the engine holds that filing for its life.
+        let booted = super::strategy::boot_session(Arc::clone(&bot), Arc::clone(&stages))
             .map_err(super::strategy::map_session_boot_error)?;
+        #[cfg(feature = "submission")]
+        let (session, settlement) = (booted.session, booted.settlement);
+        #[cfg(not(feature = "submission"))]
+        let session = booted.session;
         // ONE consumer hand-off: the ordered stream AND the claim that proves a
         // consumer holds it. It stays here until a session consumer attaches,
         // and that consumer's `resume` consumes the claim.
@@ -122,12 +128,22 @@ impl PyArbEngine {
                 .borrow(py)
                 .attach_pump_state(Arc::clone(session.driver()));
         }
-        Ok(Self {
+        #[cfg(feature = "submission")]
+        let engine = Self {
+            stages,
+            session,
+            settlement,
+            handoff: parking_lot::Mutex::new(Some(handoff)),
+            warm_code_cache,
+        };
+        #[cfg(not(feature = "submission"))]
+        let engine = Self {
             stages,
             session,
             handoff: parking_lot::Mutex::new(Some(handoff)),
             warm_code_cache,
-        })
+        };
+        Ok(engine)
     }
 
     /// Register a mixed arbitrage path.

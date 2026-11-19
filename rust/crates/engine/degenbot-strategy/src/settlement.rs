@@ -21,11 +21,6 @@
 //!
 //! Every place settlement remains special, each with why it stays:
 //!
-//! - **Process-global submission lane.** The boot installs the settlement
-//!   [`NonceLane`] process-wide instead of scoping it under a host
-//!   `LaneNamespace`. Why: the settlement seam is the Python-driven arm of the
-//!   one hosted process, and every settlement submission must stamp through the
-//!   shared operator-account authority no matter which engine instance signs.
 //! - **Channel registration moved to the shared pre-share phase.**
 //!   `EngineChannelHandles::registration()` declares the engine's named
 //!   channels, and `StrategyHost::mint` validates that declaration before it
@@ -35,8 +30,6 @@
 //!   needs the same window, so the settlement arm holds no registrar of its
 //!   own.
 //!
-//! [`NonceLane`]: degenbot_substrate::nonce::NonceLane
-
 use degenbot_config::BotConfig;
 
 use crate::strategy_plane::{Strategy, StrategyName};

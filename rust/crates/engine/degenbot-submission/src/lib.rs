@@ -133,6 +133,16 @@ pub use submit::{
     SubmitOutcome, SubmitRecord,
 };
 
+/// The host-scoped registrations of a strategy's nonce lane.
+///
+/// A host files the lane it minted under its own [`LaneScope`] and resolves it
+/// only for the operator account its submit seam proves, so two hosts never
+/// reach each other's mutable nonce state by accident and one account never
+/// gets two authorities.
+pub type SettlementLanes = degenbot_substrate::lane_authority::LaneRegistry<SubmissionLedger>;
+
+pub use degenbot_substrate::lane_authority::{LaneRefusal, LaneScope, LaneStake};
+
 /// The configured durable-state root, or `None` when it cannot be resolved.
 ///
 /// A hosted strategy scopes its lane artifacts under this root; the standalone

@@ -17,6 +17,7 @@ use degenbot_bot::bot_core::{
     SessionBootError, SessionConstruction,
 };
 use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
+use degenbot_substrate::driver_spawn::LaneNamespace;
 use degenbot_substrate::nonce::{HoldWindow, LanePolicy, NonceAuthority, NonceLane, StrategyId};
 
 /// The lane policy a registered strategy is minted with: the process-default
@@ -247,7 +248,7 @@ fn facet_status(
 pub(crate) fn boot_session(
     bot: Arc<degenbot_bot::bot_core::Bot>,
     stages: Arc<degenbot_bot::arb_engine::EngineStages>,
-) -> Result<EngineSession, SessionBootError> {
+) -> Result<BootedEngine, SessionBootError> {
     // An engine construction IS the ambient runtime's first use (FF-T5):
     // the fleet boot stamps the process with a fleet, so the shared io
     // runtime must exist - the worker census reports at least the
@@ -291,13 +292,14 @@ pub(crate) fn boot_session(
         .collect();
 
     #[cfg(feature = "submission")]
-    let (reconciler, state_root, hosted) = {
+    let (reconciler, state_root, hosted, settlement) = {
         let HostedPlane {
             reconciler,
             state_root,
             hosted,
+            settlement,
         } = hosted_plane(&nonce, cfg, &backrun_resources);
-        (reconciler, state_root, Some(hosted))
+        (reconciler, state_root, Some(hosted), settlement)
     };
     #[cfg(not(feature = "submission"))]
     let (reconciler, state_root, hosted): (
@@ -306,7 +308,7 @@ pub(crate) fn boot_session(
         Option<HostedBoot>,
     ) = (None, None, None);
 
-    EngineSession::boot(
+    let session = EngineSession::boot(
         SessionConstruction {
             bot,
             stages,
@@ -317,7 +319,25 @@ pub(crate) fn boot_session(
         },
         facets,
         hosted,
-    )
+    )?;
+
+    #[cfg(feature = "submission")]
+    return Ok(BootedEngine {
+        session,
+        settlement,
+    });
+    #[cfg(not(feature = "submission"))]
+    Ok(BootedEngine { session })
+}
+
+/// The engine wrapper's boot product: the booted session and the settlement
+/// lane this boot filed under the host's own lane namespace.
+pub(crate) struct BootedEngine {
+    pub(crate) session: EngineSession,
+    /// The settlement lane the boot minted and filed. The wrapper holds it for
+    /// the engine's life: the registration lives exactly as long as the host.
+    #[cfg(feature = "submission")]
+    pub(crate) settlement: crate::submission::settlement_lane::SettlementLaneHome,
 }
 
 /// The hosted plane's resolved values: what the session boot installs on the
@@ -327,6 +347,7 @@ struct HostedPlane {
     reconciler: Option<Arc<dyn HeadReconciler>>,
     state_root: Option<std::path::PathBuf>,
     hosted: HostedBoot,
+    settlement: crate::submission::settlement_lane::SettlementLaneHome,
 }
 
 /// Resolve the hosted plane from the resolved backrun boot.
@@ -342,18 +363,31 @@ fn hosted_plane(
     // strategy. Every lane stamps through the same authority and records into
     // the same ledger.
     let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
-    let (lanes, backruns) = hosted_lanes(nonce, &ledger);
+    let (lanes, backruns, settlement_lane) = hosted_lanes(nonce, &ledger);
     let arms = hosted_arms(cfg, backrun_resources, backruns);
+    // A hosted driver scopes its run-artifacts under the host state root; a
+    // boot with no resolvable root leaves the namespace unset, so the driver
+    // keeps its process-global path.
+    let state_root = if degenbot_config::holder::installed() {
+        degenbot_submission::resolve_state_root()
+    } else {
+        None
+    };
+    // The settlement lane is filed under the very namespace the host hands its
+    // pump-driven settlement driver at the driving edge (so the lane's owner and
+    // the driver's artifact scope are one declaration) and into the process's
+    // lane registry (so one operator account can never get two authorities).
+    let settlement = crate::submission::settlement_lane::SettlementLaneHome::boot(
+        crate::submission::settlement_lane::process_lanes(),
+        state_root
+            .clone()
+            .map(|root| LaneNamespace::under(root, settlement_lane.strategy())),
+        settlement_lane,
+    );
     HostedPlane {
         reconciler: Some(Arc::clone(&ledger) as Arc<dyn HeadReconciler>),
-        // A hosted driver scopes its run-artifacts under the host state root; a
-        // boot with no resolvable root leaves the namespace unset, so the driver
-        // keeps its process-global path.
-        state_root: if degenbot_config::holder::installed() {
-            degenbot_submission::resolve_state_root()
-        } else {
-            None
-        },
+        state_root,
+        settlement,
         hosted: HostedBoot {
             arms,
             // The engine's block pump owns the session's ONE head source in
@@ -368,32 +402,33 @@ fn hosted_plane(
 }
 
 /// The per-strategy submission lanes the head reconciliation folds notices
-/// through: the settlement lane (installed process-global — the settlement
-/// seam is the Python-driven arm of this one hosted process) plus one lane
-/// per backrun ecosystem, all stamping one submission ledger, built before
-/// any driver starts.
+/// through: the settlement lane plus one lane per backrun ecosystem, all
+/// stamping one submission ledger, built before any driver starts.
+///
+/// The settlement lane is returned so the boot can file it under the host's
+/// own lane namespace: the lane is reachable through that filing, never
+/// through a process-wide slot.
 #[cfg(feature = "submission")]
 fn hosted_lanes(
     nonce: &Arc<NonceAuthority>,
     ledger: &Arc<degenbot_submission::SubmissionLedger>,
-) -> (HeadLanes, BackrunLanes) {
+) -> (
+    HeadLanes,
+    BackrunLanes,
+    Arc<NonceLane<degenbot_submission::SubmissionLedger>>,
+) {
     let settlement_id = StrategyId::new(degenbot_strategy::StrategyName::Settlement.as_str());
     let settlement_lane = Arc::new(nonce.mint_lane(
         settlement_id.clone(),
         Arc::clone(ledger),
         lane_policy(degenbot_strategy::StrategyName::Settlement),
     ));
-    // The settlement seam is the Python-driven arm of this one hosted
-    // process, so its lane is process-global: every settlement submission
-    // stamps through the shared authority once the boot installs it.
-    crate::submission::submit::install_settlement_lane(Arc::clone(&settlement_lane));
-
     // Each per-ecosystem backrun gets its own lane and product. The
     // products share the resolver's held DB and frozen registry. The lanes
     // are all built first so the head reconciliation owns the full map
     // before any driver starts.
     let mut lanes = HeadLanes::new();
-    lanes.insert(settlement_id, settlement_lane);
+    lanes.insert(settlement_id, Arc::clone(&settlement_lane));
     let mut backruns = Vec::new();
     for (name, ecosystem) in [
         (
@@ -410,7 +445,7 @@ fn hosted_lanes(
         backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
         lanes.insert(id, lane);
     }
-    (lanes, backruns)
+    (lanes, backruns, settlement_lane)
 }
 
 /// The drivers' once-per-head reconciliation: one instance per process,
@@ -805,16 +840,139 @@ mod tests {
                 !engine.session.host().lock().has_hosted_activity(),
                 "a fresh boot has no lease and no record, so the head feed short-circuits"
             );
-            // The boot installs the process-global settlement seam lane, the
-            // one the hosted head reconciliation folds notices through.
-            let settlement_lane = crate::submission::submit::settlement_lane()
-                .expect("the boot installs the settlement head lane");
+            // The boot files the settlement lane under this host's own lane
+            // namespace, and it is the lane the hosted head reconciliation
+            // folds notices through.
+            let settlement_lane = engine
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x01), 0, true)
+                .expect("the boot filed the settlement lane");
 
             settlement_lane.stamp().expect("settlement lane stamps");
             assert!(
                 engine.session.host().lock().has_hosted_activity(),
                 "a live lease opens the reconcile guard"
             );
+        });
+    }
+
+    /// The boot files the settlement lane under the very namespace the host
+    /// hands the settlement driver at its driving edge: the lane's owner and
+    /// the driver's artifact scope are one declaration, not two derivations
+    /// that can drift.
+    #[test]
+    fn the_settlement_lane_is_filed_under_the_host_lane_namespace() {
+        hermetic_db_layer();
+        settlement_active_config();
+        Python::attach(|py| {
+            let engine = PyArbEngine::new(py, None).expect("boot the engine");
+            let id = StrategyId::new("settlement");
+            engine.enable_strategy(py, "settlement").expect("enable");
+            let host_namespace = engine.session.host().lock().lane_namespace(&id).ok();
+
+            assert_eq!(
+                engine.settlement_lane_scope().namespace().cloned(),
+                host_namespace,
+                "the filed lane scope is the host's own namespace for the arm"
+            );
+        });
+    }
+
+    /// The process composes ONE lane registry and hands it to every engine, so
+    /// two engines signing distinct accounts keep independent authorities: each
+    /// resolves the filing it owns, and a stamp in one never reaches the other.
+    #[test]
+    fn two_engines_signing_distinct_accounts_keep_independent_authorities() {
+        hermetic_db_layer();
+        settlement_active_config();
+        Python::attach(|py| {
+            let first = PyArbEngine::new(py, None).expect("boot the first engine");
+            let second = PyArbEngine::new(py, None).expect("boot the second engine");
+            assert!(
+                Arc::ptr_eq(&first.settlement_lanes(), &second.settlement_lanes()),
+                "the composition root hands every engine the process's one registry"
+            );
+            assert_eq!(
+                first.settlement_lane_scope(),
+                second.settlement_lane_scope(),
+                "co-process engines share one state root, so they name one host scope"
+            );
+
+            let first_lane = first
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x0a), 0, true)
+                .expect("the first engine resolves its filing");
+            let second_lane = second
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x0b), 0, true)
+                .expect("the second engine resolves its own filing");
+            assert!(
+                !Arc::ptr_eq(&first_lane, &second_lane),
+                "each engine resolves the lane it filed"
+            );
+            assert!(
+                !Arc::ptr_eq(first_lane.authority(), second_lane.authority()),
+                "each engine stamps through its own authority"
+            );
+
+            first_lane.stamp().expect("the first host stamps");
+            assert!(
+                second_lane.authority().outstanding_nonces().is_empty(),
+                "the first host's stamp never reaches the second host's authority"
+            );
+            second
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x0b), 0, true)
+                .expect("the second host's filing still resolves");
+        });
+    }
+
+    /// Two engines that mint their own lanes cannot both stamp one operator
+    /// account: the shared registry refuses the second authority instead of
+    /// silently double-booking the account's nonces.
+    #[test]
+    fn two_engines_signing_one_account_refuse_a_second_authority() {
+        hermetic_db_layer();
+        settlement_active_config();
+        Python::attach(|py| {
+            let first = PyArbEngine::new(py, None).expect("boot the first engine");
+            let second = PyArbEngine::new(py, None).expect("boot the second engine");
+            let account = alloy::primitives::Address::repeat_byte(0x01);
+
+            first
+                .settlement_lane(account, 0, true)
+                .expect("the first engine binds the operator account");
+            assert_eq!(
+                second.settlement_lane(account, 0, true).err(),
+                Some(degenbot_submission::LaneRefusal::AccountOwned { account }),
+                "one account has one authority across the process"
+            );
+        });
+    }
+
+    /// Teardown removes exactly the host's own filing: a peer engine booted over
+    /// the same registry keeps its registration.
+    #[test]
+    fn teardown_removes_the_hosts_own_registration() {
+        hermetic_db_layer();
+        settlement_active_config();
+        Python::attach(|py| {
+            let first = PyArbEngine::new(py, None).expect("boot the first engine");
+            let second = PyArbEngine::new(py, None).expect("boot the second engine");
+            let lanes = second.settlement_lanes();
+            let scope = second.settlement_lane_scope();
+            assert_eq!(
+                lanes.scopes(),
+                vec![scope.clone(), scope.clone()],
+                "both boots filed into the one registry"
+            );
+
+            drop(first);
+
+            assert_eq!(
+                lanes.scopes(),
+                vec![scope],
+                "the teardown removed only the filing its own stake owned"
+            );
+            second
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x0b), 0, true)
+                .expect("the peer engine's filing survives");
         });
     }
 

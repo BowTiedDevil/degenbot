@@ -41,9 +41,7 @@ use crate::simulation::identity::{candidate_id_to_dict, PyCandidateId};
 use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::signer::PyTxSigner;
-use crate::submission::submit::{
-    settlement_lane, settlement_lane_for, skip_reason_to_py, PyReceiptProbe,
-};
+use crate::submission::submit::{settlement_lane_error, skip_reason_to_py, PyReceiptProbe};
 use degenbot_batch_executor::record::{
     FailureDetail, FailureKind, SimReceipt, SimulateVerdict, SubmitVerdict,
 };
@@ -770,8 +768,11 @@ pub fn build_batch_executor_py(
         dispatcher: dispatcher.inner_arc(),
         signer: Arc::new(signer.signer().clone()),
         probe: Arc::new(PyReceiptProbe::new(&submit_provider.provider_arc())),
-        nonce_lane: settlement_lane_for(settlement_lane(), operator_nonce)
-            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?,
+        // The settlement lane this engine's boot filed under its own lane
+        // namespace, resolved for the account the signing key proves.
+        nonce_lane: engine
+            .settlement_lane(signer.signer().address(), operator_nonce, !dry_run)
+            .map_err(|refusal| settlement_lane_error(&refusal))?,
         extra_broadcast: broadcast_providers
             .unwrap_or_default()
             .iter()

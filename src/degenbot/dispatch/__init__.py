@@ -120,10 +120,13 @@ class SubmitContext:
     arguments; grouping them here keeps the companion signature stable as the
     runner's submit knobs grow. ``broadcast_providers`` is the relay fan-out
     (one Rust provider pyclass per endpoint), or ``None`` for the public
-    mempool.
+    mempool. ``engine`` is the session engine whose boot filed the settlement
+    nonce lane: the submission stamps through that host's lane and through no
+    other, so a second engine in the same process cannot be reached from here.
 
     """
 
+    engine: Any
     signer: TxSigner
     operator_nonce: int
     current_block: int
@@ -158,6 +161,7 @@ async def dispatch_and_submit(
     raw = await submit_leaf(
         candidates=candidates,
         dispatcher=dispatcher,
+        engine=context.engine,
         provider=provider,
         signer=context.signer,
         operator_nonce=context.operator_nonce,

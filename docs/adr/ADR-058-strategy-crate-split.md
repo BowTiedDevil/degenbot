@@ -97,7 +97,10 @@ boot-time registration went activation-first — the readiness gate resolves the
 settlement arm's activation and relay posture BEFORE the boot registers the
 facet table, so a facet is `Configured` iff its `strategy.<facet>.active` key is
 on, settlement included, and an inactive settlement arm is never reported
-configured or active. What remains:
+configured or active. The process-global submission lane has since left it too:
+each engine boot files the settlement `NonceLane` under its own lane namespace,
+so the lane is reached through that filing rather than through process-wide
+reachability. What remains:
 
 - **Pump-driven driver loop.** The engine pump owns the settlement block clock,
 so the arm's hosted driver loop is that pump session's lifetime
@@ -106,9 +109,6 @@ factory over the session driver it mints and `start_driving` boots it like any
 other driver. The loop adds no second pump and no second head source, and the
 arm's start/stop/halt are the host FSM's (ADR-057 D2); parameterizing the pump's
 stage payloads per family stays ADR-018's on-demand work.
-- **Process-global submission lane.** The settlement `NonceLane` is installed
-  process-wide, because the settlement seam is the Python-driven arm of the one
-  hosted process.
 - **Common pre-share channel registration.** `EngineChannelHandles::registration()`
   declares the engine's named channels as a `ChannelRegistration`, and
   `StrategyHost::mint` validates that declaration — a duplicate name is a typed

@@ -13,6 +13,7 @@ from typing import Any, Final, SupportsFloat, SupportsIndex, final
 
 from _typeshed import SupportsGetItem
 
+from . import ArbitrageEngine
 from .provider import AsyncAlloyProvider
 from .simulation import CandidateId
 
@@ -496,6 +497,7 @@ class TxSigner:
 def dispatch_and_submit_py(
     candidates: list,
     dispatcher: Dispatcher,
+    engine: ArbitrageEngine,
     provider: AsyncAlloyProvider,
     signer: TxSigner,
     operator_nonce: SupportsIndex,
@@ -518,6 +520,8 @@ def dispatch_and_submit_py(
             re-asserted by the leaf).
         `dispatcher`: the `PyDispatcher` holding the coordination state
             (the Rust leaves lock the SAME `Arc`).
+        `engine`: the `PyArbEngine` whose boot filed this host's settlement
+            lane; the submission stamps through that lane and through no other.
         `provider`: the `AsyncAlloyProvider` (the typed RPC handle).
         `signer`: the `PyTxSigner` (per-tx key never crosses to Python).
         `operator_nonce`: the account's next chain nonce — the seed of the
@@ -538,8 +542,8 @@ def dispatch_and_submit_py(
     is blocked, not decided.
 
     # Errors
-    `RuntimeError`: If the process never booted a strategy host, so no
-            settlement lane owns the operator account's nonces.
+    `RuntimeError`: If the engine's host filed no settlement lane this submission
+            may stamp through, or its lane signs for another operator account.
     `ValueError`: If the dispatch+submit leaf returns a `SubmissionError`
             (a non-"not-found" RPC error during broadcast/access-list/sign).
     """

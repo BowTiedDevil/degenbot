@@ -144,5 +144,6 @@ now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 | Hub hoist / driver attach | `degenbot-bot/src/arb_engine/driver.rs` |
 | Submission ledger + `HeadPolicy` | `degenbot-submission/src/submission_ledger.rs` |
 | `NonceAuthority` + the `NonceLane` it mints | `degenbot-substrate/src/nonce.rs` |
+| Host-scoped lane registration (`LaneRegistry`, `LaneScope`, `LaneStake`) | `degenbot-substrate/src/lane_authority.rs` |
 | Registrable backrun driver | `degenbot-strategy/src/backrun_driver.rs` |
 | Settled-block seam today | `degenbot-bot/src/bot_core/stage_handlers.rs` |
