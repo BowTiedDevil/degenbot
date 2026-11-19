@@ -8,6 +8,7 @@ use alloy::primitives::U256;
 use degenbot_core::fee::{fee_fraction, fee_ratio, FeeRatio, V2Fee};
 
 mod apply_routes;
+mod backfill;
 mod pool_identity;
 mod pool_key_census;
 mod pool_lookup;

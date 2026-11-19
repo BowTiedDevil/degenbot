@@ -189,8 +189,17 @@ impl BlockPump {
         };
 
         if latest_block > fsm.current_block() {
-            self.backfill_range(fsm.current_block() + 1, latest_block, fsm)
-                .await;
+            if let Err(malformed) = self
+                .backfill_range(fsm.current_block() + 1, latest_block, fsm)
+                .await
+            {
+                op_error!(
+                    domain = pump,
+                    %malformed,
+                    "BlockPump: watchdog backfill refused a malformed log — range not applied"
+                );
+                return;
+            }
             // ADR-028: the cursor + single-writer recovery-anchor advance happen
             // inside the FSM (`on_backfill_range_done`). The driver only reports
             // the engine-side solved boundary.

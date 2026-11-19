@@ -84,6 +84,68 @@ pub enum ConcentratedLiquidityApplyError {
     },
 }
 
+/// A backfill batch carried a log the backfill surface cannot place in time.
+///
+/// `eth_getLogs` stamps every row with its block number; a row without one is a
+/// broken provider response. Decoding such a row under a chunk-level fallback
+/// would journal the event at a block it never landed in, so both backfill
+/// paths refuse the batch before decoding or applying any entry.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "malformed backfill log at batch position {position}: no block_number \
+     (transaction_hash {transaction_hash:?}, log_index {log_index:?}, address {address}); \
+     log {log:?}"
+)]
+pub struct MalformedBackfillLog {
+    /// The offending log's position within the batch as received.
+    pub position: usize,
+    /// `transactionHash` when the response supplied one.
+    pub transaction_hash: Option<alloy::primitives::B256>,
+    /// `logIndex` when the response supplied one.
+    pub log_index: Option<u64>,
+    /// The emitting address (a log always has one).
+    pub address: Address,
+    /// The offending log verbatim, so the failure report carries every field
+    /// the response sent even when no transaction hash or log index names it.
+    ///
+    /// Boxed because the error travels through `Result` at both backfill
+    /// surfaces: an inline log would make every `Result` in that path carry a
+    /// full RPC log row on the success arm too.
+    pub log: Box<alloy::rpc::types::Log>,
+}
+
+/// Validate that every log in a backfill batch carries its own
+/// `block_number`, returning the batch's block numbers in log order.
+///
+/// Both backfill paths run this over a whole batch before decoding or applying
+/// any entry: per-block journals and buffer expiry are per-chunk facts, so a
+/// malformed late row must fail the batch instead of being skipped or stamped
+/// at the chunk boundary.
+///
+/// # Errors
+///
+/// [`MalformedBackfillLog`] for the first log with no `block_number`.
+pub fn validate_backfill_blocks(
+    logs: &[alloy::rpc::types::Log],
+) -> Result<Vec<u64>, MalformedBackfillLog> {
+    let mut blocks = Vec::with_capacity(logs.len());
+    for (position, log) in logs.iter().enumerate() {
+        match log.block_number {
+            Some(block_number) => blocks.push(block_number),
+            None => {
+                return Err(MalformedBackfillLog {
+                    position,
+                    transaction_hash: log.transaction_hash,
+                    log_index: log.log_index,
+                    address: log.address(),
+                    log: Box::new(log.clone()),
+                });
+            }
+        }
+    }
+    Ok(blocks)
+}
+
 /// The concentrated-liquidity (V3 + V4) orchestration capability - the ONE
 /// struct owning every concentrated-liquidity-local state surface the state owner carries: the
 /// dual liquidity buffers, the `(pool_manager, pool_id)` V4 registry, the
@@ -2312,27 +2374,36 @@ impl BotState {
     /// `dispatch` / no solve cycle — the `Backfilled` phase invariant is
     /// "state advanced, no batches emitted".
     ///
-    /// The engine-level entry is a thin delegator + `last_processed_block`
-    /// stamp. `BotState` owns the state (ADR-003);
-    /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
+    /// `BotState` owns the state (ADR-003); the pump's
+    /// `backfill_from_snapshot` owns the chunk fetch and the chunk-atomic write
+    /// guard around this call.
     ///
     /// Decode selection is the dispatcher's registry
     /// (`log_dispatcher`, the same decoders the forward path routes through);
     /// `BotState` keeps apply/route only — the decoders are never imported
     /// here.
+    ///
+    /// # Errors
+    ///
+    /// [`MalformedBackfillLog`] when any log carries no `block_number`. The
+    /// batch's block numbers are validated before a single entry is decoded or
+    /// applied, so a malformed late row leaves pool state, buffers, and the
+    /// journal exactly as the chunk found them.
     pub fn process_backfill_logs(
         &mut self,
         dispatcher: &log_dispatcher::LogDispatcher,
         logs: &[alloy::rpc::types::Log],
         chunk_end: u64,
-    ) {
+    ) -> Result<(), MalformedBackfillLog> {
+        let blocks = validate_backfill_blocks(logs)?;
         let mut v3_touched = false;
         let mut v4_touched = false;
-        for log in logs {
-            // The chunk-end fallback stamps a malformed log (no `block_number`)
-            // at `chunk_end`, never block 0. V2 Sync stays out
-            // of backfill scope (concentrated-liquidity-only: scalar state arrives via snapshot).
-            let Some(event) = dispatcher.try_decode_log_with_block(log, chunk_end) else {
+        for (log, block_number) in logs.iter().zip(blocks) {
+            // The decode's block fallback is the log's own validated block, so
+            // no event can be stamped with a synthetic chunk value. V2 Sync
+            // stays out of backfill scope (concentrated-liquidity-only: scalar
+            // state arrives via the snapshot).
+            let Some(event) = dispatcher.try_decode_log_with_block(log, block_number) else {
                 continue;
             };
             v3_touched |= matches!(
@@ -2369,6 +2440,7 @@ impl BotState {
         if v4_touched {
             self.concentrated_liquidity.expire_v4_buffered(chunk_end);
         }
+        Ok(())
     }
 
     /// Remove a pool from the registry, discarding anything buffered for it.

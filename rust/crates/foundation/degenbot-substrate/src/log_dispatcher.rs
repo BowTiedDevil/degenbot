@@ -337,7 +337,8 @@ impl DecodedPoolEvent {
 pub trait LogDecoder: Send + Sync {
     /// Decode `log` into a [`DecodedPoolEvent`], or `None` if unrecognized.
     /// `default_block` stamps the event's block number when the log carries
-    /// none: 0 on the forward path, the chunk end on the backfill path.
+    /// none: 0 on the forward path, the log's own validated block number on the
+    /// backfill path.
     fn try_decode(&self, log: &Log, default_block: u64) -> Option<DecodedPoolEvent>;
 }
 
@@ -813,16 +814,21 @@ impl LogDispatcher {
     /// Decode `log` into a [`DecodedPoolEvent`] via the decoder registry, or
     /// `None` if no decoder recognizes it. Used by `dispatch` (forward) and
     /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
-    /// identity; only the forward path `apply`s.
+    /// identity; only the forward path `apply`s. A log without a
+    /// `block_number` decodes at block 0 here; the backfill path refuses such
+    /// a row instead of stamping it (see
+    /// [`crate::concentrated_liquidity_orchestration::process_backfill_logs`]).
     pub fn try_decode_log(&self, log: &Log) -> Option<DecodedPoolEvent> {
         self.try_decode_log_with_block(log, 0)
     }
 
     /// The ONE decode home: decode `log` via the registry, stamping the
     /// event's block number with `default_block` when the log carries none.
-    /// The backfill chunk loop passes its chunk end so a malformed
-    /// eth_getLogs row (missing `block_number`) never stamps block 0 into a
-    /// journal; the forward and reorg paths pass 0.
+    ///
+    /// The backfill path never relies on that fallback: it validates every
+    /// log's own `block_number` before decoding and passes that number here,
+    /// so a backfilled event is journaled at the block it landed in. The
+    /// forward and reorg paths pass 0.
     pub fn try_decode_log_with_block(
         &self,
         log: &Log,

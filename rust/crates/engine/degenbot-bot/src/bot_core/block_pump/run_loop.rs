@@ -894,9 +894,17 @@ impl BlockPump {
                                     to_block = to,
                                     "BlockPump: gap from block to block — backfilling"
                                 );
-                                self.backfill_range(from, to, &mut fsm)
+                                if let Err(malformed) = self
+                                    .backfill_range(from, to, &mut fsm)
                                     .instrument(new_block_span.clone())
-                                    .await;
+                                    .await
+                                {
+                                    op_error!(
+                                        domain = pump,
+                                        %malformed,
+                                        "BlockPump: gap backfill refused a malformed log — range not applied"
+                                    );
+                                }
                             }
                             StageDecision::SetLastSolved { block } => {
                                 // the backfill/first header solved up

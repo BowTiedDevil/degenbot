@@ -576,3 +576,49 @@ async fn ws_getlogs_large_filter_diagnostic() {
         }
     }
 }
+
+/// A range backfill whose fetched batch carries a log with no `block_number`
+/// refuses the WHOLE range: the log before it is not dispatched, no buffer
+/// entry appears, and the FSM cursor does not move. `eth_getLogs` always
+/// stamps a block number, so a row without one is a broken response — the
+/// range must not be reported closed over a row that was dropped.
+#[tokio::test]
+async fn backfill_range_refuses_malformed_log_without_advancing_cursors() {
+    let pool_addr = Address::from([0xc4u8; 20]);
+    let bot = Arc::new(Bot::new(1));
+    let (pump, _sink, _shutdown, asserter) =
+        pump_for_test_with_asserter(Arc::clone(&bot), Some(100));
+
+    // [valid Burn @101, malformed row]: the valid log must not be dispatched.
+    let valid = make_v3_burn_log_with_block(pool_addr, -100, 100, 500, 101);
+    let mut malformed = make_v3_burn_log_with_block(pool_addr, -100, 100, 500, 102);
+    malformed.block_number = None;
+    malformed.transaction_hash = Some(alloy::primitives::B256::from([0xabu8; 32]));
+    malformed.log_index = Some(3);
+    asserter.push_success(&vec![valid, malformed]);
+
+    let mut fsm = StageMachine::new(100, 0);
+    let err = pump
+        .backfill_range(101, 102, &mut fsm)
+        .await
+        .expect_err("a block_number-less row refuses the range");
+
+    assert_eq!(err.position, 1, "the refusal names the malformed position");
+    assert_eq!(err.log_index, Some(3));
+    assert!(
+        err.to_string().contains("no block_number"),
+        "the refusal names the missing field: {err}"
+    );
+    assert_eq!(
+        fsm.current_block(),
+        100,
+        "a refused range must leave the FSM cursor where it was"
+    );
+    assert_eq!(
+        bot.state_arc()
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .buffered_event_count(&pool_addr),
+        0,
+        "the valid log ahead of the malformed one must not be dispatched"
+    );
+}

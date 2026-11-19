@@ -839,15 +839,16 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         v3_swap_log(pool_addr, sp_b1, 1_100_000, 1, b1),
         v3_swap_log(pool_addr, sp_b2, 1_200_000, 2, b2),
     ];
-    // the engine's `process_backfill_logs` delegator was retired
-    // (the pump calls `BotState::process_backfill_logs` directly). The test
-    // only asserts on journal/state, so call the BotState method directly
-    // — the same path the production backfill uses.
+    // The pump calls `BotState::process_backfill_logs` directly. The test only
+    // asserts on journal/state, so call the BotState method directly — the same
+    // path the production backfill uses. Both logs carry their own block
+    // number, so the chunk is accepted whole.
     let dispatcher = degenbot_substrate::log_dispatcher::LogDispatcher::with_uniswap_decoders();
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .process_backfill_logs(&dispatcher, &logs, chunk_end);
+        .process_backfill_logs(&dispatcher, &logs, chunk_end)
+        .expect("both logs carry a block number, so the chunk is accepted");
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);

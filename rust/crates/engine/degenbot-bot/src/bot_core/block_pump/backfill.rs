@@ -2,6 +2,9 @@ use super::{
     op_error, op_info, op_warn, BlockMetadata, BlockPump, HashMap, Log, LogDecision, Ordering,
     StageMachine, RELEVANT_TOPICS,
 };
+use degenbot_substrate::concentrated_liquidity_orchestration::{
+    validate_backfill_blocks, MalformedBackfillLog,
+};
 
 impl BlockPump {
     /// Backfill a range of blocks via `eth_getLogs`, applying each backfilled
@@ -10,14 +13,23 @@ impl BlockPump {
     /// (`dispatch_log`, `drive_finalize`, `drive_solve`) stay here on the driver;
     /// every FSM-state transition is routed through `StageMachine` methods
     /// (`on_log`, `on_log_applied`) — no fields are threaded out of the capsule.
+    ///
+    /// # Errors
+    ///
+    /// [`MalformedBackfillLog`] when the fetched batch carries a log with no
+    /// `block_number`. The whole batch is validated before any log is
+    /// dispatched or any FSM cursor moves, so the refusal leaves the range's
+    /// state and cursors as they were. An `eth_getLogs` transport failure stays
+    /// the logged degraded path it has always been: the range is left
+    /// unapplied and no error is returned.
     pub(super) async fn backfill_range(
         &self,
         from_block: u64,
         to_block: u64,
         fsm: &mut StageMachine,
-    ) {
+    ) -> Result<(), MalformedBackfillLog> {
         if from_block > to_block {
-            return;
+            return Ok(());
         }
 
         op_info!(
@@ -35,26 +47,29 @@ impl BlockPump {
             Ok(logs) => logs,
             Err(e) => {
                 op_error!(domain = pump, %e, "BlockPump: backfill eth_getLogs failed");
-                return;
+                return Ok(());
             }
         };
 
+        // `eth_getLogs` stamps every row with its block number; a row without
+        // one is a broken response. Refuse the whole range before dispatching
+        // anything rather than dropping the row and reporting the range closed.
+        let blocks = validate_backfill_blocks(&logs)?;
+
         // Group logs by block number for sequential processing
         let mut logs_by_block: HashMap<u64, Vec<Log>> = HashMap::new();
-        for log in &logs {
-            if let Some(block_num) = log.block_number {
-                logs_by_block
-                    .entry(block_num)
-                    .or_default()
-                    .push(log.clone());
-            }
+        for (log, block_num) in logs.iter().zip(blocks) {
+            logs_by_block
+                .entry(block_num)
+                .or_default()
+                .push(log.clone());
         }
 
         let mut any_processed = false;
         for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
                 op_info!(domain = pump, "BlockPump: shutting down during backfill");
-                return;
+                return Ok(());
             }
 
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
@@ -112,6 +127,7 @@ impl BlockPump {
                 "BlockPump: backfill found no relevant events"
             );
         }
+        Ok(())
     }
 
     /// LOUD assertion of the core WS-delivery invariant (ADR-008 D1): when
@@ -241,7 +257,10 @@ impl BlockPump {
     ///
     /// # Errors
     ///
-    /// Returns `Err(String)` on a `get_logs` RPC failure.
+    /// Returns `Err(String)` on a `get_logs` RPC failure, and for a chunk whose
+    /// batch carries a log with no `block_number` — each chunk is validated
+    /// whole before it is applied, so the offending range is named and no log
+    /// from it reaches pool state.
     pub async fn backfill_from_snapshot(
         &self,
         ws_block: u64,
@@ -325,11 +344,19 @@ impl BlockPump {
             );
             total_logs += n;
             // Hold the write guard across the chunk so the apply + buffer-expire
-            // (which advance `last_processed_block`) stay atomic per chunk.
+            // (which advance `last_processed_block`) stay atomic per chunk. The
+            // chunk is validated whole inside `process_backfill_logs` before any
+            // entry applies, so a malformed row fails the resume instead of
+            // leaving this chunk half-applied.
             self.bot
                 .state_arc()
                 .write_at(degenbot_substrate::state_lock::LockSite::Pump)
-                .process_backfill_logs(self.bot.dispatcher(), &logs, chunk_end);
+                .process_backfill_logs(self.bot.dispatcher(), &logs, chunk_end)
+                .map_err(|malformed| {
+                    format!(
+                        "malformed backfill log in blocks {chunk_start}-{chunk_end}: {malformed}"
+                    )
+                })?;
             op_info!(
                 domain = pump,
                 chunk_start,
