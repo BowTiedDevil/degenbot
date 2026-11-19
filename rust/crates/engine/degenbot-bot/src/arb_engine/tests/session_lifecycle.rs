@@ -430,6 +430,35 @@ fn a_panicking_live_loop_lands_ended_and_reports_the_join_error() {
 }
 
 #[test]
+fn a_live_loop_never_ticks_before_its_pose_lands() {
+    // The landing installs `Running` and only then releases the loop's launch
+    // edge. A loop that ticked earlier could publish its own exit into an
+    // in-flight pose — an edge the table refuses — and the session would keep
+    // claiming a pump that is already gone.
+    for _ in 0..32 {
+        let driver = driver();
+        let watcher = Arc::clone(&driver);
+        let (tick, first_tick) = tokio::sync::oneshot::channel();
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async move {
+            let _ = tick.send(watcher.current_phase());
+        })));
+        let seen = runtime()
+            .block_on(first_tick)
+            .expect("the loop reports its first tick");
+        assert_eq!(
+            seen,
+            PumpPhase::Running,
+            "the loop's first tick reads the pose the landing installed"
+        );
+        assert_eq!(
+            runtime().block_on(driver.wait_session_end()),
+            crate::arb_engine::SessionEndCause::PumpFinished
+        );
+        assert_eq!(driver.current_phase(), PumpPhase::Ended);
+    }
+}
+
+#[test]
 fn a_shutdown_return_lands_ended() {
     // The pump's own early returns (a too-deep reorg, the shutdown flag) leave
     // the loop the same way a stream end does; the exit edge is one door.

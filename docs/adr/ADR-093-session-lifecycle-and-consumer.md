@@ -313,6 +313,14 @@ The two holes close structurally rather than by an added guard:
   pose — so a crawl cannot outlive the session that owns it, and a second
   `close()` has nothing left to take.
 
+A spawned live loop is therefore **armed, not running**: it parks on a launch
+edge that the landing releases only after it has written the `Running` pose. The
+loop's one exit edge publishes `Running -> Ended`, and the table refuses that
+event from every other pose, so a loop freed any earlier would end into an
+in-flight pose — the session would then report a completed pump while its
+`PumpPhase` still claimed to be running. The launch edge makes the order
+structural rather than a race between the spawn and the landing.
+
 ### D3 — `EngineStages` is the direct engine interface; the mirror is deleted
 
 Every engine operation a consumer needs is reached at `EngineStages` (path

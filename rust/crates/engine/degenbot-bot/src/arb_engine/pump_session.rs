@@ -31,7 +31,7 @@ use std::sync::Arc;
 use degenbot_core::{op_error, op_info};
 use degenbot_ingestion::IngestEvent as WsEvent;
 use parking_lot::Mutex;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{oneshot, watch, Notify};
 use tokio::task::JoinHandle;
 
 use crate::arb_engine::crawl::controller::CrawlHandle;
@@ -411,14 +411,54 @@ pub(crate) struct ConnectedSession {
 /// completion too). A loop that is abandoned instead of installed — a landing
 /// refused by a concurrent close — is aborted HERE, so a refused move can
 /// never leave a task running.
+///
+/// A spawned loop is ARMED, not yet running: it parks on the launch edge until
+/// the pose that owns it is installed. Its one exit edge publishes
+/// `Running -> Ended`, and the table refuses that event from every other pose,
+/// so a loop freed before its landing would end into an in-flight pose — the
+/// session would then report a completed pump whose phase still claims to be
+/// running. The launch edge is what makes the ordering structural: the pose is
+/// written first, the loop ticks second.
 pub(crate) struct LiveLoop {
-    pub(crate) handle: JoinHandle<()>,
-    pub(crate) completion: Option<watch::Sender<bool>>,
+    handle: JoinHandle<()>,
+    completion: Option<watch::Sender<bool>>,
+    /// Released once the pose owns the loop; its drop is the cancellation edge
+    /// for a loop whose landing was refused.
+    launch: Option<oneshot::Sender<()>>,
+}
+
+/// Free a parked loop now that the pose that owns it is installed.
+///
+/// The pose write is the ordering fact: a loop released before it would publish
+/// its exit into an in-flight pose, which the table refuses, and the session
+/// would keep claiming a running pump that is already gone. A landing the table
+/// declined drops the edge unsent instead, so the parked task unwinds rather
+/// than running over a session that refused it.
+fn release(launch: Option<oneshot::Sender<()>>) {
+    if let Some(launch) = launch {
+        let _ = launch.send(());
+    }
 }
 
 impl LiveLoop {
+    /// Wrap a spawned loop parked on the matching launch receiver.
+    pub(crate) fn armed(handle: JoinHandle<()>, launch: oneshot::Sender<()>) -> Self {
+        Self {
+            handle,
+            completion: None,
+            launch: Some(launch),
+        }
+    }
+
+    /// Hold the launch edge out of the pose, so a landing can install the pose
+    /// and only then free the loop.
+    fn take_launch(&mut self) -> Option<oneshot::Sender<()>> {
+        self.launch.take()
+    }
+
     /// The refused-landing path: cancel the loop and release its completion
-    /// sender so any `wait_pump_finished` waiter resolves.
+    /// sender so any `wait_pump_finished` waiter resolves. A task the landing
+    /// never freed loses its launch edge here and cannot run on.
     fn abandon(self) {
         self.handle.abort();
         drop(self.completion);
@@ -691,9 +731,14 @@ impl PumpSession {
 
     /// Construction-time test seed: a session already in `Running` over a
     /// stand-in loop.
+    ///
+    /// The loop is armed by its seed, so the pose lands here exactly as a real
+    /// landing does: the pose first, the loop's first tick second.
     #[cfg(test)]
-    pub(crate) fn seed_running_for_test(&self, live: Box<LiveLoop>) {
+    pub(crate) fn seed_running_for_test(&self, mut live: Box<LiveLoop>) {
+        let launch = live.take_launch();
         self.inner.lock().pose = PumpPose::Running(live);
+        release(launch);
     }
 
     /// The pump task's ONE exit edge: `Running -> Ended`, refused when teardown
@@ -869,7 +914,8 @@ impl PumpSession {
     /// A refused landing ABORTS the spawned loop — a move the table did not
     /// admit must never leave a pump running over a dead session (the §1.3(a)
     /// regression).
-    fn land_live(&self, live: Box<LiveLoop>) -> Result<PhaseAdvance, PumpDecline> {
+    fn land_live(&self, mut live: Box<LiveLoop>) -> Result<PhaseAdvance, PumpDecline> {
+        let launch = live.take_launch();
         let landed = {
             let mut state = self.inner.lock();
             let from = state.pose.phase();
@@ -882,7 +928,12 @@ impl PumpSession {
             }
         };
         match landed {
-            Ok(advance) => Ok(advance),
+            Ok(advance) => {
+                release(launch);
+                Ok(advance)
+            }
+            // The launch edge drops unsent: a task still parked on it unwinds
+            // instead of running over a session that refused it.
             Err((decline, live)) => {
                 live.abandon();
                 Err(decline)

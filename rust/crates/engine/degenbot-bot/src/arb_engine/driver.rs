@@ -1032,21 +1032,25 @@ impl EngineDriver {
         // resolves. No explicit send is needed; channel close IS the terminal
         // event (which is also what makes the panic path work).
         let completion = self.session.take_completion();
+        let (launch, parked) = tokio::sync::oneshot::channel();
         let handle = degenbot_core::runtime::get_runtime().spawn(async move {
             let _completion = completion;
+            // The loop is armed, not yet launched: it ticks only once the
+            // landing installs the pose that owns it, so its one exit edge
+            // always lands on a pose the table admits.
+            if parked.await.is_err() {
+                return;
+            }
             pump.run_with_stream(combined, first_block).await;
         });
 
         // The landing is the ONLY way the live loop enters the session: a
         // landing the table no longer admits (a close that got there first)
         // aborts the loop instead of installing it.
-        mv.land_live(Box::new(LiveLoop {
-            handle,
-            completion: None,
-        }))
-        .map_err(|decline| {
-            DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
-        })?;
+        mv.land_live(Box::new(LiveLoop::armed(handle, launch)))
+            .map_err(|decline| {
+                DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
+            })?;
         Ok(())
     }
 
@@ -1397,18 +1401,22 @@ impl EngineDriver {
                 // exactly as production hands it over: the channel's close is the
                 // completion signal, so a panic completes too.
                 let completion = self.session.take_completion();
+                let (launch, parked) = tokio::sync::oneshot::channel();
                 let handle = degenbot_core::runtime::get_runtime().spawn(async move {
                     let _completion = completion;
+                    // Armed, not launched: a body that ran before its pose was
+                    // installed would publish its exit into an in-flight pose.
+                    if parked.await.is_err() {
+                        return;
+                    }
                     // The same one exit door production uses: every return from a
                     // live loop — normal, early, or a panic unwind — publishes
                     // the pump-exit fact.
                     let _guard = SeededExitGuard(control);
                     body.await;
                 });
-                self.session.seed_running_for_test(Box::new(LiveLoop {
-                    handle,
-                    completion: None,
-                }));
+                self.session
+                    .seed_running_for_test(Box::new(LiveLoop::armed(handle, launch)));
             }
         }
     }

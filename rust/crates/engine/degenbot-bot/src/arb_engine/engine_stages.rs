@@ -1248,12 +1248,15 @@ mod phase_projection_tests {
     #[test]
     fn pump_ended_lands_ended() {
         let (stages, session) = stages_with_session();
-        // A stand-in live loop: the pose is what the exit edge reads.
-        let handle = degenbot_core::runtime::get_runtime().spawn(async {});
-        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop {
-            handle,
-            completion: None,
-        }));
+        // A stand-in live loop: the pose is what the exit edge reads. It parks
+        // on its launch edge exactly as a real loop does.
+        let (launch, parked) = tokio::sync::oneshot::channel();
+        let handle = degenbot_core::runtime::get_runtime().spawn(async move {
+            let _ = parked.await;
+        });
+        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop::armed(
+            handle, launch,
+        )));
         assert_eq!(stages.current_phase(), PumpPhase::Running);
 
         crate::bot_core::PumpControl::on_pump_ended(&stages);
@@ -1267,11 +1270,13 @@ mod phase_projection_tests {
     fn pump_ended_during_teardown_leaves_stopping() {
         let (stages, session) = stages_with_session();
         // Something TO tear down: a live loop, so the stop lands `Stopping`.
-        let handle = degenbot_core::runtime::get_runtime().spawn(async {});
-        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop {
-            handle,
-            completion: None,
-        }));
+        let (launch, parked) = tokio::sync::oneshot::channel();
+        let handle = degenbot_core::runtime::get_runtime().spawn(async move {
+            let _ = parked.await;
+        });
+        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop::armed(
+            handle, launch,
+        )));
         let mv = session
             .take(PumpEvent::Stop)
             .expect("stop is total from every pose");
