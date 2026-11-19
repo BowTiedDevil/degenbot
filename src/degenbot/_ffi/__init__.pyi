@@ -407,10 +407,15 @@ class ArbitrageEngine:
             - "type": the hop's internal family tag (`"v2"` / `"v3"` / `"v4"` /
               `"aerodrome-v2"` / `"balancer-weighted"` / `"balancer-stable"` /
               `"curve"` — `HopType::as_tag`)
-            - "address": str (V2/V3 contract address, or V4 `pool_manager`)
+            - "address": str (the identity's own contract address — V2 / V3 /
+              Solidly — or V4's `pool_manager`)
             - "`pool_id"`: str (V4 only — the pool ID hex)
             - "`zero_for_one"`: bool
-            - "fee": int (V2: `gamma_numer`; V3: pool fee; V4: pool fee)
+            - "fee": int (V2: retained `gamma_numer`; V3: pool fee; V4: pool
+              fee; Solidly, whichever identity it registered under: the
+              direction-selected CHARGED numerator — an Aerodrome identity
+              carries the fee fraction, a Camelot `stable_swap` V2 identity a
+              retained gamma, so this is V2's gamma complement)
             - "`tick_spacing"`: int (V3/V4 only)
           Returns None if the `path_id` is not found.
         """

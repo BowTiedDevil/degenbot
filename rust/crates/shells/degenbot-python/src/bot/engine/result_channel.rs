@@ -21,10 +21,15 @@ impl PyArbEngine {
     ///     - "type": the hop's internal family tag (`"v2"` / `"v3"` / `"v4"` /
     ///       `"aerodrome-v2"` / `"balancer-weighted"` / `"balancer-stable"` /
     ///       `"curve"` — `HopType::as_tag`)
-    ///     - "address": str (V2/V3 contract address, or V4 `pool_manager`)
+    ///     - "address": str (the identity's own contract address — V2 / V3 /
+    ///       Solidly — or V4's `pool_manager`)
     ///     - "`pool_id"`: str (V4 only — the pool ID hex)
     ///     - "`zero_for_one"`: bool
-    ///     - "fee": int (V2: `gamma_numer`; V3: pool fee; V4: pool fee)
+    ///     - "fee": int (V2: retained `gamma_numer`; V3: pool fee; V4: pool
+    ///       fee; Solidly, whichever identity it registered under: the
+    ///       direction-selected CHARGED numerator — an Aerodrome identity
+    ///       carries the fee fraction, a Camelot `stable_swap` V2 identity a
+    ///       retained gamma, so this is V2's gamma complement)
     ///     - "`tick_spacing"`: int (V3/V4 only)
     ///   Returns None if the `path_id` is not found.
     #[pyo3(signature = (path_id))]
@@ -225,11 +230,7 @@ impl PyArbEngine {
                             ..HopInfo::new(pool_ref)
                         }
                     }
-                    // Solidly hop-info lands with the build/register plumbing
-                    //. Until then, a Solidly hop emits a minimal
-                    // HopInfo so the result-channel match is exhaustive; the
-                    // resolve short-circuit means no Solidly hop reaches a solve.
-                    HopType::SolidlyStable => HopInfo::new(pool_ref),
+                    HopType::SolidlyStable => solidly_hop_info(core, pool_ref),
                     HopType::BalancerWeighted => {
                         let id = core.pool_slice::<degenbot_pools::BalancerWeightedPoolIdentity>(
                             pool_ref.pool_key,
@@ -276,6 +277,38 @@ impl PyArbEngine {
         dict.set_item("hops", hops_list)?;
 
         Ok(dict.unbind())
+    }
+}
+
+/// One Solidly hop's view: whichever identity the pool registered under.
+///
+/// Two registrations derive [`HopType::SolidlyStable`] — an Aerodrome V2 pool
+/// (a charged `V2Fee`) and a Camelot `stable_swap` V2 pool (a RETAINED
+/// `FeeRatio` per direction). Both report their own address and the
+/// direction-selected CHARGED numerator, so the dict carries one fee
+/// convention however the hop was registered.
+fn solidly_hop_info(core: &degenbot_substrate::BotState, pool_ref: &MixedPoolRef) -> HopInfo {
+    if let Some(id) = core.pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_ref.pool_key)
+    {
+        return HopInfo {
+            address: Some(format!("{}", id.address)),
+            fee: Some(id.fee.fee_numer()),
+            ..HopInfo::new(pool_ref)
+        };
+    }
+    let identity = core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key);
+    let (address, fee) = identity.map_or((None, None), |i| {
+        let retained = if pool_ref.zero_for_one {
+            i.fee_token0
+        } else {
+            i.fee_token1
+        };
+        (Some(format!("{}", i.address)), Some(retained.fee_numer()))
+    });
+    HopInfo {
+        address,
+        fee,
+        ..HopInfo::new(pool_ref)
     }
 }
 
