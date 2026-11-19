@@ -108,8 +108,9 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
 
 async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     """A settlement-active boot passes NO hosted arms to resume, even when a
-    backrun facet is also active: the settlement pump arm is this runner's arm,
-    so the enabled-facet set is empty under that disposition."""
+    backrun facet is also active: the settlement arm is this runner's arm, so
+    the enabled-facet set is the settlement facet alone — enabled through the
+    host gate, which is what boots its pump-session driver loop."""
     session = _runner(
         lambda **kw: noop_coro(),
         settlement_arm=True,
@@ -121,10 +122,16 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
 
     assert session.session.actors is not None
     engine = session.session.actors.engine_registry.engine
-    assert engine.resume_facets == [], "a settlement-active boot must not host backrun lanes"
+    assert engine.resume_facets == ["settlement"], (
+        "a settlement-active boot hosts no backrun lane; it enables the settlement "
+        "facet whose loop is the pump session's lifetime"
+    )
     records = {name: state for name, state, _halt in engine.strategies()}
     assert records["mevblocker_backrun"] == "registered"
     assert records["txpool_backrun"] == "registered"
+    assert records["settlement"] != "registered", (
+        "the settlement facet is admitted, so its record leaves the registered pose"
+    )
 
 
 class TestActivationPrecedesRegistration:

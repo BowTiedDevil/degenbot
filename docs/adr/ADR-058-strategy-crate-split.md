@@ -91,15 +91,21 @@ settlement broadcast endpoints through the same plane surface instead of a
 second config copy.
 
 Settlement keeps a **special-case ledger** in `settlement.rs`, cited as the
-open-work map rather than normalizing the cases away — channel registration has
-since left that ledger for the common pre-share phase (below):
+open-work map rather than normalizing the cases away. Two entries have since
+left it: channel registration went to the common pre-share phase (below), and
+boot-time registration went activation-first — the readiness gate resolves the
+settlement arm's activation and relay posture BEFORE the boot registers the
+facet table, so a facet is `Configured` iff its `strategy.<facet>.active` key is
+on, settlement included, and an inactive settlement arm is never reported
+configured or active. What remains:
 
-- **Pump self-driving.** The engine pump owns the settlement block clock, so
-the host registers no spawn factory and `start_driving` skips it; generalizing
-the pump is ADR-018's on-demand work.
-- **Unconditional `Configured` registration.** The hosted boot registers the
-  settlement facet as configured even when `strategy.settlement.active` is
-  false; the runner resolves its live-mode gate after the engine exists.
+- **Pump-driven driver loop.** The engine pump owns the settlement block clock,
+so the arm's hosted driver loop is that pump session's lifetime
+(`degenbot-bot/src/arb_engine/settlement_driver.rs`): the boot attaches the
+factory over the session driver it mints and `start_driving` boots it like any
+other driver. The loop adds no second pump and no second head source, and the
+arm's start/stop/halt are the host FSM's (ADR-057 D2); parameterizing the pump's
+stage payloads per family stays ADR-018's on-demand work.
 - **Process-global submission lane.** The settlement `NonceLane` is installed
   process-wide, because the settlement seam is the Python-driven arm of the one
   hosted process.

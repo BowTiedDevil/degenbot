@@ -360,7 +360,10 @@ class TestRegistrationHandoff:
         session = _session(settlement_active=True)
         await RunRitual(session).run()
         assert session.actors is not None
-        assert session.actors.engine_registry.engine.resume_facets == []
+        # The settlement facet is the only enabled facet under that disposition:
+        # its driver loop is the pump session's lifetime, so the host boots and
+        # folds it like any other driver while no backrun lane is hosted.
+        assert session.actors.engine_registry.engine.resume_facets == ["settlement"]
 
     async def test_cancelled_registration_closes_the_read_tx_after_the_assemblers(
         self,

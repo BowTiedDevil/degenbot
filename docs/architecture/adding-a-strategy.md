@@ -139,8 +139,12 @@ pub async fn drive_and_fold(&mut self, task: DriverTask) -> Result<(), HostError
 lane's replay stack is single-threaded. `start_driving` polls each enabled,
 factory-bearing driver under the **ambient multi-thread runtime**
 (`degenbot_core::runtime::get_runtime`) via `spawn_blocking` + `block_on`, then
-moves the record to `Running` (`:879-925`). An enabled driver with no factory is
-skipped, not failed — the settlement pump arm is its own driver.
+moves the record to `Running` (`:879-925`). Every enabled driver carries a
+factory by the start boundary; an enabled record with no loop is refused
+(`HostError::MissingSpawn`) rather than skipped. The settlement arm's factory is
+the engine pump session's lifetime (`degenbot-bot/src/arb_engine/settlement_driver.rs`),
+so that arm starts, stops, and halts through the same FSM while its block clock
+stays the one pump the consumer arms.
 
 **Evidence / Keeps / Retires**
 

@@ -17,9 +17,10 @@
 //! A driver that owns process-lifetime artifacts is lent a [`LaneNamespace`]
 //! under the host state root, and a driver that runs a loop registers a spawn
 //! factory the host boots at [`StrategyHost::start_driving`]. The host itself
-//! never boots a loop inline. A strategy whose loop is already driven by the
-//! engine's own pump (the settlement arm) registers no factory: it is not
-//! host-driven, so `start_driving` skips it rather than failing it.
+//! never boots a loop inline. Every enabled driver carries a factory by the
+//! time the start boundary runs — including the settlement arm, whose factory
+//! is the engine pump session's lifetime — so an enabled record with no loop is
+//! a miswired boot and is refused rather than silently never started.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -325,6 +326,12 @@ pub enum HostError {
     /// `lane_namespace` was called before the host learned its state root.
     #[error("the host has no state root installed")]
     StateRootUnset,
+    /// `start_driving` found an enabled driver with no spawn factory: the boot
+    /// never wired the loop the record's `Enabled` pose promises.
+    #[error(
+        "strategy \"{0}\" is enabled with no spawn factory: the boot never wired its driver loop"
+    )]
+    MissingSpawn(StrategyId),
     /// `mint` refused a strategy's channel declaration.
     #[error(transparent)]
     ChannelRegistration(ChannelRegistrationError),
@@ -878,30 +885,32 @@ impl StrategyHost {
         Ok(())
     }
 
-    /// Whether a driver has a spawn factory attached. A facet the engine's own
-    /// pump drives (the settlement arm) deliberately has none.
+    /// Whether a driver has a spawn factory attached.
+    ///
+    /// Every facet the boot admits carries one: a hosted arm's factory comes
+    /// from its arm row, and the settlement arm's comes from the loop the boot
+    /// composes over the pump session it minted.
     #[must_use]
     pub fn has_spawn(&self, id: &StrategyId) -> bool {
         self.spawns.contains_key(id)
     }
 
-    /// Boot every enabled driver that registered a spawn factory, on the
-    /// shared runtime, and move it to [`DriverPose::Running`].
+    /// Boot every enabled driver's loop, on the shared runtime, and move it to
+    /// [`DriverPose::Running`].
     ///
-    /// This is the host's driving edge: the settlement pump arms on its own
-    /// `resume`, while a host-managed driver's loop starts here. Each returned
-    /// [`DriverTask`] is the lane boundary — the caller awaits it and feeds the
-    /// exit back through [`Self::record_driver_exit`], so a lane panic becomes
-    /// a tombstone rather than a host unwind.
+    /// This is the host's one driving edge. Each returned [`DriverTask`] is the
+    /// lane boundary — the caller awaits it and feeds the exit back through
+    /// [`Self::record_driver_exit`], so a lane panic becomes a tombstone rather
+    /// than a host unwind.
     ///
-    /// An enabled driver with no registered factory is skipped, not failed: the
-    /// settlement facet registers none because the engine's pump arm already
-    /// drives it, so only strategies that own a loop the host must start
-    /// advance to [`DriverPose::Running`] here.
+    /// The factory set is checked BEFORE any loop boots: an enabled driver with
+    /// no factory is a boot that promised a `Running` record it never wired,
+    /// and refusing the whole start leaves no half-started fleet behind.
     ///
     /// # Errors
     ///
-    /// [`HostError::Transition`] if the FSM refuses a driver's start.
+    /// [`HostError::MissingSpawn`] for an enabled driver the boot never wired a
+    /// loop for; [`HostError::Transition`] if the FSM refuses a driver's start.
     pub fn start_driving(&mut self) -> Result<Vec<DriverTask>, HostError> {
         let runtime = degenbot_core::runtime::get_runtime();
         let ids: Vec<StrategyId> = self
@@ -910,10 +919,16 @@ impl StrategyHost {
             .filter(|(_, record)| record.state == DriverPose::Enabled)
             .map(|(id, _)| id.clone())
             .collect();
+        if let Some(unwired) = ids.iter().find(|id| !self.spawns.contains_key(*id)) {
+            return Err(HostError::MissingSpawn(unwired.clone()));
+        }
         let mut tasks = Vec::new();
         for id in ids {
             let Some(spawn) = self.spawns.shift_remove(&id) else {
-                continue;
+                // Unreachable: the pre-flight above proved every enabled record
+                // carries a factory, and nothing removed one since.
+                debug_assert!(false, "an enabled driver lost its spawn factory");
+                return Err(HostError::MissingSpawn(id));
             };
             let lane = self.lane_namespace(&id).ok();
             // A lane's replay stack is single-threaded, so the loop future is
@@ -1538,13 +1553,18 @@ mod tests {
         );
     }
 
+    /// An enabled record with no loop behind it is a miswired boot: the start
+    /// boundary refuses it, and the refusal leaves the record untouched (no
+    /// half-started fleet, no `Running` claim over a loop nobody wired).
     #[test]
-    fn start_driving_leaves_a_driver_without_a_spawn_registered() {
+    fn start_driving_refuses_an_enabled_driver_with_no_spawn() {
         let mut host = host();
         let id = register(&mut host, "backrun");
         host.enable(&id).expect("enable");
-        let tasks = host.start_driving().expect("start driving");
-        assert!(tasks.is_empty());
+        assert_eq!(
+            host.start_driving().map(|tasks| tasks.len()),
+            Err(HostError::MissingSpawn(id.clone()))
+        );
         assert_eq!(host.state_of(&id), Some(DriverPose::Enabled));
     }
 

@@ -13,8 +13,8 @@ use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, Unkn
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::{
-    EngineSession, FacetBoot, HeadTriggerComposer, HostedArmBoot, HostedBoot, SessionBootError,
-    SessionConstruction,
+    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedBoot,
+    SessionBootError, SessionConstruction,
 };
 use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
 use degenbot_substrate::nonce::{HoldWindow, LanePolicy, NonceAuthority, NonceLane, StrategyId};
@@ -225,15 +225,16 @@ fn facet_status(
 /// install → start order.
 ///
 /// This shell resolves what only it can name — the typed configuration's facet
-/// table, the resolved backrun boot's route registry and node join, the
-/// per-strategy submission lanes with their reconciler, the head trigger, and
-/// the state root — and passes them as values. Every facet registers from its
-/// `strategy.<facet>.active` key: the settlement arm registers configured with
-/// no spawn factory (the engine's own pump arm drives it), and every other arm
-/// only when the operator activated it, so enabling an inactive arm fails
-/// loudly instead of starting a lane with no operator intent behind it. The
-/// boot authors none of that: it registers the statuses it is handed, in the
-/// order it is handed them.
+/// table, the loop each facet's driver runs, the resolved backrun boot's route
+/// registry and node join, the per-strategy submission lanes with their
+/// reconciler, the head trigger, and the state root — and passes them as values.
+/// Every facet registers from its `strategy.<facet>.active` key, so enabling an
+/// inactive arm fails loudly instead of starting a lane with no operator intent
+/// behind it. The settlement row names the engine pump session as its facet's
+/// driver loop: settlement's block clock IS that session, so the core boot
+/// builds its spawn factory over the driver it mints rather than this shell
+/// wrapping the pump again. The boot authors none of that: it registers the
+/// values it is handed, in the order it is handed them.
 ///
 /// The host is not a process-once singleton: every engine boots its own host,
 /// hub attachment, and hosted sources, so per-engine fleets stay isolated. The
@@ -272,12 +273,20 @@ pub(crate) fn boot_session(
     // Register every strategy under its plane name, in plane order, derived
     // from its `strategy.<facet>.active` key — including settlement, whose
     // retired boot-time waiver ("a dry-run boot must still enable the arm")
-    // is gone: activation isn't a live-only concern.
+    // is gone: activation isn't a live-only concern. The loop each facet's
+    // driver runs is a value here too: settlement's block clock is the engine
+    // pump session, whose lifetime the host boots and folds like any other
+    // driver, while a backrun facet's factory travels with its hosted arm.
     let facets = degenbot_strategy::StrategyName::ALL
         .into_iter()
         .map(|name| FacetBoot {
             id: StrategyId::new(name.as_str()),
             facet: facet_status(name, cfg),
+            driver: match name {
+                degenbot_strategy::StrategyName::Settlement => Some(FacetLoop::Pump),
+                degenbot_strategy::StrategyName::MevblockerBackrun
+                | degenbot_strategy::StrategyName::TxpoolBackrun => None,
+            },
         })
         .collect();
 
@@ -642,23 +651,30 @@ mod tests {
         });
     }
 
+    /// Install the one config this binary's tests boot over: an active
+    /// settlement facet, because the boot's facet table reads
+    /// `strategy.settlement.active` for every strategy and a defaulted
+    /// (inactive) holder would refuse the settlement enable like any other
+    /// facet. The install is first-wins, so one `Once` covers every test here.
+    fn settlement_active_config() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let mut cfg = degenbot_config::schema::BotConfig::default();
+            cfg.strategy.settlement.active = true;
+            assert!(
+                degenbot_config::holder::install(std::sync::Arc::new(cfg)),
+                "this suite owns the binary's holder install"
+            );
+        });
+    }
+
     /// The engine's start flow boots a driver that registered a factory and
     /// folds its terminal exit into the FSM, so a self-halt is a queryable
     /// tombstone carried by `strategies()`.
     #[test]
     fn the_start_flow_boots_a_registered_factory_and_folds_its_exit() {
         hermetic_db_layer();
-        // The facet's start flow needs an active settlement facet: the boot's
-        // facet table reads `strategy.settlement.active` for every strategy,
-        // so a defaulted (inactive) holder refuses the enable like any other
-        // facet. The install is first-wins, and no other test in this binary
-        // installs — a second install unittesting HERE would fail loudly.
-        let mut cfg = degenbot_config::schema::BotConfig::default();
-        cfg.strategy.settlement.active = true;
-        assert!(
-            degenbot_config::holder::install(std::sync::Arc::new(cfg)),
-            "this test owns the binary's holder install"
-        );
+        settlement_active_config();
         Python::attach(|py| {
             let engine = PyArbEngine::new(py, None).expect("boot the engine");
             // A spawn factory is attached for a facet the boot HOSTS an arm
@@ -719,6 +735,53 @@ mod tests {
                     "halted".to_string(),
                     Some("lane-local violation".to_string())
                 )
+            );
+        });
+    }
+
+    /// The settlement facet's factory is the engine pump session's lifetime:
+    /// the boot composes it over the session driver it mints, the start flow
+    /// boots it like any other driver, and a session whose block clock was
+    /// never armed reports that through the FSM as a tombstone rather than a
+    /// `Running` record.
+    #[test]
+    fn the_settlement_facet_starts_through_the_host_start_flow() {
+        hermetic_db_layer();
+        settlement_active_config();
+        Python::attach(|py| {
+            let engine = PyArbEngine::new(py, None).expect("boot the engine");
+            let id = StrategyId::new("settlement");
+            assert!(
+                engine.session.host().lock().has_spawn(&id),
+                "the boot attaches the pump-session loop as the settlement facet's factory"
+            );
+            engine.enable_strategy(py, "settlement").expect("enable");
+            let started = engine.session.start_drivers().expect("start driving");
+            assert_eq!(
+                started, 1,
+                "the settlement arm crosses the host's one driving edge"
+            );
+
+            let record = degenbot_core::runtime::get_runtime().block_on(async {
+                for _ in 0..1_000 {
+                    let record = engine.session.host().lock().record(&id).cloned();
+                    if record
+                        .as_ref()
+                        .is_some_and(|record| record.state() == DriverPose::Halted)
+                    {
+                        return record;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                }
+                None
+            });
+            let record = record.expect("the unarmed clock folds into a tombstone");
+            assert!(
+                record
+                    .halt_detail()
+                    .is_some_and(|detail| detail.contains("the block clock is not armed")),
+                "the tombstone names the unarmed clock: {:?}",
+                record.halt_detail()
             );
         });
     }

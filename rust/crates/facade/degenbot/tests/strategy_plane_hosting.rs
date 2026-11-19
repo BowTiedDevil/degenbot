@@ -22,7 +22,9 @@ use degenbot::substrate::session_registry::SessionObjectRegistry;
 use degenbot::substrate::state_lock::StateLock;
 use degenbot::substrate::BotState;
 use degenbot::substrate::RouteRegistry;
-use degenbot::{EngineSession, FacetBoot, HostedArmBoot, HostedBoot, SessionConstruction};
+use degenbot::{
+    EngineSession, FacetBoot, FacetLoop, HostedArmBoot, HostedBoot, SessionConstruction,
+};
 use std::sync::Arc;
 
 /// Both per-ecosystem compositions ride one `StrategyHost`: each is
@@ -192,6 +194,9 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
             .map(|name| FacetBoot {
                 id: StrategyId::new(name.as_str()),
                 facet: FacetStatus::Configured,
+                // Settlement's block clock is the engine pump session, so its
+                // row names the loop the boot composes over the driver it mints.
+                driver: (name == StrategyName::Settlement).then_some(FacetLoop::Pump),
             })
             .collect(),
         Some(HostedBoot {
@@ -226,6 +231,13 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
     );
 
     let arms = ["mevblocker_backrun", "txpool_backrun"];
+    // The settlement arm is a driver like any other: the boot composed its
+    // loop over the session's own pump, so the one start boundary boots it.
+    let settlement = StrategyId::new("settlement");
+    assert!(
+        session.host().lock().has_spawn(&settlement),
+        "the pump-driven facet leaves the boot with its factory attached"
+    );
     for name in arms {
         let id = StrategyId::new(name);
         assert_eq!(
@@ -239,11 +251,28 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
             .enable(&id)
             .expect("a configured arm admits");
     }
+    session
+        .host()
+        .lock()
+        .enable(&settlement)
+        .expect("the configured settlement facet admits");
 
     let started = degenbot::core::runtime::get_runtime()
         .block_on(session.start())
         .expect("the start boundary launches the session");
-    assert_eq!(started, arms.len(), "one driver per hosted arm");
+    assert_eq!(
+        started,
+        arms.len() + 1,
+        "one driver per hosted arm, plus the settlement arm's pump-session loop"
+    );
+    // This boot armed no block clock, so the settlement arm's loop is the
+    // unarmed-clock tombstone: the FSM reports the failure instead of leaving a
+    // `Running` record over a clock nobody armed.
+    let settlement_detail = await_detail(&session, &settlement);
+    assert!(
+        settlement_detail.contains("the block clock is not armed"),
+        "the settlement arm reports its failure through the host FSM: {settlement_detail}"
+    );
     for (name, source) in arms
         .into_iter()
         .zip([PendingTxSource::Mevblocker, PendingTxSource::Txpool])

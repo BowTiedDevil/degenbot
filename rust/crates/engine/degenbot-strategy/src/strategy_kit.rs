@@ -227,7 +227,7 @@ impl StrategyCell {
 /// composes.
 ///
 /// The settlement arm composes no kit: its sealed-block work is driven by the
-/// engine pump (the pump self-driving special case on the settlement ledger),
+/// engine pump, whose session lifetime the host boots as the arm's own driver,
 /// so it resolves no `StrategyKit`. The two hosted backrun arms share the one
 /// resolved composition.
 pub const STRATEGY_CELLS: &[(StrategyName, &[StrategyCell])] = &[

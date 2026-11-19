@@ -133,20 +133,26 @@ class RunRitual:
         session's one consumer claim (the driver's ``run`` — production cannot
         start without an attached consumer), and the deferred hosted I/O
         launches once the pump is armed. A settlement-active boot is this
-        session's settlement arm, so it hosts no backrun lane.
+        session's settlement arm: it hosts no backrun lane, and the settlement
+        facet it enables is a hosted driver whose loop is the pump session's
+        lifetime, so the arm's start, stop, and failure are the host FSM's.
 
         """
         self._expect(_RitualState.RESUME)
         session = self._session
         facets: list[str] = []
-        if not session.settlement_active:
+        if session.settlement_active:
+            # The settlement facet is a hosted driver like any other: its loop
+            # is the pump session's lifetime, so enabling it is what lets the
+            # host boot that loop and fold the session's end through its FSM.
+            facets = ["settlement"]
+        else:
             view = session.readiness
             assert view is not None, "start() resolved the readiness before run()"
             facets = list(view.active_backrun_facets)
-            bot_logger.info(
-                f"[host-arms] settlement facet inactive - hosted arms: "
-                f"{', '.join(facets) if facets else 'NONE'}"
-            )
+        bot_logger.info(
+            f"[host-arms] hosted facets enabled: {', '.join(facets) if facets else 'NONE'}"
+        )
         actors = session.actors
         assert actors is not None, "the run ritual drives a started session"
         consumer = session.consumer

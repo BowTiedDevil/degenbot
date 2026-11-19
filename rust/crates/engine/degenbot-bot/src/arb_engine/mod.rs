@@ -134,6 +134,9 @@ mod session_end;
 // `Block(N)` before every `Batch(N)`, no `End` item, natural end = the stream's
 // closure.
 mod session_events;
+// The settlement arm's hosted driver: the host's handle on the pump session's
+// lifetime (ADR-057 D2), so the arm's lifecycle folds through the one FSM.
+pub(crate) mod settlement_driver;
 // ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;

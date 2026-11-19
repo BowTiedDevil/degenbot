@@ -74,12 +74,25 @@ answers with a typed `FsmDecline`, never a panic; `enable` on an unknown name is
 `HostError::UnconfiguredStrategy`. A halted driver stores its `halt_detail`; a
 terminal state is a frozen record that `list` reports but nothing resurrects.
 
-`start_driving` boots every enabled driver that registered a
-`DriverSpawnFactory`, hands it the driver's `LaneNamespace`, and returns a
-`DriverTask`; a driver-task panic is folded by the lane boundary into a
-`DriverExit::Halted` tombstone rather than reaching the host process. A facet
-may legitimately register no factory — the settlement pump arm is its own
-driver — and is skipped rather than failed.
+`start_driving` boots every enabled driver's `DriverSpawnFactory`, hands it the
+driver's `LaneNamespace`, and returns a `DriverTask`; a driver-task panic is
+folded by the lane boundary into a `DriverExit::Halted` tombstone rather than
+reaching the host process. Every enabled driver carries a factory by the time
+the boundary runs, so an enabled record with no loop is a miswired boot and is
+refused (`HostError::MissingSpawn`) instead of being skipped into a `Running`
+pose the boot never backed.
+
+The settlement arm is hosted like every other driver, not beside the host. Its
+loop is the engine pump session's lifetime
+(`degenbot-bot/src/arb_engine/settlement_driver.rs`): the session boot attaches
+that factory over the driver it mints, `start_driving` boots it at the same
+edge, and its terminal exit folds through the same FSM — a pump that ended after
+teardown began is `Stopped`, while a block clock that died under the session (a
+dropped subscription, a panic, or the pump's own stall clock) is a `Halted`
+tombstone carrying the session's end cause. The factory introduces no second
+pump and no second head source; the harness consumer, not the host, is what
+arms the pump, so a driver booted over an unarmed clock halts by name rather
+than reporting `Running` over a clock nobody armed.
 
 ### D3 — The hub is hoisted; the driver attaches via a bound pair
 
@@ -203,10 +216,10 @@ file vocabulary.
 
 ## Consequences
 
-- One process can run settlement arbitrage (via its pump arm) and backrun (as a
-  hosted driver) over one operator account, with one hub, one boot-snapshot
-  registry, and one nonce authority. Adding a driver is one strategy impl, one
-  spawn factory, one config facet, and a registration.
+- One process can run settlement arbitrage (whose driver loop is the pump
+  session itself) and backrun over one operator account, with one hub, one
+  boot-snapshot registry, and one nonce authority. Adding a driver is one
+  strategy impl, one spawn factory, one config facet, and a registration.
 - The operator gains `enable_strategy` / `disable_strategy` / `strategies` on
   the engine adapter; unknown and unconfigured names raise typed errors
   (`UnknownStrategyError`, `UnconfiguredStrategyError`, base

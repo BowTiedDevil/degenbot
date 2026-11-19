@@ -10,13 +10,17 @@
 //!    owns that hub from then on. Provisioning only: nothing is started and no
 //!    socket is opened.
 //! 2. **Register.** Every row of the caller's facet table enters the driver
-//!    FSM in [`DriverPose::Registered`], carrying its admission status as a
-//!    value. A crate that can read the typed config resolves that status, so
-//!    this module authors no activation, stance, or settlement policy.
+//!    FSM in [`DriverPose::Registered`], carrying its admission status and the
+//!    loop its driver runs as values. A crate that can read the typed config
+//!    resolves that status, so this module authors no activation, stance, or
+//!    settlement policy.
 //! 3. **Attach.** The submission-truth arm ([`HeadReconciler`]) and the state
 //!    root each enabled lane's namespace resolves under, then the hosted
 //!    sources (one pending-tx pump per arm) and each arm's spawn factory, which
-//!    the boot hands the arm's own typed stream.
+//!    the boot hands the arm's own typed stream. The loop a facet row names in
+//!    [`FacetLoop`] is composed here too, over the driver this boot mints, so
+//!    every admitted facet leaves the boot with the factory its `Enabled` pose
+//!    promises.
 //! 4. **Start** ([`EngineSession::start`]). The hosted sources' deferred I/O
 //!    launches before any driver: the head edge attaches to the hub head source
 //!    the engine's block pump owns (the pump registers it at driver composition
@@ -57,6 +61,24 @@ pub struct FacetBoot {
     pub id: StrategyId,
     /// The admission status the host serves `enable` from.
     pub facet: FacetStatus,
+    /// The loop this facet's driver runs, when the boot composes it.
+    ///
+    /// A facet whose loop is a hosted pending-tx arm names none: its factory
+    /// travels with its [`HostedArmBoot`]. The settlement row names the pump,
+    /// whose factory this boot builds over the session's one driver.
+    pub driver: Option<FacetLoop>,
+}
+
+/// The loop one facet's driver runs, as the boot composes it.
+///
+/// The distinction is a VALUE on the facet row, not a name the boot matches:
+/// the composition root decides which facet the engine's own pump drives, and
+/// the boot wires whatever it is handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FacetLoop {
+    /// The facet's block clock IS the engine pump session, so its driver's
+    /// loop is that session's lifetime ([`crate::arb_engine::settlement_driver`]).
+    Pump,
 }
 
 /// Composes one hosted arm's spawn factory.
@@ -213,10 +235,15 @@ impl EngineSession {
         let host = Arc::new(Mutex::new(host));
 
         // Register the facet table in the caller's order, then the shared plane
-        // attachments.
+        // attachments. The rows that name a driver loop are kept for the attach
+        // step below, which needs the driver this boot mints last.
+        let mut pump_driven: Vec<StrategyId> = Vec::new();
         {
             let mut guard = host.lock();
             for facet in facets {
+                if let Some(FacetLoop::Pump) = facet.driver {
+                    pump_driven.push(facet.id.clone());
+                }
                 guard.register(facet.id, facet.facet)?;
             }
             if let Some(reconciler) = reconciler {
@@ -234,8 +261,14 @@ impl EngineSession {
             None => None,
         };
 
-        // Attach the driver to the hub the host minted.
+        // Attach the driver to the hub the host minted, then attach the factory
+        // of every facet the pump drives: that loop IS this session's lifetime,
+        // so its factory is built over the driver it must watch.
         let driver = Arc::new(EngineDriver::from_stages_with_hub(bot, stages, attached));
+        for id in pump_driven {
+            let spawn = crate::arb_engine::settlement_driver::settlement_spawn(Arc::clone(&driver));
+            host.lock().attach_spawn(&id, spawn)?;
+        }
         let supervisor = HostSupervisor::new(Arc::clone(&host));
         Ok(Self {
             driver,
@@ -298,16 +331,20 @@ impl EngineSession {
         self.start_drivers().map_err(SessionBootError::from)
     }
 
-    /// Boot every enabled facet that attached a spawn factory and supervise
-    /// their lane boundaries, so a terminal exit folds through the host FSM
-    /// (a self-halt becomes a tombstone) without exposing the fold.
+    /// Boot every enabled facet's driver loop and supervise their lane
+    /// boundaries, so a terminal exit folds through the host FSM (a self-halt
+    /// becomes a tombstone) without exposing the fold.
     ///
-    /// A facet with no factory is skipped, not failed: the settlement arm is
-    /// driven by the engine's own pump, so it is not a hosted loop.
+    /// Every admitted facet leaves the boot with a factory — a hosted arm's
+    /// from its arm row, the pump-driven facet's from the loop this boot
+    /// composes over the session driver — so the host refuses an enabled record
+    /// with no loop ([`HostError::MissingSpawn`]) instead of leaving it
+    /// silently unstarted.
     ///
     /// # Errors
     ///
-    /// [`HostError`] when the lifecycle refuses a driver's start.
+    /// [`HostError`] when an enabled driver has no loop, or the lifecycle
+    /// refuses a driver's start.
     pub fn start_drivers(&self) -> Result<usize, HostError> {
         let tasks = self.host.lock().start_driving()?;
         let count = tasks.len();
@@ -409,12 +446,16 @@ mod tests {
         }
     }
 
+    /// The facet table, with the settlement row naming the pump loop: the
+    /// composition root decides which facet the engine's pump drives, and the
+    /// boot wires the loop it is handed.
     fn facet_table(status: impl Fn(&str) -> FacetStatus) -> Vec<FacetBoot> {
         FACETS
             .into_iter()
             .map(|name| FacetBoot {
                 id: StrategyId::new(name),
                 facet: status(name),
+                driver: (name == "settlement").then_some(FacetLoop::Pump),
             })
             .collect()
     }
@@ -606,9 +647,10 @@ mod tests {
     }
 
     /// The settlement-versus-backrun asymmetry is a facet VALUE: the settlement
-    /// arm registers configured with no spawn factory (the engine's own pump
-    /// drives it), the backrun facets register unconfigured, and the host
-    /// refuses an enable for them without the boot branching on a name.
+    /// row names the pump loop, so the boot composes that loop's factory over
+    /// the session's own driver and the start boundary boots it through the same
+    /// FSM a hosted arm crosses. The backrun facets register unconfigured, and
+    /// the host refuses an enable for them without the boot branching on a name.
     #[test]
     fn the_facet_table_carries_the_asymmetry_as_a_value() {
         let session = EngineSession::boot(
@@ -641,10 +683,14 @@ mod tests {
         );
         let settlement = StrategyId::new("settlement");
         assert!(
-            !session.host().lock().has_spawn(&settlement),
-            "the settlement arm is host-driven, so the boot attaches no factory"
+            session.host().lock().has_spawn(&settlement),
+            "the pump-driven row leaves the boot with the factory its Enabled pose promises"
         );
         let peer = StrategyId::new("mevblocker_backrun");
+        assert!(
+            !session.host().lock().has_spawn(&peer),
+            "a hosted arm's factory travels with its arm row, not the facet table"
+        );
         assert!(
             matches!(
                 session.host().lock().enable(&peer),
@@ -662,10 +708,24 @@ mod tests {
             .block_on(session.start())
             .expect("start the session");
         assert_eq!(
-            started, 0,
-            "the settlement arm has no hosted loop, so the driving edge boots nothing"
+            started, 1,
+            "the settlement arm crosses the host's one driving edge like any other driver"
+        );
+
+        // The arm's loop is the pump session's lifetime, and this boot armed no
+        // block clock: the record is a tombstone carrying that fact, never a
+        // `Running` claim over a clock nobody armed.
+        let detail = await_tombstone(&session, &settlement);
+        assert!(
+            detail.contains("the block clock is not armed"),
+            "an unarmed clock is a tombstone: {detail}"
+        );
+        assert_eq!(
+            session.host().lock().state_of(&settlement),
+            Some(crate::strategy_host::DriverPose::Halted)
         );
     }
+
     /// An active arm whose endpoint the boot could not resolve keeps its spawn
     /// factory and provisions no pump, so its driver boots and halts at its
     /// live-mode gate instead of silently never starting.

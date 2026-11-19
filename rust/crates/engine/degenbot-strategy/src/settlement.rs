@@ -1,9 +1,12 @@
 //! The settlement strategy composition: sealed-block atomic arbitrage.
 //!
-//! Settlement is the settled-block reaction kind. It reacts to sealed blocks
-//! through the arb engine's block pump rather than a hosted driver loop, so
-//! this type is the strategy plane's *config* view of the arm — the values the
-//! engine pump resolves before it drives a block — not a second driver.
+//! Settlement is the settled-block reaction kind. Its block clock is the arb
+//! engine's block pump, so this type is the strategy plane's *config* view of
+//! the arm — the values the engine pump resolves before it drives a block — not
+//! a driver of its own. The arm's hosted driver is that pump session's
+//! lifetime (`degenbot_bot::arb_engine::settlement_driver`), which the session
+//! boot attaches as this facet's spawn factory; the loop it boots adds no pump
+//! around the one the engine already runs.
 //!
 //! | Slot | Binding |
 //! |---|---|
@@ -18,12 +21,6 @@
 //!
 //! Every place settlement remains special, each with why it stays:
 //!
-//! - **Pump self-driving (no spawn factory).** The engine's arb pump owns the
-//!   settlement loop, so the host registers no [`DriverSpawnFactory`] for it and
-//!   `start_driving` skips it. Why: sealed-block work is driven by the block
-//!   clock the pump already owns; generalizing the pump into a hosted loop is
-//!   ADR-018's on-demand work, deferred until a second settled-block strategy
-//!   exists.
 //! - **Process-global submission lane.** The boot installs the settlement
 //!   [`NonceLane`] process-wide instead of scoping it under a host
 //!   `LaneNamespace`. Why: the settlement seam is the Python-driven arm of the
@@ -38,7 +35,6 @@
 //!   needs the same window, so the settlement arm holds no registrar of its
 //!   own.
 //!
-//! [`DriverSpawnFactory`]: degenbot_substrate::driver_spawn::DriverSpawnFactory
 //! [`NonceLane`]: degenbot_substrate::nonce::NonceLane
 
 use degenbot_config::BotConfig;
