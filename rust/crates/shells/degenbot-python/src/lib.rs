@@ -672,6 +672,26 @@ mod _ffi {
         register_submodules_in_sys(m)
     }
 
+    /// The fork spawn family (ADR-103): one type per operator action — run the
+    /// program, read the child's stderr, widen the deadline — so a driver
+    /// branches on the cause instead of parsing a message.
+    #[cfg(feature = "fork")]
+    fn register_fork_exception_types(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add(
+            "AnvilSpawnError",
+            py.get_type::<crate::fork::AnvilSpawnError>(),
+        )?;
+        m.add(
+            "AnvilChildExitError",
+            py.get_type::<crate::fork::AnvilChildExitError>(),
+        )?;
+        m.add(
+            "AnvilSpawnTimeoutError",
+            py.get_type::<crate::fork::AnvilSpawnTimeoutError>(),
+        )?;
+        Ok(())
+    }
+
     /// The `create_exception!` exception types. They carry no `_PYO3_DEF`
     /// (only `#[pyclass]`/`#[pyfunction]`/`#[pymodule]` items do), so they
     /// cannot take `#[pymodule_export]` — this is the one imperative
@@ -686,6 +706,11 @@ mod _ffi {
             "ChainMismatchError",
             py.get_type::<crate::rpc::errors::ChainMismatchError>(),
         )?;
+
+        // The fork spawn family (ADR-103), behind its own helper so the
+        // island stays a router. (feature = "fork")
+        #[cfg(feature = "fork")]
+        register_fork_exception_types(py, m)?;
 
         // Typed verification exceptions: distinct `RuntimeError`
         // subclasses so `build_paths` can classify verification failures by type

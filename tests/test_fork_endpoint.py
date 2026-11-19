@@ -12,6 +12,7 @@ from typing import Self
 
 import pytest
 
+from degenbot.exceptions import AnvilChildExitError, AnvilSpawnError
 from tests.fork_endpoint import (
     ForkUpstreamUnavailable,
     UpstreamAnswer,
@@ -87,27 +88,21 @@ def _clock(*ticks: float):
 
 
 class _Spawn:
-    """A spawn callable failing a scripted number of times, then answering.
+    """A spawn callable failing with a scripted cause, then answering.
 
-    The failure message mirrors the core ``ChildExit`` display for a forked
-    child that died during startup: the exit status, the fork target, and the
-    pointer at the inherited stderr. Fast death is the shape the retry policy
-    gives a second chance; nothing here classifies on the text.
+    The failures are the typed spawn exceptions, so the policy is proven to
+    branch on the cause a driver acts on — never on a message.
     """
 
-    def __init__(self, *, failures: int) -> None:
+    def __init__(self, *, failures: int, cause: type[Exception] = AnvilChildExitError) -> None:
         self.calls = 0
         self._failures = failures
+        self._cause = cause
 
     def __call__(self) -> str:
         self.calls += 1
         if self.calls <= self._failures:
-            msg = (
-                "anvil exited before it was ready (exit status: 1) "
-                "(fork target https://hosted.example/v1/key); "
-                "the child's own reason is on the stderr above"
-            )
-            raise RuntimeError(msg)
+            raise self._cause()
         return "fork"
 
 
@@ -198,9 +193,27 @@ def test_spawn_does_not_retry_an_in_memory_spawn():
     def probe(*_args: object, **_kwargs: object) -> UpstreamAnswer:
         pytest.fail("an in-memory spawn has no upstream to probe")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(AnvilChildExitError):
         spawn_fork(spawn, probe=probe)
     assert spawn.calls == 1
+
+
+def test_spawn_does_not_retry_a_program_that_could_not_run():
+    """A missing node binary is the environment, never the upstream's fault."""
+    spawn = _Spawn(failures=5, cause=AnvilSpawnError)
+    slept: list[float] = []
+    answers = iter((UpstreamAnswer.ANSWERED,))
+
+    def probe(_url: str, **_kwargs: object) -> UpstreamAnswer:
+        try:
+            return next(answers)
+        except StopIteration:
+            pytest.fail("a program that could not run leaves nothing to probe")
+
+    with pytest.raises(AnvilSpawnError):
+        spawn_fork(spawn, fork_url=URL, probe=probe, sleep=slept.append, clock=_clock(0.0))
+    assert spawn.calls == 1
+    assert slept == []
 
 
 def test_spawn_does_not_retry_a_failure_that_spent_the_deadline():

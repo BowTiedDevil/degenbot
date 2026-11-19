@@ -53,6 +53,7 @@ use crate::conversion::alloy::{extract_python_u256, u256_to_py};
 use crate::runtime::get_runtime;
 use alloy::primitives::{Address, Bytes};
 use degenbot_fork::{AnvilFork as CoreAnvilFork, AnvilForkBuilder, ForkError, MiningMode};
+use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -64,17 +65,43 @@ use pyo3::types::PyBytes;
 const DEFAULT_MNEMONIC: &str =
     "patient rude simple dog close planet oval animal hunt sketch suspect slim";
 
-/// Map a core [`ForkError`] to a `PyErr`.
+create_exception!(
+    degenbot._ffi,
+    AnvilSpawnError,
+    PyRuntimeError,
+    "The node program could not run at all — fix the program or the environment."
+);
+
+create_exception!(
+    degenbot._ffi,
+    AnvilChildExitError,
+    PyRuntimeError,
+    "The node exited before reporting readiness — its own reason is on stderr."
+);
+
+create_exception!(
+    degenbot._ffi,
+    AnvilSpawnTimeoutError,
+    PyRuntimeError,
+    "The readiness deadline expired with the node still alive."
+);
+
+/// Map a core [`ForkError`] to the typed `PyErr` its cause deserves.
 ///
-/// One Python exception carries the whole fork surface: every variant becomes a
-/// `PyRuntimeError`, and the cause rides in its message, which the core error's
-/// `Display` renders per variant — a node program that could not be executed, a
-/// child that exited before readiness, an expired readiness deadline, another
-/// readiness failure, the fork transport runtime, the IPC connect, and a
-/// dev-RPC error each read as their own sentence.
+/// The spawn family is one exception per operator action — run the program,
+/// read the child's stderr, widen the deadline — so a driver branches on the
+/// type instead of parsing the rendered sentence. Everything else (the
+/// transport runtime, the IPC connect, a dev-RPC error) is a `RuntimeError`
+/// carrying the cause's own text.
 #[expect(clippy::needless_pass_by_value)] // `Result::map_err` requires the arg by value.
 fn map_fork_err(e: ForkError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+    let message = e.to_string();
+    match e {
+        ForkError::Spawn { .. } => AnvilSpawnError::new_err(message),
+        ForkError::ChildExit { .. } => AnvilChildExitError::new_err(message),
+        ForkError::SpawnTimeout { .. } => AnvilSpawnTimeoutError::new_err(message),
+        _ => PyRuntimeError::new_err(message),
+    }
 }
 
 /// Validate + parse a `0x…` address argument → [`Address`].
@@ -129,6 +156,7 @@ impl PyAnvilFork {
         chain_id=None,
         anvil_opts=None,
         fork_compute_units_per_second=None,
+        program=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
@@ -147,6 +175,7 @@ impl PyAnvilFork {
         chain_id: Option<u64>,
         anvil_opts: Option<Vec<String>>,
         fork_compute_units_per_second: Option<u64>,
+        program: Option<String>,
     ) -> PyResult<Self> {
         // Arg extraction (no business logic; the closure below is `Send`,
         // so all borrows must be drained to owned values BEFORE the
@@ -195,6 +224,9 @@ impl PyAnvilFork {
         }
         if let Some(cups) = fork_compute_units_per_second {
             builder = builder.fork_compute_units_per_second(cups);
+        }
+        if let Some(p) = program {
+            builder = builder.program(p);
         }
 
         let fork = py

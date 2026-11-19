@@ -132,6 +132,9 @@ class ForkLaunchConfig:
     storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]] | None = None
     coinbase: HexAddress | None = None
     anvil_opts: list[str] | None = None
+    # Node program to spawn instead of `anvil` from `$PATH` — a pinned build
+    # or a wrapper.
+    program: pathlib.Path | None = None
     # Cap on the fork upstream's request rate (anvil's
     # ``--compute-units-per-second``). ``None`` derives the cap from the fork
     # target: ``nodes.anvil_fork_compute_units_per_second`` for a hosted
@@ -162,6 +165,7 @@ class _AnvilForkSpawnKwargs(TypedDict):
     chain_id: int | None
     anvil_opts: Sequence[str] | None
     fork_compute_units_per_second: int | None
+    program: str | None
 
 
 class AnvilFork:
@@ -237,7 +241,8 @@ class AnvilFork:
 
         Spawns the rust-owned anvil subprocess + connects the alloy
         `DynProvider` over IPC + (queued post-spawn state overrides
-        applied after spawn). The rust core raises `RuntimeError` on
+        applied after spawn). The rust core raises the typed spawn family (`AnvilSpawnError`,
+        `AnvilChildExitError`, `AnvilSpawnTimeoutError`) on
         spawn/IPC-connect failure, `ValueError` on invalid `mining_mode`; the
         post-spawn override calls propagate `AnvilError` (RPC) and
         `DegenbotValueError` (interval-without-value).
@@ -334,6 +339,7 @@ class AnvilFork:
                 if launch.fork_compute_units_per_second is not None
                 else _default_fork_compute_units_per_second(fork_url)
             ),
+            "program": str(launch.program) if launch.program is not None else None,
         }
 
     # ------------------------------------------------------------------

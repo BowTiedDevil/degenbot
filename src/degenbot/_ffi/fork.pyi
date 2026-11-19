@@ -42,6 +42,7 @@ class AnvilFork:
         chain_id: SupportsIndex | None = None,
         anvil_opts: SupportsGetItem[int, str] | None = None,
         fork_compute_units_per_second: SupportsIndex | None = None,
+        program: str | None = None,
     ) -> AnvilFork:
         """
         Spawn the `anvil` subprocess + connect the IPC `DynProvider`.

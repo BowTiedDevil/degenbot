@@ -15,6 +15,9 @@ stamped by the PyO3 adapter, never re-derived from the message.
 """
 
 from degenbot._ffi import (
+    AnvilChildExitError,
+    AnvilSpawnError,
+    AnvilSpawnTimeoutError,
     # The typed fleet boot refusal — the library never
     # aborts the host process on the boot-refusal arm; the binary maps
     # this exception to its loud named fail-fast exit.
@@ -92,7 +95,10 @@ from degenbot.exceptions.verification import (
 
 __all__ = (
     "AddressMismatch",
+    "AnvilChildExitError",
     "AnvilError",
+    "AnvilSpawnError",
+    "AnvilSpawnTimeoutError",
     "ArbCalculationError",
     "ArbitrageError",
     "BackupExists",

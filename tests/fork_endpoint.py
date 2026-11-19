@@ -14,14 +14,16 @@ re-issue it. Two things the harness can do, and this module does:
 * wait for the endpoint to answer again *before* spawning — the probe is a
   plain ``eth_chainId`` liveness call, bounded, with exponential backoff;
 * give the spawn one second chance when a failed spawn coincides with an
-  unhealthy endpoint.
+  unhealthy endpoint — never when the program itself could not run.
 
-The classification is evidence, never the message text: a second probe decides
-whether the upstream or the fork itself failed — an endpoint that answers while
-the spawn failed is the fork's problem (bad flags, a missing block) and
-retrying would only hide it. Neither does the harness retry a spawn that was
-slow enough to have spent the deadline: only a fast child death leaves room in
-the test's budget for a second attempt.
+The classification is two-layered and never the message text: a typed cause
+names what failed (a program that could not run is the environment's problem
+and is never retried), and a second probe decides whether the upstream or the
+fork itself did — an endpoint that answers while the spawn failed is the
+fork's problem (bad flags, a missing block) and retrying would only hide it.
+Neither does the harness retry a spawn that was slow enough to have spent the
+deadline: only a fast child death leaves room in the test's budget for a
+second attempt.
 
 Scope is the test lane: production spawn failures stay loud and unretried.
 
@@ -42,6 +44,7 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Final
 
+from degenbot.exceptions import AnvilSpawnError
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
@@ -210,6 +213,10 @@ def spawn_fork[T](
         started = clock()
         try:
             return spawn()
+        except AnvilSpawnError:
+            # A program that could not run is the environment's problem:
+            # no endpoint state makes a second attempt more likely to run.
+            raise
         except RuntimeError:
             elapsed = clock() - started
             if (
