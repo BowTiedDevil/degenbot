@@ -108,15 +108,28 @@ class ChainlinkPriceFeed:
     def price(self, /) -> Any:
         """
         The decimal-corrected nominal price as a `U256` (whole units) — the
-        integer analogue of `int(answer // 10**decimals)`. Negative answers
-        (never for live USD feeds, but allowed by the `int256` ABI type) clamp
-        to zero.
+        integer analogue of `int(answer // 10**decimals)`.
+
+        A zero answer is a zero price. Malformed feed data is refused, never
+        priced: a negative answer, or a `decimals` whose `10**decimals` cannot
+        be scaled, raises `ValueError` carrying the aggregator, the answer, and
+        the decimals (`PriceError::FeedData` as `degenbot-price` maps it).
 
         Note: the Python shell `ChainlinkPriceContract.price` (a float)
         computes `float(answer) / 10**decimals` from `latest_round_data` +
         `decimals` to preserve the prior float-exact behavior *including* the
         fractional part; this `price` truncates and is exposed for direct
         Rust/standalone consumers.
+        """
+    def validate(self, /, answer: Any, decimals: SupportsIndex) -> None:
+        """
+        Validate, without an `eth_call`, that a decoded `answer`/`decimals` pair
+        can be priced by this feed.
+
+        The reader's own check, for a companion that decoded the round tuple
+        itself: the Python shell keeps the fractional float the integer `price`
+        truncates away, so it validates the tuple it already has. Raises
+        `ValueError` naming the aggregator, the answer, and the decimals.
         """
 
 __all__ = [

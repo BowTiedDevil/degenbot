@@ -27,7 +27,13 @@ class ChainlinkPriceContract:
     / ``abi_decode`` bodies are retired — ``eth_call`` + canonical ABI decode now
     run in Rust. The float ``price`` is computed here (display layer) from the raw
     ``int256`` answer + ``decimals``, preserving the prior ``float(answer / 10**decimals)``
-    behavior exactly.
+    behavior exactly, fractional part included.
+
+    Feed-data validation belongs to the Rust reader, and ``price`` applies it
+    before dividing: the reader's no-RPC ``validate`` runs over the round tuple
+    already decoded here, so a negative answer or an unscalable ``decimals``
+    raises (a ``ValueError`` naming the feed, answer, and decimals) instead of
+    yielding a price.
     """
 
     def __init__(
@@ -93,7 +99,9 @@ class ChainlinkPriceContract:
         """Price.
 
         Raises:
-            ValueError: See function documentation.
+            ValueError: If no ``bot`` was set, or if the feed reports malformed
+                data (a negative answer, or a ``decimals`` the reader cannot
+                scale). The message names the feed, answer, and decimals.
 
         """
         if self._bot is None:
@@ -106,4 +114,9 @@ class ChainlinkPriceContract:
         _round_id, answer, _started_at, _updated_at, _answered_in_round = (
             self._get_py_feed().latest_round_data()
         )
-        return cast("float", float(answer) / (10**self.decimals))
+        decimals = self.decimals
+        # The Rust reader owns the malformed-data policy: the same check its
+        # integer `price()` applies, run over the tuple decoded above, so this
+        # float path costs no second `eth_call`.
+        self._get_py_feed().validate(answer, decimals)
+        return cast("float", float(answer) / (10**decimals))

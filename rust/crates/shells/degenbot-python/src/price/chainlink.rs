@@ -9,7 +9,7 @@
 //! behavior — the Rust `price()` truncating-integer convenience is also
 //! exposed here for standalone Rust consumers).
 
-use crate::conversion::alloy::{i256_to_py, u256_to_py};
+use crate::conversion::alloy::{extract_python_i256, i256_to_py, u256_to_py};
 use crate::prelude::*;
 use crate::rpc::provider::PyAlloyProvider;
 use degenbot_price::ChainlinkPriceFeed;
@@ -85,9 +85,12 @@ impl PyChainlinkPriceFeed {
     }
 
     /// The decimal-corrected nominal price as a `U256` (whole units) — the
-    /// integer analogue of `int(answer // 10**decimals)`. Negative answers
-    /// (never for live USD feeds, but allowed by the `int256` ABI type) clamp
-    /// to zero.
+    /// integer analogue of `int(answer // 10**decimals)`.
+    ///
+    /// A zero answer is a zero price. Malformed feed data is refused, never
+    /// priced: a negative answer, or a `decimals` whose `10**decimals` cannot
+    /// be scaled, raises `ValueError` carrying the aggregator, the answer, and
+    /// the decimals (`PriceError::FeedData` as `degenbot-price` maps it).
     ///
     /// Note: the Python shell `ChainlinkPriceContract.price` (a float)
     /// computes `float(answer) / 10**decimals` from `latest_round_data` +
@@ -101,6 +104,115 @@ impl PyChainlinkPriceFeed {
             .map_err(Into::<PyErr>::into)?;
         u256_to_py(py, &price)
     }
+
+    /// Validate, without an `eth_call`, that a decoded `answer`/`decimals` pair
+    /// can be priced by this feed.
+    ///
+    /// The reader's own check, for a companion that decoded the round tuple
+    /// itself: the Python shell keeps the fractional float the integer `price`
+    /// truncates away, so it validates the tuple it already has. Raises
+    /// `ValueError` naming the aggregator, the answer, and the decimals.
+    fn validate(&self, answer: &Bound<'_, PyAny>, decimals: u8) -> PyResult<()> {
+        let answer = extract_python_i256(answer)?;
+        self.feed
+            .validate(answer, decimals)
+            .map_err(Into::<PyErr>::into)
+    }
 }
 
 use pyo3::types::PyTuple;
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "test assertions fail loudly"
+    )]
+
+    use alloy::primitives::{Address, I256};
+    use degenbot_price::{ChainlinkPriceFeed, FeedDataReason, PriceError};
+    use degenbot_rpc::offline::OfflineProvider;
+    use pyo3::exceptions::PyValueError;
+    use pyo3::prelude::*;
+    use std::sync::Arc;
+
+    use super::PyChainlinkPriceFeed;
+    use crate::conversion::alloy::i256_to_py;
+
+    /// A reader over a provider with no recorded chain data: `validate` answers
+    /// from its arguments, so any RPC would have to fail.
+    fn offline_feed() -> PyChainlinkPriceFeed {
+        let provider = OfflineProvider::from_json_str("{\"chain_id\": 1}")
+            .unwrap()
+            .as_alloy_provider();
+        PyChainlinkPriceFeed {
+            feed: ChainlinkPriceFeed::new(
+                "0x5f4eC3Df9cbd43714FE2740f5e3616155c5b8419",
+                Arc::new(provider),
+                Some(1),
+            )
+            .unwrap(),
+        }
+    }
+
+    /// The no-RPC check answers with the same rejection the reading path
+    /// raises, so a companion projecting the fraction cannot disagree with it.
+    #[test]
+    fn chainlink_validate_reports_malformed_feed_data_without_an_rpc() {
+        let feed = offline_feed();
+
+        Python::attach(|py| {
+            let negative = i256_to_py(py, &I256::MINUS_ONE).unwrap();
+            let err = feed
+                .validate(&negative, 8)
+                .expect_err("a negative answer is not priceable");
+            assert!(err.is_instance_of::<PyValueError>(py));
+            let message = err.value(py).str().unwrap().extract::<String>().unwrap();
+            assert!(message.contains("negative answer"), "{message}");
+            assert!(message.contains("-1"), "{message}");
+            assert!(message.contains("decimals 8"), "{message}");
+
+            let priceable = i256_to_py(py, &I256::try_from(372_038_000_000i64).unwrap()).unwrap();
+            assert!(feed.validate(&priceable, 8).is_ok());
+
+            let err = feed
+                .validate(&priceable, 40)
+                .expect_err("40 decimals is not priceable");
+            let message = err.value(py).str().unwrap().extract::<String>().unwrap();
+            assert!(message.contains("overflows u128"), "{message}");
+            assert!(message.contains("decimals 40"), "{message}");
+        });
+    }
+
+    /// Malformed feed data crosses the seam as a `ValueError` that names the
+    /// feed, the answer, and the decimals — the values a driver acts on. A
+    /// silently-clamped zero would arrive as a valid price instead.
+    #[test]
+    fn chainlink_feed_data_error_reaches_python_as_value_error() {
+        let feed: Address = "0x5f4eC3Df9cbd43714FE2740f5e3616155c5b8419"
+            .parse()
+            .unwrap();
+        let error: PyErr = PriceError::FeedData {
+            feed,
+            answer: I256::MINUS_ONE,
+            decimals: 8,
+            reason: FeedDataReason::NegativeAnswer,
+        }
+        .into();
+
+        Python::attach(|py| {
+            assert!(error.is_instance_of::<PyValueError>(py));
+            let message = error.value(py).str().unwrap().extract::<String>().unwrap();
+            assert!(
+                message.contains(&format!("{feed}")),
+                "feed context: {message}"
+            );
+            assert!(message.contains("-1"), "answer context: {message}");
+            assert!(
+                message.contains("decimals 8"),
+                "decimals context: {message}"
+            );
+        });
+    }
+}

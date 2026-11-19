@@ -47,4 +47,4 @@ pub mod error;
 
 pub use aave::AavePriceOracle;
 pub use chainlink::{ChainlinkPriceFeed, RoundData};
-pub use error::{PriceError, PriceResult};
+pub use error::{FeedDataReason, PriceError, PriceResult};

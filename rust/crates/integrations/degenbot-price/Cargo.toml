@@ -26,6 +26,14 @@ thiserror = { version = "^2.0" }
 # `PyErr` (mirrors `degenbot-core`/`degenbot-rpc`'s `pyo3` feature).
 pyo3 = { version = "^0.30", features = ["abi3-py312", "serde"], optional = true }
 
+# The integration test drives the reader over a successful `eth_call` answered
+# from recorded chain data: `OfflineProvider` is a real `AlloyProvider` over an
+# in-memory transport, so no RPC mock enters the crate and the decode path under
+# test is the one a node feeds.
+[dev-dependencies]
+serde_json = { version = "^1.0" }
+tokio = { version = "^1.54", features = ["macros", "rt"] }
+
 [features]
 default = []
 # Enables `impl From<PriceError> for pyo3::PyErr`. Enabled by the

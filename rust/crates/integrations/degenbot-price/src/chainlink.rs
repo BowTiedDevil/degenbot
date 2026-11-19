@@ -18,7 +18,7 @@
 //! [`AggregatorV3Interface`]: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol
 
 use crate::decode::{as_int, as_u128, as_uint};
-use crate::error::{PriceError, PriceResult};
+use crate::error::{FeedDataReason, PriceError, PriceResult};
 use alloy::primitives::{Address, I256, U256};
 #[cfg(test)]
 use degenbot_abi::abi_types::AbiType;
@@ -145,13 +145,15 @@ impl ChainlinkPriceFeed {
     /// Fetches `decimals()` + `latestRoundData()` and divides the `int256`
     /// answer by `10**decimals`. The division is integer truncation, so the
     /// `[0,1)` fractional part is dropped — the feed reports the answer in its
-    /// own `decimals`, and this is the whole-unit face of it. Negative `answer`
-    /// values (which never occur for live USD feeds, but are possible per the
-    /// `int256` ABI) clamp to zero.
+    /// own `decimals`, and this is the whole-unit face of it. A zero answer is
+    /// a zero price.
     ///
     /// # Errors
     ///
-    /// [`PriceError`] if either underlying call fails.
+    /// [`PriceError::FeedData`] — carrying the feed address, the answer, and
+    /// the decimals — when the answer is negative or the feed's `decimals`
+    /// cannot be scaled. Malformed feed data is never truncated into a zero
+    /// price. [`PriceError`] otherwise if either underlying call fails.
     ///
     /// # Note
     ///
@@ -161,7 +163,23 @@ impl ChainlinkPriceFeed {
     pub async fn price(&self, block_number: Option<u64>) -> PriceResult<U256> {
         let decimals = self.decimals(block_number).await?;
         let round = self.latest_round_data(block_number).await?;
-        Ok(decimal_corrected_price(round.answer, decimals))
+        decimal_corrected_price(self.address(), round.answer, decimals)
+    }
+
+    /// Validate, without issuing an RPC, that a decoded `answer`/`decimals`
+    /// pair can be priced by this feed.
+    ///
+    /// The conversion's own check, exposed for a caller that decoded the round
+    /// tuple itself: the Python float projection divides the fraction the
+    /// integer [`price`](Self::price) truncates away, so it validates the tuple
+    /// it already has instead of re-deciding what malformed data means.
+    ///
+    /// # Errors
+    ///
+    /// [`PriceError::FeedData`] — carrying this feed's address, `answer`, and
+    /// `decimals` — when the pair cannot be represented as a price.
+    pub fn validate(&self, answer: I256, decimals: u8) -> PriceResult<()> {
+        feed_denominator(self.address(), answer, decimals).map(drop)
     }
 }
 
@@ -190,32 +208,66 @@ fn build_round_data(values: &[AbiValue]) -> PriceResult<RoundData> {
     })
 }
 
+/// The `int256` denominator `10**decimals` the correction divides by.
+///
+/// The one home of the feed-data policy: every reader-side refusal — [`ChainlinkPriceFeed::price`],
+/// [`ChainlinkPriceFeed::validate`], and a companion projecting the fraction —
+/// names the feed, the answer, and the decimals from here. Malformed data is
+/// never a price — least of all `0`, which a valuation would act on — and
+/// dividing by the returned denominator keeps validation and conversion from
+/// disagreeing.
+///
+/// # Errors
+///
+/// [`PriceError::FeedData`] when the pair has no non-negative whole-unit price:
+/// a negative `answer` (never produced by a live USD feed, but permitted by the
+/// `int256` ABI type), or a `decimals` whose `10**decimals` overflows `u128`
+/// (no deployed feed reports more than 18) or does not fit `int256`. The
+/// denominator guards cannot fire for a power of ten today; they answer with
+/// typed errors rather than a silent zero so a future change to the scale
+/// cannot reintroduce one.
+fn feed_denominator(feed: Address, answer: I256, decimals: u8) -> PriceResult<I256> {
+    let feed_data = |reason: FeedDataReason| PriceError::FeedData {
+        feed,
+        answer,
+        decimals,
+        reason,
+    };
+
+    // Check the answer, not the truncated quotient: -1 wei at 8 decimals
+    // divides to 0, which would report malformed data as a valid zero price.
+    if answer.is_negative() {
+        return Err(feed_data(FeedDataReason::NegativeAnswer));
+    }
+    let Some(pow_u128) = 10u128.checked_pow(u32::from(decimals)) else {
+        return Err(feed_data(FeedDataReason::DecimalsOverflow));
+    };
+    let Ok(denom) = I256::try_from(pow_u128) else {
+        return Err(feed_data(FeedDataReason::DenominatorConversion));
+    };
+    if denom.is_zero() {
+        return Err(feed_data(FeedDataReason::ZeroDenominator));
+    }
+    Ok(denom)
+}
+
 /// Decimal-correct a raw `int256` Chainlink answer into a `U256` whole-unit
 /// price: `answer / 10**decimals`, truncated toward zero.
 ///
 /// The answer arrives in the feed's own `decimals`; the division drops the
-/// `[0,1)` fractional part. A negative `answer` (not produced by live USD feeds,
-/// but permitted by the `int256` ABI type) clamps to zero rather than wrapping
-/// into a two's-complement magnitude. `decimals` beyond ~38 (no Chainlink feed)
-/// would overflow `u128::checked_pow`; such a feed clamps to zero here too —
-/// the caller already validated the feed address, not the on-chain return.
-#[must_use]
-pub(crate) fn decimal_corrected_price(answer: I256, decimals: u8) -> U256 {
-    let Some(pow_u128) = 10u128.checked_pow(u32::from(decimals)) else {
-        return U256::ZERO;
-    };
-    let Ok(denom) = I256::try_from(pow_u128) else {
-        return U256::ZERO;
-    };
-    if denom.is_zero() {
-        return U256::ZERO;
-    }
-    let adjusted = answer / denom;
-    if adjusted.is_negative() {
-        U256::ZERO
-    } else {
-        adjusted.into_raw()
-    }
+/// `[0,1)` fractional part. A zero answer is a zero price.
+///
+/// # Errors
+///
+/// Whatever [`feed_denominator`] refuses, with the feed, the answer, and the
+/// decimals attached.
+pub(crate) fn decimal_corrected_price(
+    feed: Address,
+    answer: I256,
+    decimals: u8,
+) -> PriceResult<U256> {
+    let denominator = feed_denominator(feed, answer, decimals)?;
+    Ok((answer / denominator).into_raw())
 }
 
 /// Latest-round-data return types, for parity-test byte construction.
@@ -305,43 +357,129 @@ mod tests {
         );
     }
 
+    fn pinned_feed() -> Address {
+        PINNED_CHAINLINK_ETH_USD
+            .parse()
+            .expect("pinned feed address parses")
+    }
+
     #[test]
     fn decimal_correction_matches_python_integer_division() {
         // Python: float(answer) / 10**decimals → here the integer analogue
         // int(answer // 10**decimals), matching value-exactly for the whole
         // units (the [0,1) fractional part is dropped).
+        let feed = pinned_feed();
         // ETH @ $1845.00, 8 decimals.
         assert_eq!(
-            decimal_corrected_price(I256::try_from(184_500_000_000i64).unwrap(), 8),
+            decimal_corrected_price(feed, I256::try_from(184_500_000_000i64).unwrap(), 8)
+                .expect("a positive answer is priceable"),
             U256::from(1845u64)
         );
         // USDC-style 6-decimal feed @ $1.00.
         assert_eq!(
-            decimal_corrected_price(I256::try_from(1_000_000i64).unwrap(), 6),
+            decimal_corrected_price(feed, I256::try_from(1_000_000i64).unwrap(), 6)
+                .expect("a positive answer is priceable"),
             U256::from(1u64)
         );
         // WETH-style 18-decimal feed @ $3000.50 → truncates to 3000 whole units.
         assert_eq!(
             decimal_corrected_price(
+                feed,
                 I256::try_from(U256::from(3_000_500_000_000_000_000_000u128)).unwrap(),
                 18,
-            ),
+            )
+            .expect("a positive answer is priceable"),
             U256::from(3000u64)
         );
-        // Zero answer → zero price.
-        assert_eq!(decimal_corrected_price(I256::ZERO, 8), U256::ZERO);
-        // Negative answer (never for live USD feeds, but allowed by int256)
-        // clamps to zero rather than a two's-complement monster.
+        // Zero answer → zero price (a zero answer is data, not malformed data).
         assert_eq!(
-            decimal_corrected_price(I256::try_from(-1i64).unwrap(), 8),
+            decimal_corrected_price(feed, I256::ZERO, 8).expect("zero is priceable"),
             U256::ZERO
         );
         // Fractional truncation: answer = 184_500_000_005, 8 dec → 1845
         // (the trailing 5 units are the fractional part, dropped).
         assert_eq!(
-            decimal_corrected_price(I256::try_from(184_500_000_005i64).unwrap(), 8),
+            decimal_corrected_price(feed, I256::try_from(184_500_000_005i64).unwrap(), 8)
+                .expect("a positive answer is priceable"),
             U256::from(1845u64)
         );
+        // A 38-decimal feed is the widest `10**decimals` that fits `u128`.
+        assert_eq!(
+            decimal_corrected_price(feed, I256::try_from(10i128.pow(38)).unwrap(), 38)
+                .expect("38 decimals still fits the denominator"),
+            U256::from(1u64)
+        );
+    }
+
+    #[test]
+    fn negative_answer_is_feed_data_error_not_zero() {
+        let feed = pinned_feed();
+        let answer = I256::try_from(-184_500_000_005i64).unwrap();
+        let err = decimal_corrected_price(feed, answer, 8)
+            .expect_err("a negative answer cannot be priced");
+        assert!(
+            matches!(
+                err,
+                PriceError::FeedData {
+                    feed: got_feed,
+                    answer: got_answer,
+                    decimals: 8,
+                    reason: FeedDataReason::NegativeAnswer,
+                } if got_feed == feed && got_answer == answer
+            ),
+            "a negative answer must surface as FeedData{{NegativeAnswer}} carrying \
+             the feed and answer, got {err:?}"
+        );
+        // The message names all three pieces of context: a caller can point at
+        // the misbehaving feed and the exact on-chain values without re-reading
+        // the chain.
+        let message = err.to_string();
+        assert!(
+            message.contains(&format!("{feed}")),
+            "feed context: {message}"
+        );
+        assert!(
+            message.contains("-184500000005"),
+            "answer context: {message}"
+        );
+        assert!(
+            message.contains("decimals 8"),
+            "decimals context: {message}"
+        );
+        // A small negative answer truncates to zero in integer division; the
+        // refusal happens on the answer, so it never arrives as a valid `0`.
+        assert!(
+            matches!(
+                decimal_corrected_price(feed, I256::try_from(-1i64).unwrap(), 8),
+                Err(PriceError::FeedData {
+                    reason: FeedDataReason::NegativeAnswer,
+                    ..
+                })
+            ),
+            "a negative answer that divides to zero is still an error, not a price"
+        );
+    }
+
+    #[test]
+    fn decimals_beyond_u128_power_is_feed_data_error() {
+        let feed = pinned_feed();
+        let answer = I256::try_from(372_038_000_000i64).unwrap();
+        for decimals in [39u8, 40, u8::MAX] {
+            let err = decimal_corrected_price(feed, answer, decimals)
+                .expect_err("10**decimals overflows u128 above 38 decimals");
+            assert!(
+                matches!(
+                    err,
+                    PriceError::FeedData {
+                        feed: got_feed,
+                        answer: got_answer,
+                        decimals: got_decimals,
+                        reason: FeedDataReason::DecimalsOverflow,
+                    } if got_feed == feed && got_answer == answer && got_decimals == decimals
+                ),
+                "decimals {decimals} must surface as FeedData{{DecimalsOverflow}}, got {err:?}"
+            );
+        }
     }
 
     #[test]

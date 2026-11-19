@@ -2890,7 +2890,9 @@ dependencies = [
  "degenbot-core",
  "degenbot-rpc",
  "pyo3",
+ "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
