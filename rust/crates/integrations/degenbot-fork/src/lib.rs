@@ -13,10 +13,13 @@
 //! [`alloy::providers::ext::AnvilApi`] trait.
 //!
 //! This crate is a standalone-Rust core: a Rust-only consumer can
-//! `cargo add degenbot-fork` to spin an anvil fork — no Python required. The
-//! `anvil` binary must be present in `$PATH` at runtime (it is the same
+//! `cargo add degenbot-fork` to spin an anvil fork — no Python required. By
+//! default the `anvil` binary must be present in `$PATH` at runtime (the same
 //! runtime dependency degenbot already required for the legacy Python
-//! `AnvilFork`).
+//! `AnvilFork`); [`AnvilForkBuilder::program`] names a pinned build or a
+//! wrapper instead. A spawn failure is classified by cause — see
+//! [`ForkError`] — so a driver can act on what went wrong instead of parsing
+//! a sentence.
 //!
 //! Zero `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` wrapper
 //! lives under `degenbot-python/src/fork/`.
