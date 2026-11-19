@@ -25,7 +25,7 @@
 //! populates them) so the JSON shape + a future lightweight drift detector can
 //! repopulate them via `compute_field_diffs` without re-introducing the heavy
 //! Multicall3 recompute.
-use super::ArbitrageEngine;
+use super::{ArbitrageEngine, ClampStatus};
 use ::degenbot_pools::solve::{HopType, MixedPoolRef};
 use alloy::primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
@@ -194,8 +194,72 @@ pub enum DiagnosticPoolState {
         tick: i32,
         liquidity: String,
     },
+    /// The typed verdict for a hop family with no authoritative quote at this
+    /// seam: Curve, Balancer (weighted and stable), and Solidly have no
+    /// byte-exact twin, so none of the hop's figures were verified. `reason`
+    /// carries the clamp's own status for such a hop, so the snapshot speaks the
+    /// merge's vocabulary instead of inventing a second one.
+    Unsupported {
+        #[serde(with = "hop_family_serde")]
+        family: HopType,
+        reason: ClampStatus,
+    },
 }
+
+/// The short diagnostic tag for a hop family — the ONE spelling the snapshot's
+/// `hop_type` column, its `path_type` string, and an unsupported verdict's
+/// family all share.
+#[must_use]
+fn hop_type_tag(hop: HopType) -> &'static str {
+    match hop {
+        HopType::V2 => "V2",
+        HopType::V3 => "V3",
+        HopType::V4 => "V4",
+        HopType::SolidlyStable => "Solidly",
+        HopType::BalancerWeighted => "BalW",
+        HopType::BalancerStable => "BalS",
+        HopType::CurveStableswap => "Crv",
+    }
+}
+
+/// The serde wire form of an unsupported verdict's `family`: [`hop_type_tag`],
+/// so the verdict's family and the hop's own tag can never disagree.
+mod hop_family_serde {
+    use super::hop_type_tag;
+    use ::degenbot_pools::solve::HopType;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    // `serialize_with` hands the field by reference by contract.
+    #[expect(clippy::trivially_copy_pass_by_ref)]
+    pub(super) fn serialize<S: Serializer>(
+        family: &HopType,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(hop_type_tag(*family))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<HopType, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        HopType::ALL
+            .iter()
+            .copied()
+            .find(|hop| hop_type_tag(*hop) == raw)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown hop family {raw:?}")))
+    }
+}
+
 impl DiagnosticPoolState {
+    /// The unsupported verdict for `family`: no authoritative quote exists at
+    /// this seam, so the clamp's status for that hop is `Unverified`.
+    #[must_use]
+    fn unsupported(family: HopType) -> Self {
+        Self::Unsupported {
+            family,
+            reason: ClampStatus::Unverified,
+        }
+    }
     /// Short family tag used by `compute_field_diffs` for the cross-family
     /// mismatch case (e.g. engine V2 vs onchain V3).
     #[must_use]
@@ -204,6 +268,7 @@ impl DiagnosticPoolState {
             Self::V2 { .. } => "V2",
             Self::V3 { .. } => "V3",
             Self::V4 { .. } => "V4",
+            Self::Unsupported { family, .. } => hop_type_tag(*family),
         }
     }
 }
@@ -214,23 +279,23 @@ impl DiagnosticPoolState {
 /// populates them) after the `fetch_onchain` retirement. A future
 /// lightweight drift detector may repopulate them via `compute_field_diffs`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
 pub struct DiagnosticHop {
     /// Zero-based position of the hop in the path.
     pub position: usize,
-    /// Short hop-type tag: "V2", "V3", or "V4".
+    /// Short hop-type tag: the family's [`hop_type_tag`] spelling.
     pub hop_type: String,
     /// Whether the hop is zero-for-one in the path direction.
     pub zero_for_one: bool,
-    /// Engine-owned state captured under the engine lock.
+    /// The hop's typed engine-state verdict: the family's real state, or the
+    /// typed `Unsupported` verdict when no authoritative quote exists.
     pub engine_state: DiagnosticPoolState,
     /// On-chain state fetched after the lock was released (`None` — the
     /// `fetch_onchain` half was retired; retained for a future
     /// lightweight drift detector).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onchain_state: Option<DiagnosticPoolState>,
     /// Human-readable field-level differences between engine and chain.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diff: Vec<String>,
     /// True iff ANY field differs between `engine_state` and `onchain_state`
     /// `false` when no on-chain fetch ran or every fetched field
@@ -242,26 +307,6 @@ pub struct DiagnosticHop {
     /// derived from these (`FieldDiff::to_diff_string`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub field_drift: Vec<FieldDiff>,
-}
-impl Default for DiagnosticHop {
-    fn default() -> Self {
-        Self {
-            position: 0,
-            hop_type: String::new(),
-            zero_for_one: false,
-            engine_state: DiagnosticPoolState::V2 {
-                address: String::new(),
-                reserve_in: String::new(),
-                reserve_out: String::new(),
-                fee_denom: String::new(),
-                gamma_numer: String::new(),
-            },
-            onchain_state: None,
-            diff: Vec::new(),
-            drift: false,
-            field_drift: Vec::new(),
-        }
-    }
 }
 /// Diagnostic snapshot for a single registered mixed path.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -375,40 +420,21 @@ pub(crate) fn diagnostic_path_state(
     let type_tags: Vec<&str> = path
         .pools
         .iter()
-        .map(|r| match r.hop_type {
-            HopType::V2 => "V2",
-            HopType::V3 => "V3",
-            HopType::V4 => "V4",
-            HopType::SolidlyStable => "Solidly",
-            HopType::BalancerWeighted => "BalW",
-            HopType::BalancerStable => "BalS",
-            HopType::CurveStableswap => "Crv",
-        })
+        .map(|r| hop_type_tag(r.hop_type))
         .collect();
     snapshot.path_type = type_tags.join("-");
     for (position, pool_ref) in path.pools.iter().enumerate() {
-        let engine_state = build_engine_pool_state(&core, pool_ref);
-        let Some(engine_state) = engine_state else {
-            // Pool referenced by the path is missing from the sub-engine.
-            // This is itself a diagnostic signal; record a placeholder
-            // and continue so the rest of the hops are still visible.
-            snapshot.hops.push(DiagnosticHop {
-                position,
-                hop_type: type_tags[position].to_string(),
-                zero_for_one: pool_ref.zero_for_one,
-                engine_state: DiagnosticPoolState::V2 {
-                    address: "0x0000000000000000000000000000000000000000".to_string(),
-                    reserve_in: "0x0".to_string(),
-                    reserve_out: "0x0".to_string(),
-                    fee_denom: "0x0".to_string(),
-                    gamma_numer: "0x0".to_string(),
-                },
-                onchain_state: None,
-                diff: vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
-                drift: false,
-                field_drift: Vec::new(),
-            });
-            continue;
+        // A twin-verified family reads its real state; a family with no
+        // authoritative quote answers the typed `Unsupported` verdict itself. A
+        // twin-verified family whose pool is absent from the snapshot is the SAME
+        // verdict — nothing was verified — with a diff naming the missing pool,
+        // so the absence stays visible without a fabricated pool record.
+        let (engine_state, diff) = match build_engine_pool_state(&core, pool_ref) {
+            Some(state) => (state, Vec::new()),
+            None => (
+                DiagnosticPoolState::unsupported(pool_ref.hop_type),
+                vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
+            ),
         };
         snapshot.hops.push(DiagnosticHop {
             position,
@@ -416,7 +442,7 @@ pub(crate) fn diagnostic_path_state(
             zero_for_one: pool_ref.zero_for_one,
             engine_state,
             onchain_state: None,
-            diff: Vec::new(),
+            diff,
             drift: false,
             field_drift: Vec::new(),
         });
@@ -443,9 +469,10 @@ fn thread_solver_result_onto_snapshot(
 }
 /// Build the per-hop [`DiagnosticPoolState`] from a locked [`BotState`] snapshot.
 ///
-/// Returns `None` when the pool referenced by `pool_ref` is absent from the
-/// sub-engine — the caller records a "missing pool" placeholder in that case
-/// so the rest of the hops remain visible.
+/// Returns `None` only when a twin-verified family's pool is absent from the
+/// sub-engine; the caller turns that into the same typed `Unsupported` verdict
+/// plus a "missing pool" diff. The families with no authoritative quote answer
+/// the verdict here, so no placeholder record stands in for them.
 fn build_engine_pool_state(
     core: &degenbot_substrate::BotState,
     pool_ref: &MixedPoolRef,
@@ -508,23 +535,21 @@ fn build_engine_pool_state(
                 liquidity: format!("0x{:x}", state.liquidity),
             })
         }
-        // Solidly-stable diagnostics land with the resolve+solve wiring
-        // . Until then, a Solidly hop records a
-        // "not yet wired" placeholder; same for Balancer stable and weighted
-        // the path is still solvable via the other hops' diagnostic data.
         HopType::SolidlyStable
         | HopType::BalancerWeighted
         | HopType::BalancerStable
-        | HopType::CurveStableswap => None,
+        | HopType::CurveStableswap => Some(DiagnosticPoolState::unsupported(pool_ref.hop_type)),
     }
 }
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::arb_engine::lifecycle::{last_processed_block, register_path};
+    use crate::arb_engine::path_registry::PathRegistration;
+    use crate::arb_engine::solve_cycle::ClampStatus;
     use crate::arb_engine::test_harness::run_test_cycle;
     use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState};
-    use ::degenbot_pools::solve::PoolHop;
+    use ::degenbot_pools::solve::{HopType, MixedPoolRef, PoolHop};
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::RegisterV3PoolParams as V3Params;
@@ -609,29 +634,45 @@ mod tests {
                 known_bitmap_words: Vec::new(),
             })
             .expect("V4 registration failed");
-        // Mixed V2 -> V3 -> V4 path
-        let path_id = register_path(
-            &mut engine,
-            vec![
-                PoolHop {
-                    pool_id: v2_fwd,
+        // Mixed V2 -> V3 -> V4 -> Curve path: the three twin-verified families
+        // keep their real engine state, and the Curve hop — which has no
+        // byte-exact twin at the clamp seam — carries the typed unsupported
+        // verdict instead of a fabricated pool record.
+        let curve_key = 4_242;
+        let path_id = engine.registry.commit(PathRegistration {
+            signature: vec![
+                (v2_fwd, true),
+                (v3_key, false),
+                (v4_fwd, true),
+                (curve_key, true),
+            ],
+            pool_refs: vec![
+                MixedPoolRef {
+                    hop_type: HopType::V2,
+                    pool_key: v2_fwd,
                     zero_for_one: true,
                 },
-                PoolHop {
-                    pool_id: v3_key,
+                MixedPoolRef {
+                    hop_type: HopType::V3,
+                    pool_key: v3_key,
                     zero_for_one: false,
                 },
-                PoolHop {
-                    pool_id: v4_fwd,
+                MixedPoolRef {
+                    hop_type: HopType::V4,
+                    pool_key: v4_fwd,
+                    zero_for_one: true,
+                },
+                MixedPoolRef {
+                    hop_type: HopType::CurveStableswap,
+                    pool_key: curve_key,
                     zero_for_one: true,
                 },
             ],
-        )
-        .unwrap();
+        });
         let snapshot = super::diagnostic_path_state(&engine, path_id).expect("path should exist");
         assert_eq!(snapshot.path_id, path_id);
-        assert_eq!(snapshot.path_type, "V2-V3-V4");
-        assert_eq!(snapshot.hops.len(), 3);
+        assert_eq!(snapshot.path_type, "V2-V3-V4-Crv");
+        assert_eq!(snapshot.hops.len(), 4);
         // V2 hop
         assert!(matches!(
             snapshot.hops[0].engine_state,
@@ -649,10 +690,37 @@ mod tests {
         } else {
             panic!("expected V4 state");
         }
-        // Round-trip through JSON should succeed.
+        // The unsupported hop is a typed verdict, not a substituted V2 record.
+        assert!(
+            matches!(
+                &snapshot.hops[3].engine_state,
+                super::DiagnosticPoolState::Unsupported {
+                    family: HopType::CurveStableswap,
+                    reason: ClampStatus::Unverified
+                }
+            ),
+            "the Curve hop must report its typed unsupported verdict, got {:?}",
+            snapshot.hops[3].engine_state
+        );
+        // Round-trip through JSON should succeed, verdict intact.
         let json = serde_json::to_string(&snapshot).expect("snapshot should serialize");
-        let _parsed: DiagnosticPathState =
+        assert!(
+            json.contains(r#""pool_family":"Unsupported""#),
+            "the verdict names its own tag: {json}"
+        );
+        let parsed: DiagnosticPathState =
             serde_json::from_str(&json).expect("snapshot should deserialize");
+        assert!(
+            matches!(
+                &parsed.hops[3].engine_state,
+                super::DiagnosticPoolState::Unsupported {
+                    family: HopType::CurveStableswap,
+                    reason: ClampStatus::Unverified
+                }
+            ),
+            "the verdict survives the JSON round-trip, got {:?}",
+            parsed.hops[3].engine_state
+        );
     }
     #[test]
     fn diagnostic_path_state_returns_none_for_unknown_path() {
@@ -832,6 +900,85 @@ mod tests {
                 .iter()
                 .map(|v| format!("0x{v:x}"))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    /// Every family without a byte-exact twin answers with the ONE typed verdict
+    /// — `Unsupported { family, reason: Unverified }` — never a `None` and never
+    /// a fabricated pool record standing in for state the engine does not read.
+    #[test]
+    fn diagnostic_path_state_names_every_unsupported_family_as_a_typed_verdict() {
+        const UNREGISTERED: u64 = 4_242;
+        let mut engine = ArbitrageEngine::new();
+        for family in [
+            HopType::SolidlyStable,
+            HopType::BalancerWeighted,
+            HopType::BalancerStable,
+            HopType::CurveStableswap,
+        ] {
+            let path_id = engine.registry.commit(PathRegistration {
+                signature: vec![(UNREGISTERED, true)],
+                pool_refs: vec![MixedPoolRef {
+                    hop_type: family,
+                    pool_key: UNREGISTERED,
+                    zero_for_one: true,
+                }],
+            });
+            let snapshot =
+                super::diagnostic_path_state(&engine, path_id).expect("path should exist");
+            let hop = &snapshot.hops[0];
+            assert!(
+                matches!(
+                    &hop.engine_state,
+                    super::DiagnosticPoolState::Unsupported {
+                        family: reported,
+                        reason: ClampStatus::Unverified
+                    } if *reported == family
+                ),
+                "family {family:?} must report its own unsupported verdict, got {:?}",
+                hop.engine_state
+            );
+            assert!(
+                hop.diff.is_empty(),
+                "an unsupported family is a verdict, not a missing-pool placeholder: {:?}",
+                hop.diff
+            );
+            assert_eq!(hop.hop_type, super::hop_type_tag(family));
+            assert_eq!(hop.engine_state.family_tag(), super::hop_type_tag(family));
+        }
+    }
+
+    /// A twin-verified family whose pool is absent from the engine snapshot is
+    /// the SAME typed verdict — nothing was verified — and the diff names the
+    /// pool that is missing. No zeroed pool record is fabricated in its place.
+    #[test]
+    fn diagnostic_path_state_reports_a_missing_pool_as_a_typed_verdict() {
+        const MISSING: u64 = 4_242;
+        let mut engine = ArbitrageEngine::new();
+        let path_id = engine.registry.commit(PathRegistration {
+            signature: vec![(MISSING, true)],
+            pool_refs: vec![MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: MISSING,
+                zero_for_one: true,
+            }],
+        });
+        let snapshot = super::diagnostic_path_state(&engine, path_id).expect("path should exist");
+        let hop = &snapshot.hops[0];
+        assert!(
+            matches!(
+                &hop.engine_state,
+                super::DiagnosticPoolState::Unsupported {
+                    family: HopType::V3,
+                    reason: ClampStatus::Unverified
+                }
+            ),
+            "a missing pool is an unverified hop, not a fabricated pool record: {:?}",
+            hop.engine_state
+        );
+        assert_eq!(
+            hop.diff,
+            vec![format!("missing pool_key={MISSING} in engine")]
         );
     }
 }

@@ -11,32 +11,140 @@ use degenbot_pools::V4PoolKey;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-/// The clamp-skip census must name every non-twin family exactly once, and
-/// leave the concentrated liquidity/V2 families unmapped (they own the twin arm).
+/// The clamp's unsupported-family verdict: every family without a byte-exact
+/// twin answers `ClampStatus::Unverified`, keeps its reported figures, and never
+/// presents them as verified. The V2/concentrated-liquidity families own the
+/// twin arm.
 #[test]
-fn clamp_skip_kind_names_every_non_twin_family() {
-    use crate::arb_engine::solve_cycle::clamp_skip_kind;
-    use crate::telemetry::error_kind;
-    use ::degenbot_pools::solve::HopType;
+fn every_unsupported_family_clamps_to_the_unverified_verdict() {
+    use crate::arb_engine::hooked_leg_requote::HookedLegPlan;
+    use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use ::degenbot_pools::solve::{HopType, MixedPoolRef};
+    use degenbot_substrate::state_lock::LockSite;
 
-    assert_eq!(clamp_skip_kind(HopType::V2), None);
-    assert_eq!(clamp_skip_kind(HopType::V3), None);
-    assert_eq!(clamp_skip_kind(HopType::V4), None);
+    let engine = ArbitrageEngine::new();
+    let core = engine.core().read_at(LockSite::Solver);
+    for family in [
+        HopType::SolidlyStable,
+        HopType::BalancerWeighted,
+        HopType::BalancerStable,
+        HopType::CurveStableswap,
+    ] {
+        let reported = SolvePathResult {
+            optimal_input: U256::from(1_000u64),
+            profit: U256::from(5u64),
+            hop_outputs: vec![U256::from(1_010u64)],
+            consumed_inputs: vec![U256::from(1_000u64)],
+            ..Default::default()
+        };
+        let report = clamp_result_with_state(
+            &core,
+            0,
+            &[MixedPoolRef {
+                hop_type: family,
+                pool_key: 9_999,
+                zero_for_one: true,
+            }],
+            U256::from(1u8),
+            &HookedLegPlan::empty(),
+            reported.clone(),
+        )
+        .expect("an unsupported family still yields a report");
+        assert_eq!(
+            report.status,
+            ClampStatus::Unverified,
+            "{family:?} has no byte-exact twin at the clamp seam"
+        );
+        assert_eq!(
+            report.result.hop_outputs, reported.hop_outputs,
+            "{family:?} reported figures stand, unverified"
+        );
+    }
+}
+
+/// A mixed path keeps the twin-verified figures AND the one verdict: the
+/// supported hop lands on exactly the figure it clamps to on its own, while the
+/// unsupported hop's presence downgrades the whole path to `Unverified`.
+#[test]
+fn a_mixed_path_clamps_supported_figures_under_an_unverified_verdict() {
+    use crate::arb_engine::hooked_leg_requote::HookedLegPlan;
+    use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use ::degenbot_pools::solve::{HopType, MixedPoolRef};
+    use degenbot_substrate::state_lock::LockSite;
+
+    let engine = ArbitrageEngine::new();
+    let v2 = engine.register_v2_pool(
+        Address::from([0x61u8; 20]),
+        U256::from(1_000_000_000_000u64).to(),
+        U256::from(2_000_000_000_000u64).to(),
+        997,
+        1000,
+    );
+    let solver_result = |outputs: Vec<U256>| SolvePathResult {
+        optimal_input: U256::from(1_000u64),
+        profit: U256::from(1_000u64),
+        consumed_inputs: vec![U256::from(1_000u64); outputs.len()],
+        hop_outputs: outputs,
+        ..Default::default()
+    };
+
+    let core = engine.core().read_at(LockSite::Solver);
+    // The supported hop ALONE: the twin's own byte-exact figure.
+    let supported = clamp_result_with_state(
+        &core,
+        0,
+        &[MixedPoolRef {
+            hop_type: HopType::V2,
+            pool_key: v2,
+            zero_for_one: true,
+        }],
+        U256::from(1u8),
+        &HookedLegPlan::empty(),
+        solver_result(vec![U256::from(2_000u64)]),
+    )
+    .expect("the V2 hop commits");
     assert_eq!(
-        clamp_skip_kind(HopType::SolidlyStable),
-        Some(error_kind::CLAMP_SKIP_SOLIDLY_STABLE)
+        supported.status,
+        ClampStatus::Adjusted,
+        "premise: the solver's 2_000 over-predicts the twin"
+    );
+    let twin_figure = supported.result.hop_outputs[0];
+
+    // The same hop followed by an unsupported family.
+    let mixed = clamp_result_with_state(
+        &core,
+        0,
+        &[
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::CurveStableswap,
+                pool_key: 9_999,
+                zero_for_one: true,
+            },
+        ],
+        U256::from(1u8),
+        &HookedLegPlan::empty(),
+        solver_result(vec![U256::from(2_000u64), U256::from(3_000u64)]),
+    )
+    .expect("the mixed path commits");
+
+    assert_eq!(
+        mixed.status,
+        ClampStatus::Unverified,
+        "one unsupported hop downgrades the whole path"
     );
     assert_eq!(
-        clamp_skip_kind(HopType::BalancerWeighted),
-        Some(error_kind::CLAMP_SKIP_BALANCER_WEIGHTED)
+        mixed.result.hop_outputs[0], twin_figure,
+        "the supported hop still clamps to its twin's figure"
     );
     assert_eq!(
-        clamp_skip_kind(HopType::BalancerStable),
-        Some(error_kind::CLAMP_SKIP_BALANCER_STABLE)
-    );
-    assert_eq!(
-        clamp_skip_kind(HopType::CurveStableswap),
-        Some(error_kind::CLAMP_SKIP_CURVE_STABLESWAP)
+        mixed.result.hop_outputs[1],
+        U256::from(3_000u64),
+        "the unsupported hop's reported figure stands, unverified"
     );
 }
 /// Narrow single-position V4 pool (±60 ticks, 1e6 liquidity) + a one-hop

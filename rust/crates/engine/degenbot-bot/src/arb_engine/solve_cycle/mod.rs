@@ -131,7 +131,7 @@ mod solve;
 /// carries no unreachable import.
 pub(crate) use merge::clamp_result_with_state;
 #[cfg(test)]
-pub(crate) use merge::{clamp_skip_kind, recompute_clamped_profit};
+pub(crate) use merge::recompute_clamped_profit;
 pub use merge::{ClampReport, ClampStatus};
 
 /// The solve-cycle block scope: the ONE owner of the block boundary.

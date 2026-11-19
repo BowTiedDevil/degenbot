@@ -27,6 +27,7 @@ use degenbot_pools::v4_simulate_swap;
 use degenbot_pools::{v3_simulate_swap, Caveats, V3PoolState};
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::{BlockMetadata, BotState};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ===========================================================================
@@ -36,20 +37,6 @@ use std::sync::Arc;
 // worker` both drive the same `clamp_result_with_state`; there is exactly
 // one clamp body (ADR-046 "no inherent twins").
 // ===========================================================================
-/// The clamp-skip error kind for a hop with no byte-exact twin at the clamp
-/// seam. `None` for the V2/V3/V4 families that DO execute the twin arm.
-pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
-    match hop {
-        HopType::SolidlyStable => Some(crate::telemetry::error_kind::CLAMP_SKIP_SOLIDLY_STABLE),
-        HopType::BalancerWeighted => {
-            Some(crate::telemetry::error_kind::CLAMP_SKIP_BALANCER_WEIGHTED)
-        }
-        HopType::BalancerStable => Some(crate::telemetry::error_kind::CLAMP_SKIP_BALANCER_STABLE),
-        HopType::CurveStableswap => Some(crate::telemetry::error_kind::CLAMP_SKIP_CURVE_STABLESWAP),
-        HopType::V2 | HopType::V3 | HopType::V4 => None,
-    }
-}
-
 /// The clamp shared by the merge-site gate and the SIMPIPE2 T2 worker
 /// relocation — the pool list is a parameter so the WORKER can drive the
 /// identical logic from its `to_solve`-aligned snapshot, and the clamp margin
@@ -82,7 +69,12 @@ pub(crate) fn clamp_skip_kind(hop: HopType) -> Option<&'static str> {
 /// The variants are ORDERED — `Exact < Adjusted < Unverified` — so the clamp
 /// escalates through [`Ord::max`] and one unsupported or unverifiable hop
 /// downgrades the whole path no matter what the other hops did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// `Unverified` is the ONE unsupported-family verdict: the clamp reports it here,
+/// and the diagnostics snapshot reports the same status for a hop with no
+/// authoritative quote (`DiagnosticPoolState::Unsupported`), so a family's
+/// policy cannot be stated in two different vocabularies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ClampStatus {
     /// Every hop is a twin-verified family, and every executable amount as
     /// well as the recomputed profit equal the solver's own figures.
@@ -330,8 +322,7 @@ struct HopTwin {
 }
 
 /// The byte-exact twin for ONE hop of the clamp seam, or `None` when the hop has
-/// no twin at this seam (Curve / Balancer / Solidly — counted per family so a
-/// first live occurrence is visible without per-hop logging) or the twin cannot
+/// no twin at this seam (Curve / Balancer / Solidly) or the twin cannot
 /// price it (missing pool state, an input past the twin's range). A `None` is
 /// what makes the path's clamp status `Unverified`: the reported figures stand,
 /// and nothing downstream pretends they were verified.
@@ -347,15 +338,13 @@ fn hop_twin(
         HopType::V3 => v3_hop_twin(core, pool_ref, requested, margin),
         HopType::V4 => v4_hop_twin(core, pool_ref, plan, i, requested, margin),
         HopType::V2 => v2_hop_twin(core, pool_ref, requested),
+        // No byte-exact twin at this seam: the caller reads the `None` as the
+        // ONE verdict, `ClampStatus::Unverified` — the reported figures stand and
+        // nothing downstream presents them as verified.
         HopType::SolidlyStable
         | HopType::BalancerWeighted
         | HopType::BalancerStable
-        | HopType::CurveStableswap => {
-            if let Some(kind) = clamp_skip_kind(pool_ref.hop_type) {
-                crate::instruments::record(crate::instruments::CensusEvent::EngineError { kind });
-            }
-            None
-        }
+        | HopType::CurveStableswap => None,
     }
 }
 
