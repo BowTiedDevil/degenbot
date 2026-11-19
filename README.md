@@ -1,66 +1,100 @@
 # Degenbot
 
-A Rust MEV-bot core with a first-class Python driver shell, for Uniswap (V2, V3, V4), Curve V1, Solidly V2, Balancer V2, and Aave V3 integrations on EVM-compatible blockchains.
+A Rust MEV-bot core for EVM chains, with a thin Python driver shell. Supported integrations: Uniswap V2/V3/V4, Curve V1, Balancer V2, Aerodrome, PancakeSwap, SushiSwap, Camelot, SwapBased, and Aave V3.
 
 Degenbot has two equally first-class consumers sharing one Rust core:
 
 - **Pure-Rust MEV bot** — `cargo add degenbot` (the umbrella crate re-exporting the cores; a git/path dependency until the workspace is published to crates.io) and build a fully functional MEV bot in Rust only.
 - **Python-driven MEV bot** — drive the same Rust core from Python through a thin [PyO3](https://pyo3.rs) layer that translates Python calls into Rust calls.
 
-The Rust core is the engine; Python is a driver shell, not a co-implementation. Pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding all live in Rust core crates; the Python layer provides the user-facing API, orchestration, and configuration. See [`docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) for the architectural vision.
+The Rust core is the engine; Python is a driver shell, not a co-implementation — [Architecture: The Python-Rust Split](#architecture-the-python-rust-split) states the ownership rule, and [`ADR-005`](docs/adr/ADR-005-polars-inspired-three-layer-architecture.md) records the vision behind it.
 
 ## Contents
 
 - [Overview](#overview)
 - [Architecture: The Python-Rust Split](#architecture-the-python-rust-split)
 - [Installation](#installation)
+  - [Requirements](#requirements)
+  - [From PyPI](#from-pypi)
+  - [From Source](#from-source)
 - [Quick Start](#quick-start)
-- [Supported Protocols](#supported-protocols)
+  - [Create a Bot Session](#create-a-bot-session)
+  - [Direct Pool Construction (Advanced)](#direct-pool-construction-advanced)
 - [Core Concepts](#core-concepts)
   - [I/O-Free Architecture](#io-free-architecture)
   - [The Bot Class](#the-bot-class)
   - [Pool Types and Builders](#pool-types-and-builders)
   - [External Updates](#external-updates)
+- [Supported Protocols](#supported-protocols)
+  - [DEXs (Automated Market Makers)](#dexs-automated-market-makers)
+  - [Lending Protocols](#lending-protocols)
+  - [Infrastructure](#infrastructure)
 - [Examples](#examples)
-  - [Using the Bot Class](#using-the-bot-class-recommended)
   - [Uniswap V2 Liquidity Pools](#uniswap-v2-liquidity-pools)
   - [Uniswap V3 Liquidity Pools](#uniswap-v3-liquidity-pools)
   - [Uniswap V4 Liquidity Pools](#uniswap-v4-liquidity-pools)
   - [Forking With Anvil](#forking-with-anvil)
-  - [Curve StableSwap Pools](#curve-stableswap-pools-io-free)
+    - [Anvil Options](#anvil-options)
+  - [Curve StableSwap Pools](#curve-stableswap-pools)
   - [Balancer V2 Weighted Pools](#balancer-v2-weighted-pools)
+  - [Balancer V2 Stable Pools](#balancer-v2-stable-pools)
   - [Uniswap Arbitrage](#uniswap-arbitrage)
     - [Swap Encoding & On-Chain Execution](#swap-encoding--on-chain-execution)
   - [Running the Settlement-Arbitrage Bot](#running-the-settlement-arbitrage-bot)
 - [Bot API Reference](#bot-api-reference)
+  - [Initialization](#initialization)
+  - [Universal Pool Builder](#universal-pool-builder)
+  - [Pool Construction by Type](#pool-construction-by-type)
+  - [Token Factory](#token-factory)
+  - [Token Utilities (With Caching)](#token-utilities-with-caching)
+  - [Accessing Bot Components](#accessing-bot-components)
   - [Chainlink Price Feeds](#chainlink-price-feeds)
 - [CLI Reference](#cli-reference)
+  - [Installing the Console](#installing-the-console)
+  - [Commands](#commands)
+    - [Database Management](#database-management)
+    - [Pool State Management](#pool-state-management)
+    - [Fleet Posture Management](#fleet-posture-management)
+    - [Aave State Management](#aave-state-management)
+    - [Config and Strategy Management](#config-and-strategy-management)
+  - [Block Identifiers](#block-identifiers)
 - [Configuration](#configuration)
+  - [Configuration File](#configuration-file)
+  - [Layer Precedence](#layer-precedence)
+  - [Environment Variables](#environment-variables)
 - [The Rust Core](#the-rust-core-degenbot_rs-rust-crate-degenbot_ffi-python-module)
+  - [Available Functions](#available-functions)
+    - [Tick Math](#tick-math)
+    - [ABI Decoding](#abi-decoding)
+    - [Address Utilities](#address-utilities)
+    - [ABI Encoding & Selectors](#abi-encoding--selectors)
+  - [Provider Classes](#provider-classes)
+    - [Async Provider](#async-provider)
+    - [Log Filtering](#log-filtering)
   - [Engine and Dispatch Surface](#engine-and-dispatch-surface)
+  - [Why Rust for the Hot Path](#why-rust-for-the-hot-path)
+  - [Build Requirements](#build-requirements)
+  - [Rust Feature Matrix](#rust-feature-matrix)
 - [Documentation](#documentation)
+  - [Contract Reference](#contract-reference)
 - [Contributing](#contributing)
+  - [Development Setup](#development-setup)
 - [License](#license)
 - [Donation](#donation)
-
-> **Debugging a failing settlement-arbitrage path, or building your own
-> simulation harness?** See [`docs/architecture/investigation-harness.md`](docs/architecture/investigation-harness.md) — the
-> simulation oracle driver, the per-contract scaffolder, and the
-> path-fixture toolkit.
 
 ## Overview
 
 > **Capability map:** every capability's Rust home, Python name, door items, and consumer probe is cataloged in [`docs/capabilities.md`](docs/capabilities.md) (ADR-084).
 
-Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
+Degenbot is a MEV-bot toolkit for EVM chains: state, math, solvers, and the whole execution path live in Rust core crates, and Python reaches them through a thin PyO3 binding that holds no business logic of its own.
 
-The Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process evm2 simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
+The core owns the operator-facing infrastructure too: the settlement-arbitrage engine, the in-process evm2 simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
 
-These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
+Degenbot is the toolkit behind the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
 ## Architecture: The Python-Rust Split
 
-Ownership is strict, which is what makes both consumption paths first-class: the Rust core owns everything stateful and performance-critical — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python side owns the user-facing API, orchestration, and configuration. The core crates contain **no PyO3 code at all**, so a pure-Rust bot (`cargo add degenbot`) runs without any Python machinery; an in-repo proof is `rust/crates/facade/degenbot/examples/standalone_consumer.rs`. Architectural decisions — state ownership (ADR-003), FFI topology (ADR-005), schema cutover (ADR-010) — are recorded in the [ADR design log](docs/adr/), with the crate sources as the last word.
+Ownership is strict, which is what keeps both consumption paths first-class: the Rust core owns everything stateful and performance-critical — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python side owns the user-facing API, orchestration, and configuration. The core crates contain **no PyO3 code at all**, so a pure-Rust bot (`cargo add degenbot`) runs without any Python machinery; an in-repo proof is `rust/crates/facade/degenbot/examples/standalone_consumer.rs`. Architectural decisions — state ownership (ADR-003), FFI topology (ADR-005), schema cutover (ADR-010) — are recorded in the [ADR design log](docs/adr/), with the crate sources as the last word.
 
 ## Installation
 
@@ -80,12 +114,12 @@ pip install degenbot
 ```bash
 git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
-just bootstrap  # or: pip install -e . for release-equivalent defaults
+just bootstrap  # locked deps, then the dev-features extension; `pip install -e .` builds the binding's default feature set (maturin's dev profile) instead
 ```
 
 ## Quick Start
 
-### Modern Bot-Based Approach (Recommended)
+### Create a Bot Session
 
 The `Bot` class is the central session object for all degenbot operations. It manages connections, registries, and provides factory methods for creating pools and tokens:
 
@@ -112,18 +146,20 @@ bot = degenbot.Bot(
 # registration is needed.
 ```
 
-```
-# Create pools and tokens through Bot (I/O-free when possible)
-pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
+```python
+# Create pools and tokens through Bot
+pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")  # USDC/WETH 0.3%
 token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")  # WETH
 
-# Pools are I/O-free - all data injected at construction
 print(f"Pool: {pool.name}")
 print(f"Token: {token}")
 
-# Calculate swaps without any network calls
+# Swap math reads the registered state, so a quote costs no network call. Scale
+# the quantity by the input token's decimals: token0 here is USDC (6 decimals),
+# so a raw 10**18 would be a trillion-dollar sell and walk far past the
+# liquidity this pool actually holds.
 amount_out = pool.calculate_tokens_out_from_tokens_in(
-    token_in=pool.token0,
+    token_in=pool.token1,      # WETH
     token_in_quantity=10**18,
 )
 print(f"Output: {amount_out}")
@@ -132,7 +168,6 @@ print(f"Output: {amount_out}")
 ### Direct Pool Construction (Advanced)
 
 Pool classes are Python companions over **Rust-owned pool state** — direct construction is impossible (any constructor call raises `TypeError`); a pool comes into being only by registering in a `Bot`'s Rust state. Use `Bot.build_pool()` in production (or the `make_*_pool` test helpers in tests):
-
 
 ```python
 # Do NOT do this — the constructor always raises TypeError:
@@ -147,22 +182,34 @@ except TypeError:
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 ```
 
-
 <!-- clear-namespace -->
 
 ## Core Concepts
 
 ### I/O-Free Architecture
 
-Degenbot pools follow an **I/O-free architecture** where on-chain data is fetched at construction time and injected into pool objects. After construction, pools are pure calculation objects with no network dependencies. For the Uniswap V2/V3/V4 families (including Aerodrome and Balancer), `Bot.build_pool()` performs that full choreography on the Rust side; Curve pools and token metadata use the equivalent Python-side builders. Either way, the pool you receive needs no network access at construction time.
+Degenbot pools follow an **I/O-free architecture** (ADR-001): on-chain data is resolved once, up front, and registered into the pool's state, so a pool companion carries no RPC client of its own. The provider a pool keeps is a Rust trait object stored on the core state and read through a thin adapter when a calculation needs it; it is never a Python-side fetch path. `Bot.build_pool()` runs the fetch-and-register choreography core-side for every family, and the Python builders that remain are companion shells over that one entry (registry short-circuit, token companions, handle wrapper).
+
+Construction is I/O-free for every pool type. Calculation is I/O-free for most, but not all:
+
+| Pool family | Construction | Calculation |
+|-------------|--------------|-------------|
+| V2 / V3 / V4 / Aerodrome / Camelot | I/O-free | I/O-free |
+| Curve STANDARD / RAW_BALANCE | I/O-free | I/O-free |
+| Curve lending / crypto / live-admin / metapool | I/O-free | reads per-block `D`, `gamma`, `price_scale`, lending rates, `virtual_price` |
+| Curve with A ramping | I/O-free | reads the block timestamp |
+| Balancer V2 weighted / stable with a static rate provider | I/O-free | I/O-free |
+| Balancer V2 ComposableStable with a live rate provider | I/O-free | reads fresh rates |
+
+Only the Curve and Balancer companions expose `requires_io_at_calculation_time`: `True` exactly for the shapes above, `False` for their static ones. `docs/adr/ADR-001-io-free-pools.md` owns this table.
 
 **Benefits:**
 - **Testability**: Easy to create test fixtures with mocked data
 - **Performance**: Swap calculations are pure math, no network calls
 - **Reliability**: No async complexity in pool logic
-- **State Management**: Pools can be snapshotted, pickled, and restored
+- **State Management**: state can be snapshotted atomically (`pool.state`) for the simulation path, and rewound through the Rust reorg journal
 
-**Current status:** all pool types (V2, V3, V4, Aerodrome, Camelot, Balancer, Curve) are fully I/O-free — no pool class carries provider-dependent methods. For the Uniswap V2/V3/V4 families (including Aerodrome and Balancer), `Bot.build_pool()` performs the full fetch-and-register choreography and `bot.update(pool)` refreshes state from chain; Curve pools and token metadata use the remaining Python builders. Either way, state changes enter a pool only as a validated `external_update()` message — the pool itself never does I/O.
+**State changes** land in the pool's Rust-owned state, never in a Python-side copy: `bot.dispatch_log()` and `bot.dispatch_reorg_log()` decode and apply logs, and `bot.update(pool)` delegates to the core refresh entry (`pool.refresh_via`). Only the Curve and Balancer companions take an explicit `external_update()`; the V2/V3/V4 companions have no state-write method at all.
 
 ### The Bot Class
 
@@ -191,7 +238,6 @@ bot.provider  # the chain's AlloyProvider (chain_id enforced at construction)
 bot.chain_id  # 1
 ```
 
-
 ```python
 # All pool/token creation flows through Bot
 pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
@@ -202,7 +248,6 @@ balance = bot.get_token_balance(token, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
 ```
 
-
 **Bot properties:**
 - `bot.chain_id` - the configured chain ID for this single-chain session
 - `bot.provider` / `bot.get_provider()` - the chain's `AlloyProvider` (chain_id enforced at construction)
@@ -212,24 +257,25 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 - `bot.database_path` - the SQLite path used by the Rust-owned database core
 - `degenbot.db` - the stable Python mirror for Rust-backed database operations and row types
 
-**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the Rust database snapshot, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point for the V2/V3/V4 families: it fetches current chain state from the Rust core and pushes `pool.external_update()` (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. Builders are internal to Bot and not exposed publicly. All pool/token creation goes through `Bot.build_pool()`.
+**Lifecycle & refresh:** `Bot` is a context manager — `with degenbot.Bot(config=...) as bot:` (or an explicit, idempotent `bot.close()`) tears down the provider, the Rust database snapshot, and the Rust engine handles. `bot.update(pool, block_number=...)` is the canonical refresh entry point: it runs the core refresh entry (`pool.refresh_via`), which fetches current chain state and applies it atomically (returns `True` only when state changed). `bot.release_python_state()` drops the Python-side tracker/snapshot caches once the Rust engine owns canonical state. The builder objects stay internal to `Bot`; the request types they consume (`degenbot.builders.request.BuildPoolRequest` / `BuildManagedPoolRequest`) are part of the public construction surface, since a V4 build cannot name its pool without one.
 
 ### Pool Types and Builders
 
-`build_pool(address)` is the universal entry point that auto-resolves pool type from DB, registry, and on-chain probing:
+`build_pool(address)` is the universal entry point: it resolves the pool's type before building it.
 
 | Pool Type | Method | Supports |
 |-----------|--------|----------|
-| Uniswap V2 | `bot.build_pool(address)` | Standard AMM, Camelot, other forks |
+| Uniswap V2 | `bot.build_pool(address)` | Constant-product AMM, Aerodrome/Camelot (Solidly) variants, other forks |
 | Uniswap V3 | `bot.build_pool(address)` | Full tick data, range orders |
-| Uniswap V4 | `bot.build_managed_pool(address, pool_id=...)` | Singleton architecture with hooks |
+| Uniswap V4 | `bot.build_managed_pool(pool_manager, BuildManagedPoolRequest(...))` | Singleton architecture with hooks |
 | Curve V1 | `bot.build_pool(address)` | StableSwap, metapools, lending pools |
+| Balancer V2 | `bot.build_pool(address)` | Weighted and stable (MetaStable, ComposableStable) |
 
-When `build_pool` is called, the pool type is auto-resolved — in order, from the pool registry, the database, and (as a last resort) on-chain probing of the pool contract.
+`build_pool` answers an already-built pool from the session's pool registry with no I/O. Otherwise the core identity ladder resolves the pool: the persisted `pools.kind` from the database first, then the pool's `factory()` against the registered species and shipped deployment records, then positive on-chain probes. The discipline is positive-only — an identity it cannot positively establish is a typed refusal, never a guess.
 
 ### External Updates
 
-State reaches a pool through the pump's own door, never through a Python-side write method: `bot.dispatch_log(...)` decodes a WS log and applies it to the shared Rust state, and `bot.dispatch_reorg_log(...)` drives the same log flagged `removed: true` through the reorg restore. I/O never touches the pool itself: for the V2/V3/V4 families `bot.update(pool)` fetches current reserves/slot0/liquidity from the Rust core (Curve/Balancer refresh runs through the remaining Python builders) and applies it through the core's refresh entry:
+State reaches a pool through the pump's own door, never through a Python-side write method: `bot.dispatch_log(...)` decodes a WS log and applies it to the shared Rust state, and `bot.dispatch_reorg_log(...)` drives the same log flagged `removed: true` through the reorg restore. I/O never touches the pool companion: `bot.update(pool)` hands the session's I/O façade to the core's per-family refresh entry (`pool.refresh_via`), which fetches the current reserves/slot0/liquidity/balances for every family — Curve and Balancer included — compares, and applies atomically:
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -290,17 +336,17 @@ assert pool.state.reserves_token0 == reserves0
 
 ### DEXs (Automated Market Makers)
 
-| Protocol | Versions | Chains |
-|----------|----------|--------|
-| Uniswap | V2, V3, V4 | Ethereum, Base |
-| Aerodrome | V2, V3 | Base |
-| PancakeSwap | V2, V3 | Ethereum, Base |
-| SushiSwap | V2, V3 | Ethereum, Base |
-| Curve | V1 | Ethereum |
-| Solidly | V2 | Ethereum, Base | *(utility functions only, no pool class)*
-| Balancer | V2 | Ethereum | Weighted & stable pools (MetaStable, Composable) |
-| Camelot | V2 | Arbitrum |
-| SwapBased | V2 | Base |
+| Protocol | Versions | Chains | Notes |
+|----------|----------|--------|-------|
+| Uniswap | V2, V3, V4 | Ethereum, Base, Arbitrum | Arbitrum carries V3 only |
+| Aerodrome | V2, V3 | Base | |
+| PancakeSwap | V2, V3 | Ethereum, Base | |
+| SushiSwap | V2, V3 | Ethereum, Base, Arbitrum | |
+| Curve | V1 | Ethereum | StableSwap, metapools, lending pools |
+| Solidly | V2 | Ethereum, Base | Math leaves only, no pool class |
+| Balancer | V2 | Ethereum | Weighted and stable pools (MetaStable, ComposableStable) |
+| Camelot | V2 | Arbitrum | Solidly stable math |
+| SwapBased | V2 | Base | |
 
 ### Lending Protocols
 
@@ -317,52 +363,7 @@ assert pool.state.reserves_token0 == reserves0
 
 ## Examples
 
-The following examples demonstrate the recommended **Bot-based approach** for pool and token construction.
-
-### Using the Bot Class (Recommended)
-
-All pool and token creation should flow through the `Bot` class for proper registry management and I/O handling:
-
-```python
-import degenbot
-
-# RPC_URL is any HTTP RPC endpoint for chain 1, for example
-#   "https://eth-mainnet.example.com"
-# Initialize Bot (handles connections, registries)
-bot = degenbot.Bot(
-    chain_id=1,
-    node=RPC_URL,
-    database=":memory:",
-)
-```
-
-
-```python
-# Build tokens (fetches from DB/RPC, cached in registry)
-weth = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-usdc = bot.build_erc20token("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
-
-# Build pools (fetches all state from DB/RPC, returns I/O-free pool objects)
-v3_pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
-v2_pool = bot.build_pool("0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc")
-curve_pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")  # 3Crv
-
-# Universal builder -- auto-resolves pool type
-pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")  # V3, detected automatically
-
-# Token utilities with automatic caching
-balance = bot.get_token_balance(usdc, "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-approval = bot.get_token_approval(usdc, owner="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", spender="0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45")
-
-# Pools are I/O-free after construction - pure calculations
-amount_out = v3_pool.calculate_tokens_out_from_tokens_in(
-    token_in=v3_pool.token0,
-    token_in_quantity=1000_000000,  # 1000 USDC
-)
-```
-
-
----
+Worked examples, one section per pool family. Each is self-contained: a real mainnet pool's state is injected from the database or a recorded fixture, so the swap math runs with no RPC. Production code obtains the same objects through `Bot.build_pool()` (see [Bot API Reference](#bot-api-reference)).
 
 ### Uniswap V2 Liquidity Pools
 
@@ -447,7 +448,7 @@ assert lp.reserves_token1 == 2056841643098872755548
 
 ### Uniswap V3 Liquidity Pools
 
-V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
+V3 pools use concentrated liquidity with tick-based positions. Tick data is seeded into the Rust tick map at construction: a tracked pool carries the complete map, while a sparse pool whose walk enters an unfetched bitmap word backfills it through the core's tick-word source.
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -520,7 +521,7 @@ assert 0 in lp.tick_data
 
 ### Uniswap V4 Liquidity Pools
 
-V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
+V4 uses a singleton pool manager with hooks. A pool is identified by the pair (PoolManager, `pool_id`) rather than by an address of its own:
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -557,8 +558,8 @@ lp = make_v4_pool(
 
 ```python
 # `lp` is the ETH/USDC 0.05% V4 pool; in production it comes from
-# `lp = bot.build_managed_pool('<poolManager>', pool_id='0x<...>')` — V4 pools
-# are identified by (pool manager, pool id) rather than an address.
+# `bot.build_managed_pool('<poolManager>', BuildManagedPoolRequest(pool_id='0x<...>'))`
+# — V4 pools are identified by (pool manager, pool id), not by an address.
 # An off-line test fixture built the same pool here so the math below
 # runs without RPC.
 assert lp.token0.symbol == 'ETH'
@@ -586,30 +587,34 @@ The `AnvilFork` class is used to launch a fork with `anvil` from the [Foundry](h
 
 ```python
 >>> fork = degenbot.AnvilFork(fork_url='http://localhost:8545')
->>> fork.provider.chain_id
+>>> fork.provider.get_chain_id()
 1
->>> fork.provider.block_number
+>>> fork.provider.get_block_number()
 22675736
 
-# The `AnvilFork` instance also exposes HTTP and WS endpoints that can be used to make a
-# separate connection from a remote machine.
+# The `AnvilFork` instance also exposes HTTP and WS endpoints, so a separate
+# connection (from a remote machine, say) can be made against them.
 >>> from degenbot.provider import AlloyProvider
 >>> _prov = AlloyProvider(fork.http_url)
->>> _prov.is_connected()
-True
+>>> _prov.get_chain_id()
+1
 
 # The fork can be reset to a specific block (defaults to the latest block).
 >>> fork.reset(block_number=22_675_800)
->>> fork.provider.block_number
+>>> fork.provider.get_block_number()
 22675800
 
-# A different endpoint or start block needs a NEW fork — `reset` cannot retarget
-# the fork URL. An "imaginary" block after a historical transaction (anvil
+# `reset(fork_url=...)` / `reset(transaction_hash=...)` retarget by tearing the
+# rust subprocess down and respawning it (slower than the in-place block reset
+# above). An "imaginary" block after a historical transaction (anvil
 # `--fork-transaction-hash`, see the [Anvil reference](https://getfoundry.sh/anvil/reference/))
-# is a constructor option:
+# is a launch setting:
+>>> from degenbot.fork import ForkLaunchConfig
 >>> fork = degenbot.AnvilFork(
     fork_url='http://localhost:8545',
-    fork_transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c',
+    launch=ForkLaunchConfig(
+        fork_transaction_hash='0xc16e63e693a2748559c0fd653ade195be426472dddc5bfa3fcc769c4c88c249c',
+    ),
 )
 
 # Blocks can be manually mined
@@ -618,7 +623,7 @@ True
 # Byte code can be set for an arbitrary address.
 >>> fork.set_code(
     address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-    code=bytes.fromhex('45')
+    bytecode=bytes.fromhex('45')
 )
 >>> fork.provider.get_code('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
 b'\x45'
@@ -626,13 +631,13 @@ b'\x45'
 
 #### Anvil Options
 
-The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/); the most common ones are exposed as `AnvilFork` constructor options. For fine-grained control, pass any raw anvil flag through the `anvil_opts` argument (a list of strings, e.g. `anvil_opts=['--optimism']` or `anvil_opts=['--hardfork=london']`) — they are appended after all managed options.
+The Anvil client offers [many options](https://getfoundry.sh/anvil/reference/anvil/). The launch knobs live on `degenbot.fork.ForkLaunchConfig`, passed as `launch=`: mining mode and interval, storage caching, chain id, base fee, the post-spawn balance/bytecode/nonce/storage overrides, and `anvil_opts` — a raw flag list (e.g. `ForkLaunchConfig(anvil_opts=['--optimism'])` or `anvil_opts=['--hardfork=london']`) appended after all managed options.
 
 <!-- skip: end -->
 
-### Curve StableSwap Pools (I/O-Free)
+### Curve StableSwap Pools
 
-Curve pools follow the same I/O-free architecture: the Bot resolves metapool detection, lending-token identification, and all on-chain inputs before the pool runs pure math:
+Curve pools follow the same I/O-free architecture: the Bot resolves metapool detection and lending-token identification, and the pool reads any per-block inputs its shape needs through its data provider (see [I/O-Free Architecture](#io-free-architecture)):
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -692,8 +697,9 @@ assert [t.symbol for t in tripool.tokens] == ['DAI', 'USDC', 'USDT']
 assert tripool.a_coefficient == 2000
 assert tripool.fee == 4000000
 
-# For lending pools (cTokens), rates are resolved before calculation;
-# get_dy() resolves all on-chain inputs upfront, then computes with pure math
+# For lending pools (cTokens), the per-block rates are read through the pool's
+# data provider at calculation time (see I/O-Free Architecture); the invariant
+# math itself is pure
 ```
 
 ### Balancer V2 Weighted Pools
@@ -991,7 +997,7 @@ registry = EngineRegistry(bot=bot)
 # core-owned registration lifecycle (ADR-022 D1) has a verify access). A V3
 # pool not registered in the shared BotState is a no-op (no RPC); registration
 # is async because the core lifecycle aspirates the verify choreography.
-registry.engine.set_verify_rpc_url('http://127.0.0.1:8545')
+registry.engine.set_verify_rpc_url(RPC_URL)
 registry.register_v2_pool(v2_pool)
 asyncio.run(registry.register_v3_pool(v3_pool))
 -->
@@ -1020,11 +1026,11 @@ transaction — there is no Python encoding layer. After a path solves:
 
 ### Running the Settlement-Arbitrage Bot
 
-The end-to-end settlement-arbitrage bot — the flagship Rust-core-driven workload — is a thin Python driver over the `degenbot.runner` package: the example owns only CLI parsing + SIGINT handling, while `BotRunner` owns the session and the Rust engine handshake.
+The end-to-end settlement-arbitrage bot is a thin Python driver over the `degenbot.runner` package: the example owns only CLI parsing + SIGINT handling, while `BotRunner` owns the session and the Rust engine handshake.
 
 ```bash
 # Dry run (default): solves, simulates in-process, renders profit lines — nothing is submitted
-uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py \\
+uv run python examples/eth_settlement_arbitrage_v2_v3_v4_rust.py \
   --node "https://eth-mainnet.example.com"
 
 # Restrict to one 3-hop permutation (overrides the driver's default path filter)
@@ -1085,30 +1091,31 @@ bot = degenbot.Bot(
 
 ### Universal Pool Builder
 
-
 ```python
-# Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
+# Universal builder — the type resolves through the core identity ladder
 pool = bot.build_pool(
     "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
     state_block=18900000,  # Optional, defaults to current block
 )
 ```
 
-
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
-# For V4 pools, use build_managed_pool with the PoolManager address + pool_id
+# V4 pools are identified by (PoolManager, pool id), and the id rides a typed request
+from degenbot.builders.request import BuildManagedPoolRequest
+
 pool = bot.build_managed_pool(
-    "0x...",  # PoolManager address
-    pool_id="0x...",
+    "0x498581fF718922c3f8e6A244956aF099B2652b2b",  # PoolManager singleton
+    BuildManagedPoolRequest(
+        pool_id="0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a",
+    ),
 )
 ```
 
 <!-- skip: end -->
 
 ### Pool Construction by Type
-
 
 ```python
 # V2 pool (auto-detected from factory)
@@ -1128,25 +1135,30 @@ pool = bot.build_pool(
 )
 ```
 
-
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
-# V4 pool (singleton architecture with pool_id)
+# V4 pool (singleton architecture): a pool the database has never seen carries
+# its whole immutable set on the request — nothing about it is discoverable
+# on-chain without them
 pool = bot.build_managed_pool(
-    "0x...",  # PoolManager address
-    pool_id="0x...",
-    state_view_address="0x...",
-    tokens=["0x...", "0x..."],
-    fee=500,
-    tick_spacing=10,
+    "0x498581fF718922c3f8e6A244956aF099B2652b2b",  # PoolManager singleton
+    BuildManagedPoolRequest(
+        pool_id="0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a",
+        state_view_address="0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71",
+        tokens=[
+            "0x0000000000000000000000000000000000000000",
+            "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        ],
+        fee=500,
+        tick_spacing=10,
+    ),
 )
 ```
 
 <!-- skip: end -->
 
 ### Token Factory
-
 
 ```python
 # ERC-20 token (fetches name, symbol, decimals from DB/RPC)
@@ -1156,9 +1168,7 @@ token = bot.build_erc20token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 token = bot.get_token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 ```
 
-
 ### Token Utilities (With Caching)
-
 
 ```python
 # Get balance at block (cached per-bot)
@@ -1174,7 +1184,6 @@ total_supply = bot.get_token_total_supply(token)
 # Get native ETH balance
 eth_balance = bot.get_ether_balance(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 ```
-
 
 ### Accessing Bot Components
 
@@ -1210,14 +1219,15 @@ price_feed = degenbot.ChainlinkPriceContract(
 assert price_feed.address == '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
 assert price_feed.decimals == 8
 
-# price_feed.price requires a Bot instance with RPC access for live data
+# `price` reads through the session's provider, so it needs a Bot — pass
+# `bot=` at construction; without one, `decimals=` above still answers
 ```
 
 ## CLI Reference
 
-Degenbot provides a command-line interface for managing blockchain data and pool state.
+Degenbot provides a command-line interface for managing blockchain data and pool state. The console is the Rust `degenbot-cli` binary; `docs/rust-cli.md` is its authoritative command/flag/exit-code reference.
 
-### Installation
+### Installing the Console
 
 The CLI is installed automatically with the package:
 
@@ -1264,7 +1274,9 @@ degenbot database heal [--dry-run]
 # Update pool metadata and liquidity positions for all active exchanges
 # (--verify-chunk/--verify-all add pre-commit on-chain-truth gates: a
 # divergence rolls the chunk back and does NOT advance last_update_block)
-degenbot pool update [--chunk SIZE] [--to-block BLOCK] [--verify-chunk/--no-verify-chunk] [--verify-all/--no-verify-all]
+degenbot pool update [--chunk SIZE] [--max-block-range BLOCKS] [--to-block BLOCK]
+                     [--verify-chunk/--no-verify-chunk] [--verify-all/--no-verify-all]
+                     [--verify-all-interval BLOCKS]
 
 # Verify one V3/V4 pool's DB state against on-chain truth at a given block
 degenbot pool verify --rpc-url URL --chain 1 --block 18900000 --pool 0x... --family v3|v4 [--pool-manager 0x...]
@@ -1275,6 +1287,9 @@ degenbot exchange activate --chain base --name uniswap_v3
 
 # Deactivate an exchange
 degenbot exchange deactivate --chain base --name uniswap_v3
+
+# List every supported (chain, DEX) pair with its activation state
+degenbot exchange list [--chain base]
 
 # Steer a running bot (started with --operator-socket) without restarting it
 degenbot path add --socket /path/to/operator.sock --hop V2:0xPoolAddr [--hop V3:0xPoolAddr] [--direction zfo|ozf]
@@ -1314,6 +1329,33 @@ degenbot aave deactivate [--chain-id CHAIN_ID] [--name MARKET]
 
 # Show a user's position in a market
 degenbot aave position show <ADDRESS> [--market MARKET] [--chain-id CHAIN_ID]
+
+# Purge one market's populated state, then re-run its cold-boot update
+degenbot aave reset [--name MARKET] [--dry-run]
+
+# Print one market's completed-market record (row counts + table digests)
+degenbot aave digest [--market-name MARKET]
+```
+
+#### Config and Strategy Management
+
+```bash
+# Inspect the operator file and the values the process resolves (read-only)
+degenbot config show [--resolved]
+degenbot config get nodes.http.1
+degenbot config path
+
+# Write or drop one declared key / table entry (validated before write)
+degenbot config set nodes.http.1 "http://localhost:8545" [--force]
+degenbot config unset nodes.http.1 [--force]
+
+# Inspect and steer the typed strategy facets (ADR-055)
+degenbot strategy list
+degenbot strategy show settlement
+degenbot strategy activate settlement (--endpoints URLS | --endpoints-default)
+degenbot strategy deactivate settlement
+degenbot strategy set settlement <KEY> <VALUE>
+degenbot strategy default settlement <KEY>
 ```
 
 > **Rust-owned console (ADR-051).** The `degenbot` console is the `degenbot-cli`
@@ -1329,9 +1371,8 @@ Commands accepting `--to-block` support the following formats:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| `latest` | `latest` | Latest block |
-| `latest:-N` | `latest:-64` | N blocks before latest (default) |
-| `safe:+N` | `safe:128` | N blocks after safe block |
+| Tag | `latest` | One of the closed tag set: `earliest`, `finalized`, `safe`, `latest`, `pending` |
+| `<tag>:<signed offset>` | `latest:-64`, `safe:128` | The tag's block plus a negative or positive offset; the updaters default to `latest:-64` |
 | Number | `18900000` | Specific block number |
 
 ## Configuration
@@ -1342,8 +1383,10 @@ The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (else `~/.config/degen
 override) is the typed Rust `BotConfig` file layer: its tables must name
 declared schema sections (see
 [docs/rust-config-keys.md](docs/rust-config-keys.md) for the authoritative,
-generated key reference), plus the free-form `[failure_policy]` table. It is the
-BASE layer of the cascade — the per-chain endpoints, the session chain id, and
+generated key reference), plus the two free-form tables the loader skips rather
+than types: `[failure_policy]` (per-bucket reaction overrides, ADR-040) and
+`[deployments]` (the Python registry overlay, ADR-062). It is the BASE layer of
+the cascade — the per-chain endpoints, the session chain id, and
 the database path are read from it:
 
 ```toml
@@ -1372,7 +1415,7 @@ metrics_addr = "0.0.0.0:9464"
 the bot. Treat the file as a secret carrier: `chmod 600` it, and prefer a
 per-machine environment variable for anything credential-shaped.
 
-### Layer precedence
+### Layer Precedence
 
 | Precedence | Layer | Supplies |
 |---|---|---|
@@ -1409,6 +1452,14 @@ when `$XDG_STATE_HOME` is an absolute path, else `~/.local/state/degenbot/db/deg
 | `DEGENBOT_RPC_WS_CHAINID_<ID>` | any WS(S) URL | WebSocket endpoint for chain `<ID>`; overrides that chain's `[nodes.ws]` entry alone |
 | `DEGENBOT_RPC_IPC_CHAINID_<ID>` | any `ipc://` URL or socket path | Local IPC endpoint for chain `<ID>`; overrides that chain's `[nodes.ipc]` entry alone |
 | `DEGENBOT_DB_PATH` | filesystem path | SQLite database file; overrides the file's `database.path` |
+| `DEGENBOT_CONFIG` | filesystem path | Operator config file; overrides the XDG config home |
+| `DEGENBOT_OPERATOR_SOCKET` | filesystem path | Operator-channel socket the `path` / `fleet` commands dial when `--socket` is omitted |
+| `DEGENBOT_LOG_LEVEL` | `off`/`error`/`warn`/`info`/`debug`/`trace` | Console wiring default, used only when `RUST_LOG` is absent |
+| `DEGENBOT_OTEL` | `0`, `1` | OTLP span layer plus the Prometheus endpoint (default on) |
+| `DEGENBOT_METRICS_ADDR` | `host:port` | Prometheus scrape bind address (default `127.0.0.1:9464`) |
+| `DEGENBOT_JAEGER_ENDPOINT` | URL | OTLP endpoint for the opt-in Jaeger E2E test (default `http://127.0.0.1:4318`) |
+
+[`docs/rust-config-keys.md`](docs/rust-config-keys.md) is the full env-name-to-key inventory; this table is the operator-facing subset.
 
 ```bash
 DEGENBOT_DEBUG=1 python my_script.py
@@ -1422,9 +1473,11 @@ The extension is built automatically during installation using [maturin](https:/
 
 ### Available Functions
 
+These are the leaf helpers a driver reaches directly. Each is a thin Python companion over a Rust implementation: the math and ABI codecs are pyo3 exports, the address helpers wrap `degenbot._ffi.to_checksum_address` with an LRU cache, and `degenbot.contract` composes the encoding leaves.
+
 #### Tick Math
 
-Uniswap V3 tick-to-price conversions (Q96 fixed point):
+Concentrated-liquidity tick-to-price conversions (Q96 fixed point), shared by the V3 and V4 families:
 
 ```python
 from degenbot.uniswap.math import get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio
@@ -1469,10 +1522,6 @@ assert checksummed == "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
 #### ABI Encoding & Selectors
 
 Encode function calls and compute selectors:
-
-```python
-from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
-```
 
 <!-- invisible-code-block: python
 from degenbot.contract import encode_function_call, get_function_selector, decode_return_data
@@ -1591,7 +1640,7 @@ Advanced drivers can also reach the engine directly through the `degenbot._ffi` 
 
 ### Why Rust for the Hot Path
 
-The MEV workload — per-block re-solve of hundreds of cyclic paths, EVM-exact evm2 simulation, ABI decode, tick math, and swap encoding — is latency-bound at the CPython boundary, so the pump loop runs in Rust with the GIL released around each PyO3 crossing. Per-operation microbenchmarks are not tracked in-repo.
+The MEV workload — per-block re-solve of hundreds of cyclic paths, EVM-exact evm2 simulation, ABI decode, tick math, and swap encoding — is latency-bound at the CPython boundary, so the pump loop runs in Rust with the GIL released around each PyO3 crossing. Criterion benches for the math, pathfinding, pool, and db crates — plus the updater replay bench (`just bench-updaters`) — live in-repo; the pump's own counters are opt-in behind the `hotpath` feature.
 
 ### Build Requirements
 
@@ -1610,11 +1659,13 @@ Local Rust and maturin development builds intentionally use the workspace
 `[profile.dev]`: `opt-level = 1`, no LTO or stripping, and line-tables-only
 debug information. This favors representative optimization over an
 unoptimized debug build while keeping iterative rebuilds cheaper than
-release. Release wheels use `[profile.release]`: thin LTO, stripping, and
-`codegen-units = 1` for the final extension link. The selected core-library
-packages intentionally use `codegen-units = 16` to reduce release compile time;
-Cargo has no per-package LTO or strip override, and the final thin-LTO link
-reconverges those units.
+release. Release builds use `[profile.release]` (thin LTO, stripped), with the
+shipped `degenbot_rs` cdylib pinned to `codegen-units = 1` so the final link
+gets maximal codegen granularity; every other member library and third-party
+dependency compiles at the profile default of 16 units and is re-converged by
+that same link. Release-profile test runs use `[profile.release-tests]`, which
+inherits release's semantics and drops only the two packaging keys (`lto`,
+`strip`), because a thin-LTO link of a test binary is pure link cost.
 
 ```bash
 # Build the two default pure-Rust entry points
@@ -1623,7 +1674,7 @@ cargo build --manifest-path rust/Cargo.toml
 # Build the extension (same as `just build-rust-extension`)
 cargo build --locked -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
-# Run the standalone smokes and canonical full Rust suite
+# Standalone smoke + the dev-profile workspace suite, then the release-profile suite
 just test-rust
 
 # Bootstrap locked Python dependencies, then build/install the explicit
@@ -1639,7 +1690,7 @@ RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg tokio_unstable" cargo test --locked \
   -p degenbot-bot --features hotpath --lib profiling:: -- --ignored --nocapture
 ```
 
-### Rust feature matrix
+### Rust Feature Matrix
 
 The Rust workspace is checked by named feature lanes. The default lane never
 uses `--all-features`, so a default-feature regression cannot be hidden by an
@@ -1651,8 +1702,8 @@ exhaustive build.
 | Pure-Rust consumer | `degenbot` and its examples, with the umbrella's defaults and no PyO3 binding | `just check-rust-consumer` |
 | Binding defaults | `degenbot_rs` with its broad default domain features, without `extension-module` | `just check-rust-binding-default` |
 | Binding no-default | `degenbot_rs` with no domain feature on (`--no-default-features`): the no-bot module tree, and the shape that proves every export carries the gate its module needs | `just check-rust-binding-no-default` |
-| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-pools/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`; the recipe adds `RUSTFLAGS=--cfg tokio_unstable` for full Tokio runtime metrics | `just check-rust-dev-features` |
-| Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling, telemetry, allocator-control, or mimalloc features | `just check-rust-extension-release` or `just build-rust-extension` |
+| Development wheel | the binding's `dev-features` alias: `pyo3/extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-pools/hotpath`, and `otel`; `allocator-ctrl` and `mimalloc` stay explicit opt-ins for A/B probes | `just check-rust-dev-features` |
+| Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling or telemetry features | `just check-rust-extension-release` or `just build-rust-extension` |
 | Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
 
 The development-wheel list is the binding manifest's canonical `dev-features`
@@ -1674,22 +1725,23 @@ Additional documentation is available in the [`docs/`](docs/) directory:
   - [Rust-Owned Settlement-Arbitrage Bot](docs/architecture/rust-owned-bot.md) — the original `ArbitrageEngine` design (Plans 079–082); marked historical, kept as a design-history reference (the current state layer follows the ADR log)
   - [Operator Add-Path Surface](docs/architecture/operator-add-path-surface.md) — steering a live bot (mid-run add-path + bounded on-demand discovery) over the Unix-socket JSON-lines operator channel
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
+- **[Investigation harness](docs/architecture/investigation-harness.md)**: the simulation oracle driver, the per-contract scaffolder, and the path-fixture toolkit — for debugging a failing settlement-arbitrage path or building a custom simulation harness
 - **[Architecture Decision Records](docs/adr/)**: the ADR design log for the Python→Rust migration (three-layer architecture, per-chain Bot, schema retention/cutover, registration-verify lifecycle, executor grammar, …)
 - **[Execution Strategy](docs/execution-strategy.md)**: the user-owned `ExecutionStrategy` seam (ADR-025)
-- **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
+- **[Aave V3](docs/cli/aave.md)**: The Aave market/position command reference; verified Solidity sources live in [`contract_reference/aave/`](contract_reference/aave/)
 - **[CLI](docs/cli/)**: Detailed CLI command reference (`aave.md`, `database.md`, `pool.md`)
 - **[Logging](docs/logging.md)**: Controlling `RUST_LOG` / `DEGENBOT_DEBUG` tracing, the env-gated hard/loud diagnostics, and debug-named diagnostics
 
 ### Contract Reference
 
-Verified Solidity source code for all supported protocols is in [`contract_reference/`](contract_reference/README.md):
+Verified Solidity sources for the Uniswap V2/V3/V4 cores and Aave V3 are in [`contract_reference/`](contract_reference/README.md). Each Uniswap directory holds one concatenated file carrying the whole core:
 
 | Protocol | Path | Contents |
 |----------|------|----------|
-| Uniswap V2 | `contract_reference/uniswap/V2/` | Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
-| Uniswap V3 | `contract_reference/uniswap/V3/` | Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position, etc. |
-| Uniswap V4 | `contract_reference/uniswap/V4/` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
-| Aave V3 | `contract_reference/aave/` | Pool (10 revisions), AToken (5 revisions), VariableDebtToken, GhoVariableDebtToken (6 revisions), GhoDiscountRateStrategy, AaveOracle, stkAAVE, RewardsController |
+| Uniswap V2 | `contract_reference/uniswap/V2/UniswapV2Factory.sol` | Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
+| Uniswap V3 | `contract_reference/uniswap/V3/UniswapV3Factory.sol` | Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position |
+| Uniswap V4 | `contract_reference/uniswap/V4/PoolManager.sol` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909 |
+| Aave V3 | `contract_reference/aave/` | One file per revision: Pool (10), AToken (5), GhoVariableDebtToken (6), stkAAVE (6), VariableDebtToken (4), plus GhoDiscountRateStrategy, AaveOracle, RewardsController |
 
 Useful when auditing, or when you need to understand the exact on-chain behavior of a supported protocol. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
 
@@ -1704,13 +1756,14 @@ git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
 just bootstrap
 
-# Run the full gate: Rust lint + standalone-Rust smoke + cargo workspace +
-# full pytest + the offline executor lane (Forge tree + production calldata)
+# The default gate: Rust lint + the tripwire ratchet, the whole workspace suite
+# under nextest, the full pytest suite, the offline executor lane, and the
+# consumer probes
 just test
 
 # Individual tracks:
-just test-rust    # cargo workspace + just test-standalone
-just test-python  # builds the extension (incremental), then `uv run --no-sync pytest`
+just test-rust    # standalone smoke + the dev-profile workspace suite, then the release-profile suite
+just test-python  # builds the extension (incremental), then pytest + the executor release ratchet
 ```
 
 ## License
