@@ -227,12 +227,13 @@ fn facet_status(
 /// This shell resolves what only it can name — the typed configuration's facet
 /// table, the resolved backrun boot's route registry and node join, the
 /// per-strategy submission lanes with their reconciler, the head trigger, and
-/// the state root — and passes them as values. The settlement facet registers
-/// configured with no spawn factory (the engine's own pump arm drives it), and
-/// a backrun facet registers configured only when the operator activated it, so
-/// enabling an inactive arm fails loudly instead of starting a lane with no
-/// operator intent behind it. The boot authors none of that asymmetry: it
-/// registers the statuses it is handed, in the order it is handed them.
+/// the state root — and passes them as values. Every facet registers from its
+/// `strategy.<facet>.active` key: the settlement arm registers configured with
+/// no spawn factory (the engine's own pump arm drives it), and every other arm
+/// only when the operator activated it, so enabling an inactive arm fails
+/// loudly instead of starting a lane with no operator intent behind it. The
+/// boot authors none of that: it registers the statuses it is handed, in the
+/// order it is handed them.
 ///
 /// The host is not a process-once singleton: every engine boots its own host,
 /// hub attachment, and hosted sources, so per-engine fleets stay isolated. The

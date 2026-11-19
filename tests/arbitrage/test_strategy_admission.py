@@ -35,22 +35,31 @@ class TestAdmissionIsHostOwned:
     def test_host_admission_follows_the_facet_config(self):
         """The host's typed refusal is the one admission surface, and it reads
         the SAME facet activation the readiness resolution reports: enabled
-        iff `strategy.<facet>.active`. The test derives the expectation from
-        that resolution rather than pinning ambient holder state — the boot
-        installs the ambient config, so a workspace with an activated backrun
-        facet must admit it exactly as a defaulted one refuses."""
+        iff `strategy.<facet>.active` — for every registered facet, settlement
+        included. An inactive settlement arm is never admitted, and the status
+        the host reports for it stays "registered" rather than "enabled", so the
+        readout matches what the process actually runs. The test derives the
+        expectation from that resolution rather than pinning ambient holder
+        state — the boot installs the ambient config, so a workspace with an
+        activated facet must admit it exactly as a defaulted one refuses."""
         engine = ArbitrageEngine(py_bot=Bot(1))
         readiness = validate_strategy_readiness()
         # The registered fleet is the engine's own vocabulary; the view's data
-        # says which backrun arm is admitted, so the test restates no facet.
+        # says which arm is admitted, so the test restates no facet.
         registered = [name for name, _state, _halt in engine.strategies()]
         active_facets = set(readiness.active_backrun_facets)
-        for facet in (name for name in registered if name != "settlement"):
+        if readiness.settlement_active:
+            active_facets.add("settlement")
+        for facet in registered:
             if facet in active_facets:
                 assert engine.enable_strategy(facet) == "enabled"
-            else:
-                with pytest.raises(UnconfiguredStrategyError):
-                    engine.enable_strategy(facet)
+                continue
+            with pytest.raises(UnconfiguredStrategyError):
+                engine.enable_strategy(facet)
+            record = next(record for record in engine.strategies() if record[0] == facet)
+            assert record[1] == "registered", (
+                f"{facet}: a refused (unconfigured) facet is never reported active"
+            )
 
 
 @pytest.fixture(autouse=True)

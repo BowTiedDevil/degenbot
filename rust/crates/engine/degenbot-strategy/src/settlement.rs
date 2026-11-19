@@ -16,8 +16,7 @@
 //!
 //! # Special-case ledger
 //!
-//! Every place settlement remains special, each with why it stays, and the one
-//! case that has left this ledger:
+//! Every place settlement remains special, each with why it stays:
 //!
 //! - **Pump self-driving (no spawn factory).** The engine's arb pump owns the
 //!   settlement loop, so the host registers no [`DriverSpawnFactory`] for it and
@@ -25,12 +24,6 @@
 //!   clock the pump already owns; generalizing the pump into a hosted loop is
 //!   ADR-018's on-demand work, deferred until a second settled-block strategy
 //!   exists.
-//! - **Boot registration is unconditionally configured.** The hosted Python
-//!   boot is the settlement arm, so it registers the settlement facet as
-//!   `FacetStatus::Configured` even when `strategy.settlement.active` is
-//!   false. Why: the runner resolves its live relay posture *after* the engine
-//!   exists, and a dry-run boot that never broadcasts must still enable the
-//!   arm (the live-mode gate lives in the runner, not in registration).
 //! - **Process-global submission lane.** The boot installs the settlement
 //!   [`NonceLane`] process-wide instead of scoping it under a host
 //!   `LaneNamespace`. Why: the settlement seam is the Python-driven arm of the

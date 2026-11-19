@@ -10,10 +10,11 @@ python state. An all-inactive fleet refuses at the posture gate.
 from __future__ import annotations
 
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from degenbot.runner import ActivationGateRefused
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
 from tests.helpers import verdict_probe as probe
@@ -124,3 +125,60 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     records = {name: state for name, state, _halt in engine.strategies()}
     assert records["mevblocker_backrun"] == "registered"
     assert records["txpool_backrun"] == "registered"
+
+
+class TestActivationPrecedesRegistration:
+    """The gate resolves BEFORE the actor record builds.
+
+    Building the actor record builds the engine, and the engine's construction
+    IS facet registration (the boot's facet table reads
+    ``strategy.<facet>.active``). A refused boot therefore leaves no engine, no
+    arm, and no posture behind: a session that never ran reports nothing active,
+    so its status is the state it actually reached.
+    """
+
+    async def test_a_readiness_refusal_leaves_no_actors_resolved(self) -> None:
+        def readiness() -> Any:
+            raise ValueError("no strategy facet is active: activate one")
+
+        def settlement_endpoints() -> list[str]:
+            pytest.fail("a refused fleet consulted the settlement endpoints")
+
+        session = _runner(
+            lambda **kw: None,
+            readiness=readiness,
+            settlement_endpoints=settlement_endpoints,
+        ).session
+
+        with pytest.raises(ActivationGateRefused, match="no strategy facet is active"):
+            await session.start()
+
+        assert session.actors is None, (
+            "the refused boot never built the actor record, so no engine registered a facet"
+        )
+        assert session.readiness is None
+        assert session.settlement_active is False
+        assert session.relay_posture is None
+
+    async def test_an_endpointless_active_arm_refuses_before_the_actors_resolve(self) -> None:
+        """An activated settlement arm with no settled endpoints is the gate's
+        refusal, landed before any engine exists — the arm that cannot settle is
+        never registered configured, and the refused boot reports no posture."""
+
+        def settlement_endpoints() -> list[str]:
+            raise ValueError('strategy "settlement" is active but its endpoint set is empty')
+
+        session = _runner(
+            lambda **kw: noop_coro(),
+            settlement_arm=True,
+            readiness=lambda: FakeBootReadiness(settlement_active=True),
+            settlement_endpoints=settlement_endpoints,
+        ).session
+
+        with pytest.raises(ActivationGateRefused, match="endpoint set is empty"):
+            await session.start()
+
+        assert session.actors is None
+        assert session.readiness is None
+        assert session.settlement_active is False
+        assert session.relay_posture is None

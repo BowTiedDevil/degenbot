@@ -19,6 +19,7 @@ import pytest
 from degenbot.runner import ActivationGateRefused, BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.session import SessionPhase
 from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import boot_runner
 
@@ -179,10 +180,13 @@ class TestBootGate:
         with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
             await runner.start()
 
-    async def test_a_refused_boot_still_reaches_the_engine_for_shutdown(self) -> None:
-        """A boot refused AFTER the engine subscribed keeps its actors on the
-        session, so shutdown() can stop the pump instead of leaking a
-        subscription into an unstarted session."""
+    async def test_a_refused_boot_never_reaches_the_engine(self) -> None:
+        """The gate refuses before the actor record — and so before the engine
+        that registers the facets and subscribes the pump — exists.
+
+        There is no half-started engine to stop and no subscription to leak, so
+        the refused session holds no actors and no block clock, and shutdown()
+        is the total teardown of a session that never started."""
 
         def readiness() -> Any:
             msg = "facet unreadiness: degenbot strategy activate"
@@ -192,13 +196,12 @@ class TestBootGate:
         with pytest.raises(ActivationGateRefused):
             await runner.start()
 
-        assert runner.session.actors is not None
-        registry = runner.session.actors.engine_registry
-        assert len(registry.start_calls) == 1
-        await runner.shutdown()
-        assert registry.engine.stop_calls == 1, (
-            "a half-started session must still reach its engine to stop the pump"
-        )
+        session = runner.session
+        assert session.actors is None, "the refused boot never built the engine"
+        assert session.dispatcher is None, "no block clock was ever resolved"
+
+        await session.shutdown()
+        assert session.phase is SessionPhase.CLOSED
 
     async def test_an_injected_arm_off_beats_a_settlement_active_view(self) -> None:
         """The injected settlement arm is the session's ONE fact. A DI seam

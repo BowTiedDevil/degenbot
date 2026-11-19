@@ -268,6 +268,20 @@ class InjectedActors:
 
 
 @dataclass(frozen=True)
+class Gate:
+    """The activation gate's resolvers — resolved before any actor exists.
+
+    The boot resolves the gate FIRST, because building the actor record builds
+    the engine and the engine's construction IS facet registration. Holding the
+    resolvers apart from the record lets the gate refuse a fleet that no engine
+    has registered yet.
+    """
+
+    readiness: Callable[[], StrategyReadinessView]
+    settlement_endpoints: Callable[[], list[str]]
+
+
+@dataclass(frozen=True)
 class Actors:
     """A session's resolved collaborators — production or injected, one shape.
 
@@ -287,6 +301,27 @@ class Actors:
     readiness: Callable[[], StrategyReadinessView]
     settlement_endpoints: Callable[[], list[str]]
     stop_engine: Callable[[], None] | None
+
+    @classmethod
+    def gate(cls, injected: InjectedActors) -> Gate:
+        """Resolve the activation gate's factory pair — no actor, no engine.
+
+        The same resolution :meth:`from_injected` carries, so the gate the boot
+        walks and the record it later builds can never read different resolvers.
+
+        Args:
+            injected: The session's DI value.
+
+        Returns:
+            The readiness and settlement-endpoint factories.
+
+        """
+        return Gate(
+            readiness=_pick(injected.readiness, validate_strategy_readiness),
+            settlement_endpoints=_pick(
+                injected.settlement_endpoints, settlement_broadcast_endpoints
+            ),
+        )
 
     @classmethod
     async def resolve(cls, cfg: ArbitrageConfig, injected: InjectedActors) -> Actors:
@@ -335,6 +370,7 @@ class Actors:
         assert bot is not None, "the bot is built (or injected) before the record"
         assert engine_registry is not None, "the registry is built before the record"
         assert async_w3 is not None, "the provider is built (or injected) before the record"
+        gate = cls.gate(injected)
         return cls(
             bot=bot,
             engine_registry=engine_registry,
@@ -344,10 +380,8 @@ class Actors:
             consumer_factory=_pick(injected.consumer_factory, build_session_consumer),
             scheduler=injected.scheduler,
             pipeline_factory=_pick(injected.pipeline_factory, build_executor_for),
-            readiness=_pick(injected.readiness, validate_strategy_readiness),
-            settlement_endpoints=_pick(
-                injected.settlement_endpoints, settlement_broadcast_endpoints
-            ),
+            readiness=gate.readiness,
+            settlement_endpoints=gate.settlement_endpoints,
             stop_engine=injected.stop_engine,
         )
 
@@ -428,6 +462,11 @@ class Session:
     async def start(self) -> Self:
         """Build the actors and run the engine's pre-resume ritual.
 
+        The activation gate resolves FIRST, before the actor record — and so
+        before the engine that registers the facets — exists: a fleet the gate
+        refuses leaves no registered facet and no posture behind. The actors
+        then resolve, and the engine's pre-resume ritual runs over them.
+
         Stops at ``subscribed`` — BEFORE ``resume()``. Zero result batches emit
         during this window (the pump isn't running), so ``run()`` can attach the
         consumer in the gap before ``resume()`` without a stale-backlog window.
@@ -453,11 +492,38 @@ class Session:
         # reads stay the loader's. Zero-config arms nothing.
         arm_diagnostics(cfg.diag)
 
+        # ── The activation gate, before any actor exists ──
+        # Building the actor record builds the engine, and the engine's
+        # construction IS facet registration: the boot's facet table reads
+        # `strategy.<facet>.active` for every strategy. So the gate settles the
+        # fleet first, and a boot it refuses leaves no engine, no registered
+        # facet, and no posture behind — the session reports exactly the nothing
+        # it runs. An endpointless active settlement arm refuses here, before a
+        # host, a session, or the process-global settlement lane exists.
+        gate = Actors.gate(self.injected)
+        # The gate resolves ONCE and the session caches the value; the run ritual
+        # consumes that data rather than re-reading the verdict, while the
+        # refusal rule stays with the Rust config validation.
+        readiness = resolve_readiness(gate.readiness)
+        # The settlement arm resolves before the engine exists: the posture
+        # minter and run()'s dispositions read this ONE resolved fact, so the
+        # session can never carry a posture the arm disagrees with.
+        settlement_active = self._resolve_settlement_arm(readiness)
+        relay_posture = (
+            self.injected.relay_posture
+            if self.injected.relay_posture is not None
+            else mint_relay_posture(
+                settlement_active=settlement_active,
+                live=not cfg.dry_run,
+                endpoints=gate.settlement_endpoints,
+            )
+        )
+
         # ── The actor trio (injected or from cfg) ──
         actors = await Actors.resolve(cfg, self.injected)
-        # The resolved record lands on the session BEFORE the boot can refuse
-        # (the readiness gate, the posture mint): a half-started session still
-        # reaches its engine, so shutdown() can stop a subscribed pump.
+        # The resolved record lands on the session once the gate admitted the
+        # boot: a later refusal still reaches its engine, so shutdown() can stop
+        # a subscribed pump.
         self.actors = actors
 
         # ── Fetch current block (for the dispatcher + backfill comparison) ──
@@ -486,24 +552,6 @@ class Session:
         if backfill_target > current_block:
             current_block = backfill_target
             dispatcher.advance_block(backfill_target)
-
-        # The activation gate resolves ONCE here and caches the value; the run
-        # ritual consumes that data rather than re-reading the verdict, while
-        # the refusal rule stays with the Rust config validation.
-        readiness = resolve_readiness(actors.readiness)
-        # The settlement arm resolves before the ritual runs: the posture minter
-        # and run()'s dispositions read this ONE resolved fact, so the session
-        # can never carry a posture the arm disagrees with.
-        settlement_active = self._resolve_settlement_arm(readiness)
-        relay_posture = (
-            self.injected.relay_posture
-            if self.injected.relay_posture is not None
-            else mint_relay_posture(
-                settlement_active=settlement_active,
-                live=not cfg.dry_run,
-                endpoints=actors.settlement_endpoints,
-            )
-        )
 
         self.dispatcher = dispatcher
         self.sim_ctx = sim_ctx
