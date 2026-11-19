@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
-use degenbot_bot::crawl::{FlightEnter, FlightKey, FlightOutcome};
+use degenbot_bot::crawl::FlightKey;
 
 use crate::bot::engine::{hex_string_to_pool_id, refusal_err, SpecViolationError};
 use crate::bot::errmap::{
@@ -216,47 +216,18 @@ impl PyBot {
     /// wake with the published result (id, or the leader's exact exception).
     ///
     /// Publication is strictly after the leader's `BotState` insertion, so a
-    /// `Built` wake never precedes the registry. A lead whose claim window
-    /// closed before it subscribed loops back through `precheck`; past a
-    /// defensive retry bound the call falls through to an unclaimed build
-    /// (the terminal registration refuses duplicates exactly as the legacy
-    /// path did).
+    /// `Built` wake never precedes the registry. A caller whose claim window
+    /// closed before it subscribed loops back through `precheck`; a caller that
+    /// keeps losing the election answers the typed claim-exhaustion error,
+    /// because a build outside a claim is exactly what the flight prevents.
     fn run_flight<T>(
         &self,
         py: Python<'_>,
         key: FlightKey,
-        mut precheck: impl FnMut() -> PyResult<Option<T>>,
+        precheck: impl FnMut() -> PyResult<Option<T>>,
         lead: impl FnOnce() -> PyResult<(u64, T)>,
     ) -> PyResult<T> {
-        let mut iterations: u32 = 0;
-        loop {
-            if let Some(payload) = precheck()? {
-                return Ok(payload);
-            }
-            match self.flights.enter(key) {
-                FlightEnter::Lead(mut guard) => {
-                    let outcome = lead();
-                    match &outcome {
-                        Ok((pool_id, _)) => guard.publish(FlightOutcome::Built(*pool_id)),
-                        Err(err) => {
-                            guard.publish(FlightOutcome::Failed(build_flights::failure(py, err)));
-                        }
-                    }
-                    return outcome.map(|(_, payload)| payload);
-                }
-                FlightEnter::Peer(peer) => {
-                    // Park GIL-free; `Built` re-answers through `precheck`, a
-                    // failure re-raises the leader's exact exception.
-                    if let FlightOutcome::Failed(failure) = build_flights::wait(py, peer) {
-                        return Err(build_flights::rethrow(py, &failure));
-                    }
-                }
-            }
-            iterations += 1;
-            if iterations > 8 {
-                return lead().map(|(_, payload)| payload);
-            }
-        }
+        build_flights::run(py, &self.flights, key, precheck, lead)
     }
 
     /// The address-keyed registry-of-record payload for a V2 build: identity
