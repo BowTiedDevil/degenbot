@@ -41,6 +41,9 @@ tower = { version = "^0.5", default-features = false }
 [dev-dependencies]
 # The IPC guard test binds a fake node on a real Unix socket.
 tempfile = { version = "^3.27" }
+# Virtual time: the simulation call policy's ceiling is asserted against a
+# >2s response without a real 2s sleep (`#[tokio::test(start_paused = true)]`).
+tokio = { version = "^1.54", features = ["test-util"] }
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry"] }
 
 [features]

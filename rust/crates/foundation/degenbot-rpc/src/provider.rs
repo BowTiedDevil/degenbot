@@ -1560,16 +1560,31 @@ fn json_kind(value: &serde_json::Value) -> &'static str {
     }
 }
 
-/// Per-call timeout for the in-process SIMULATION path (incident 2026-08-20):
-/// the dispatch fan-out holds a `BotState` READ guard across `Evm2BlockSimHandle`
-/// build + sim-loop fetches on the fan-out worker; GIL-held FFI writers park
-/// behind that reader and keep the GIL while parked. With the default 30s
-/// call timeout x 3-5 attempts + backoff, one stalled RPC stalled the guard
-/// (and therefore the GIL) for MINUTES - the observed 'GIL deadlock'. The sim
-/// path uses a fail-fast budget instead: a slow cold miss tallies
-/// `rpc-failed` quickly rather than stalling graph state for the retry
-/// budget's duration.
-pub const SIM_CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// The simulation path's per-attempt ceiling: the bound on ONE RPC call a
+/// simulation makes. Its own policy, not the generic provider posture
+/// ([`DEFAULT_CALL_TIMEOUT`] x [`DEFAULT_MAX_RETRIES`]), because the simulation
+/// path answers to a different deadline.
+///
+/// The dispatch seam drops the `BotState` read guard BEFORE any provider I/O
+/// (`degenbot-arbitrage::dispatch`, pinned by
+/// `fanout_does_not_hold_the_botstate_guard_across_provider_io`), so a slow call
+/// parks nothing but the simulation itself: the ceiling's job is liveness, not
+/// lock-scope protection.
+///
+/// Measured cold-miss p99 across the simulation's read shapes on the local node
+/// (single storage read, 16-way concurrent, the account triple, 32- and 128-slot
+/// prefetch packets, `eth_call`) was ~11ms, so 5s is ~467x the healthy tail and
+/// admits a healthy read lasting longer than two seconds — a remote endpoint, a
+/// cold archive page, a loaded host — instead of misclassifying it as a stall.
+/// [`SIM_MAX_ATTEMPTS`] x this ceiling plus one 100-200ms backoff bounds a
+/// STALLED endpoint at ~10.2s, under one mainnet block. The generic posture is
+/// unchanged.
+pub const SIM_CALL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Total attempts the simulation path spends on one RPC call: the initial
+/// attempt plus one retry. One retry is what a cut attempt is worth — either
+/// attempt answers a healthy endpoint, and a further retry would push the
+/// stall bound ([`SIM_CALL_TIMEOUT`] x this count) past one block.
 pub const SIM_MAX_ATTEMPTS: u32 = 2;
 
 /// The failure context of the batched account read ([`AlloyProvider::get_account_at`]):
@@ -1604,10 +1619,13 @@ pub struct AccountRead {
 }
 
 impl AlloyProvider {
-    /// A clone of this provider bounded for the in-process simulation path
-    /// ([`SIM_CALL_TIMEOUT`] / [`SIM_MAX_ATTEMPTS`]). Shares the same
-    /// transport (the `inner` `Arc` is cloned) - only the retry policy
-    /// changes, so there is no connection-pool cost.
+    /// A clone of this provider carrying the simulation call policy
+    /// ([`SIM_CALL_TIMEOUT`] / [`SIM_MAX_ATTEMPTS`]) — the derived ceiling and
+    /// attempt count a simulation's reads are bounded by. ONLY the call policy
+    /// changes: the generic provider this was cloned from keeps its own
+    /// posture, the transport (`inner`) and the endpoint-level facts are shared,
+    /// so there is no connection-pool cost, and the deployment's cumulative
+    /// `nodes.retry_budget_ms` key passes through rather than being re-set here.
     #[must_use]
     pub fn sim_bounded(&self) -> Self {
         Self {
@@ -3861,6 +3879,258 @@ mod tests {
             attempt_counter.load(Ordering::SeqCst),
             2,
             "exactly two attempts: the first timed out, the second succeeded"
+        );
+    }
+
+    // ── The simulation call policy ─────────────────────────────────────
+    //
+    // The simulation path's ceiling and attempt count are the ONLY bound on a
+    // pathological call: nothing holds a `BotState` guard across the provider
+    // I/O it bounds, so the policy's job is liveness (a stalled endpoint cannot
+    // outlive the block a candidate prices), not lock-scope protection.
+
+    /// A simulated response that takes 2.5s is a HEALTHY read, not a stall: the
+    /// policy must land it on the first attempt instead of burning the retry
+    /// against a ceiling that was set to protect a guard nobody holds.
+    #[tokio::test(start_paused = true)]
+    async fn sim_policy_admits_a_healthy_read_longer_than_two_seconds() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(SIM_MAX_ATTEMPTS, SIM_CALL_TIMEOUT, None, move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(2_500)).await;
+                    Ok(11_u64)
+                }
+            })
+            .await;
+
+        assert_eq!(
+            result.expect("a 2.5s healthy read is inside the simulation ceiling"),
+            11
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the healthy read must not burn a retry: one attempt answers it"
+        );
+    }
+
+    /// An attempt past the ceiling is cut as a retryable `Timeout` and the
+    /// retry lands the answer — the ceiling's slow tail costs one retry, never
+    /// the candidate.
+    #[tokio::test(start_paused = true)]
+    async fn sim_policy_retries_a_timed_out_attempt_and_recovers() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+        let just_past_the_ceiling = SIM_CALL_TIMEOUT + Duration::from_secs(1);
+
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(SIM_MAX_ATTEMPTS, SIM_CALL_TIMEOUT, None, move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                        tokio::time::sleep(just_past_the_ceiling).await;
+                    }
+                    Ok(23_u64)
+                }
+            })
+            .await;
+
+        assert_eq!(result.expect("the retry recovers the attempt"), 23);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "exactly one cut attempt plus one retry"
+        );
+    }
+
+    /// A stalled endpoint is bounded, and the bound is the stated one:
+    /// `attempts x ceiling` plus the backoff the first cut attempt earned.
+    /// Measured in virtual time, so the assertion is the policy's arithmetic
+    /// rather than a wall clock.
+    #[tokio::test(start_paused = true)]
+    async fn sim_policy_bounds_a_stalled_endpoint_within_one_block() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&calls);
+        let started = tokio::time::Instant::now();
+
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(SIM_MAX_ATTEMPTS, SIM_CALL_TIMEOUT, None, move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    // Long enough that only the ceiling can end the attempt.
+                    tokio::time::sleep(Duration::from_secs(3_600)).await;
+                    Ok(0_u64)
+                }
+            })
+            .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(ProviderError::Timeout { .. })),
+            "a stalled endpoint surfaces the retryable Timeout, got {result:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            SIM_MAX_ATTEMPTS,
+            "the attempt count is the stall bound's first factor"
+        );
+        let attempts = SIM_CALL_TIMEOUT * SIM_MAX_ATTEMPTS;
+        let worst_case = attempts + Duration::from_millis(200);
+        assert!(
+            elapsed >= attempts,
+            "each attempt waited its full ceiling, elapsed {elapsed:?}"
+        );
+        assert!(
+            elapsed <= worst_case,
+            "the ceiling plus one backoff bounds the chain, elapsed {elapsed:?} \
+             against {worst_case:?}"
+        );
+        // Liveness: a stalled endpoint costs less than one mainnet block, so a
+        // found path's verdict arrives in time to price the block it was found
+        // on rather than the next one.
+        assert!(
+            worst_case < Duration::from_secs(12),
+            "a stalled simulation must not outlive the block it prices: {worst_case:?}"
+        );
+    }
+
+    /// `sim_bounded` rebinds the policy and nothing else: the generic provider
+    /// keeps its 30s / 3-attempt posture, the simulation handle shares the
+    /// transport (no second pool) and the endpoint-level facts.
+    #[test]
+    fn sim_bounded_rebinds_the_policy_and_leaves_the_generic_posture_alone() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("a current-thread runtime for one construction");
+        // HTTP connects lazily, so an unused address still builds a provider.
+        let provider = runtime
+            .block_on(AlloyProvider::new(
+                "http://127.0.0.1:1",
+                DEFAULT_MAX_RETRIES,
+            ))
+            .expect("an HTTP endpoint builds without connecting");
+
+        assert_eq!(provider.call_timeout, DEFAULT_CALL_TIMEOUT);
+        assert_eq!(
+            provider.max_attempts,
+            DEFAULT_MAX_RETRIES + 1,
+            "the generic constructor spends 1 initial attempt + N retries"
+        );
+
+        let sim = provider.sim_bounded();
+        assert_eq!(sim.call_timeout, SIM_CALL_TIMEOUT);
+        assert_eq!(sim.max_attempts, SIM_MAX_ATTEMPTS);
+        assert_eq!(
+            sim.retry_budget, provider.retry_budget,
+            "the deployment's cumulative budget key is not the sim policy's to re-set"
+        );
+        assert!(
+            Arc::ptr_eq(&sim.inner, &provider.inner),
+            "the sim handle shares the generic transport"
+        );
+        assert!(
+            Arc::ptr_eq(&sim.verified_chain_id, &provider.verified_chain_id),
+            "the verified chain is an endpoint fact both handles read"
+        );
+
+        // The generic posture itself is untouched by the rebinding.
+        assert_eq!(provider.call_timeout, DEFAULT_CALL_TIMEOUT);
+        assert_eq!(provider.max_attempts, DEFAULT_MAX_RETRIES + 1);
+        assert_eq!(DEFAULT_CALL_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(DEFAULT_MAX_RETRIES, 3);
+    }
+
+    /// A node that answers its FIRST request after `delay` and every later one
+    /// immediately: the transport-level slow read the ceiling must cut, retry,
+    /// and recover from. One thread per connection, so the retry is not queued
+    /// behind the first (still sleeping) answer. The delay is generous against
+    /// the assertion so a loaded scheduler cannot flake it.
+    fn spawn_slow_first_node(delay: Duration) -> String {
+        use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let port = listener.local_addr().expect("listener address").port();
+        let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let first = Arc::clone(&first);
+                std::thread::spawn(move || {
+                    let mut writer = stream.try_clone().expect("clone the stream");
+                    let mut reader = BufReader::new(stream);
+                    let mut content_length = 0_usize;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            content_length = value.trim().parse().unwrap_or(0);
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0_u8; content_length];
+                    if reader.read_exact(&mut body).is_err() {
+                        return;
+                    }
+                    let id = serde_json::from_slice::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|json| json.get("id").cloned())
+                        .unwrap_or_else(|| serde_json::Value::from(1));
+                    if first.swap(false, Ordering::SeqCst) {
+                        std::thread::sleep(delay);
+                    }
+                    let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": "0x2a"})
+                        .to_string();
+                    let _ = write!(
+                        writer,
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                });
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// End to end through the real transport: a slow first answer is cut at the
+    /// ceiling, classified retryable, and the retry lands the block number — so a
+    /// slow-but-healthy endpoint recovers instead of tallying `rpc-failed`.
+    #[tokio::test]
+    async fn sim_handle_cuts_a_slow_first_answer_and_recovers_through_the_transport() {
+        let url = spawn_slow_first_node(Duration::from_secs(1));
+        let provider = AlloyProvider::new(&url, DEFAULT_MAX_RETRIES)
+            .await
+            .expect("a provider builds against a listening endpoint");
+        let mut sim = provider.sim_bounded();
+        // Short budgets keep this leg fast; the virtual-time tests above assert
+        // the shipped policy's arithmetic.
+        sim.call_timeout = Duration::from_millis(50);
+        sim.max_attempts = 2;
+
+        let started = std::time::Instant::now();
+        let block = sim.get_block_number().await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(block.expect("the retry lands the answer"), 42);
+        // Wide against the 1s first answer: the retry's backoff is 100-200ms, so
+        // 750ms still proves the first attempt was cut rather than waited out
+        // while leaving a loaded scheduler room to land the retry.
+        assert!(
+            elapsed < Duration::from_millis(750),
+            "the unanswered first attempt was cut, not waited out: elapsed {elapsed:?}"
         );
     }
 

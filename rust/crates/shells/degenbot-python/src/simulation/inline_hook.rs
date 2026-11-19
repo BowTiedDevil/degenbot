@@ -63,8 +63,10 @@ use std::future::Future;
 /// closes over. Built once (at `install_inline_simulator` time) and shared
 /// by every per-path worker call for the engine's lifetime.
 pub(crate) struct InlineSimHook {
-    /// The `sim_bounded` provider (fail-fast cold-miss budget — the dispatch
-    /// seam's incident-2026-08-20 discipline).
+    /// The `sim_bounded` provider: the simulation call policy
+    /// (`SIM_CALL_TIMEOUT` 5s x `SIM_MAX_ATTEMPTS` 2), a liveness bound that
+    /// keeps a stalled endpoint under one block while admitting a healthy
+    /// multi-second read.
     provider: Arc<AlloyProvider>,
     /// The injected execution deployment this hook simulates through.
     deployment: Arc<SimulationDeployment>,
