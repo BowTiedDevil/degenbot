@@ -29,9 +29,19 @@
 //!    live inside `PoolManager`, not as separate contracts.
 //! 2. Amounts are `int128` (not `int256`), and a `fee` field is present.
 //! 3. The event is emitted by `PoolManager`, not by individual pool contracts.
+//!
+//! # `PoolManager.swap` calldata
+//!
+//! [`decode_v4_pool_manager_swap_pool_id`] reads the pool identity out of a
+//! `swap` CALL rather than a log: `swap(PoolKey,SwapParams,bytes)`, whose
+//! five-word `PoolKey` head is precisely the `abi.encode(PoolKey)` preimage, so
+//! `keccak256` over those words is the same `V4PoolId` the event's `topic[1]`
+//! carries. Reverting-frame attribution needs it because every V4 pool lives
+//! inside one shared `PoolManager`: a failing frame's target address names the
+//! manager, and only the calldata names the pool.
 
 use crate::uniswap_tick_range::validate_tick;
-use alloy::primitives::{b256, Address, B256, I256, U128, U256};
+use alloy::primitives::{b256, keccak256, Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
 use alloy::sol_types::SolEvent;
 
@@ -112,6 +122,114 @@ pub fn decode_v4_swap_log(log: &Log) -> Option<V4SwapEvent> {
         tick: validate_tick(log.data.tick)?,
         fee: log.data.fee.to::<u32>(),
     })
+}
+
+// ── `PoolManager.swap` calldata ───────────────────────────────────────────
+
+/// The `PoolManager.swap` selector —
+/// `swap((address,address,uint24,int24,address),(bool,int256,uint160),bytes)`.
+pub const V4_POOL_MANAGER_SWAP_SELECTOR: [u8; 4] = [0xf3, 0xcd, 0x91, 0x4c];
+
+/// The static head of a canonical `swap` call: the five-word `PoolKey`, the
+/// three-word `SwapParams`, and the `bytes hookData` offset word.
+const V4_SWAP_HEAD_BYTES: usize = 9 * 32;
+
+/// The width of `abi.encode(PoolKey)` — five static words, which are exactly
+/// the call's first five head words.
+const V4_POOL_KEY_BYTES: usize = 5 * 32;
+
+/// Decode the pool identity a canonical `PoolManager.swap` call names: the
+/// `poolId` = `keccak256(abi.encode(PoolKey))` the `PoolManager` indexes the
+/// pool under, and the key [`V4SwapEvent::pool_id`] carries — the call's first
+/// five head words ARE the `abi.encode(PoolKey)` preimage.
+///
+/// Returns `None` unless the calldata is a canonical `swap` call:
+///
+/// - The selector is [`V4_POOL_MANAGER_SWAP_SELECTOR`]. Another `PoolManager`
+///   entry point (`unlock`, `settle`, `take`, …) carries no `PoolKey`, so the
+///   five words in its argument list are some other call's numbers.
+/// - The nine-word static head is present and every word is canonical for its
+///   declared width (`address` / `uint160` / `uint24` zero-padded above their
+///   width, `int24` sign-extended, `bool` exactly `0` or `1`). A dirty word is
+///   refused instead of masked into a key the pool never had.
+/// - The `hookData` offset is the canonical head offset and its tail is exactly
+///   the declared length, so a truncated call or a surplus trailing byte cannot
+///   ride along as an attributable swap.
+///
+/// The identity is the attribution seam: every V4 pool lives inside one shared
+/// `PoolManager`, so the failing frame's target address names the manager, not
+/// the pool. This is what names the pool.
+#[must_use]
+pub fn decode_v4_pool_manager_swap_pool_id(calldata: &[u8]) -> Option<V4PoolId> {
+    let body = calldata.strip_prefix(V4_POOL_MANAGER_SWAP_SELECTOR.as_slice())?;
+    let head = body.get(..V4_SWAP_HEAD_BYTES)?;
+    let pool_key = head.get(..V4_POOL_KEY_BYTES)?;
+    let (words, _) = head.as_chunks::<32>();
+    let word = |index: usize| -> Option<&[u8]> { words.get(index).map(<[u8; 32]>::as_slice) };
+
+    // `PoolKey`: Currency (address), Currency (address), uint24 fee,
+    // int24 tickSpacing, IHooks (address).
+    if !is_canonical_address(word(0)?)
+        || !is_canonical_address(word(1)?)
+        || !is_canonical_uint(word(2)?, 3)
+        || !is_canonical_int24(word(3)?)
+        || !is_canonical_address(word(4)?)
+    {
+        return None;
+    }
+
+    // `SwapParams`: bool zeroForOne, int256 amountSpecified, uint160
+    // sqrtPriceLimitX96. Every `int256` word is canonical at its full width, so
+    // the amount needs no check; the other two do.
+    if !is_canonical_bool(word(5)?) || !is_canonical_uint(word(7)?, 20) {
+        return None;
+    }
+
+    // `bytes hookData`: an offset naming the head's end, then a length word and
+    // that many padded bytes.
+    if U256::from_be_slice(word(8)?) != U256::from(V4_SWAP_HEAD_BYTES) {
+        return None;
+    }
+    let tail = body.get(V4_SWAP_HEAD_BYTES..)?;
+    let declared = usize::try_from(U256::from_be_slice(tail.get(..32)?)).ok()?;
+    if tail.len() != 32 + declared.checked_next_multiple_of(32)? {
+        return None;
+    }
+
+    Some(keccak256(pool_key).0)
+}
+
+/// Whether `word` is the canonical ABI word of an `address`: 32 bytes whose
+/// high 12 are zero.
+fn is_canonical_address(word: &[u8]) -> bool {
+    word.get(..12)
+        .is_some_and(|high| high.iter().all(|byte| *byte == 0))
+}
+
+/// Whether `word` is the canonical ABI word of an unsigned integer
+/// `width_bytes` wide — zero above the value's width.
+fn is_canonical_uint(word: &[u8], width_bytes: usize) -> bool {
+    word.get(..32_usize.saturating_sub(width_bytes))
+        .is_some_and(|high| high.iter().all(|byte| *byte == 0))
+}
+
+/// Whether `word` is the canonical ABI word of an `int24`: sign-extended, so
+/// every byte above the value's three bytes repeats its sign bit.
+fn is_canonical_int24(word: &[u8]) -> bool {
+    let Some(low) = word.get(29) else {
+        return false;
+    };
+    let fill = if low & 0x80 == 0 { 0x00 } else { 0xff };
+    word.get(..29)
+        .is_some_and(|high| high.iter().all(|byte| *byte == fill))
+}
+
+/// Whether `word` is the canonical ABI word of a `bool`: zero except for a low
+/// byte that is exactly `0` or `1`.
+fn is_canonical_bool(word: &[u8]) -> bool {
+    word.get(..31)
+        .is_some_and(|high| high.iter().all(|byte| *byte == 0))
+        && word.get(31).is_some_and(|low| *low <= 1)
 }
 
 #[cfg(test)]
@@ -466,6 +584,165 @@ mod tests {
         let mut log = valid_swap_log();
         corrupt_topic_byte(&mut log, 2, 0, 0x01);
         assert!(decode_v4_swap_log(&log).is_none());
+    }
+
+    // ── `PoolManager.swap` calldata → poolId ──────────────────────────────
+
+    /// `cast calldata 'swap((address,address,uint24,int24,address),(bool,int256,uint160),bytes)'`
+    /// with the ETH/USDC 0.05 % key, `(true,-1000,2^96)`, empty hook data — a
+    /// canonical `swap` call produced by an independent encoder (foundry), so
+    /// the decoder is pinned against the real ABI layout instead of its own
+    /// encoder.
+    const CANONICAL_SWAP_CALLDATA: &str = "0xf3cd914c\
+        0000000000000000000000000000000000000000000000000000000000000000\
+        000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+        00000000000000000000000000000000000000000000000000000000000001f4\
+        000000000000000000000000000000000000000000000000000000000000000a\
+        0000000000000000000000000000000000000000000000000000000000000000\
+        0000000000000000000000000000000000000000000000000000000000000001\
+        fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc18\
+        0000000000000000000000000000000000000001000000000000000000000000\
+        0000000000000000000000000000000000000000000000000000000000000120\
+        0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// `cast keccak $(cast abi-encode 'f((address,address,uint24,int24,address))' …)`
+    /// over the same key — the mainnet ETH/USDC 0.05 % `poolId`.
+    const CANONICAL_POOL_ID: &str =
+        "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27";
+
+    fn canonical_swap_calldata() -> Vec<u8> {
+        alloy::hex::decode(CANONICAL_SWAP_CALLDATA).expect("pinned calldata is hex")
+    }
+
+    /// The first byte of the 32-byte head word `word` (word 0 begins right
+    /// after the selector).
+    fn word_offset(word: usize) -> usize {
+        4 + word * 32
+    }
+
+    fn set_calldata_byte(calldata: &mut [u8], offset: usize, value: u8) {
+        calldata[offset] = value;
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_names_the_pool_id() {
+        let id = decode_v4_pool_manager_swap_pool_id(&canonical_swap_calldata())
+            .expect("a canonical swap call names its pool");
+        let expected: B256 = CANONICAL_POOL_ID.parse().expect("the pinned poolId is hex");
+        assert_eq!(B256::from(id), expected);
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_wrong_selector() {
+        // A different `PoolManager` entry point (`settle`, `take`, `unlock`)
+        // carries no `PoolKey` at all: the selector is what distinguishes a
+        // swap call, so its absence is a refusal rather than a best-effort read
+        // of five words that mean something else.
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, 3, 0x4d);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_truncated_selector() {
+        assert!(decode_v4_pool_manager_swap_pool_id(&[]).is_none());
+        assert!(decode_v4_pool_manager_swap_pool_id(&[0xf3, 0xcd, 0x91]).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_truncated_head() {
+        // One byte short of the 9-word static head: the `hookData` offset word
+        // is absent, so no `PoolKey` can be claimed.
+        let calldata = canonical_swap_calldata();
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata[..4 + 9 * 32 - 1]).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_truncated_hook_data() {
+        // The `hookData` tail owns a 32-byte length word even when empty; a
+        // call that stops at the offset word is not the ABI encoding of it.
+        let calldata = canonical_swap_calldata();
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata[..4 + 9 * 32]).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_trailing_bytes() {
+        // The `bytes` tail is length-bounded: a surplus byte is a refusal, not
+        // an ignored word (the encoder never emits one).
+        let mut calldata = canonical_swap_calldata();
+        calldata.push(0x00);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_dirty_currency() {
+        // `Currency` is an `address`: the high 12 bytes of the word are zero.
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(1), 0x01);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_over_wide_fee() {
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(2), 0x01);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_non_sign_extended_tick_spacing() {
+        // `tickSpacing` is an `int24`: a zero-extended `-1` (0xff in the low
+        // three bytes, zeroes above) is a different key, not a maskable value.
+        let mut calldata = canonical_swap_calldata();
+        for byte in 29..32 {
+            set_calldata_byte(&mut calldata, word_offset(3) + byte, 0xff);
+        }
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_dirty_hooks() {
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(4), 0x01);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_non_bool_zero_for_one() {
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(5) + 31, 0x02);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_over_wide_price_limit() {
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(7), 0x01);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_rejects_non_canonical_hook_data_offset() {
+        // The offset word must name the canonical tail start; a shifted offset
+        // reads the length word from inside the head and is a refusal.
+        let mut calldata = canonical_swap_calldata();
+        set_calldata_byte(&mut calldata, word_offset(8) + 31, 0x40);
+        assert!(decode_v4_pool_manager_swap_pool_id(&calldata).is_none());
+    }
+
+    #[test]
+    fn decode_v4_pool_manager_swap_distinguishes_pools_sharing_a_manager() {
+        // Two keys through ONE PoolManager — the shape two V4 hops take. Their
+        // ids must differ, which is what lets a failing frame name its pool
+        // rather than only the shared manager.
+        let first = canonical_swap_calldata();
+        let mut second = canonical_swap_calldata();
+        set_calldata_byte(&mut second, word_offset(2) + 31, 0xb8); // fee 3000
+        set_calldata_byte(&mut second, word_offset(2) + 30, 0x0b);
+
+        let first_id = decode_v4_pool_manager_swap_pool_id(&first).expect("first key decodes");
+        let second_id = decode_v4_pool_manager_swap_pool_id(&second).expect("second key decodes");
+        assert_ne!(first_id, second_id);
     }
 
     #[test]

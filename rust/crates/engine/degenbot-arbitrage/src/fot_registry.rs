@@ -44,7 +44,7 @@ use degenbot_execution::HopInfo;
 use crate::pool_divergence::{
     captured_swap_output, hop_pool_key, is_solver_calc_failure, PoolDivergenceKey,
 };
-use crate::simulator::SimFailure;
+use crate::simulator::{RevertingFrame, SimFailure};
 
 /// The set of `reverting_frame.label` values that indicate a fee-on-transfer
 /// token consumed the input mid-swap. Sourced from
@@ -102,24 +102,19 @@ const FOT_REVERT_LABELS: &[&str] = &["IIA", "CurrencyNotSettled", "UniswapV2: K"
 /// `V4HopInfo.pool_id_hex`.
 ///
 /// `hops` is the path's `HopInfo` list (the dispatch path's
-/// `path_info_by_id[pid].hops`). The failing hop is the one whose pool
-/// address (`V2HopInfo.pool_address` / `V3HopInfo.pool_address` /
-/// `V4HopInfo.pool_manager_address`) equals `reverting_frame.target`. The
-/// input token is selected by the hop's `zfo` direction: `token0_address`
-/// (V2/V3) / `currency0_address` (V4) when `zfo == true`, else `token1` /
-/// `currency1`.
+/// `path_info_by_id[pid].hops`). The failing hop is the one the frame
+/// identifies (see [`hop_for_frame`]): a V2/V3 pool by its address, a V4 pool by
+/// the `(PoolManager, poolId)` pair the failing frame's `PoolManager.swap`
+/// calldata names — so two V4 hops through one shared `PoolManager` stay
+/// distinguishable. The input token is selected by the hop's `zfo` direction:
+/// `token0_address` (V2/V3) / `currency0_address` (V4) when `zfo == true`, else
+/// `token1` / `currency1`.
 ///
-/// V4 caveat: the reverting frame's `target` is the PoolManager address
-/// (shared by every V4 pool), so the lookup matches the FIRST V4 hop with
-/// that PoolManager address — which may be the wrong pool when the path has
-/// multiple V4 hops through the same PoolManager (see [`hop_for_target`]).
-/// This is a documented limitation, not a regression: most paths have at most
-/// one V4 hop, and the token identity (what FoT confirmation actually gates
-/// on) is unaffected. Resolving the exact failing V4 `poolId` when several
-/// share a PoolManager would require threading the `poolId` onto the
-/// reverting frame (currently only the target address is carried) — a larger
-/// inspector change deferred out of this spike, with the single-hop case
-/// already correct.
+/// A multi-V4-hop path whose frame carries no usable pool identity (the revert
+/// came from another `PoolManager` entry point, or a hop's `pool_id_hex` is
+/// malformed) returns `None`: the manager alone cannot say which pool failed, and
+/// attributing the first hop would record a suspicion against a pool that did not
+/// fail.
 #[must_use]
 pub fn fot_suspected_token_from_reverting_frame(
     failure: &SimFailure,
@@ -134,7 +129,7 @@ pub fn fot_suspected_token_from_reverting_frame(
     // distinct failing pools are distinct `poolId`s and the K=2 threshold can
     // actually fire. A malformed V4 `pool_id_hex` → `hop_pool_key` → `None` →
     // skip (never flag a pool we can't identify — same as divergence).
-    let hop = hop_for_target(hops, frame.target)?;
+    let hop = hop_for_frame(hops, frame)?;
     hop_pool_key(hop).map(|pool_key| (hop_input_token(hop), pool_key))
 }
 
@@ -267,20 +262,55 @@ pub fn hop_output_token(hop: &HopInfo) -> Address {
     }
 }
 
-/// The first hop whose pool matches the reverting frame's `target`. V2/V3
-/// pools match on `pool_address`; V4 matches on `pool_manager_address` (the
-/// shared PoolManager — the multi-V4-hop ambiguity: when several V4 hops go
-/// through the same PoolManager, this returns the FIRST, which may be the
-/// wrong pool; the token identity is unaffected, so FoT confirmation still
-/// keys correctly on the token). Returns `None` when no hop matches — the
-/// reverting pool isn't on this path (a dispatch bookkeeping bug, or the
-/// frame's target was an inner callback contract).
-fn hop_for_target(hops: &[HopInfo], target: Address) -> Option<&HopInfo> {
-    hops.iter().find(|hop| match hop {
-        HopInfo::V2(v2) => v2.pool_address == target,
-        HopInfo::V3(v3) => v3.pool_address == target,
-        HopInfo::V4(v4) => v4.pool_manager_address == target,
-    })
+/// The hop a reverting frame identifies.
+///
+/// V2/V3 pools are named by the frame's `target` — their own contract address,
+/// exact by construction, and unchanged.
+///
+/// A V4 pool is NOT named by an address: every V4 pool lives inside one shared
+/// `PoolManager`, so `target` names the manager. The exact identity is the
+/// frame's decoded [`RevertingFrame::pool_id`] (the `keccak256(PoolKey)` of the
+/// failing `PoolManager.swap` calldata), which must match the hop's own
+/// `poolId` under that same manager.
+///
+/// Without a decoded pool identity — the revert came from `settle`/`take`/another
+/// `PoolManager` entry point, or the calldata was not a canonical `swap` — only
+/// an UNAMBIGUOUS V4 hop through that manager can be attributed. Several V4 hops
+/// through one manager with no identity is ambiguous: this returns `None` rather
+/// than the first hop, because the first hop's pool would be a guess and the
+/// registry's distinct-pool threshold is built on exact identities.
+///
+/// Returns `None` when no hop matches — the reverting pool isn't on this path (a
+/// dispatch bookkeeping bug, or the frame's target was an inner callback
+/// contract).
+fn hop_for_frame<'a>(hops: &'a [HopInfo], frame: &RevertingFrame) -> Option<&'a HopInfo> {
+    // An identity naming a V4 pool cannot be a V2/V3 pool's address: the frame's
+    // calldata was a `PoolManager.swap`, which no V2/V3 pool answers.
+    if let Some(pool_id) = frame.pool_id {
+        let identity = PoolDivergenceKey::V4(pool_id);
+        return hops.iter().find(|hop| {
+            matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address == frame.target)
+                && hop_pool_key(hop) == Some(identity)
+        });
+    }
+
+    if let Some(hop) = hops.iter().find(|hop| match hop {
+        HopInfo::V2(v2) => v2.pool_address == frame.target,
+        HopInfo::V3(v3) => v3.pool_address == frame.target,
+        HopInfo::V4(_) => false,
+    }) {
+        return Some(hop);
+    }
+
+    // The manager fallback: unambiguous only when one V4 hop routes through it.
+    let mut manager_hops = hops
+        .iter()
+        .filter(|hop| matches!(hop, HopInfo::V4(v4) if v4.pool_manager_address == frame.target));
+    let hop = manager_hops.next()?;
+    if manager_hops.next().is_some() {
+        return None;
+    }
+    Some(hop)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -470,6 +500,14 @@ mod tests {
     // shared PoolManager address, so the K=2 threshold can fire).
     const V4_POOL_ID_A: &str = "0xabcd000000000000000000000000000000000000000000000000000000000001";
     const V4_POOL_ID_B: &str = "0xabcd000000000000000000000000000000000000000000000000000000000002";
+    /// A third `poolId` no hop in the shared-manager fixtures routes through.
+    const V4_POOL_ID_C: &str = "0xabcd000000000000000000000000000000000000000000000000000000000003";
+    /// A second `PoolManager` deployment (the manager half of the identity).
+    const V4_OTHER_PM: Address = address!("d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1");
+    /// The second V4 pool's own currency pair, so an attribution to it is
+    /// distinguishable from the first pool's in the returned token.
+    const V4_TOKEN_B_IN: Address = address!("1212121212121212121212121212121212121212");
+    const V4_TOKEN_B_OUT: Address = address!("3434343434343434343434343434343434343434");
 
     // zfo = true → input token = token0 / currency0
     fn v2_hop_zfo(pool: Address) -> HopInfo {
@@ -501,11 +539,22 @@ mod tests {
         })
     }
     fn v4_hop(pm: Address, pool_id_hex: &str) -> HopInfo {
+        v4_hop_currencies(pm, pool_id_hex, TOKEN_IN, TOKEN_OUT)
+    }
+
+    /// A V4 hop with its own currency pair, so an attribution to one of two
+    /// hops sharing a `PoolManager` is visible in the returned token.
+    fn v4_hop_currencies(
+        pm: Address,
+        pool_id_hex: &str,
+        currency0: Address,
+        currency1: Address,
+    ) -> HopInfo {
         HopInfo::V4(degenbot_execution::V4HopInfo {
             pool_manager_address: pm,
             pool_id_hex: pool_id_hex.to_string(),
-            currency0_address: TOKEN_IN,
-            currency1_address: TOKEN_OUT,
+            currency0_address: currency0,
+            currency1_address: currency1,
             fee: 3000,
             tick_spacing: 60,
             hook_address: Address::ZERO,
@@ -521,12 +570,14 @@ mod tests {
     fn v3_key(a: Address) -> PoolDivergenceKey {
         PoolDivergenceKey::V3(a)
     }
-    fn v4_key(hex: &str) -> PoolDivergenceKey {
+    fn v4_id(hex: &str) -> B256 {
         let stripped = hex.strip_prefix("0x").unwrap_or(hex);
         let bytes = alloy::hex::decode(stripped).expect("valid 0x hex");
-        PoolDivergenceKey::V4(B256::from(
-            <[u8; 32]>::try_from(bytes.as_slice()).expect("32 bytes"),
-        ))
+        B256::from(<[u8; 32]>::try_from(bytes.as_slice()).expect("32 bytes"))
+    }
+
+    fn v4_key(hex: &str) -> PoolDivergenceKey {
+        PoolDivergenceKey::V4(v4_id(hex))
     }
 
     fn frame(label: &str, target: Address) -> RevertingFrame {
@@ -534,6 +585,7 @@ mod tests {
             depth: 2,
             target,
             selector: [0x49, 0x49, 0x41, 0x00],
+            pool_id: None,
             revert_data: Bytes::default(),
             label: label.to_string(),
             outcome_kind: "revert",
@@ -541,16 +593,29 @@ mod tests {
         }
     }
 
+    /// The same frame, but one whose `PoolManager.swap` calldata decoded the
+    /// named pool identity — the `(PoolManager, poolId)` pair attribution gets.
+    fn frame_naming_pool(label: &str, target: Address, pool_id_hex: &str) -> RevertingFrame {
+        RevertingFrame {
+            pool_id: Some(v4_id(pool_id_hex)),
+            ..frame(label, target)
+        }
+    }
+
     fn failure_no_captures(label: &str, target: Address) -> SimFailure {
+        failure_with_frame(frame(label, target))
+    }
+
+    fn failure_with_frame(frame: RevertingFrame) -> SimFailure {
         SimFailure {
             candidate_id: degenbot_execution::CandidateId::new(
                 1,
                 degenbot_execution::DeploymentId::new(1),
             ),
-            bucket: label.to_string(),
+            bucket: frame.label.clone(),
             fail_index: Some(3),
             revert_data: Bytes::default(),
-            reverting_frame: Some(frame(label, target)),
+            reverting_frame: Some(frame),
             captured_swaps: Vec::new(),
             log_full_count: 0,
             reverted_swaps: Vec::new(),
@@ -589,17 +654,139 @@ mod tests {
     }
 
     #[test]
-    fn v4_two_hops_same_poolmanager_attributes_to_first() {
-        // Two DISTINCT V4 hops through the SAME PoolManager. The reverting
-        // frame carries only the PoolManager target, so the attribution
-        // resolves to the FIRST matching V4 hop (documented limitation — the
-        // poolId isn't on the reverting frame). The token identity (what FoT
-        // confirmation actually gates on) is correct either way.
+    fn fot_v4_two_hops_same_poolmanager_names_the_second_pool() {
+        // Two DISTINCT V4 pools inside ONE `PoolManager`. The failing frame's
+        // calldata names the SECOND pool, so attribution must pick it — both its
+        // input token and its `poolId` are the evidence recorded against the
+        // token.
+        let hops = vec![
+            v4_hop(V4_PM, V4_POOL_ID_A),
+            v4_hop_currencies(V4_PM, V4_POOL_ID_B, V4_TOKEN_B_IN, V4_TOKEN_B_OUT),
+        ];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_B));
+
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((V4_TOKEN_B_IN, v4_key(V4_POOL_ID_B)))
+        );
+    }
+
+    #[test]
+    fn fot_v4_two_hops_same_poolmanager_without_identity_returns_none() {
+        // The manager alone names two candidate pools. Attributing either would
+        // be a guess, and a guess records a suspicion against a pool that did
+        // not fail.
         let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A), v4_hop(V4_PM, V4_POOL_ID_B)];
         let f = failure_no_captures("CurrencyNotSettled", V4_PM);
+
+        assert_eq!(fot_suspected_token(&f, &hops), None);
+    }
+
+    #[test]
+    fn fot_v4_named_pool_absent_from_the_path_returns_none() {
+        // The frame names a third pool, and the path routes two others through
+        // the same manager: neither hop is the failing pool.
+        let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A), v4_hop(V4_PM, V4_POOL_ID_B)];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_C));
+
+        assert_eq!(fot_suspected_token(&f, &hops), None);
+    }
+
+    #[test]
+    fn fot_v4_named_pool_under_a_different_manager_returns_none() {
+        // The identity is the PAIR: the same `poolId` under another `PoolManager`
+        // deployment is a different pool, so the manager must agree too.
+        let hops = vec![v4_hop(V4_OTHER_PM, V4_POOL_ID_A)];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_A));
+
+        assert_eq!(fot_suspected_token(&f, &hops), None);
+    }
+
+    #[test]
+    fn fot_v4_malformed_hop_pool_id_returns_none() {
+        // The frame names pool B, but that hop's `pool_id_hex` does not parse:
+        // its identity is unusable, so attribution refuses instead of falling
+        // back to the other hop through the same manager.
+        let hops = vec![
+            v4_hop(V4_PM, V4_POOL_ID_A),
+            v4_hop(V4_PM, "0xnot-a-pool-id"),
+        ];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_B));
+
+        assert_eq!(fot_suspected_token(&f, &hops), None);
+    }
+
+    #[test]
+    fn fot_v4_single_hop_falls_back_to_the_pool_manager() {
+        // One V4 hop through the manager is unambiguous even when the frame
+        // carries no decoded identity — a `PoolManager` revert from `settle` or
+        // `take` names no pool at all.
+        let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A)];
+        let f = failure_no_captures("CurrencyNotSettled", V4_PM);
+
         assert_eq!(
             fot_suspected_token(&f, &hops),
             Some((TOKEN_IN, v4_key(V4_POOL_ID_A)))
+        );
+    }
+
+    #[test]
+    fn fot_v4_single_hop_named_by_its_pool_id_attributes() {
+        let hops = vec![v4_hop(V4_PM, V4_POOL_ID_A)];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_A));
+
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v4_key(V4_POOL_ID_A)))
+        );
+    }
+
+    #[test]
+    fn fot_two_hop_frame_records_the_actual_failing_pool() {
+        // End to end: the SECOND hop fails, so the suspicion is recorded against
+        // pool B — not pool A, the first hop through the same manager, which
+        // never failed.
+        let hops = vec![
+            v4_hop(V4_PM, V4_POOL_ID_A),
+            v4_hop_currencies(V4_PM, V4_POOL_ID_B, V4_TOKEN_B_IN, V4_TOKEN_B_OUT),
+        ];
+        let f = failure_with_frame(frame_naming_pool("CurrencyNotSettled", V4_PM, V4_POOL_ID_B));
+        let mut reg = FeeOnTransferRegistry::new();
+
+        let (token, pool_key) = fot_suspected_token(&f, &hops).expect("the failing hop");
+        reg.record_suspicion(token, pool_key, 100);
+
+        let record = reg.record_for(token).expect("a suspicion was recorded");
+        assert_eq!(token, V4_TOKEN_B_IN);
+        assert!(
+            !reg.is_fot(token, 100),
+            "one failing pool is not confirmation"
+        );
+        assert!(
+            record.failing_pools.contains(&v4_key(V4_POOL_ID_B)),
+            "the suspicion names the pool that failed"
+        );
+        assert!(
+            !record.failing_pools.contains(&v4_key(V4_POOL_ID_A)),
+            "the first hop's pool was never suspected"
+        );
+    }
+
+    #[test]
+    fn fot_mixed_path_keeps_v3_address_attribution() {
+        // A V3 frame keeps matching by pool address even on a path that also
+        // holds two V4 hops through one manager — the V4 ambiguity does not leak
+        // into the V2/V3 address identity.
+        let hops = vec![
+            v3_hop(V3_POOL),
+            v4_hop(V4_PM, V4_POOL_ID_A),
+            v4_hop(V4_PM, V4_POOL_ID_B),
+        ];
+        let f = failure_no_captures("IIA", V3_POOL);
+
+        assert_eq!(
+            fot_suspected_token(&f, &hops),
+            Some((TOKEN_IN, v3_key(V3_POOL)))
         );
     }
 

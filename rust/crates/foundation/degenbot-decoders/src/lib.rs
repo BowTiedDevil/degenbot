@@ -37,7 +37,7 @@
 //! - [`v2_swap_decoder`] — V2 `Swap(address,uint256,uint256,uint256,uint256,address)` (in/out amounts — the swap-event-capture source that retires `recompute_v2_amount_out`).
 //! - [`v3_swap_decoder`] — V3 `Swap(address,address,int256,int256,uint160,uint128,int24)`.
 //! - [`v3_mint_burn_decoder`] — V3 `Mint` / `Burn` (both → tick-range liquidity delta).
-//! - [`v4_swap_decoder`] — V4 `Swap` (from `PoolManager`).
+//! - [`v4_swap_decoder`] — V4 `Swap` (from `PoolManager`) + the `PoolManager.swap` call's `PoolKey` → `poolId` decoder (the reverting-frame attribution seam).
 //! - [`v4_modify_liquidity_decoder`] — V4 `ModifyLiquidity` (signed delta; replaces V3 Mint/Burn).
 //! - [`pool_created_decoder`] — V2/V3/V4 `PoolCreated`/`Initialize` events
 //!   (the pool-discovery events the chunk-loop fetcher consumes). Pure leaf — produces decoder-native structs;

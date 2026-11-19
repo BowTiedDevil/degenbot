@@ -49,7 +49,7 @@ use degenbot_core::{diag, diag_trace, op_info};
 use std::collections::BTreeMap;
 
 use alloy::eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, B256, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
@@ -353,6 +353,11 @@ pub struct SimFailure {
 /// For a `Halt` (e.g. `0xfe` INVALID, OOG), `revert_data` is empty + `label`
 /// is `classify_revert` on empty bytes (the `"empty"` bucket) — parity with
 /// the pre-inspector behavior, now attributed to the halting frame's target.
+///
+/// Both production constructors decode [`RevertingFrame::pool_id`] from the
+/// frame's captured calldata — the traced frame's `CallFrame::data`, or the
+/// synthesized frame's own step calldata — so the pool identity is decoded from
+/// the call that reverted, never re-derived from path shapes.
 #[derive(Debug, Clone)]
 pub struct RevertingFrame {
     /// The call-stack depth (1 = top-level `execute()`, 2 = first sub-call, …).
@@ -361,6 +366,16 @@ pub struct RevertingFrame {
     pub target: alloy::primitives::Address,
     /// The first 4 bytes of the call's calldata (the Solidity selector).
     pub selector: [u8; 4],
+    /// The V4 pool the frame's call names, when that call is a canonical
+    /// `PoolManager.swap` — `keccak256(abi.encode(PoolKey))`, the `poolId` the
+    /// `PoolManager` indexes the pool under and the `Swap` event indexes its
+    /// `topic[1]` by. `None` for every other call: another `PoolManager` entry
+    /// point (`unlock`/`settle`/`take`), a V2/V3 pool call, or calldata that is
+    /// not a canonical `swap`.
+    ///
+    /// Every V4 pool lives inside one shared `PoolManager`, so `target` names
+    /// the manager — this field is what names the pool.
+    pub pool_id: Option<alloy::primitives::B256>,
     /// The reverting frame's revert data (`0x` for a `Halt`).
     pub revert_data: alloy::primitives::Bytes,
     /// The `classify_revert` label run on `revert_data`.
@@ -1501,19 +1516,19 @@ fn absent_probe_reading(observation: &ExecutionObservation) -> Option<usize> {
         })
 }
 
-/// The `(target, selector)` of the step at `index` — the identity a synthesized
+/// The `(target, calldata)` of the step at `index` — the identity a synthesized
 /// revert frame carries when the capture collected no call trace.
-fn step_identity(
-    probes: &[ProbeSpec],
-    observation: &ExecutionObservation,
+fn step_call<'a>(
+    probes: &'a [ProbeSpec],
+    observation: &'a ExecutionObservation,
     index: usize,
-) -> (Address, [u8; 4]) {
-    let declared = |spec: &ProbeSpec| -> (Address, [u8; 4]) {
+) -> (Address, &'a [u8]) {
+    let declared = |spec: &'a ProbeSpec| -> (Address, &'a [u8]) {
         match spec {
-            ProbeSpec::Call { to, data, .. } => (*to, selector_of(data)),
+            ProbeSpec::Call { to, data, .. } => (*to, data.as_ref()),
             // A native-balance read runs no code and cannot revert, so it never
             // reaches this attribution.
-            ProbeSpec::NativeBalance { account, .. } => (*account, [0u8; 4]),
+            ProbeSpec::NativeBalance { account, .. } => (*account, &[]),
         }
     };
     if index < probes.len() {
@@ -1522,20 +1537,89 @@ fn step_identity(
     if index == probes.len() {
         return (
             observation.transaction.to,
-            selector_of(&observation.transaction.data),
+            observation.transaction.data.as_ref(),
         );
     }
     probes
         .get(index - probes.len() - 1)
-        .map_or((observation.transaction.to, [0u8; 4]), declared)
+        .map_or((observation.transaction.to, &[][..]), declared)
 }
 
 /// The first four calldata bytes, zero-padded when the call carries fewer.
-fn selector_of(data: &alloy::primitives::Bytes) -> [u8; 4] {
+fn selector_of(data: &[u8]) -> [u8; 4] {
     let mut selector = [0u8; 4];
     let len = data.len().min(4);
     selector[..len].copy_from_slice(&data[..len]);
     selector
+}
+
+/// The V4 pool a failing call names, when that call is a canonical
+/// `PoolManager.swap` — the `poolId` its `PoolKey` hashes to. Any other call
+/// names no pool, so the frame carries `None` rather than a guess.
+fn frame_pool_id(calldata: &[u8]) -> Option<B256> {
+    degenbot_decoders::v4_swap_decoder::decode_v4_pool_manager_swap_pool_id(calldata)
+        .map(B256::from)
+}
+
+/// The revert frame for a captured call-trace frame — the deep attribution of
+/// the frame that actually reverted (or halted), including the V4 pool its
+/// captured calldata names.
+fn traced_revert_frame(frame: &degenbot_simulation::CallFrame) -> RevertingFrame {
+    let revert_data = match &frame.outcome {
+        Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
+        _ => alloy::primitives::Bytes::new(),
+    };
+    let label = degenbot_decoders::revert::classify_revert(&revert_data);
+    RevertingFrame {
+        depth: frame.depth,
+        target: frame.target,
+        selector: frame.selector,
+        pool_id: frame_pool_id(&frame.data),
+        revert_data,
+        label,
+        outcome_kind: match &frame.outcome {
+            Some(degenbot_simulation::FrameOutcome::Revert { .. }) => "revert",
+            Some(degenbot_simulation::FrameOutcome::Success { .. }) => "success-unexpected",
+            _ => "halt",
+        },
+        gas_used: frame.outcome.as_ref().map_or(0, |outcome| {
+            use degenbot_simulation::FrameOutcome;
+            match outcome {
+                FrameOutcome::Revert { gas_used, .. }
+                | FrameOutcome::Halt { gas_used, .. }
+                | FrameOutcome::Success { gas_used, .. } => *gas_used,
+            }
+        }),
+    }
+}
+
+/// The revert frame for a failing sequence step the capture did not trace,
+/// synthesized from the step's own identity — its calldata + target, which is
+/// all the attribution has in seam mode.
+fn synthesized_step_frame(
+    probes: &[ProbeSpec],
+    observation: &ExecutionObservation,
+    fail_idx: usize,
+    revert_data: alloy::primitives::Bytes,
+    label: String,
+    verdict: degenbot_simulation::sim::RunVerdict,
+    gas_used: u64,
+) -> RevertingFrame {
+    let (target, calldata) = step_call(probes, observation, fail_idx);
+    RevertingFrame {
+        depth: 1,
+        target,
+        selector: selector_of(calldata),
+        pool_id: frame_pool_id(calldata),
+        revert_data,
+        label,
+        outcome_kind: match verdict {
+            degenbot_simulation::sim::RunVerdict::Reverted => "revert",
+            degenbot_simulation::sim::RunVerdict::Success => "success-unexpected",
+            degenbot_simulation::sim::RunVerdict::Halted => "halt",
+        },
+        gas_used,
+    }
 }
 
 /// Record the first failing step of the sequence — the bucket/revert taxonomy,
@@ -1567,35 +1651,13 @@ fn record_failed_step(
             full_call_trace = %capture.trace.render_debug(),
             "[sim-trace]"
         );
-        let frame_revert_data = match &frame.outcome {
-            Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
-            _ => alloy::primitives::Bytes::new(),
-        };
-        let frame_label = degenbot_decoders::revert::classify_revert(&frame_revert_data);
+        let attributed = traced_revert_frame(frame);
+        let frame_bucket = attributed.label.clone();
         fail_buckets.record_revert(
             path.candidate_id,
-            &frame_label.clone(),
+            &frame_bucket,
             Some(fail_idx),
-            RevertingFrame {
-                depth: frame.depth,
-                target: frame.target,
-                selector: frame.selector,
-                revert_data: frame_revert_data,
-                label: frame_label,
-                outcome_kind: match &frame.outcome {
-                    Some(degenbot_simulation::FrameOutcome::Revert { .. }) => "revert",
-                    Some(degenbot_simulation::FrameOutcome::Success { .. }) => "success-unexpected",
-                    _ => "halt",
-                },
-                gas_used: frame.outcome.as_ref().map_or(0, |outcome| {
-                    use degenbot_simulation::FrameOutcome;
-                    match outcome {
-                        FrameOutcome::Revert { gas_used, .. }
-                        | FrameOutcome::Halt { gas_used, .. }
-                        | FrameOutcome::Success { gas_used, .. } => *gas_used,
-                    }
-                }),
-            },
+            attributed,
             capture.swaps.clone(),
             path.optimal_input,
             path.expected_outputs_vec(),
@@ -1605,24 +1667,20 @@ fn record_failed_step(
 
     // Seam-mode attribution (no call trace): synthesize the frame from the failing
     // STEP's own identity — a declared read or the opportunity's transaction.
-    let (target, selector) = step_identity(probes, observation, fail_idx);
+    let frame = synthesized_step_frame(
+        probes,
+        observation,
+        fail_idx,
+        revert_data.clone(),
+        bucket.clone(),
+        step.verdict,
+        step.gas_used,
+    );
     fail_buckets.record_revert(
         path.candidate_id,
-        &bucket.clone(),
+        &bucket,
         Some(fail_idx),
-        RevertingFrame {
-            depth: 1,
-            target,
-            selector,
-            revert_data: revert_data.clone(),
-            label: bucket,
-            outcome_kind: match step.verdict {
-                degenbot_simulation::sim::RunVerdict::Reverted => "revert",
-                degenbot_simulation::sim::RunVerdict::Success => "success-unexpected",
-                degenbot_simulation::sim::RunVerdict::Halted => "halt",
-            },
-            gas_used: step.gas_used,
-        },
+        frame,
         capture.swaps.clone(),
         path.optimal_input,
         path.expected_outputs_vec(),
@@ -2386,7 +2444,122 @@ mod tests {
             assert_eq!(frame.target, SMOKE_EXECUTOR, "the executor reverted");
             assert_eq!(frame.label, label);
             assert_eq!(frame.revert_data.as_ref(), revert_data);
+            assert!(
+                frame.pool_id.is_none(),
+                "a cmd_executor `execute()` frame names no V4 pool"
+            );
         }
+    }
+
+    // ── reverting-frame V4 pool identity ─────────────────────────────────
+
+    /// The foundry-encoded
+    /// `swap((address,address,uint24,int24,address),(bool,int256,uint160),bytes)`
+    /// call for the mainnet ETH/USDC 0.05 % key, `(true,-1000,2^96)`, empty hook
+    /// data — the same pinned fixture `degenbot_decoders`' own decoder test reads,
+    /// so the frame's identity is pinned to an independent encoder.
+    const V4_SWAP_CALLDATA: &str = "0xf3cd914c\
+        0000000000000000000000000000000000000000000000000000000000000000\
+        000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+        00000000000000000000000000000000000000000000000000000000000001f4\
+        000000000000000000000000000000000000000000000000000000000000000a\
+        0000000000000000000000000000000000000000000000000000000000000000\
+        0000000000000000000000000000000000000000000000000000000000000001\
+        fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc18\
+        0000000000000000000000000000000000000001000000000000000000000000\
+        0000000000000000000000000000000000000000000000000000000000000120\
+        0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// `keccak256(abi.encode(PoolKey))` for that key.
+    const V4_SWAP_POOL_ID: &str =
+        "0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27";
+
+    fn v4_swap_calldata() -> Bytes {
+        alloy::hex::decode(V4_SWAP_CALLDATA)
+            .map(Bytes::from)
+            .expect("the pinned swap calldata is hex")
+    }
+
+    fn v4_swap_pool_id() -> B256 {
+        V4_SWAP_POOL_ID.parse().expect("the pinned poolId is hex")
+    }
+
+    /// The traced constructor: a frame whose captured calldata IS the `swap`
+    /// call names the pool its `PoolKey` hashes to — not the shared manager.
+    #[test]
+    fn a_traced_reverting_frame_carries_the_named_v4_pool_id() {
+        let call = degenbot_simulation::CallFrame {
+            depth: 3,
+            caller: SMOKE_EXECUTOR,
+            target: SMOKE_PM,
+            selector: [0xf3, 0xcd, 0x91, 0x4c],
+            gas_limit: 1_000_000,
+            data: v4_swap_calldata(),
+            outcome: Some(degenbot_simulation::FrameOutcome::Revert {
+                gas_used: 42,
+                data: Bytes::new(),
+            }),
+        };
+
+        let frame = traced_revert_frame(&call);
+
+        assert_eq!(frame.target, SMOKE_PM, "the frame's target is the manager");
+        assert_eq!(
+            frame.pool_id,
+            Some(v4_swap_pool_id()),
+            "the calldata's `PoolKey` names the pool"
+        );
+    }
+
+    /// The seam constructor: a declared read that IS the `swap` call carries the
+    /// same identity, so a proxyless path attributes to its own pool too.
+    #[test]
+    fn a_synthesized_reverting_frame_carries_the_named_v4_pool_id() {
+        let probes = vec![ProbeSpec::call("SWAP", SMOKE_PM, v4_swap_calldata())];
+        let observation = ExecutionObservation::new(
+            TransactionRequest::call(SMOKE_EXECUTOR, vec![0x11u8; 4]),
+            degenbot_execution::ExecutionStatus::Revert,
+            0,
+            0,
+        );
+
+        let frame = synthesized_step_frame(
+            &probes,
+            &observation,
+            0,
+            Bytes::new(),
+            "CurrencyNotSettled".to_string(),
+            degenbot_simulation::sim::RunVerdict::Reverted,
+            21_000,
+        );
+
+        assert_eq!(frame.target, SMOKE_PM, "the failing read's own callee");
+        assert_eq!(frame.selector, [0xf3, 0xcd, 0x91, 0x4c]);
+        assert_eq!(frame.pool_id, Some(v4_swap_pool_id()));
+    }
+
+    /// A `PoolManager` revert from another entry point (`settle`, `take`,
+    /// `unlock`) carries no `PoolKey`: the frame names no pool, so attribution
+    /// must refuse a multi-V4-hop path rather than guess.
+    #[test]
+    fn a_reverting_frame_from_another_pool_manager_call_names_no_pool() {
+        let mut calldata = v4_swap_calldata().to_vec();
+        calldata[3] = 0x4d; // off the `swap` selector
+
+        let call = degenbot_simulation::CallFrame {
+            depth: 2,
+            caller: SMOKE_EXECUTOR,
+            target: SMOKE_PM,
+            selector: [0xf3, 0xcd, 0x91, 0x4d],
+            gas_limit: 1_000_000,
+            data: Bytes::from(calldata),
+            outcome: Some(degenbot_simulation::FrameOutcome::Revert {
+                gas_used: 7,
+                data: Bytes::new(),
+            }),
+        };
+
+        assert!(traced_revert_frame(&call).pool_id.is_none());
     }
 
     /// The fixture `CacheDB` for a declared-code build: the state overrides and
