@@ -1,5 +1,6 @@
 use super::*;
-use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+use crate::concentrated_liquidity_orchestration::PostDrainPin;
+use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind, PinProvenance};
 use degenbot_pools::PoolLiquidityUpdate;
 
 #[test]
@@ -902,122 +903,488 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     PoolLookup::from_address(pool_addr).mark_registration_live(&mut core);
 }
 
-// ── pin clamp regression (fabricated-mismatch fix) ──────────────
+// ── post-drain pin: one atomic (map, clock) claim ───────────────
 //
-// The pin stores (tick_map, liquidity_clock) and step-2 verify compares
-// the map against on-chain @ that block. If the pump has any UNDRAINED
-// event at/below the pool's liquidity clock (an in-progress block the
-// drain held back at the tombstone cutoff), the map is NOT complete AT
-// that clock block — verifying there would compare an incomplete map
-// against the full on-chain block and fabricate a mismatch. The pin must
-// clamp the verify block down to `pump_complete_cutoff`. Both branches are
-// asserted below: the clamp (undrained > 0) and the benign preserve
-// (undrained == 0, mod.rs:580 seed).
-#[test]
-fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
-    use crate::PoolTickCoverage;
-    use crate::RegisterV3PoolParams;
-    let mut core = BotState::new();
-    let pool_addr = Address::from([0xf8u8; 20]);
-    core.register_v3_pool(&RegisterV3PoolParams {
-        address: pool_addr,
-        token0: Address::ZERO,
-        token1: Address::from([1u8; 20]),
-        fee: 500,
-        tick_spacing: 10,
-        factory: Address::ZERO,
+// The pin freezes the drained tick map WITH the block that map reflects, and
+// that pair is a completeness claim: step-2 verify compares it against
+// on-chain state at the carried block. The claim holds only when the drain
+// released every buffered pump event at or below the map's own liquidity
+// clock. When one is held back (an in-progress block the tombstone cutoff has
+// not closed), the map omits a KNOWN event at/below its own stamp, so no
+// block exists the pair matches: the clock is contradicted by the drain's
+// held-back tail, and the tombstone cutoff is a stamp no snapshot was ever
+// taken at. The pin refuses, stores nothing, and the consumer rebuilds after
+// the next drain.
+
+/// The V4 twin of [`register_v3_tracked_at`].
+fn register_v4_tracked_at(core: &mut BotState, clock: u64) -> PoolLookup {
+    let pool_manager = Address::from([0x44u8; 20]);
+    let v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
+    core.register_v4_pool(&RegisterV4PoolParams {
+        pool_manager,
+        pool_id: v4_pool_id,
+        pool_key: V4PoolKey {
+            currency0: Address::ZERO,
+            currency1: Address::from([1u8; 20]),
+            fee: 10_000,
+            tick_spacing: 60,
+            hooks: Address::ZERO,
+        },
+        state_view: Address::ZERO,
+        hook_flags: 0,
+        protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,
-        liquidity: 1_000_000,
+        liquidity: 0,
         tick: 0,
         tick_data: HashMap::new(),
-        // DB-seeded seed: the liquidity clock is exact at block 100.
-        update_block: 100,
-        tick_data_block: Some(100),
+        update_block: clock,
+        tick_data_block: Some(clock),
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
-        ..Default::default()
+        known_bitmap_words: Vec::new(),
     })
-    .expect("test setup: V3 registration");
-    // Quarantine so live Mint/Burn route to the pump buffer.
-    PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
-    // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
-    // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
-    // block-100 event back, so the map is NOT complete at its 100 clock.
+    .expect("test setup: V4 tracked registration");
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: v4_pool_id,
+    }
+}
+
+/// The pool's registration lifecycle, resolved through its key — the observable
+/// a deferral changes.
+fn lifecycle_of(core: &BotState, key: PoolLookup) -> RegistrationLifecycle {
+    let pool_id = key.resolve(core).expect("registered pool");
+    match core.pools.get(pool_id).expect("pool entry") {
+        crate::PoolEntry::V3(p) => p.1.registration_lifecycle,
+        crate::PoolEntry::V4(p) => p.1.registration_lifecycle,
+        _ => panic!("only a concentrated-liquidity pool has a registration lifecycle"),
+    }
+}
+
+/// Quarantine `key`, stage one liquidity event, tombstone block 99 only, and
+/// drain: the event stays buffered because the drain's horizon stops at the
+/// tombstone. A pool whose map is stamped at 100 lands in the shape the old
+/// clamp papered over.
+fn quarantine_buffer_and_drain_behind_the_clock(
+    core: &mut BotState,
+    key: PoolLookup,
+    update: PoolLiquidityUpdate,
+) {
+    key.begin_registration_quarantine(core);
     assert_eq!(
-        core.apply_liquidity_update(
-            PoolLookup::from_address(pool_addr),
-            PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
-        ),
+        core.apply_liquidity_update(key, update),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's liquidity event is staged, not dropped"
+    );
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(99);
+    key.pump(core);
+}
+
+/// The prior mismatch shape: a seed map stamped at 100 with the pump holding a
+/// Mint@100 the tombstone cutoff (99) has not released. Pre-fix the pin
+/// lowered the stamp to 99 — a block the map was never captured at. The map
+/// omits an event at its own clock, so no stamp is complete and the pin
+/// refuses.
+#[test]
+fn pin_refuses_incomplete_when_pump_has_undrained_events_at_the_clock() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xf8u8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    let key = PoolLookup::from_address(pool_addr);
+    quarantine_buffer_and_drain_behind_the_clock(
+        &mut core,
+        key,
+        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    );
+    assert_eq!(
+        core.concentrated_liquidity()
+            .buffered_v3_event_count(&pool_addr),
+        1,
+        "the drain's horizon stops at the tombstone (precondition)"
+    );
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete {
+            clock: 100,
+            undrained: 1,
+            cutoff: 99,
+            verdict: PinProvenance::WitnessedBeyondCutoff,
+        },
+        "an event at the map's own clock is missing from it: no block is complete"
+    );
+    assert_eq!(
+        key.take_post_drain(&mut core),
+        None,
+        "an incomplete drain stores no pair (step-2 has nothing to verify)"
+    );
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::VerificationDeferred,
+        "an incomplete pin parks the pool as still owing a verification"
+    );
+}
+
+/// The consumer's rebuild path: the incomplete outcome is not terminal. The
+/// tombstone for block 100 closes, the next drain applies the held-back Mint,
+/// and the re-pin claims the (now complete) map at 100.
+#[test]
+fn pin_incomplete_is_rebuilt_by_the_next_drain() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xf9u8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    let key = PoolLookup::from_address(pool_addr);
+    quarantine_buffer_and_drain_behind_the_clock(
+        &mut core,
+        key,
+        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    );
+    assert!(matches!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete { .. }
+    ));
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::VerificationDeferred,
+        "the incomplete pin parks the pool (precondition for the retry)"
+    );
+
+    // The retry starts the way the registration lifecycle starts: re-quarantine,
+    // which is the one transition a deferred pool takes back into the machine.
+    key.begin_registration_quarantine(&mut core);
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::Quarantined,
+        "begin_registration_quarantine moves a deferred pool back to Quarantined"
+    );
+
+    // The pump's next tombstone lands: block 100 is complete, so its event
+    // drains into the map.
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(100);
+    key.pump(&mut core);
+    assert_eq!(
+        core.concentrated_liquidity()
+            .buffered_v3_event_count(&pool_addr),
+        0,
+        "the completed block's event drained (precondition)"
+    );
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Pinned {
+            clock: 100,
+            tick_count: 2,
+            verdict: PinProvenance::CorroboratedByDelivery,
+        },
+        "the rebuilt map covers its clock, and the tombstone now corroborates it"
+    );
+    let (tick_data, pinned_block) = key
+        .take_post_drain(&mut core)
+        .expect("the rebuilt pin is stored for step-2");
+    assert_eq!(pinned_block, 100, "the pin carries the map's own clock");
+    assert_eq!(
+        tick_data.get(&-10).map(|t| t.liquidity_gross.to::<u128>()),
+        Some(500),
+        "the rebuilt pin carries the drained Mint"
+    );
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::Quarantined,
+        "a completed pin returns the pool to Quarantined; only step-2 promotes it to Live"
+    );
+}
+
+/// A pool with no tombstone at all (`cutoff == 0`) proves nothing about a
+/// seeded map's clock, so a held-back event still refuses the pin. Pre-fix the
+/// clamp's `cutoff > 0` guard skipped the clamp here and stamped the map at
+/// its clock — the same contradiction, unwarned.
+#[test]
+fn pin_refuses_incomplete_with_no_tombstone_yet() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xfbu8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    let key = PoolLookup::from_address(pool_addr);
+    key.begin_registration_quarantine(&mut core);
+    assert_eq!(
+        core.apply_liquidity_update(key, PoolLiquidityUpdate::new(-10, 10, 500_i128, 100)),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's Mint is staged, not dropped"
+    );
+    assert_eq!(
+        core.concentrated_liquidity().pump_complete_cutoff(),
+        0,
+        "no tombstone yet (precondition)"
+    );
+    key.pump(&mut core);
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete {
+            clock: 100,
+            undrained: 1,
+            cutoff: 0,
+            verdict: PinProvenance::WitnessedBeyondCutoff,
+        },
+        "a missing delivery horizon cannot certify a map the drain contradicts"
+    );
+    assert_eq!(key.take_post_drain(&mut core), None);
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::VerificationDeferred,
+        "a refusal always parks the deferral state, with no tombstone or not"
+    );
+}
+
+/// An EMPTY map is a complete map when nothing is undrained, and its stamp
+/// stays its own clock: the delivery horizon is corroboration, never a
+/// promotion target.
+#[test]
+fn pin_stamps_an_empty_map_at_its_own_clock() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xfcu8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(150);
+    let key = PoolLookup::from_address(pool_addr);
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Pinned {
+            clock: 100,
+            tick_count: 0,
+            verdict: PinProvenance::CorroboratedByDelivery,
+        }
+    );
+    let (tick_data, pinned_block) = key
+        .take_post_drain(&mut core)
+        .expect("an empty map with nothing undrained still pins");
+    assert!(tick_data.is_empty(), "the pin mirrors the drained map");
+    assert_eq!(pinned_block, 100, "the stamp is the map's clock, not 150");
+}
+
+/// Only a `Tracked` pool carries a complete map, so only it can be pinned.
+#[test]
+fn pin_reports_not_pinnable_for_sparse_and_unregistered_pools() {
+    let mut core = BotState::new();
+    let _ = register_v3(&mut core, 0);
+    assert_eq!(
+        PoolLookup::from_address(make_pool_addr()).pin_post_drain(&mut core),
+        PostDrainPin::NotPinnable,
+        "a sparse pool has no complete map to pin"
+    );
+    assert_eq!(
+        PoolLookup::from_address(Address::from([0x99u8; 20])).pin_post_drain(&mut core),
+        PostDrainPin::NotPinnable,
+        "an unregistered pool has no map at all"
+    );
+}
+
+/// A stale pair is dropped, never left behind: a complete pin followed by a
+/// drain that holds an event back must not leave the earlier pair for step-2
+/// to verify as if it were this drain's state.
+#[test]
+fn incomplete_pin_drops_a_stale_pair() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xfeu8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    let key = PoolLookup::from_address(pool_addr);
+    key.begin_registration_quarantine(&mut core);
+    assert!(matches!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Pinned { .. }
+    ));
+
+    assert_eq!(
+        core.apply_liquidity_update(key, PoolLiquidityUpdate::new(-10, 10, 500_i128, 100)),
         Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
         "a quarantined pool's Mint is staged, not dropped"
     );
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(99);
-    assert_eq!(core.concentrated_liquidity().pump_complete_cutoff(), 99);
+    key.pump(&mut core);
+
+    assert!(matches!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete { .. }
+    ));
     assert_eq!(
-        core.concentrated_liquidity
-            .v3_buffer
-            .pump_count_at_or_below(&pool_addr, 100),
-        1
-    );
-    PoolLookup::from_address(*pool_addr).pump(&mut core);
-    PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
-    let (_ticks, pinned_block) = PoolLookup::from_address(pool_addr)
-        .take_post_drain(&mut core)
-        .expect("pin captured for a Tracked pool");
-    assert_eq!(
-        pinned_block, 99,
-        "fabricated mismatch: pin must clamp the verify block down to the \
-         complete cutoff (99), not the seed liquidity clock (100), when the \
-         pump has undrained events at/below the clock"
+        key.take_post_drain(&mut core),
+        None,
+        "the stale pair from the earlier drain is dropped, not verified"
     );
 }
 
+/// The benign counterpart: a seed stamped BEYOND the tombstone with nothing
+/// undrained keeps its own clock. Nothing the drain knows contradicts the
+/// map, so the pin is minted; the seed-trust provenance is a diagnostic
+/// (`SeedTrustOnly { witnessed_horizon: 0 }`), not a veto.
 #[test]
 fn pin_preserves_clock_block_when_no_undrained_events() {
-    use crate::PoolTickCoverage;
-    use crate::RegisterV3PoolParams;
     let mut core = BotState::new();
-    let pool_addr = Address::from([0xf9u8; 20]);
-    core.register_v3_pool(&RegisterV3PoolParams {
-        address: pool_addr,
-        token0: Address::ZERO,
-        token1: Address::from([1u8; 20]),
-        fee: 500,
-        tick_spacing: 10,
-        factory: Address::ZERO,
-        sqrt_price_x96: U256::from(1u128) << 96,
-        liquidity: 1_000_000,
-        tick: 0,
-        tick_data: HashMap::new(),
-        update_block: 100,
-        tick_data_block: Some(100),
-        coverage: PoolTickCoverage::Tracked,
-        fetcher: None,
-        ..Default::default()
-    })
-    .expect("test setup: V3 registration");
-    PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
-    // Cutoff is BEHIND the seed clock (99 < 100) and the pump has NO event
-    // for this pool at/below the clock → pump_count == 0. This is the
-    // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head
-    // past the cutoff, so no event could be missing — the clock block is
-    // preserved (NOT clamped), and verifying at 100 is correct.
+    let pool_addr = Address::from([0xf3u8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 100);
+    let key = PoolLookup::from_address(pool_addr);
+    key.begin_registration_quarantine(&mut core);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(99);
+    key.pump(&mut core);
+
     assert_eq!(
-        core.concentrated_liquidity
-            .v3_buffer
-            .pump_count_at_or_below(&pool_addr, 100),
-        0
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Pinned {
+            clock: 100,
+            tick_count: 0,
+            verdict: PinProvenance::SeedTrustOnly {
+                witnessed_horizon: 0
+            },
+        }
     );
-    PoolLookup::from_address(*pool_addr).pump(&mut core);
-    PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
-    let (_ticks, pinned_block) = PoolLookup::from_address(pool_addr)
+    let (_ticks, pinned_block) = key
         .take_post_drain(&mut core)
         .expect("pin captured for a Tracked pool");
     assert_eq!(
         pinned_block, 100,
-        "benign seed (pump_count==0) must keep the clock block, not clamp"
+        "an undrained-free drain keeps the map's own clock"
+    );
+}
+
+/// Re-seed after activity: the engine witnessed this pool's Mint@90 (still
+/// undrained) and a DB row then re-seeded the map at 105. The seed-trust
+/// verdict stays visible for diagnostics, but it is NOT completeness: the pin
+/// refuses rather than trusting the fresher stamp.
+#[test]
+fn pin_refuses_incomplete_after_a_re_seed_over_witnessed_activity() {
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0xfdu8; 20]);
+    register_v3_tracked_at(&mut core, pool_addr, 90);
+    let key = PoolLookup::from_address(pool_addr);
+    key.begin_registration_quarantine(&mut core);
+    assert_eq!(
+        core.apply_liquidity_update(key, PoolLiquidityUpdate::new(-10, 10, 500_i128, 90)),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the engine witnesses this pool's Mint@90 and stages it"
+    );
+    // The tombstone closes block 85 only, so the drain holds the Mint back.
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(85);
+    key.pump(&mut core);
+
+    // The re-seed: one wholesale sync moves both clocks to 105, past anything
+    // the engine witnessed for this pool.
+    core.sync_pool_state(
+        key,
+        PoolStateUpdate::V3(V3StateSync {
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 105,
+        }),
+    )
+    .expect("the re-seed applies to a registered pool");
+    key.pump(&mut core);
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete {
+            clock: 105,
+            undrained: 1,
+            cutoff: 85,
+            verdict: PinProvenance::SeedTrustOnly {
+                witnessed_horizon: 90
+            },
+        },
+        "a fresher seed stamp cannot certify a map the witnessed tail contradicts"
+    );
+    assert_eq!(key.take_post_drain(&mut core), None);
+}
+
+/// The V4 twin of [`pin_refuses_incomplete_when_pump_has_undrained_events_at_the_clock`]:
+/// one rule for both designs.
+#[test]
+fn v4_pin_refuses_incomplete_when_pump_has_undrained_events_at_the_clock() {
+    let mut core = BotState::new();
+    let key = register_v4_tracked_at(&mut core, 100);
+    quarantine_buffer_and_drain_behind_the_clock(
+        &mut core,
+        key,
+        PoolLiquidityUpdate::from_v4_wire(
+            -60,
+            60,
+            I256::try_from(500_i128).expect("500 fits i128"),
+            100,
+        )
+        .expect("valid V4 ModifyLiquidity wire update"),
+    );
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete {
+            clock: 100,
+            undrained: 1,
+            cutoff: 99,
+            verdict: PinProvenance::WitnessedBeyondCutoff,
+        }
+    );
+    assert_eq!(key.take_post_drain(&mut core), None);
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::VerificationDeferred,
+        "the V4 refusal defers exactly like the V3 one"
+    );
+}
+
+/// The V4 twin of [`pin_incomplete_is_rebuilt_by_the_next_drain`].
+#[test]
+fn v4_pin_incomplete_is_rebuilt_by_the_next_drain() {
+    let mut core = BotState::new();
+    let key = register_v4_tracked_at(&mut core, 100);
+    quarantine_buffer_and_drain_behind_the_clock(
+        &mut core,
+        key,
+        PoolLiquidityUpdate::from_v4_wire(
+            -60,
+            60,
+            I256::try_from(500_i128).expect("500 fits i128"),
+            100,
+        )
+        .expect("valid V4 ModifyLiquidity wire update"),
+    );
+    assert!(matches!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Incomplete { .. }
+    ));
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::VerificationDeferred
+    );
+    key.begin_registration_quarantine(&mut core);
+
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(100);
+    key.pump(&mut core);
+
+    assert_eq!(
+        key.pin_post_drain(&mut core),
+        PostDrainPin::Pinned {
+            clock: 100,
+            tick_count: 2,
+            verdict: PinProvenance::CorroboratedByDelivery,
+        }
+    );
+    let (tick_data, pinned_block) = key
+        .take_post_drain(&mut core)
+        .expect("the rebuilt V4 pin is stored for step-2");
+    assert_eq!(pinned_block, 100);
+    assert_eq!(
+        tick_data.get(&-60).map(|t| t.liquidity_gross.to::<u128>()),
+        Some(500)
+    );
+    assert_eq!(
+        lifecycle_of(&core, key),
+        RegistrationLifecycle::Quarantined,
+        "the completed V4 retry re-quarantined the pool; step-2 owns the promotion"
     );
 }

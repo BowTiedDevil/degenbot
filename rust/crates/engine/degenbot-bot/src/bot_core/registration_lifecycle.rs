@@ -17,7 +17,13 @@
 //!   deferral and no RPC**;
 //! - a **tracked** pool is `Live` only after its liquidity-map verification
 //!   passes, with the verification `MismatchError` as the **tripwire** that
-//!   must pass before `Live` (no pool becomes solvable on unverified state).
+//!   must pass before `Live` (no pool becomes solvable on unverified state);
+//! - a **tracked** pool whose post-drain pin is INCOMPLETE (the drain held a
+//!   pump event back at/below the map's own liquidity clock) is neither
+//!   verified nor promoted: the machine answers `Ok` with the pool still
+//!   `Quarantined`, deferring to a later call whose drain completed that
+//!   block. `Ok` therefore means "this lifecycle call finished", never
+//!   unconditionally "verified".
 //!
 //! The module is deliberately **runtime-agnostic**: the two RPC-bound verify
 //! steps (`verify_seed`, `verify_post_drain`) are supplied as async closures,
@@ -47,7 +53,26 @@ use super::liquidity_verifier::verify_snapshot_map;
 use super::registration_ledger::{LifecyclePrecondition, RefusalKind, RegistrationPhase};
 use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
+use degenbot_substrate::concentrated_liquidity_orchestration::PostDrainPin;
 use degenbot_substrate::BotState;
+
+/// What one registration verify-lifecycle call established.
+///
+/// The machine has two successful answers, and they differ in exactly the fact a
+/// caller records: a `Completed` call reached its tripwire gate and promoted the
+/// pool to `Live` (or was a sparse / unregistered no-op that owed nothing),
+/// while a `Deferred` call found the post-drain pin INCOMPLETE — no block the
+/// drained map can back — and left the pool parked with its verification still
+/// owed. A caller records a durable "verified" fact ONLY for `Completed`: a
+/// `Deferred` pool must stay retriable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LifecycleOutcome {
+    /// The lifecycle ran to its end: verified (or nothing was owed), live.
+    Completed,
+    /// The drain was incomplete, so nothing was verified and nothing was
+    /// promoted. The pool remains parked and a later call retries it.
+    Deferred,
+}
 
 /// A **tracked** pool reached a verify step with no provider configured (the
 /// D-C fail-fast: no verify-disabled mode for tracked). Sparse / unregistered
@@ -80,6 +105,17 @@ fn missing_tick_spacing() -> RefusalKind {
 /// this on whatever tokio runtime owns registration; `core` is the `BotState`
 /// `RwLock`, and the closures capture the verify access (provider).
 ///
+/// # Deferred (incomplete) drains
+///
+/// Step-2 needs a `(tick_data, block)` pair the drain can back: the drained map
+/// must hold every buffered pump event at/below its own liquidity clock. When
+/// the tombstone cutoff held one back, the pin answers
+/// [`PostDrainPin::Incomplete`] and stores nothing (dropping any stale pair),
+/// parks the pool as `VerificationDeferred`, and this machine returns
+/// [`LifecycleOutcome::Deferred`] WITHOUT invoking `verify_post_drain` and
+/// WITHOUT `set_live`. A later call whose drain has completed that block
+/// re-quarantines, re-pins, verifies and promotes it.
+///
 /// # Lock-scope contract
 ///
 /// No guard is held across the `verify_seed`/`verify_post_drain` `.await`s
@@ -92,14 +128,23 @@ fn missing_tick_spacing() -> RefusalKind {
 /// Returns the closure error type `E` if either verify closure returns `Err`
 /// — a verification failure aborts BEFORE `set_live`, leaving the tracked pool
 /// `Quarantined` (the tripwire; never auto-repair). No error on the Sparse /
-/// no-op paths.
+/// no-op paths, nor on the deferred (incomplete-drain) path.
+///
+/// # Returns
+///
+/// [`LifecycleOutcome::Completed`] when the call ran to its end (verified, or a
+/// sparse / unregistered no-op that owed nothing), or
+/// [`LifecycleOutcome::Deferred`] when the post-drain pin was incomplete — the
+/// pool stays parked and a later call retries it. A caller must record a
+/// durable "verified" fact only for `Completed`.
+///
 pub async fn run_verify_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
     key: PoolLookup,
     snapshot_block: Option<u64>,
     verify_seed: F1,
     verify_post_drain: F2,
-) -> Result<(), E>
+) -> Result<LifecycleOutcome, E>
 where
     F1: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut1 + Send,
     Fut1: Future<Output = Result<(), E>> + Send,
@@ -116,11 +161,11 @@ where
         key.coverage(&state)
     };
     match coverage {
-        None => return Ok(()),
+        None => return Ok(LifecycleOutcome::Completed),
         Some(PoolTickCoverage::Sparse) => {
             let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             key.drain(&mut state);
-            return Ok(());
+            return Ok(LifecycleOutcome::Completed);
         }
         Some(PoolTickCoverage::Tracked) => {}
     }
@@ -163,12 +208,23 @@ where
     }
 
     // Drain + pin under a SINGLE `core.write()` hold: backfill buffer, then
-    // pump buffer, then capture the frozen post-drain `(tick_data, block)`
-    // pair atomically with the drain (the step-2 rolling-start race fix).
-    {
+    // pump buffer, then freeze the post-drain `(tick_data, block)` pair
+    // atomically with the drain (the step-2 rolling-start race fix). The pin
+    // answers its own completeness verdict: a pump event the tombstone cutoff
+    // held back at/below the map's own liquidity clock leaves no block the map
+    // can claim.
+    let pin_outcome = {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.drain(&mut state);
-        key.pin_post_drain(&mut state);
+        key.pin_post_drain(&mut state)
+    };
+
+    // An INCOMPLETE drain is neither verifiable nor promotable: the seam stored
+    // no pair (dropping any stale one), so return WITHOUT step-2 and WITHOUT
+    // `set_live`. The pool stays `Quarantined`, and a later call whose drain has
+    // completed that block re-pins, verifies and promotes it.
+    if let PostDrainPin::Incomplete { .. } = pin_outcome {
+        return Ok(LifecycleOutcome::Deferred);
     }
 
     // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
@@ -190,7 +246,7 @@ where
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.mark_registration_live(&mut state);
     }
-    Ok(())
+    Ok(LifecycleOutcome::Completed)
 }
 
 /// Drive one pool through the registration verify-lifecycle against the bot's
@@ -207,6 +263,11 @@ where
 /// [`LifecyclePrecondition`] — D-C); Sparse / unregistered no-op paths never
 /// need one.
 ///
+/// A tracked pool whose drain is incomplete answers
+/// `Ok(`[`LifecycleOutcome::Deferred`]`)` with the pool still parked (a deferred
+/// retry — see [`run_verify_lifecycle`]), so a caller must not record that
+/// outcome as an established "verified" fact.
+///
 /// # Errors
 ///
 /// Returns a [`RefusalKind`] at the lifecycle phase: a verify failure
@@ -218,7 +279,7 @@ pub async fn run_registration_lifecycle(
     provider: Option<&AlloyProvider>,
     key: PoolLookup,
     snapshot_block: Option<u64>,
-) -> Result<(), RefusalKind> {
+) -> Result<LifecycleOutcome, RefusalKind> {
     let provider = provider.cloned();
     // The spacing is read inside each closure, not up front: a Sparse pool
     // never verifies and so never needs it.
@@ -258,7 +319,10 @@ mod tests {
 
     use alloy::primitives::{Address, U128, U256};
     use degenbot_pools::PoolLiquidityUpdate;
+    use degenbot_substrate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
     use degenbot_substrate::state_lock::{LockSite, StateLock};
+
+    use alloy::primitives::I256;
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::V4PoolKey;
@@ -269,7 +333,7 @@ mod tests {
     use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams, RegistrationLifecycle};
     use degenbot_substrate::{BotState, PoolLookup};
 
-    use super::run_verify_lifecycle;
+    use super::{run_verify_lifecycle, LifecycleOutcome};
 
     fn new_core() -> Arc<StateLock<BotState>> {
         Arc::new(StateLock::new(BotState::new()))
@@ -624,6 +688,406 @@ mod tests {
             !state.tick_data.contains_key(&-201_000),
             "buffered burn must be drained onto the seed, removing the zeroed tick"
         );
+    }
+
+    /// The tracked seed tick map: tick 60 initialized with gross/net 100.
+    fn seed_tick_60() -> HashMap<i32, TickInfo> {
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: 100i128,
+                block: 0,
+            },
+        );
+        tick_data
+    }
+
+    /// Register a `Tracked` V3 pool whose imported seed stamps its tick map at
+    /// `clock` — the DB-row shape, with no engine witnesses yet.
+    fn reg_v3_clocked(core: &mut BotState, address: Address, clock: u64) -> u64 {
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: seed_tick_60(),
+            update_block: clock,
+            tick_data_block: Some(clock),
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: V3 tracked registration")
+    }
+
+    /// The V4 twin of [`reg_v3_clocked`].
+    fn reg_v4_clocked(core: &mut BotState, pm: Address, pid: V4PoolId, clock: u64) -> u64 {
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager: pm,
+            pool_id: pid,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            state_view: Address::ZERO,
+            hook_flags: 0,
+            protocol_fee: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: seed_tick_60(),
+            update_block: clock,
+            tick_data_block: Some(clock),
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            known_bitmap_words: Vec::new(),
+        })
+        .expect("test setup: V4 tracked registration")
+    }
+
+    /// Stage one pump liquidity event at `block` on a quarantined pool and
+    /// tombstone only `block - 1`, so the lifecycle's drain holds the event
+    /// back — the shape whose pin is `Incomplete`.
+    fn hold_back_pump_event(
+        core: &mut BotState,
+        key: PoolLookup,
+        update: PoolLiquidityUpdate,
+        block: u64,
+    ) {
+        assert_eq!(
+            core.apply_liquidity_update(key, update),
+            Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+            "a quarantined pool's liquidity event is staged, not dropped"
+        );
+        core.concentrated_liquidity_mut()
+            .advance_pump_complete_cutoff(block - 1);
+    }
+
+    /// An INCOMPLETE post-drain pin defers: the drain held a pump event back at
+    /// the map's own clock, so no block is complete. The lifecycle must answer
+    /// `Ok` WITHOUT running step-2 and WITHOUT promoting the pool — and must
+    /// leave no pair behind for a later call to mistake for this drain's state.
+    #[tokio::test]
+    async fn tracked_v3_incomplete_drain_defers_without_verify_or_live() {
+        let core = new_core();
+        let addr = Address::from([0x31u8; 20]);
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            let pid = reg_v3_clocked(&mut c, addr, 100);
+            hold_back_pump_event(
+                &mut c,
+                PoolLookup::from_address(addr),
+                PoolLiquidityUpdate::new(-60, 60, 500_i128, 100),
+                100,
+            );
+            pid
+        };
+        let post_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&post_calls);
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            PoolLookup::from_address(addr),
+            None, // step-1 out of the way: this test is about the drain's verdict
+            |_, _| async move { Ok(()) },
+            move |tick_data, block| {
+                let seen = seen;
+                async move {
+                    seen.lock().unwrap().push((block, tick_data.len()));
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert_eq!(
+            result.expect("a deferred drain is Ok, not a refusal"),
+            LifecycleOutcome::Deferred,
+            "the machine reports the deferral instead of a silent no-op"
+        );
+        assert!(
+            post_calls.lock().unwrap().is_empty(),
+            "step-2 must not verify a map the drain itself contradicts"
+        );
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert_eq!(
+                lifecycle_v3(&c, pid),
+                RegistrationLifecycle::VerificationDeferred,
+                "an incomplete pin parks the pool: never Live, and never swept"
+            );
+        }
+        {
+            let mut c = core.write_at(LockSite::Registration);
+            assert_eq!(
+                PoolLookup::from_address(addr).take_post_drain(&mut c),
+                None,
+                "the deferred call leaves no post-drain pair behind"
+            );
+            assert_eq!(
+                c.apply_liquidity_update(
+                    PoolLookup::from_address(addr),
+                    PoolLiquidityUpdate::new(-60, 60, 100_i128, 108),
+                ),
+                Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+                "a parked pool keeps buffering its live events"
+            );
+        }
+    }
+
+    /// The retry after a deferral: once the tombstone closes the held-back
+    /// block, the next lifecycle call drains it, verifies the DRAINED map at its
+    /// own clock (never the stale pre-drain pair) and reaches `Live`.
+    #[tokio::test]
+    async fn tracked_v3_next_complete_drain_verifies_and_goes_live() {
+        let core = new_core();
+        let addr = Address::from([0x32u8; 20]);
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            let pid = reg_v3_clocked(&mut c, addr, 100);
+            hold_back_pump_event(
+                &mut c,
+                PoolLookup::from_address(addr),
+                PoolLiquidityUpdate::new(-60, 60, 500_i128, 100),
+                100,
+            );
+            pid
+        };
+        let deferred = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            PoolLookup::from_address(addr),
+            None,
+            |_, _| async move { Ok(()) },
+            |_, _| async move { unreachable!("step-2 must not run while the drain is incomplete") },
+        )
+        .await;
+        assert_eq!(
+            deferred.expect("the first call defers"),
+            LifecycleOutcome::Deferred
+        );
+
+        // The pump's next tombstone closes block 100, so the retry's drain may
+        // release the Mint.
+        {
+            let mut c = core.write_at(LockSite::Registration);
+            c.concentrated_liquidity_mut()
+                .advance_pump_complete_cutoff(100);
+        }
+
+        let post_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&post_calls);
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            PoolLookup::from_address(addr),
+            None,
+            |_, _| async move { Ok(()) },
+            move |tick_data, block| {
+                let seen = seen;
+                async move {
+                    seen.lock().unwrap().push((
+                        block,
+                        tick_data.len(),
+                        tick_data.contains_key(&-60),
+                    ));
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert_eq!(
+            result.expect("the retry completes"),
+            LifecycleOutcome::Completed
+        );
+        assert_eq!(
+            *post_calls.lock().unwrap(),
+            vec![(100u64, 2usize, true)],
+            "step-2 verifies the drained map at its own clock, WITH the Mint@100's tick — a \
+             seed-only pair from before the drain would be (100, 1, false), so the stale pair \
+             was not reused"
+        );
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert_eq!(
+                lifecycle_v3(&c, pid),
+                RegistrationLifecycle::Live,
+                "the completed retry promotes the pool"
+            );
+        }
+    }
+
+    /// The V4 twin of [`tracked_v3_incomplete_drain_defers_without_verify_or_live`].
+    #[tokio::test]
+    async fn tracked_v4_incomplete_drain_defers_without_verify_or_live() {
+        let core = new_core();
+        let pm = Address::from([0x45u8; 20]);
+        let pid_bytes = [0x73u8; 32];
+        let key = PoolLookup::V4 {
+            pool_manager: pm,
+            pool_id: pid_bytes,
+        };
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            let pid = reg_v4_clocked(&mut c, pm, pid_bytes, 100);
+            hold_back_pump_event(
+                &mut c,
+                key,
+                PoolLiquidityUpdate::from_v4_wire(
+                    -60,
+                    60,
+                    I256::try_from(500_i128).expect("500 fits i128"),
+                    100,
+                )
+                .expect("valid V4 ModifyLiquidity wire update"),
+                100,
+            );
+            pid
+        };
+        let post_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&post_calls);
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            key,
+            None,
+            |_, _| async move { Ok(()) },
+            move |tick_data, block| {
+                let seen = seen;
+                async move {
+                    seen.lock().unwrap().push((block, tick_data.len()));
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert_eq!(
+            result.expect("a deferred drain is Ok, not a refusal"),
+            LifecycleOutcome::Deferred,
+            "the V4 machine reports the deferral too"
+        );
+        assert!(post_calls.lock().unwrap().is_empty());
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert_eq!(
+                lifecycle_v4(&c, pid),
+                RegistrationLifecycle::VerificationDeferred,
+                "an incomplete V4 pin parks the pool: never Live, and never swept"
+            );
+        }
+        {
+            let mut c = core.write_at(LockSite::Registration);
+            assert_eq!(
+                key.take_post_drain(&mut c),
+                None,
+                "the deferred call leaves no post-drain pair behind"
+            );
+            assert_eq!(
+                c.apply_liquidity_update(
+                    key,
+                    PoolLiquidityUpdate::from_v4_wire(
+                        -60,
+                        60,
+                        I256::try_from(100_i128).expect("100 fits i128"),
+                        108,
+                    )
+                    .expect("valid V4 ModifyLiquidity wire update"),
+                ),
+                Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+                "a parked V4 pool keeps buffering its live events"
+            );
+        }
+    }
+
+    /// The V4 twin of [`tracked_v3_next_complete_drain_verifies_and_goes_live`].
+    #[tokio::test]
+    async fn tracked_v4_next_complete_drain_verifies_and_goes_live() {
+        let core = new_core();
+        let pm = Address::from([0x46u8; 20]);
+        let pid_bytes = [0x74u8; 32];
+        let key = PoolLookup::V4 {
+            pool_manager: pm,
+            pool_id: pid_bytes,
+        };
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            let pid = reg_v4_clocked(&mut c, pm, pid_bytes, 100);
+            hold_back_pump_event(
+                &mut c,
+                key,
+                PoolLiquidityUpdate::from_v4_wire(
+                    -60,
+                    60,
+                    I256::try_from(500_i128).expect("500 fits i128"),
+                    100,
+                )
+                .expect("valid V4 ModifyLiquidity wire update"),
+                100,
+            );
+            pid
+        };
+        let deferred = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            key,
+            None,
+            |_, _| async move { Ok(()) },
+            |_, _| async move { unreachable!("step-2 must not run while the drain is incomplete") },
+        )
+        .await;
+        assert_eq!(
+            deferred.expect("the first call defers"),
+            LifecycleOutcome::Deferred
+        );
+
+        {
+            let mut c = core.write_at(LockSite::Registration);
+            c.concentrated_liquidity_mut()
+                .advance_pump_complete_cutoff(100);
+        }
+
+        let post_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&post_calls);
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            key,
+            None,
+            |_, _| async move { Ok(()) },
+            move |tick_data, block| {
+                let seen = seen;
+                async move {
+                    seen.lock().unwrap().push((
+                        block,
+                        tick_data.len(),
+                        tick_data.contains_key(&-60),
+                    ));
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert_eq!(
+            result.expect("the V4 retry completes"),
+            LifecycleOutcome::Completed
+        );
+        assert_eq!(
+            *post_calls.lock().unwrap(),
+            vec![(100u64, 2usize, true)],
+            "step-2 verifies the drained V4 map at its own clock, WITH the ModifyLiquidity's \
+             tick — the stale seed-only pair was not reused"
+        );
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert_eq!(
+                lifecycle_v4(&c, pid),
+                RegistrationLifecycle::Live,
+                "the completed V4 retry promotes the pool"
+            );
+        }
     }
 
     /// A missing provider for a TRACKED pool is a no-config fail-fast for

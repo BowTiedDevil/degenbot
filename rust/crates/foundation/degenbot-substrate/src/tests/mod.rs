@@ -117,6 +117,33 @@ fn register_v3(core: &mut BotState, update_block: u64) -> u64 {
     .expect("test setup: V3 registration")
 }
 
+/// Register a `Tracked` V3 pool whose imported seed (an EMPTY tick map) stamps
+/// the pool's liquidity clock at `clock` — the DB-row shape, with no engine
+/// witnesses yet. Shared by the snapshot-pin and quarantine suites.
+fn register_v3_tracked_at(core: &mut BotState, pool_addr: Address, clock: u64) -> u64 {
+    use crate::PoolTickCoverage;
+    use crate::RegisterV3PoolParams;
+
+    core.register_v3_pool(&RegisterV3PoolParams {
+        address: pool_addr,
+        token0: Address::ZERO,
+        token1: Address::from([1u8; 20]),
+        fee: 3000,
+        tick_spacing: 60,
+        factory: Address::ZERO,
+        sqrt_price_x96: U256::from(1u128) << 96,
+        liquidity: 1_000_000,
+        tick: 0,
+        tick_data: HashMap::new(),
+        update_block: clock,
+        tick_data_block: Some(clock),
+        coverage: PoolTickCoverage::Tracked,
+        fetcher: None,
+        ..Default::default()
+    })
+    .expect("test setup: V3 tracked registration")
+}
+
 // --- buffer appliers push journal deltas + advance update_block ---
 /// Register a V3 pool with tick 60 pre-initialized (gross/net 100) and
 /// tick 120 absent, so a buffered Mint at [60,120] bumps 60 → 600 and

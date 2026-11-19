@@ -215,7 +215,9 @@ pub use degenbot_bot::bot_core::{BuiltIdentity, ConstructedPool, ConstructionRef
 
 pub use degenbot_bot::bot_core::{PreBuildIdentity, RefusalKind};
 
-pub use degenbot_bot::bot_core::{run_registration_lifecycle, run_verify_lifecycle};
+pub use degenbot_bot::bot_core::{
+    run_registration_lifecycle, run_verify_lifecycle, LifecycleOutcome,
+};
 
 /// The reason a build refused a pool as out of spec — the builder's
 /// `PoolBuilderError::Spec` payload, so a consumer can name the refusal without

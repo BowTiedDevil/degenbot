@@ -325,6 +325,74 @@ fn release_all_quarantined_flushes_and_marks_live() {
     );
 }
 
+/// A pool whose post-drain pin was INCOMPLETE is parked in
+/// `VerificationDeferred`: it is not an orphan (its verification is still owed),
+/// so the orphan sweep leaves it buffering while releasing a true `Quarantined`
+/// orphan, and the retry's `begin_registration_quarantine` takes it back to
+/// `Quarantined` for the next drain.
+#[test]
+fn verification_deferred_buffers_and_survives_the_orphan_sweep() {
+    let mut core = BotState::new();
+    let deferred_addr = Address::from([0x79u8; 20]);
+    let orphan_addr = Address::from([0x7au8; 20]);
+    register_v3_tracked_at(&mut core, deferred_addr, 100);
+    let orphan_id = register_v3_tracked_at(&mut core, orphan_addr, 0);
+    let key = PoolLookup::from_address(deferred_addr);
+    let deferred_id = key.resolve(&core).expect("registered deferred pool");
+
+    let lifecycle = |core: &BotState, pool_id: u64| {
+        core.pool_slice::<degenbot_pools::V3PoolState>(pool_id)
+            .expect("registered V3 pool")
+            .registration_lifecycle
+    };
+
+    // The incomplete shape: a Mint@100 the tombstone cutoff (99) holds back, so
+    // the pin refuses and the pool starts owing a verification.
+    assert_eq!(
+        core.apply_liquidity_update(key, PoolLiquidityUpdate::new(-60, 60, 500_i128, 100)),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's Mint is staged, not dropped"
+    );
+    core.concentrated_liquidity_mut()
+        .advance_pump_complete_cutoff(99);
+    key.pump(&mut core);
+    key.pin_post_drain(&mut core);
+    assert_eq!(
+        lifecycle(&core, deferred_id),
+        RegistrationLifecycle::VerificationDeferred,
+        "an incomplete pin parks the pool as owing a verification"
+    );
+
+    // Routing treats the parked pool exactly like `Quarantined`: its live events
+    // keep deferring to the pump buffer.
+    assert_eq!(
+        core.apply_liquidity_update(key, PoolLiquidityUpdate::new(-60, 60, 100_i128, 108)),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a deferred pool's live Mint keeps buffering"
+    );
+
+    // The orphan sweep releases the TRUE orphan and skips the deferred pool.
+    core.release_all_quarantined();
+    assert_eq!(
+        lifecycle(&core, orphan_id),
+        RegistrationLifecycle::Live,
+        "a Quarantined orphan is still swept"
+    );
+    assert_eq!(
+        lifecycle(&core, deferred_id),
+        RegistrationLifecycle::VerificationDeferred,
+        "a deferred pool is not an orphan: the sweep must leave it for its verification"
+    );
+
+    // The retry's starting state.
+    key.begin_registration_quarantine(&mut core);
+    assert_eq!(
+        lifecycle(&core, deferred_id),
+        RegistrationLifecycle::Quarantined,
+        "begin_registration_quarantine moves a deferred pool back to Quarantined"
+    );
+}
+
 /// A `Quarantined` V4 pool's live `Swap` lands in the pump buffer (NOT
 /// applied directly): `tick_data` and scalars are unchanged, but the
 /// buffered event count increases and the buffer carries a `Swap` variant.

@@ -20,7 +20,7 @@ use std::fmt;
 use alloy::primitives::Address;
 use hashbrown::HashMap;
 
-use crate::concentrated_liquidity_orchestration::{V3Family, V4Family};
+use crate::concentrated_liquidity_orchestration::{PostDrainPin, V3Family, V4Family};
 use crate::state_lock::StateLock;
 use crate::{
     BotState, ConcentratedLiquidityPoolMut, PoolEntry, PoolIdentity, PoolTickCoverage,
@@ -307,7 +307,12 @@ impl PoolLookup {
 
     /// Freeze the post-drain `(tick_data, block)` pair atomically with the
     /// drain.
-    pub fn pin_post_drain(&self, state: &mut BotState) {
+    ///
+    /// The outcome is the pin's completeness verdict, not only a freeze: only
+    /// [`PostDrainPin::Pinned`] stores a pair, so a consumer that sees
+    /// [`PostDrainPin::Incomplete`] must rebuild after the next drain instead of
+    /// verifying a block the drained map cannot back.
+    pub fn pin_post_drain(&self, state: &mut BotState) -> PostDrainPin {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity

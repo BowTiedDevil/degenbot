@@ -106,7 +106,9 @@ pub use registration_ledger::{
     RegistrationUnitOutcome, SnapshotLoadReason, UnregistrableRecord, UnsupportedSubject,
     VerifyOrigin, REFUSAL_KIND_TAGS, REGISTRATION_OUTCOMES,
 };
-pub use registration_lifecycle::{run_registration_lifecycle, run_verify_lifecycle};
+pub use registration_lifecycle::{
+    run_registration_lifecycle, run_verify_lifecycle, LifecycleOutcome,
+};
 
 /// The engine session's strategy-plane boot: the mint → register → attach →
 /// install → start ordering the composition root drives, with the plane's own

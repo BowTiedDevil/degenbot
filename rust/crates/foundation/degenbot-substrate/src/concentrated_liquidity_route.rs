@@ -37,7 +37,8 @@ pub enum PoolPresence {
     /// No `BotState` entry yet — crawl has not reached this pool.
     Unregistered,
     /// Registered `Tracked` pool in the two-step verify-then-live lifecycle
-    /// events defer to the pump buffer so the pin cannot outrun
+    /// (including a pool whose pin was incomplete and whose verification is
+    /// still owed): events defer to the pump buffer so the pin cannot outrun
     /// `last_complete_block`.
     Quarantined,
     /// Registered and verified: steady-state direct application.
@@ -46,10 +47,16 @@ pub enum PoolPresence {
 
 impl PoolPresence {
     /// Map a registration lookup to presence. `None` = not in `BotState`.
+    ///
+    /// `VerificationDeferred` routes exactly like `Quarantined`: the pool owes a
+    /// verification, so its live events keep deferring to the pump buffer until
+    /// a later lifecycle call pins a complete map and promotes it.
     #[must_use]
     pub fn from_lifecycle(lifecycle: Option<RegistrationLifecycle>) -> Self {
         match lifecycle {
-            Some(RegistrationLifecycle::Quarantined) => Self::Quarantined,
+            Some(
+                RegistrationLifecycle::Quarantined | RegistrationLifecycle::VerificationDeferred,
+            ) => Self::Quarantined,
             Some(RegistrationLifecycle::Live) => Self::Live,
             None => Self::Unregistered,
         }
@@ -368,6 +375,11 @@ mod tests {
         assert_eq!(
             PoolPresence::from_lifecycle(Some(RegistrationLifecycle::Live)),
             PoolPresence::Live
+        );
+        assert_eq!(
+            PoolPresence::from_lifecycle(Some(RegistrationLifecycle::VerificationDeferred)),
+            PoolPresence::Quarantined,
+            "a deferred pool owes a verification, so it routes (and buffers) like a quarantined one"
         );
     }
 }

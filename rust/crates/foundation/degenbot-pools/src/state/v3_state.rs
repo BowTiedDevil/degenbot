@@ -77,6 +77,14 @@ pub enum RegistrationLifecycle {
     /// Live events are deferred to the pump buffer until `mark_registration_live`
     /// flushes them. Used during `register_v3/v4_pool`'s drain+pin+verify.
     Quarantined,
+    /// The post-drain pin was INCOMPLETE — a pump event the tombstone cutoff
+    /// held back at/below the map's own liquidity clock — so the pool's
+    /// verification is still owed and no block is verifiable yet. Live events
+    /// keep deferring exactly like `Quarantined`, and the orphan sweep leaves
+    /// the pool alone (it is not an orphan: it owes a verification). A later
+    /// registration attempt re-quarantines it, pins a complete map, verifies,
+    /// and only then promotes it.
+    VerificationDeferred,
 }
 
 // ---------------------------------------------------------------------------

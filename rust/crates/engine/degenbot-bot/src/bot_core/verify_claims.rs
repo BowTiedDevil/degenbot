@@ -50,19 +50,20 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
+use super::registration_lifecycle::LifecycleOutcome;
 use crate::bot_core::registration_ledger::{PreBuildIdentity, RegistrationLedger};
 
 /// The shared claim table, held behind an `Arc` so a leader guard can evict
 /// its own entry without borrowing the table's owner.
-type ClaimTable<E> = Arc<Mutex<HashMap<String, Arc<VerifyClaim<E>>>>>;
+type ClaimTable<T, E> = Arc<Mutex<HashMap<String, Arc<VerifyClaim<T, E>>>>>;
 
 /// The settlement state of one claim window.
 #[derive(Debug)]
-enum Settlement<E> {
+enum Settlement<T, E> {
     /// The leader is still running the work.
     Pending,
     /// The leader finished; every peer receives this outcome.
-    Settled(Result<(), E>),
+    Settled(Result<T, E>),
     /// The leader's future was dropped without settling. A waiting peer
     /// re-claims rather than inheriting an answer nobody will give.
     Abandoned,
@@ -70,11 +71,11 @@ enum Settlement<E> {
 
 /// One live claim window: the settlement slot peers read.
 #[derive(Debug)]
-struct VerifyClaim<E> {
-    settlement: watch::Sender<Settlement<E>>,
+struct VerifyClaim<T, E> {
+    settlement: watch::Sender<Settlement<T, E>>,
 }
 
-impl<E: Clone> VerifyClaim<E> {
+impl<T: Clone, E: Clone> VerifyClaim<T, E> {
     fn new() -> Self {
         Self {
             settlement: watch::Sender::new(Settlement::Pending),
@@ -83,7 +84,7 @@ impl<E: Clone> VerifyClaim<E> {
 
     /// The leader's publish. Replaces any prior value, so a subscriber that
     /// arrives after settlement reads it directly.
-    fn settle(&self, outcome: Result<(), E>) {
+    fn settle(&self, outcome: Result<T, E>) {
         self.settlement.send_replace(Settlement::Settled(outcome));
     }
 
@@ -93,7 +94,7 @@ impl<E: Clone> VerifyClaim<E> {
 
     /// The peer's wait. `None` means the window was abandoned and the caller
     /// must re-claim.
-    async fn wait(&self) -> Option<Result<(), E>> {
+    async fn wait(&self) -> Option<Result<T, E>> {
         let mut settlement = self.settlement.subscribe();
         loop {
             let outcome = match &*settlement.borrow_and_update() {
@@ -118,15 +119,15 @@ impl<E: Clone> VerifyClaim<E> {
 /// The eviction is identity-checked, so only the leader that owns the live
 /// entry removes it. `Drop` also covers a dropped or panicking future: the
 /// window is marked abandoned (peers re-claim) and then released.
-struct LeaderGuard<E: Clone> {
-    table: ClaimTable<E>,
+struct LeaderGuard<T: Clone, E: Clone> {
+    table: ClaimTable<T, E>,
     key: String,
-    claim: Arc<VerifyClaim<E>>,
+    claim: Arc<VerifyClaim<T, E>>,
     armed: bool,
 }
 
-impl<E: Clone> LeaderGuard<E> {
-    fn settle(mut self, outcome: Result<(), E>) -> Result<(), E> {
+impl<T: Clone, E: Clone> LeaderGuard<T, E> {
+    fn settle(mut self, outcome: Result<T, E>) -> Result<T, E> {
         self.claim.settle(outcome.clone());
         self.release();
         outcome
@@ -146,7 +147,7 @@ impl<E: Clone> LeaderGuard<E> {
     }
 }
 
-impl<E: Clone> Drop for LeaderGuard<E> {
+impl<T: Clone, E: Clone> Drop for LeaderGuard<T, E> {
     fn drop(&mut self) {
         // Only an UNSETTLED window is abandoned. `settle` disarms the guard
         // before this runs, so a settled window's published outcome is never
@@ -160,11 +161,11 @@ impl<E: Clone> Drop for LeaderGuard<E> {
 
 /// The at-most-once claim table: the one owner of the claim policy.
 #[derive(Debug)]
-pub struct VerifyClaims<E> {
-    table: ClaimTable<E>,
+pub struct VerifyClaims<T, E> {
+    table: ClaimTable<T, E>,
 }
 
-impl<E> Default for VerifyClaims<E> {
+impl<T, E> Default for VerifyClaims<T, E> {
     fn default() -> Self {
         Self {
             table: Arc::new(Mutex::new(HashMap::new())),
@@ -172,7 +173,7 @@ impl<E> Default for VerifyClaims<E> {
     }
 }
 
-impl<E: Clone + Send + Sync + 'static> VerifyClaims<E> {
+impl<T: Clone + Send + Sync + 'static, E: Clone + Send + Sync + 'static> VerifyClaims<T, E> {
     /// An empty claim table.
     #[must_use]
     pub fn new() -> Self {
@@ -182,7 +183,7 @@ impl<E: Clone + Send + Sync + 'static> VerifyClaims<E> {
     /// Claim-if-absent under the table lock: the check and the insert are
     /// contiguous, so two callers racing one key cannot both win. The guard
     /// is armed only for the winner; a peer's is inert.
-    fn acquire(&self, key: &str) -> (Arc<VerifyClaim<E>>, LeaderGuard<E>) {
+    fn acquire(&self, key: &str) -> (Arc<VerifyClaim<T, E>>, LeaderGuard<T, E>) {
         let (claim, armed) = {
             let mut table = self.table.lock();
             if let Some(existing) = table.get(key) {
@@ -215,10 +216,10 @@ impl<E: Clone + Send + Sync + 'static> VerifyClaims<E> {
     ///
     /// The leader's own error, or a re-issued copy of it when this caller
     /// was a peer. A failed window is released, so a later caller retries.
-    pub async fn run_exclusive<F, Fut>(&self, key: &str, run: F) -> Result<(), E>
+    pub async fn run_exclusive<F, Fut>(&self, key: &str, run: F) -> Result<T, E>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<(), E>>,
+        Fut: Future<Output = Result<T, E>>,
     {
         loop {
             let (claim, guard) = self.acquire(key);
@@ -265,7 +266,7 @@ impl<E: Clone + Send + Sync + 'static> VerifyClaims<E> {
 /// independent entries.
 #[derive(Debug)]
 pub struct PoolVerifications<E> {
-    claims: VerifyClaims<E>,
+    claims: VerifyClaims<LifecycleOutcome, E>,
     ledger: Mutex<RegistrationLedger>,
 }
 
@@ -308,16 +309,22 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
     ///
     /// The leader's own error, or a re-issued copy of it when this caller was
     /// a peer. A failed window is released and stays retriable.
-    pub async fn run_exclusive<F, Fut>(&self, key: &PreBuildIdentity, run: F) -> Result<(), E>
+    pub async fn run_exclusive<F, Fut>(
+        &self,
+        key: &PreBuildIdentity,
+        run: F,
+    ) -> Result<LifecycleOutcome, E>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<(), E>>,
+        Fut: Future<Output = Result<LifecycleOutcome, E>>,
     {
         if self.is_verified(key) {
-            return Ok(());
+            return Ok(LifecycleOutcome::Completed);
         }
         let outcome = self.claims.run_exclusive(&key.to_string(), run).await;
-        if outcome.is_ok() {
+        // ONLY a completed lifecycle is a durable fact. A deferred drain still
+        // owes its verification, so it records nothing and stays retriable.
+        if matches!(outcome, Ok(LifecycleOutcome::Completed)) {
             self.mark_verified(*key);
         }
         outcome
@@ -351,10 +358,13 @@ mod tests {
         kind: &'static str,
     }
 
-    type Claims = VerifyClaims<FakeVerifyError>;
+    type Claims = VerifyClaims<(), FakeVerifyError>;
 
-    /// The success value every policy test settles with.
+    /// The success value every claim-policy test settles with.
     const OK: Result<(), FakeVerifyError> = Ok(());
+
+    /// The completed lifecycle the pool-fact tests settle with.
+    const COMPLETED: Result<LifecycleOutcome, FakeVerifyError> = Ok(LifecycleOutcome::Completed);
 
     /// Leader success: N concurrent callers, one run, every caller sees the
     /// settled outcome, and the window is released.
@@ -587,11 +597,11 @@ mod tests {
                 let runs = Arc::clone(&runs);
                 async move {
                     runs.fetch_add(1, Ordering::SeqCst);
-                    OK
+                    COMPLETED
                 }
             })
             .await;
-        assert_eq!(first, Ok(()));
+        assert_eq!(first, Ok(LifecycleOutcome::Completed));
         assert!(verifications.is_verified(&v3_key(0xab)));
         assert_eq!(verifications.verified_pool_count(), 1);
 
@@ -600,13 +610,72 @@ mod tests {
                 let runs = Arc::clone(&runs);
                 async move {
                     runs.fetch_add(1, Ordering::SeqCst);
-                    OK
+                    COMPLETED
                 }
             })
             .await;
-        assert_eq!(second, Ok(()), "a verified pool returns the settled answer");
+        assert_eq!(
+            second,
+            Ok(LifecycleOutcome::Completed),
+            "a verified pool answers Completed without re-running"
+        );
         assert_eq!(runs.load(Ordering::SeqCst), 1, "no re-run after success");
         assert_eq!(verifications.live_claim_count(), 0);
+    }
+
+    /// A DEFERRED lifecycle records NO durable fact and stays retriable: the
+    /// later call that completes runs the work, and only then does the pool
+    /// become verified.
+    #[tokio::test]
+    async fn pool_verifications_deferred_lifecycle_records_no_fact_and_stays_retriable() {
+        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let runs = Arc::new(AtomicUsize::new(0));
+
+        let first = verifications
+            .run_exclusive(&v3_key(0xdd), || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    Ok(LifecycleOutcome::Deferred)
+                }
+            })
+            .await;
+        assert_eq!(first, Ok(LifecycleOutcome::Deferred));
+        assert!(
+            !verifications.is_verified(&v3_key(0xdd)),
+            "a deferred drain still owes its verification"
+        );
+        assert_eq!(verifications.verified_pool_count(), 0);
+        assert_eq!(
+            verifications.live_claim_count(),
+            0,
+            "the window is released so the retry can claim it"
+        );
+
+        let second = verifications
+            .run_exclusive(&v3_key(0xdd), || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    COMPLETED
+                }
+            })
+            .await;
+        assert_eq!(
+            second,
+            Ok(LifecycleOutcome::Completed),
+            "the deferred pool must be retried, not skipped"
+        );
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            2,
+            "the retry ran the lifecycle again"
+        );
+        assert!(
+            verifications.is_verified(&v3_key(0xdd)),
+            "only the completed call records the durable fact"
+        );
+        assert_eq!(verifications.verified_pool_count(), 1);
     }
 
     /// A failed lifecycle records NO fact and stays retriable; the retry that
@@ -625,9 +694,13 @@ mod tests {
         assert_eq!(verifications.verified_pool_count(), 0);
 
         let second = verifications
-            .run_exclusive(&v3_key(0xde), || async { OK })
+            .run_exclusive(&v3_key(0xde), || async { COMPLETED })
             .await;
-        assert_eq!(second, Ok(()), "a failed claim must stay retriable");
+        assert_eq!(
+            second,
+            Ok(LifecycleOutcome::Completed),
+            "a failed claim must stay retriable"
+        );
         assert!(verifications.is_verified(&v3_key(0xde)));
     }
 
@@ -652,14 +725,14 @@ mod tests {
                         async move {
                             runs.fetch_add(1, Ordering::SeqCst);
                             tokio::time::sleep(Duration::from_millis(20)).await;
-                            OK
+                            COMPLETED
                         }
                     })
                     .await
             }));
         }
         for handle in handles {
-            assert_eq!(handle.await.unwrap(), Ok(()));
+            assert_eq!(handle.await.unwrap(), Ok(LifecycleOutcome::Completed));
         }
         assert_eq!(runs.load(Ordering::SeqCst), 1, "one run per live window");
         assert_eq!(verifications.verified_pool_count(), 1);
@@ -675,7 +748,7 @@ mod tests {
         let verifications = PoolVerifications::<FakeVerifyError>::new();
 
         verifications
-            .run_exclusive(&v3_key(0xab), || async { OK })
+            .run_exclusive(&v3_key(0xab), || async { COMPLETED })
             .await
             .unwrap();
         assert!(verifications.is_verified(&v3_key(0xab)));
@@ -691,7 +764,7 @@ mod tests {
         );
 
         verifications
-            .run_exclusive(&PreBuildIdentity::V4([0x01u8; 32]), || async { OK })
+            .run_exclusive(&PreBuildIdentity::V4([0x01u8; 32]), || async { COMPLETED })
             .await
             .unwrap();
         assert!(verifications.is_verified(&PreBuildIdentity::V4([0x01u8; 32])));

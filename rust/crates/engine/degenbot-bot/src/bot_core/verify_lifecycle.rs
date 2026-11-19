@@ -29,6 +29,7 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::{BotState, PoolLookup};
 
 use super::registration_ledger::{PreBuildIdentity, RefusalKind};
+use super::registration_lifecycle::LifecycleOutcome;
 use super::verification_retry::{retry_verification_call, RetryPolicy};
 use super::verify_claims::PoolVerifications;
 
@@ -70,7 +71,7 @@ pub struct VerifyLifecycle {
     /// Test-only scripted attempt outcomes: each attempt pops one, and an empty
     /// script runs the real lifecycle.
     #[cfg(test)]
-    script: Mutex<Vec<Result<(), RefusalKind>>>,
+    script: Mutex<Vec<Result<LifecycleOutcome, RefusalKind>>>,
 }
 
 impl VerifyLifecycle {
@@ -128,6 +129,15 @@ impl VerifyLifecycle {
     /// attempt sequence and its final outcome, and a failed sequence releases
     /// the window so a later caller retries.
     ///
+    /// # Returns
+    ///
+    /// [`LifecycleOutcome::Completed`] when the lifecycle finished (verified, or
+    /// a sparse / unregistered no-op that owed nothing — the only outcome that
+    /// records the durable verified-pool fact), or
+    /// [`LifecycleOutcome::Deferred`] when the post-drain pin was incomplete: the
+    /// pool is parked with its verification still owed, NO fact is recorded, and
+    /// a later call retries it.
+    ///
     /// # Errors
     ///
     /// The lifecycle's [`RefusalKind`]: a fatal one immediately (a mismatch is
@@ -137,10 +147,10 @@ impl VerifyLifecycle {
         &self,
         key: PoolLookup,
         snapshot_block: Option<u64>,
-    ) -> Result<(), RefusalKind> {
+    ) -> Result<LifecycleOutcome, RefusalKind> {
         let claim_key = claim_key(key);
         if self.verifications.is_verified(&claim_key) {
-            return Ok(());
+            return Ok(LifecycleOutcome::Completed);
         }
         // An unregistered pool is a no-op: recording a fact here would skip the
         // verify the pool still owes once it IS registered.
@@ -149,7 +159,7 @@ impl VerifyLifecycle {
             key.coverage(&state).is_some()
         };
         if !registered {
-            return Ok(());
+            return Ok(LifecycleOutcome::Completed);
         }
         let config = self.config.lock().clone();
         self.verifications
@@ -180,10 +190,16 @@ impl VerifyLifecycle {
                 })
                 .instrument(span)
                 .await;
-                if result.is_ok() {
-                    diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle complete");
-                } else {
-                    op_warn!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle FAILED");
+                match &result {
+                    Ok(LifecycleOutcome::Completed) => {
+                        diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle complete");
+                    }
+                    Ok(LifecycleOutcome::Deferred) => {
+                        diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle deferred: the drain was incomplete, so the pool is parked and stays retriable");
+                    }
+                    Err(_) => {
+                        op_warn!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle FAILED");
+                    }
                 }
                 result
             })
@@ -192,9 +208,13 @@ impl VerifyLifecycle {
 
     /// Script the next attempt outcomes: each attempt pops one entry, and an
     /// empty script runs the real lifecycle. The seam a suite needs to observe
-    /// the retry bound and the fatal-vs-transient split without a live node.
+    /// the retry bound, the fatal-vs-transient split, and a deferred answer
+    /// without a live node.
     #[cfg(test)]
-    pub(crate) fn script_attempts_for_test(&self, attempts: Vec<Result<(), RefusalKind>>) {
+    pub(crate) fn script_attempts_for_test(
+        &self,
+        attempts: Vec<Result<LifecycleOutcome, RefusalKind>>,
+    ) {
         // Attempts answer in the order the caller scripted them (the pop reads
         // the tail).
         *self.script.lock() = attempts.into_iter().rev().collect();
@@ -418,6 +438,36 @@ mod tests {
             .await
             .expect("an unregistered pool is a no-op");
         assert_eq!(lifecycle.verified_pool_count(), 0);
+    }
+
+    /// A DEFERRED answer is not a pool fact: nothing is recorded, and the next
+    /// call re-enters the lifecycle, which then completes and records it.
+    #[tokio::test]
+    async fn a_deferred_answer_records_no_fact_and_stays_retriable() {
+        let lifecycle = lifecycle();
+        let address = Address::from([0x18u8; 20]);
+        register_v3(&lifecycle.core, address, PoolTickCoverage::Sparse);
+        lifecycle.script_attempts_for_test(vec![Ok(LifecycleOutcome::Deferred)]);
+
+        let outcome = lifecycle
+            .run(PoolLookup::from_address(address), Some(SNAPSHOT))
+            .await
+            .expect("a deferred answer is not an error");
+        assert_eq!(outcome, LifecycleOutcome::Deferred);
+        assert!(
+            !lifecycle.is_verified(&PreBuildIdentity::Address(address)),
+            "a deferred lifecycle records no durable verified-pool fact"
+        );
+        assert_eq!(lifecycle.verified_pool_count(), 0);
+
+        // An empty script runs the real lifecycle: the retry completes it.
+        let retried = lifecycle
+            .run(PoolLookup::from_address(address), Some(SNAPSHOT))
+            .await
+            .expect("the deferred pool is retried");
+        assert_eq!(retried, LifecycleOutcome::Completed);
+        assert!(lifecycle.is_verified(&PreBuildIdentity::Address(address)));
+        assert_eq!(lifecycle.verified_pool_count(), 1);
     }
 
     /// A transient failure is retried until the lifecycle answers; the policy's

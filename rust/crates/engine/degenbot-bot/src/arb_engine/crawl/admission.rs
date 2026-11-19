@@ -934,6 +934,11 @@ impl RegistrationAdmission {
     /// owns the claim window, the durable fact, and the bounded retry, so two
     /// candidates (from either adapter) share one run and each receives its
     /// outcome.
+    ///
+    /// A DEFERRED outcome (an incomplete drain) is a successful return that
+    /// leaves the pool parked with its verification still owed: this step
+    /// reports no abort, and a later lifecycle call for the same pool retries it
+    /// (the deferral records no durable fact).
     async fn verify_hop(&self, facts: &RegisteredHopFacts) -> Result<(), CrawlAbort> {
         let key = match facts.family {
             RegisteredPoolFamily::V3 => {
@@ -996,6 +1001,7 @@ impl RegistrationAdmission {
         self.verify
             .run(lookup, self.settings.snapshot_block)
             .await
+            .map(|_outcome| ())
             .map_err(CrawlAbort::Verify)
     }
 }

@@ -314,18 +314,54 @@ pub(crate) trait LiquidityFamily {
         block: u64,
     ) -> usize;
 
-    /// The post-drain pin diagnostic and its stamp-provenance classification.
-    fn diag_pin(
-        key: &Self::Key,
-        clock: u64,
-        ticks: usize,
-        undrained: usize,
-        cutoff: u64,
-        verdict: PinProvenance,
-    );
+    /// The post-drain pin diagnostic (minted, refused, or not pinnable).
+    fn diag_pin(key: &Self::Key, outcome: &PostDrainPin);
 
     /// Emit the drain diagnostic (the field names are family-specific).
     fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]);
+}
+
+/// What the post-drain pin minted for one pool: the frozen `(tick map, block)`
+/// pair's completeness verdict, or the reason no pair was minted.
+///
+/// The pair is a COMPLETENESS claim, not only a freeze: step-2 verification
+/// compares the map against on-chain state at the block it carries. The claim
+/// is minted only when the drain released every buffered pump event at or below
+/// the map's own liquidity clock, because a held-back event at that block means
+/// the map omits a known event at/below its own stamp — and then no block
+/// matches the pair: the clock is contradicted by the drain's tail, and the
+/// tombstone cutoff is a block the map was never captured at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PostDrainPin {
+    /// The drained map covers its own liquidity clock. The pair is stored and
+    /// the consumer may verify on-chain at `clock`.
+    Pinned {
+        /// The map's own liquidity clock (the block it reflects).
+        clock: u64,
+        /// How many ticks the frozen map carries.
+        tick_count: usize,
+        /// Who corroborates the stamp's freshness. A DIAGNOSTIC, not a
+        /// completeness proof: a witnessed-but-undrained event sits beyond the
+        /// map's contents while the verdict still counts it as a witness.
+        verdict: PinProvenance,
+    },
+    /// Buffered pump events at or below the map's liquidity clock are missing
+    /// from it, so no block is complete. No pair is stored — a stale pair from
+    /// an earlier drain is dropped — and the consumer rebuilds after the next
+    /// drain.
+    Incomplete {
+        /// The map's own liquidity clock (the block it reflects).
+        clock: u64,
+        /// Buffered pump events at/below `clock` the drain did not release.
+        undrained: usize,
+        /// The tombstone-confirmed delivery horizon at pin time.
+        cutoff: u64,
+        /// Who corroborates the stamp's freshness, for diagnostics.
+        verdict: PinProvenance,
+    },
+    /// Nothing to pin: the pool is unregistered, or its tick coverage is
+    /// `Sparse` (no complete map exists to freeze).
+    NotPinnable,
 }
 
 /// The registration lifecycle both concentrated-liquidity state types carry.
@@ -539,38 +575,46 @@ impl LiquidityFamily for V3Family {
         orch.v3_buffer.pump_count_at_or_below(key, block)
     }
 
-    fn diag_pin(
-        key: &Self::Key,
-        clock: u64,
-        ticks: usize,
-        undrained: usize,
-        cutoff: u64,
-        verdict: PinProvenance,
-    ) {
-        diag!(domain = verify, pool_addr = %format!("{key:x}"),
-            tick_data_block = clock,
-            tick_count = ticks,
-            pump_count = undrained,
-            last_complete_block = cutoff,
-            "V3 pin"
-        );
-        match verdict {
-            PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
-                op_warn!(domain = state, pool_addr = %format!("{key:x}"),
-                    seed_block = clock,
-                    cutoff,
-                    witnessed_horizon,
-                    "V3 re-seed-after-activity: a fresher seed stamp arrived after the engine had already witnessed events for this pool (the mis-stamped lie shape)"
+    fn diag_pin(key: &Self::Key, outcome: &PostDrainPin) {
+        match *outcome {
+            PostDrainPin::Pinned {
+                clock,
+                tick_count,
+                verdict,
+            } => {
+                diag!(domain = verify, pool_addr = %format!("{key:x}"),
+                    tick_data_block = clock,
+                    tick_count = tick_count,
+                    verdict = ?verdict,
+                    "V3 pin"
+                );
+                if let PinProvenance::SeedTrustOnly { witnessed_horizon } = verdict {
+                    if witnessed_horizon > 0 {
+                        op_warn!(domain = state, pool_addr = %format!("{key:x}"),
+                            seed_block = clock,
+                            witnessed_horizon,
+                            "V3 re-seed-after-activity: a fresher seed stamp arrived after the engine had already witnessed events for this pool (the mis-stamped lie shape)"
+                        );
+                    }
+                }
+            }
+            PostDrainPin::Incomplete {
+                clock,
+                undrained,
+                cutoff,
+                verdict,
+            } => {
+                op_warn!(domain = verify, pool_addr = %format!("{key:x}"),
+                    tick_data_block = clock,
+                    pump_count = undrained,
+                    last_complete_block = cutoff,
+                    verdict = ?verdict,
+                    "V3 pin REFUSED: undrained pump events at/below the map's clock — no stamp minted, the consumer rebuilds on the next drain"
                 );
             }
-            PinProvenance::CorroboratedByDelivery
-            | PinProvenance::WitnessedBeyondCutoff
-            | PinProvenance::SeedTrustOnly { .. } => {
-                diag!(domain = state, pool_addr = %format!("{key:x}"),
-                    seed_block = clock,
-                    cutoff,
-                    verdict = ?verdict,
-                    "V3 pin stamp classified"
+            PostDrainPin::NotPinnable => {
+                diag!(domain = verify, pool_addr = %format!("{key:x}"),
+                    "V3 pin: nothing to pin (sparse or unregistered)"
                 );
             }
         }
@@ -669,41 +713,50 @@ impl LiquidityFamily for V4Family {
         orch.v4_buffer.pump_count_at_or_below(key, block)
     }
 
-    fn diag_pin(
-        key: &Self::Key,
-        clock: u64,
-        ticks: usize,
-        undrained: usize,
-        cutoff: u64,
-        verdict: PinProvenance,
-    ) {
-        diag!(domain = verify, pool_manager = %format!("{:x}", key.0),
-            pool_id = %alloy::hex::encode_prefixed(key.1),
-            tick_data_block = clock,
-            tick_count = ticks,
-            pump_count = undrained,
-            last_complete_block = cutoff,
-            "V4 pin"
-        );
-        match verdict {
-            PinProvenance::SeedTrustOnly { witnessed_horizon } if witnessed_horizon > 0 => {
-                op_warn!(domain = state, pool_manager = %format!("{:x}", key.0),
+    fn diag_pin(key: &Self::Key, outcome: &PostDrainPin) {
+        match *outcome {
+            PostDrainPin::Pinned {
+                clock,
+                tick_count,
+                verdict,
+            } => {
+                diag!(domain = verify, pool_manager = %format!("{:x}", key.0),
                     pool_id = %alloy::hex::encode_prefixed(key.1),
-                    seed_block = clock,
-                    cutoff,
-                    witnessed_horizon,
-                    "V4 re-seed-after-activity: a fresher seed stamp arrived after the engine had already witnessed events for this pool (the mis-stamped lie shape)"
+                    tick_data_block = clock,
+                    tick_count = tick_count,
+                    verdict = ?verdict,
+                    "V4 pin"
+                );
+                if let PinProvenance::SeedTrustOnly { witnessed_horizon } = verdict {
+                    if witnessed_horizon > 0 {
+                        op_warn!(domain = state, pool_manager = %format!("{:x}", key.0),
+                            pool_id = %alloy::hex::encode_prefixed(key.1),
+                            seed_block = clock,
+                            witnessed_horizon,
+                            "V4 re-seed-after-activity: a fresher seed stamp arrived after the engine had already witnessed events for this pool (the mis-stamped lie shape)"
+                        );
+                    }
+                }
+            }
+            PostDrainPin::Incomplete {
+                clock,
+                undrained,
+                cutoff,
+                verdict,
+            } => {
+                op_warn!(domain = verify, pool_manager = %format!("{:x}", key.0),
+                    pool_id = %alloy::hex::encode_prefixed(key.1),
+                    tick_data_block = clock,
+                    pump_count = undrained,
+                    last_complete_block = cutoff,
+                    verdict = ?verdict,
+                    "V4 pin REFUSED: undrained pump events at/below the map's clock — no stamp minted, the consumer rebuilds on the next drain"
                 );
             }
-            PinProvenance::CorroboratedByDelivery
-            | PinProvenance::WitnessedBeyondCutoff
-            | PinProvenance::SeedTrustOnly { .. } => {
-                diag!(domain = state, pool_manager = %format!("{:x}", key.0),
+            PostDrainPin::NotPinnable => {
+                diag!(domain = verify, pool_manager = %format!("{:x}", key.0),
                     pool_id = %alloy::hex::encode_prefixed(key.1),
-                    seed_block = clock,
-                    cutoff,
-                    verdict = ?verdict,
-                    "V4 pin stamp classified"
+                    "V4 pin: nothing to pin (sparse or unregistered)"
                 );
             }
         }
@@ -1440,38 +1493,58 @@ impl ConcentratedLiquidityOrchestration {
     /// drain, for either key shape.
     ///
     /// The pin pairs the tick map with its own LIQUIDITY clock (two-stamp rule:
-    /// the price clock can move under the map), clamped down to the tombstone
-    /// cutoff when undrained pump events at or below the clock mean the map is
-    /// not confirmed complete yet (fabricated-mismatch clamp). The stamp's
-    /// provenance is classified here, so a fresher stamp that arrived after the
-    /// engine already witnessed events for this pool warns loudly — the
-    /// mis-stamped lie shape.
+    /// the price clock can move under the map) and mints that pair only when the
+    /// drain's horizon proves the map covers the clock — no buffered pump event
+    /// at or below it. A held-back event means the map omits a known event
+    /// at/below its own stamp, and no block matches the pair: the clock is
+    /// contradicted by the drain's tail and the tombstone cutoff is a block the
+    /// map was never captured at. That shape answers [`PostDrainPin::Incomplete`]
+    /// and stores nothing, so the consumer rebuilds on the next drain instead of
+    /// verifying a fabricated block.
     pub(crate) fn pin_post_drain_snapshot<F: LiquidityFamily>(
         &mut self,
         reg: &mut PoolTable,
         key: &F::Key,
-    ) {
+    ) -> PostDrainPin {
         let cutoff = self.pump_complete_cutoff;
         let witnessed = F::event_horizon(self, key);
         let Some(pool_id) = reg.pool_id_for(&F::lookup(key)) else {
-            return;
+            return PostDrainPin::NotPinnable;
         };
         let Some(state) = F::state_mut(reg, pool_id) else {
-            return;
+            return PostDrainPin::NotPinnable;
         };
         if state.coverage() != PoolTickCoverage::Tracked {
-            return;
+            return PostDrainPin::NotPinnable;
         }
         let clock = state.liquidity_clock();
-        let undrained = F::pump_count_at_or_below(self, key, clock);
-        let pinned_block = if undrained > 0 && cutoff > 0 {
-            clock.min(cutoff)
-        } else {
-            clock
-        };
-        let ticks = state.pin_post_drain(pinned_block);
         let verdict = pin_provenance_verdict(clock, cutoff, witnessed);
-        F::diag_pin(key, clock, ticks, undrained, cutoff, verdict);
+        let undrained = F::pump_count_at_or_below(self, key, clock);
+        let outcome = if undrained > 0 {
+            // The map is missing an event at/below its own clock, so it is not
+            // the chain's state at `clock` and `cutoff` is not its stamp. Drop
+            // any pair an earlier drain pinned (a stale freeze would be verified
+            // as if it were this drain's state), and record that the pool still
+            // owes a verification: `VerificationDeferred` keeps its live events
+            // buffering exactly like `Quarantined` and the orphan sweep skips
+            // it, so nothing promotes a pool on a map the drain contradicted.
+            *state.post_drain_snapshot_mut() = None;
+            *state.lifecycle_mut() = RegistrationLifecycle::VerificationDeferred;
+            PostDrainPin::Incomplete {
+                clock,
+                undrained,
+                cutoff,
+                verdict,
+            }
+        } else {
+            PostDrainPin::Pinned {
+                clock,
+                tick_count: state.pin_post_drain(clock),
+                verdict,
+            }
+        };
+        F::diag_pin(key, &outcome);
+        outcome
     }
     /// Overwrite a registered pool's state from one source snapshot, for either
     /// key shape.
@@ -1941,6 +2014,10 @@ impl ConcentratedLiquidityOrchestration {
     /// unregistered pool and for a `Sparse` pool (it has no pin / step-2 verify
     /// to protect, so deferring its events buys nothing — coverage-aware
     /// carve-out).
+    ///
+    /// A pool parked in [`RegistrationLifecycle::VerificationDeferred`] returns
+    /// to `Quarantined` here: that is the retry's starting state, and it is why
+    /// a deferred pool is picked up again rather than swept.
     pub(crate) fn begin_registration_quarantine<F: LiquidityFamily>(
         &mut self,
         reg: &mut PoolTable,
@@ -2004,6 +2081,10 @@ impl ConcentratedLiquidityOrchestration {
     /// [`Self::mark_registration_live`]) and mark it `Live`, so no
     /// registered pool is left buffering forever. No-op when nothing is
     /// quarantined.
+    ///
+    /// A [`RegistrationLifecycle::VerificationDeferred`] pool is NOT an orphan —
+    /// it owes a verification a later registration attempt will perform — so the
+    /// sweep matches `Quarantined` only and leaves deferred pools buffering.
     pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut PoolTable) {
         // Collect the still-Quarantined V3 addresses and V4 (pm, pool_id) keys
         // first (drain buffers are keyed by those, not `pool_id`), then release

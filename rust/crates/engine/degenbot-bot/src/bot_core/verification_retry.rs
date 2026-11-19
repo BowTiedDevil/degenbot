@@ -83,25 +83,26 @@ fn jitter_fraction(attempt: u32) -> f64 {
 /// Call `attempt_fn(attempt_number)` with bounded retry on transient failures.
 ///
 /// `attempt_number` is 1-indexed. Only [`is_retryable`] failures are retried;
-/// all other failures return immediately.
+/// all other failures return immediately. The attempt's own success VALUE rides
+/// through unchanged (a lifecycle outcome is not flattened to `()` here).
 ///
 /// # Errors
 ///
 /// Returns the last transient failure after exhausting `policy`, or the first
 /// fatal failure.
-pub async fn retry_verification_call<F, Fut>(
+pub async fn retry_verification_call<T, F, Fut>(
     policy: &RetryPolicy,
     mut attempt_fn: F,
-) -> Result<(), RefusalKind>
+) -> Result<T, RefusalKind>
 where
     F: FnMut(u32) -> Fut,
-    Fut: Future<Output = Result<(), RefusalKind>>,
+    Fut: Future<Output = Result<T, RefusalKind>>,
 {
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
         match attempt_fn(attempt).await {
-            Ok(()) => return Ok(()),
+            Ok(outcome) => return Ok(outcome),
             Err(err) if is_retryable(&err) && attempt < policy.max_attempts => {
                 let delay = policy.capped_backoff(attempt)
                     + Duration::from_secs_f64(jitter_fraction(attempt) * policy.jitter);
@@ -215,7 +216,7 @@ mod tests {
     async fn snapshot_mismatch_is_fatal_and_never_retried() {
         let policy = zero_policy(3);
         let attempts = Arc::new(AtomicU32::new(0));
-        let result = retry_verification_call(&policy, |_n| {
+        let result: Result<(), RefusalKind> = retry_verification_call(&policy, |_n| {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
@@ -234,7 +235,7 @@ mod tests {
     async fn other_errors_are_fatal_and_never_retried() {
         let policy = zero_policy(3);
         let attempts = Arc::new(AtomicU32::new(0));
-        let result = retry_verification_call(&policy, |_n| {
+        let result: Result<(), RefusalKind> = retry_verification_call(&policy, |_n| {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
@@ -256,7 +257,7 @@ mod tests {
     async fn other_verify_failures_are_fatal_and_never_retried() {
         let policy = zero_policy(3);
         let attempts = Arc::new(AtomicU32::new(0));
-        let result = retry_verification_call(&policy, |_n| {
+        let result: Result<(), RefusalKind> = retry_verification_call(&policy, |_n| {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);
@@ -281,7 +282,7 @@ mod tests {
     async fn rpc_exhaustion_returns_the_last_error() {
         let policy = zero_policy(2);
         let attempts = Arc::new(AtomicU32::new(0));
-        let result = retry_verification_call(&policy, |_n| {
+        let result: Result<(), RefusalKind> = retry_verification_call(&policy, |_n| {
             let attempts = Arc::clone(&attempts);
             async move {
                 attempts.fetch_add(1, Ordering::SeqCst);

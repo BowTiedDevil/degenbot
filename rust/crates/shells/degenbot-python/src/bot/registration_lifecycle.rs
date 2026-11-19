@@ -330,7 +330,13 @@ pub(crate) fn run_registration_lifecycle(
         Mode::Async => {
             let verify = Arc::clone(driver.verify());
             let future = crate::ambient_runtime::future_into_py(py, async move {
-                verify.run(key, snapshot_block).await.map_err(map_refusal)
+                // The PyO3 surface answers `None` as before; the outcome is
+                // observable through the pool's registration lifecycle state.
+                verify
+                    .run(key, snapshot_block)
+                    .await
+                    .map(|_| ())
+                    .map_err(map_refusal)
             })?;
             Ok(future.into())
         }
