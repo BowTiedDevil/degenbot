@@ -99,7 +99,7 @@ fn opts() -> Vec<(&'static str, EncodeOptions)> {
         (
             "erc6909",
             EncodeOptions {
-                erc6909_profit: true,
+                capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
                 use_v4_batch: false,
                 ..Default::default()
             },
@@ -107,7 +107,6 @@ fn opts() -> Vec<(&'static str, EncodeOptions)> {
         (
             "batch",
             EncodeOptions {
-                erc6909_profit: false,
                 use_v4_batch: true,
                 ..Default::default()
             },

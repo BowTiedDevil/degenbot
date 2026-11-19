@@ -181,7 +181,6 @@ impl SimStage {
         // deployment's override plan, so the boundary converts it exactly once,
         // by handing it over.
         let opts = EncodeOptions {
-            erc6909_profit: policy.erc6909_profit,
             use_v4_batch,
             ..EncodeOptions::default()
         };

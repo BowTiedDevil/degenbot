@@ -450,7 +450,6 @@ class TestExecutorPolicyParity:
     _KNOBS = (
         ("sim_concurrency", "simulation.pipeline_concurrency"),
         ("min_profit_margin_bps", "dispatch.min_profit_margin_bps"),
-        ("erc6909_profit", "dispatch.erc6909_profit"),
         ("inject_code", "simulation.inject_executor_code"),
         ("inject_code_guard", "simulation.inject_executor_code"),
     )

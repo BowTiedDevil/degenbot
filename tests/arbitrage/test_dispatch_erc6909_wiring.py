@@ -1,13 +1,11 @@
-"""The ERC6909 encode-axis authority at the executor construction boundary.
+"""The executor policy's authority at the construction boundary.
 
-The driver's ``dispatch.erc6909_profit`` operator knob names the encode axis
-the core batch executor stamps onto every assembled candidate's
-``EncodeOptions``, through the ``resolve_axes``/``config_for_options`` axis
-chain. The knob itself converts inside the FFI from the installed verdict
-(the conversion owns every default and clamp), so the construction boundary
-carries no driver-side copy of it; the conversion's projection is pinned by the
+The verdict-named knobs convert inside the FFI from the installed verdict (the
+conversion owns every default and clamp), so the construction boundary carries
+no driver-side copy of them; the conversion's projection is pinned by the
 resolution-oracle suites, and this file pins that the driver passes none of the
-verdict-named knobs.
+verdict-named knobs. The capture destination is not one of them: it is the
+per-path encode axis (``EncodeOptions.capture``), never an operator key.
 """
 
 from __future__ import annotations
@@ -77,16 +75,11 @@ def _session(engine: Any, cfg: ArbitrageConfig) -> Session:
     )
 
 
-def test_erc6909_default_is_off() -> None:
-    """Custody capture stays the default: the declared key is off."""
-    assert _cfg().erc6909_profit is False
-
-
 async def test_construction_injects_only_runtime_values() -> None:
     """The construction boundary carries NO driver-side policy copy.
 
-    The verdict-named knobs (the ERC6909 axis, the thin-margin floor, the
-    inject guard) convert inside the FFI from the installed verdict — a
+    The verdict-named knobs (the thin-margin floor, the inject guard) convert
+    inside the FFI from the installed verdict — a
     driver-side kwarg for any of them would be a second authority. Only the
     run-mode stance (a CLI fact) crosses.
     """
@@ -105,7 +98,6 @@ async def test_construction_injects_only_runtime_values() -> None:
     for verdict_named in (
         "sim_concurrency",
         "min_profit_margin_bps",
-        "erc6909_profit",
         "inject_code_guard",
         "max_candidates",
     ):

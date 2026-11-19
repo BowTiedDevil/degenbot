@@ -357,7 +357,7 @@ pub struct ChainResult {
     pub actual_weth_delta: i128,
     /// Measured PoolManager ERC6909 WETH-balance delta
     /// (`PM.balanceOf(executor, weth)`) after `execute` — where the
-    /// `erc6909_profit` capture mints the profit
+    /// `Erc6909` capture mints the profit
     /// ([`assert_erc6909_capture`] is its assertion). 0 for
     /// streams the capture axis does not branch (every non-pure-V4 family:
     /// they reach the vault only via the on-chain `profit_mode` config, never
@@ -1022,7 +1022,7 @@ pub fn assert_profitable(result: &ChainResult, expected_swaps: usize, label: &st
 }
 
 /// Assert a [`ChainResult`] is a genuine **ERC6909-vault capture** (the
-/// `erc6909_profit` operator toggle): the path executed, the measured
+/// `capture = ProfitCapture::Erc6909` encode axis): the path executed, the measured
 /// PoolManager ERC6909 WETH delta — the **contract-computed** side of the
 /// profit assertion, read via `PM.balanceOf(executor, weth)` — is positive
 /// and matches the predicted profit within the same 0.1% tolerance as
@@ -1131,7 +1131,6 @@ mod tests {
             funding: FundingSource::SelfFund,
             initial_capital: InitialCapital::Held,
             capture: ProfitCapture::Erc6909,
-            erc6909_profit: true,
             use_v4_batch: true,
             bribe: Bribe::Some {
                 bips: 25,
@@ -1161,7 +1160,6 @@ mod tests {
 
         for projected in [production, self_fund, zero] {
             assert_eq!(projected.capture, baseline.capture);
-            assert_eq!(projected.erc6909_profit, baseline.erc6909_profit);
             assert_eq!(projected.use_v4_batch, baseline.use_v4_batch);
             assert_eq!(projected.bribe, baseline.bribe);
         }

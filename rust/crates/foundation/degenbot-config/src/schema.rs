@@ -667,8 +667,6 @@ crate::config_schema! {
     // own policy surfaces -- a driver-side copy of a core-owned threshold is a
     // value the core would ignore.
     dispatch DispatchConfig {
-        erc6909_profit [bool] = false, env = "DEGENBOT_ERC6909_PROFIT", def = "false",
-            doc = "Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam.";
         min_profit_margin_bps [u64] = 0, env = "DEGENBOT_MIN_PROFIT_MARGIN_BPS", def = "0",
             doc = "Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other.";
         contracts_dir [opt path] = None, env = "DEGENBOT_CONTRACTS_DIR", def = "(unset)",

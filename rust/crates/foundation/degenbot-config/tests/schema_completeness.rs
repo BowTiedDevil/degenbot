@@ -19,8 +19,8 @@ const SWEEP_ARTIFACTS: &[&str] = &[
     // the sweep regex stops at the `2` of `DEGENBOT_EVM2_OPT_LEVEL`
     // (see SWEEP_EXPANSIONS).
     "DEGENBOT_EVM",
-    // the sweep regex stops at the digit of the dispatch profit-capture
-    // stance's env name (see SWEEP_EXPANSIONS).
+    // the sweep regex stops at the digit of the retired dispatch
+    // profit-capture env name (RETIRED_ENV_NAMES in `loader.rs`).
     "DEGENBOT_ERC",
     // the family wildcard in the allocator doc comment (the loader
     // owns the four concrete DEGENBOT_MIMALLOC_* keys).
@@ -118,7 +118,6 @@ const RETIRED_KEYS: &[&str] = &[
 /// matches expand to these full names).
 const SWEEP_EXPANSIONS: &[&str] = &[
     "DEGENBOT_JAEGER_E2E",
-    "DEGENBOT_ERC6909_PROFIT",
     "DEGENBOT_V3_FIXTURE_RPC",
     "DEGENBOT_V3_FIXTURE_BLOCK",
     "DEGENBOT_EVM2_OPT_LEVEL",

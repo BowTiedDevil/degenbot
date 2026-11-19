@@ -106,7 +106,6 @@ pub fn net_bid(
 #[must_use]
 pub const fn backrun_encode_options(bribe_bips: u16) -> EncodeOptions {
     EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: false,
         // Ordinary validation: the built-in production policy grants the
         // `SelfFund` seed an in-path-flash stream may declare.

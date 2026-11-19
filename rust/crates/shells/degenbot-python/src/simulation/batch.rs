@@ -884,12 +884,6 @@ impl ExecutorPolicyValues {
         self.inner.min_profit_margin_bps
     }
 
-    /// The ERC6909 encode axis: `dispatch.erc6909_profit`.
-    #[getter]
-    fn erc6909_profit(&self) -> bool {
-        self.inner.erc6909_profit
-    }
-
     /// The sim-injection stance: `simulation.inject_executor_code`.
     #[getter]
     fn inject_code(&self) -> bool {

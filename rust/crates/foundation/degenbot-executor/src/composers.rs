@@ -208,16 +208,9 @@ pub(crate) fn emit_currency_bridge(
 /// pure-V4 streams reach `capture` only via the on-chain `profit_mode` config
 /// (a different seam), NOT the stream bytes. `bribe` is branched by no family
 /// (it rides `pack_config`, never the stream). Spreading an axis across more
-/// families is separate follow-up work, not this surface's claim. The legacy
-/// `erc6909_profit` bool is kept as a backwards-compatible alias for
-/// `capture = ProfitCapture::Erc6909` (see [`resolve_axes`] for the precedence
-/// rule).
+/// families is separate follow-up work, not this surface's claim.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EncodeOptions {
-    /// If `true`, use `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` for profit
-    /// capture on pure-V4 paths (saves ~20K gas; needs `profit_mode=2`).
-    /// Legacy alias for `capture = ProfitCapture::Erc6909` (see [`resolve_axes`]).
-    pub erc6909_profit: bool,
     /// If `true`, use `V4_BATCH` instead of individual `V4_SWAP_COMPACT`/`_DYNAMIC`
     /// for pure-V4 paths (single PM extcall).
     pub use_v4_batch: bool,
@@ -255,22 +248,15 @@ pub struct EncodeOptions {
     /// under either value, so the bytes are its only difference.
     pub funding: crate::grammar_ledger::FundingSource,
     /// Declared destination of the stream's terminal profit (ADR-029 D1).
-    /// Honored via [`resolve_axes`] (takes precedence over the legacy
-    /// `erc6909_profit` bool only when that bool is `false`).
+    /// `Erc6909` uses `V4_MINT_COMPACT` instead of `V4_TAKE_DELTA` on pure-V4
+    /// paths (saves ~20K gas; needs `profit_mode=2`).
     pub capture: crate::grammar_ledger::ProfitCapture,
     /// Whether/how a builder bribe is paid (ADR-029 D1/Q3). Not yet honored by
     /// the encoder; wiring lands in a subsequent increment.
     pub bribe: crate::grammar_ledger::Bribe,
 }
 
-/// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`],
-/// collapsing the legacy `erc6909_profit` bool into the `capture` axis.
-///
-/// **Precedence (backwards-compatible):** `erc6909_profit: true` forces
-/// `ProfitCapture::Erc6909` regardless of the `capture` field — so every
-/// existing caller that sets the legacy bool keeps today's bytes. A caller that
-/// leaves `erc6909_profit: false` (the default) and sets `capture` directly is
-/// honored.
+/// Resolve the per-path output axes (ADR-029 D1) from [`EncodeOptions`].
 ///
 /// `funding` and `bribe` are passed through unchanged (the encoder does not yet
 /// read them; they are carried for subsequent increments).
@@ -282,12 +268,7 @@ pub fn resolve_axes(
     crate::grammar_ledger::ProfitCapture,
     crate::grammar_ledger::Bribe,
 ) {
-    let capture = if opts.erc6909_profit {
-        crate::grammar_ledger::ProfitCapture::Erc6909
-    } else {
-        opts.capture
-    };
-    (opts.funding, capture, opts.bribe)
+    (opts.funding, opts.capture, opts.bribe)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -539,9 +520,8 @@ pub struct EncodedCall {
 ///     every other capture
 ///     (`Custody`/`Native`/`Owner`/`BalancerVault`) = 1 (WETH+ETH combined
 ///     balance assert — active by default). Resolved through
-///     [`resolve_axes`] so the legacy `erc6909_profit` bool is collapsed into
-///     `capture` (backwards-compatible: `erc6909_profit: true` forces
-///     `Erc6909`).
+///     [`resolve_axes`], the same resolution the stream's own capture branch
+///     uses.
 ///   - `bribe` → `bribe_bips` + `bribe_recipient_idx`: `None` = (0, 0) (no bribe);
 ///     `Some{bips, recipient_idx}` is forwarded (recipient_idx 0 = block.coinbase).
 ///   - `min_profit` is packed into bits 32–255 and enforced against gross
@@ -997,29 +977,7 @@ fn resolve_axes_default_is_custody_no_bribe() {
 }
 
 #[test]
-fn resolve_axes_legacy_erc6909_bool_forces_erc6909_capture() {
-    // Backwards-compat: erc6909_profit: true wins over the capture field.
-    for capture in [
-        crate::grammar_ledger::ProfitCapture::Custody,
-        crate::grammar_ledger::ProfitCapture::Owner,
-        crate::grammar_ledger::ProfitCapture::Native,
-    ] {
-        let opts = EncodeOptions {
-            erc6909_profit: true,
-            use_v4_batch: false,
-            capture,
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_axes(opts).1,
-            crate::grammar_ledger::ProfitCapture::Erc6909,
-            "legacy erc6909_profit:true must force Erc6909 even with capture={capture:?}"
-        );
-    }
-}
-
-#[test]
-fn resolve_axes_capture_field_honored_when_legacy_bool_false() {
+fn resolve_axes_capture_passes_through() {
     for capture in [
         crate::grammar_ledger::ProfitCapture::Custody,
         crate::grammar_ledger::ProfitCapture::Owner,
@@ -1027,7 +985,6 @@ fn resolve_axes_capture_field_honored_when_legacy_bool_false() {
         crate::grammar_ledger::ProfitCapture::Erc6909,
     ] {
         let opts = EncodeOptions {
-            erc6909_profit: false,
             use_v4_batch: false,
             capture,
             ..Default::default()
@@ -1122,24 +1079,6 @@ fn config_for_options_capture_native_is_profit_mode_1() {
         cfg & U256::from(255u64),
         U256::from(1u64),
         "Native → profit_mode=1 (assert active)"
-    );
-}
-
-#[test]
-#[expect(clippy::unwrap_used)] // test asserts config bits; unwrap is fine
-fn config_for_options_legacy_erc6909_bool_forces_profit_mode_2() {
-    // Backwards-compat: the legacy `erc6909_profit: true` bool forces
-    // Erc6909 (via resolve_axes precedence) → profit_mode=2.
-    let opts = EncodeOptions {
-        erc6909_profit: true,
-        capture: crate::grammar_ledger::ProfitCapture::Custody, // overridden
-        ..Default::default()
-    };
-    let cfg = config_for_options(opts, U256::ZERO).unwrap();
-    assert_eq!(
-        cfg & U256::from(255u64),
-        U256::from(2u64),
-        "legacy bool forces profit_mode=2"
     );
 }
 

@@ -77,6 +77,7 @@ or TOML key fails the load loudly with a pointed message, for one release.
 | `solve.lpt_partition` / `DEGENBOT_LPT_PARTITION` | P6YXA6 | bins are always LPT-pre-balanced |
 | `fleet.stance` / `DEGENBOT_FLEET` | LW-T9 (ergo CQLMM2) | fleet is the only stance since LW-T9 — the worker fleet is the only behavior |
 | `solve.solve_sim_inflight` / `DEGENBOT_SOLVE_SIM_INFLIGHT` | LW-T9 (ergo CQLMM2) | SimDriver capacity: `fleet.sim_slot_cap`; inline-sim sizing: `solve.inline_sim_workers` |
+| `dispatch.erc6909_profit` / `DEGENBOT_ERC6909_PROFIT` | FFBEKY | the per-path encode axis `EncodeOptions.capture = ProfitCapture::Erc6909` — there is no operator switch |
 
 ## Development opt-ins (new typed keys)
 

@@ -414,7 +414,7 @@ class ArbitrageEngine:
             - "`tick_spacing"`: int (V3/V4 only)
           Returns None if the `path_id` is not found.
         """
-    def install_inline_simulator(self, /, context: SimulateContext, erc6909_profit: bool) -> None:
+    def install_inline_simulator(self, /, context: SimulateContext) -> None:
         """
         SIMPIPE2 T4: install the production inline-sim hook — the
         `degenbot_bot`-defined `InlineSimulator` seam's concrete closure over
@@ -2378,8 +2378,6 @@ class _ConfigDiagnosticsFace:
 class _ConfigDispatchFace:
     @property
     def contracts_dir(self) -> str | None: ...
-    @property
-    def erc6909_profit(self) -> bool: ...
     @property
     def min_profit_margin_bps(self) -> int: ...
 

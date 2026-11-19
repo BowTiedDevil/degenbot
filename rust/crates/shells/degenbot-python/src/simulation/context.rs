@@ -227,19 +227,13 @@ impl crate::bot::engine::PyArbEngine {
     /// The sim itself runs per-path in the SOLVE WORKER (the T2 clamp seam)
     /// through a dedicated multi-thread runtime — see
     /// `simulation::inline_hook` for the thread/runtime matrix.
-    fn install_inline_simulator(
-        &self,
-        py: Python<'_>,
-        context: &PySimulateContext,
-        erc6909_profit: bool,
-    ) {
+    fn install_inline_simulator(&self, py: Python<'_>, context: &PySimulateContext) {
         let bot_state = self.bot_state_arc();
         let warm_cache = self.warm_code_cache_arc();
-        // The hook's own encode axis set (the payload path's `erc6909_profit`).
-        let deployment = context.deployment(EncodeOptions {
-            erc6909_profit,
-            ..EncodeOptions::default()
-        });
+        // The hook's encode policy: the production default stance. Profit
+        // capture is a per-path axis on the encode request, not a session
+        // setting, so the hook takes no capture override.
+        let deployment = context.deployment(EncodeOptions::default());
         let hook = Arc::new(crate::simulation::inline_hook::InlineSimHook::new(
             Arc::new(context.provider.sim_bounded()),
             deployment,
@@ -265,6 +259,6 @@ impl crate::bot::engine::PyArbEngine {
         degenbot_workers::lane::install_default_escalation_port(escalation_port);
         // The soak's hook-wiring tell — one line at install, matching the
         // `[solve-phase] cycle complete` inline.* fields it pairs with.
-        op_info!(domain = sim, erc6909_profit, "hook installed");
+        op_info!(domain = sim, "hook installed");
     }
 }

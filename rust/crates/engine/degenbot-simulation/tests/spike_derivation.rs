@@ -1235,7 +1235,7 @@ fn native_v4v4v4_derived_executes_with_exact_native_delta() {
 //
 //   * `use_v4_batch=true`  → single `V4_BATCH` PM extcall; profit is physical
 //     WETH on the executor (measured via `balance_of`).
-//   * `erc6909_profit=true` → `V4_MINT_COMPACT` mints profit as an ERC6909
+//   * `capture = ProfitCapture::Erc6909` → `V4_MINT_COMPACT` mints profit as an ERC6909
 //     claim held on the PM; the execute `config` must set `profit_mode=2`
 //     (see `config_for_options`) and profit is measured via `pm_balance_of`.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1402,7 +1402,6 @@ fn v4v4_batch_executes_with_exact_delta() {
     let mut h = Harness::new().unwrap();
     let (hops, optimal_input, gas) = build_v4v4_weth(&mut h);
     let opts = EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: true,
         ..Default::default()
     };
@@ -1443,7 +1442,6 @@ fn v4v4_tok_batch_executes_and_captures_tok_profit() {
     let (hops, optimal_input, gas) = build_v4v4_tok(&mut h);
     let t2 = hops[1].dst; // the tok-terminal profit currency
     let opts = EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: true,
         ..Default::default()
     };
@@ -1494,7 +1492,6 @@ fn v4v4v4_batch_executes_with_exact_delta() {
     let mut h = Harness::new().unwrap();
     let (hops, optimal_input, gas) = build_v4v4v4_weth(&mut h);
     let opts = EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: true,
         ..Default::default()
     };
@@ -1516,7 +1513,7 @@ fn v4v4v4_batch_executes_with_exact_delta() {
     assert_profitable(&result, 3, "v4_v4_v4 batch");
 }
 
-/// v4_v4 with `erc6909_profit=true`: profit is minted as an ERC6909 WETH claim
+/// v4_v4 with `capture = ProfitCapture::Erc6909`: profit is minted as an ERC6909 WETH claim
 /// on the PM, and the execute `config` is wired to `profit_mode=2` so the
 /// profit-check settles. Assert Accepted + the ERC6909 balance equals the exact
 /// predicted profit.
@@ -1525,7 +1522,7 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     let mut h = Harness::new().unwrap();
     let (hops, optimal_input, gas) = build_v4v4_weth(&mut h);
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         use_v4_batch: false,
         ..Default::default()
     };
@@ -1572,13 +1569,13 @@ fn v4v4_erc6909_executes_with_exact_profit() {
     );
 }
 
-/// v4_v4_v4 with `erc6909_profit=true` + `profit_mode=2`: 3-hop mint capture.
+/// v4_v4_v4 with `capture = ProfitCapture::Erc6909` + `profit_mode=2`: 3-hop mint capture.
 #[test]
 fn v4v4v4_erc6909_executes_with_exact_profit() {
     let mut h = Harness::new().unwrap();
     let (hops, optimal_input, gas) = build_v4v4v4_weth(&mut h);
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         use_v4_batch: false,
         ..Default::default()
     };

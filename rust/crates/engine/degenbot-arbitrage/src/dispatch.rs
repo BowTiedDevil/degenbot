@@ -1332,7 +1332,6 @@ mod tests {
             WETH,
             PM,
             EncodeOptions {
-                erc6909_profit: false,
                 use_v4_batch: false,
                 ..EncodeOptions::default()
             },
@@ -1457,30 +1456,29 @@ mod tests {
 
     #[test]
     #[expect(clippy::expect_used)] // in-range axes; a fail-closed panic is the test contract
-    fn erc6909_option_reaches_the_binding_and_mode2_config() {
-        // The operator's `erc6909_profit` flag must survive the production
-        // projection — the injected deployment binding's encode policy is the
-        // ONE authority (a candidate carries no second copy) — resolving
-        // through `resolve_axes` to the `Erc6909` capture axis and packing
-        // `profit_mode=2` (the on-chain ERC6909 WETH floor the profit assert
-        // runs under).
+    fn erc6909_capture_axis_reaches_the_binding_and_mode2_config() {
+        // A caller's `capture` axis must survive the production projection —
+        // the injected deployment binding's encode policy is the ONE authority
+        // (a candidate carries no second copy) — and pack `profit_mode=2` (the
+        // on-chain ERC6909 WETH floor the profit assert runs under).
         let opts = EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             ..EncodeOptions::default()
         };
         let adapter = CmdExecutorBinding::new(OWNER, EXECUTOR, WETH, PM, opts).adapter();
-        assert!(
-            adapter.binding().opts().erc6909_profit,
-            "the binding carries the operator's erc6909 axis"
+        assert_eq!(
+            adapter.binding().opts().capture,
+            degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
+            "the binding carries the caller's capture axis"
         );
-        // → resolve_axes: the legacy bool forces the Erc6909 capture axis.
+        // → resolve_axes: `capture` is the sole profit-capture spelling.
         let (_, capture, _) = degenbot_executor::composers::resolve_axes(opts);
         assert!(
             matches!(
                 capture,
                 degenbot_executor::grammar_ledger::ProfitCapture::Erc6909
             ),
-            "erc6909_profit must resolve to the Erc6909 capture axis"
+            "capture must resolve to the Erc6909 axis"
         );
         // → the axis-aware packed config: profit_mode=2 (Erc6909 WETH assert).
         let cfg = degenbot_executor::composers::config_for_options(opts, U256::ZERO)

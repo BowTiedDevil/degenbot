@@ -104,7 +104,6 @@ use degenbot_executor::grammar_ledger::{
 };
 
 let opts = EncodeOptions {
-    erc6909_profit: false,                    // legacy alias for capture=Erc6909
     use_v4_batch: false,                      // bundle pure-V4 swaps in one PM extcall
     initial_capital: InitialCapital::Held,    // validation stance; never reaches the bytes
     funding: FundingSource::SelfFund,         // executor holds the entry WETH
@@ -118,14 +117,12 @@ let opts = EncodeOptions {
 | `funding` | `FundingSource` | yes — `SelfFund` on V2-led paths; `InPathFlash` default. Modeled on others. |
 | `capture` | `ProfitCapture` | yes — routes to `check_mode` via `config_for_options`. |
 | `bribe` | `Bribe` | yes — routes to `bribe_bips`/`recipient_idx` via `config_for_options`. |
-| `erc6909_profit` | `bool` | legacy alias; forces `ProfitCapture::Erc6909` via `resolve_axes`. |
 | `use_v4_batch` | `bool` | yes — `V4_BATCH` for pure-V4 paths (single PM extcall). |
 | `initial_capital` | `InitialCapital` | the ledger's capital policy: `Held` (the default, ordinary validation — a `SelfFund` seed names capital the executor holds) or `Zero` (nothing is granted, so a stream needing external entry capital answers a typed `InsolventZeroCapital` deficit). A VALIDATION stance, never a stream axis: it never reaches the bytes, and `funding` stays the axis a family branches on. |
 
-`resolve_axes(opts)` collapses the legacy `erc6909_profit` bool into `capture`
-(backwards-compatible: `erc6909_profit: true` forces `Erc6909` regardless of
-the `capture` field; leaving it `false` and setting `capture` directly is
-honored).
+`resolve_axes(opts)` projects the three per-path axes (`funding`, `capture`,
+`bribe`) out of `EncodeOptions` — the one place that names the axis set, so no
+caller keeps a second copy. `capture` is the only profit-capture spelling.
 
 ## The config builder: `config_for_options`
 

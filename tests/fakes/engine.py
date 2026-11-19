@@ -69,11 +69,7 @@ class EngineSeam(Protocol):
     def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> tuple[int, bool]: ...
     def pool_id_for_pool(self, family_tag: str, address: str) -> int | None: ...
     def pool_id_for_v4_pool(self, pool_manager: str, pool_id_hex: str) -> int | None: ...
-    def install_inline_simulator(
-        self,
-        context: object,
-        erc6909_profit: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
-    ) -> None: ...
+    def install_inline_simulator(self, context: object) -> None: ...
     def set_path_cap(self, cap: int | None) -> None: ...
     def release_all_v3_v4_quarantined(self) -> None: ...
     def last_processed_block(self) -> int | None: ...
@@ -278,12 +274,8 @@ class FakeEngine:
     def set_verify_state_view(self, address: str) -> None:
         self._record("set_verify_state_view")
 
-    def install_inline_simulator(
-        self,
-        context: object,
-        erc6909_profit: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
-    ) -> None:
-        self.inline_sim_installs.append({"context": context, "erc6909_profit": erc6909_profit})
+    def install_inline_simulator(self, context: object) -> None:
+        self.inline_sim_installs.append({"context": context})
 
     # ── core-owned registration lifecycle ──────────────────────────
 

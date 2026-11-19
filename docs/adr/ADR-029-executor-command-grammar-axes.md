@@ -190,7 +190,7 @@ fan-out is the intended trade.
 - The ledger validator and the expanded matrix
   (family × funding × capture × bribe) become the correctness gate for every
   future composer/encoder change.
-- The `erc6909_profit`/`use_v4_batch` opts, today honored only by `v4_v4_v4`,
+- The `capture`/`use_v4_batch` axes, today honored only by `v4_v4_v4`,
   become general axis values/ledger strategies honored across families.
 
 Implementation, terminology, and the matrix live under ergo epic `463V2C`;

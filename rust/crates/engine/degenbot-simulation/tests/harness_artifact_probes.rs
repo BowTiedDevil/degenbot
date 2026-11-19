@@ -108,7 +108,7 @@ fn probe_setup() -> (
         hop_outputs: &hop_outputs,
         consumed_inputs: &consumed,
         opts: EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             ..Default::default()
         },
     };

@@ -480,7 +480,7 @@ impl Harness {
 
     /// Execute an encoded payload with an explicit `execute()` `config` uint256
     /// (packed `profit_mode`/bribe/min_profit — see [`execute_data_config`])
-    /// and classify the outcome. Enables runtime proof of the `erc6909_profit`
+    /// and classify the outcome. Enables runtime proof of the ERC6909-capture
     /// (`profit_mode=2`) and bribe config axes.
     pub fn execute_payload_config(
         &mut self,
@@ -525,7 +525,7 @@ impl Harness {
     }
 
     /// Read `PM.balanceOf(account, uint160(currency))` — the executor's
-    /// ERC6909 WETH balance held inside the PoolManager (the `erc6909_profit`
+    /// ERC6909 WETH balance held inside the PoolManager (the `Erc6909`
     /// capture destination and the value `profit_mode=2` verifies).
     pub fn pm_balance_of(&mut self, account: Address, currency: Address) -> Result<U256, String> {
         self.erc6909_balance_of(self.pool_manager, account, currency)
@@ -626,7 +626,7 @@ impl Harness {
     /// Executes under the **production axis-aware config** (the same
     /// `config_for_options(opts, 0)` the arbitrage strategy packs):
     /// the on-chain profit check runs exactly like production (default
-    /// Custody → `profit_mode=1` active assert; `erc6909_profit` → `profit_mode=2`).
+    /// Custody → `profit_mode=1` active assert; `Erc6909` → `profit_mode=2`).
     pub fn run_path_with_opts(
         &mut self,
         path: &degenbot_execution::PathInfo,

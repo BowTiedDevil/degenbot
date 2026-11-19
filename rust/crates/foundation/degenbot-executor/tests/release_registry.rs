@@ -333,7 +333,7 @@ fn the_requirement_set_follows_the_path_and_the_axes() {
     let v4_path = PathInfo::new(vec![v4_hop(), v4_hop()]);
     let batched = EncodeOptions {
         use_v4_batch: true,
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..EncodeOptions::default()
     };
     let required = required_capabilities(&v4_path, batched);

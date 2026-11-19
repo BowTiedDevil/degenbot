@@ -34,7 +34,7 @@ use crate::path::PathInfo;
 /// Generic, adapter-agnostic encode knobs (ADR-025 D2/D5).
 ///
 /// Deliberately **not** `degenbot_executor::composers::EncodeOptions` (which
-/// carries `erc6909_profit` / `use_v4_batch` — cmd_executor-specific opcode
+/// carries `capture` / `use_v4_batch` — cmd_executor-specific opcode
 /// toggles). This is an empty, defaulted placeholder a foreign composer may
 /// ignore; extend it if a future user contract needs its own encode-time
 /// switches. Decoupled from `cmd_executor` opcodes by construction.

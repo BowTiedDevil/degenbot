@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use degenbot_config::BotConfigLoader;
+use degenbot_config::{BotConfigLoader, MapEnv};
 
 fn temp_toml(name: &str, body: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -109,6 +109,45 @@ fn pointed_errors_name_replacements() {
     assert!(
         otel.contains("telemetry"),
         "otel problem must name the modern telemetry section: {otel}"
+    );
+}
+
+/// The retired ERC6909 capture switch fails the boundary instead of exporting
+/// nothing: an operator who set it expected the ERC6909 capture arm, so the
+/// load names the encode axis the decision moved to.
+#[test]
+fn retired_erc6909_env_export_fails_the_load() {
+    let mut env = BTreeMap::new();
+    env.insert("DEGENBOT_ERC6909_PROFIT".to_string(), "1".to_string());
+    let problems = must_err_problems(&BotConfigLoader::new().with_env(Box::new(MapEnv::new(env))));
+
+    let hit = must_find(
+        &problems,
+        "DEGENBOT_ERC6909_PROFIT",
+        "the retired export must be named",
+    );
+    assert!(
+        hit.contains("EncodeOptions::capture") && hit.contains("ProfitCapture::Erc6909"),
+        "the refusal must name the encode axis that carries the decision: {hit}"
+    );
+    assert!(
+        hit.contains("docs/config-migration.md"),
+        "the refusal must point at the migration doc: {hit}"
+    );
+}
+
+/// The same cutover on the file layer: the key is undeclared, so a surviving
+/// `[dispatch] erc6909_profit` member takes the generic unknown-key refusal.
+#[test]
+fn retired_erc6909_toml_member_is_an_unknown_key() {
+    let path = temp_toml("retired-erc6909", "[dispatch]\nerc6909_profit = true\n");
+    let problems = must_err_problems(&BotConfigLoader::new().without_env().with_config_path(&path));
+    cleanup(&path);
+
+    must_find(
+        &problems,
+        "unknown key erc6909_profit in section [dispatch]",
+        "the retired member must be refused as undeclared",
     );
 }
 

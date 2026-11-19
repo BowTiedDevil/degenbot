@@ -413,7 +413,7 @@ pub enum PlanStep {
         open_weth: bool,
     },
     /// `V4_MINT_COMPACT(cur→rcp, amount)` — convert a positive `PM[cur]`
-    /// delta into an ERC6909 claim for `rcp` (`erc6909_profit` opt).
+    /// delta into an ERC6909 claim for `rcp` (`capture` opt).
     /// Ledger-equivalent to [`PlanStep::V4TakeDelta`]: debits `PM[cur]` by
     /// `amount` (requires credit-before-debit, `D0`). The asset stays inside
     /// the PM as a claim rather than a physical transfer — distinct from

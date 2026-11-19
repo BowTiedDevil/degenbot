@@ -936,10 +936,10 @@ fn concentrated_liquidity_hop_aligned_clamp_shape_executes_with_consistent_delta
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ERC6909-vault profit capture (the `erc6909_profit` operator toggle)
+// ERC6909-vault profit capture (the `capture = ProfitCapture::Erc6909` operator toggle)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// a 2-hop V4 WETH-terminal path with the `erc6909_profit` toggle,
+/// a 2-hop V4 WETH-terminal path with the `capture = ProfitCapture::Erc6909` toggle,
 /// driven through the declarative entry — the production-mirror of the
 /// strategy's `SimulatePath → encode_request → execute(axis-aware config)`
 /// path. The stream mints the profit as an ERC6909 claim on the PoolManager;
@@ -995,7 +995,7 @@ fn erc6909_capture_v4v4_lands_in_vault() {
         "fixture starts from a zero ERC6909 position"
     );
     let opts = degenbot_executor::composers::EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..Default::default()
     };
     let result = h
@@ -1065,7 +1065,7 @@ fn erc6909_capture_v4v4v4_lands_in_vault() {
         },
     ];
     let opts = degenbot_executor::composers::EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..Default::default()
     };
     let result = h
@@ -1075,7 +1075,7 @@ fn erc6909_capture_v4v4v4_lands_in_vault() {
 }
 
 /// TGUZCT/SW42JA (supersedes the SMOZG3 decline): `use_v4_batch` and
-/// `erc6909_profit` now DO compose on a WETH-terminal pure-V4 path. The
+/// `capture = ProfitCapture::Erc6909` now DO compose on a WETH-terminal pure-V4 path. The
 /// encoder emits the `V4_BATCH_OPEN_WETH` (0x43) variant — the batch leaves
 /// the positive WETH delta open, and the trailing `V4_MINT_COMPACT` converts
 /// it into the ERC6909 vault. The prior decline (SMOZG3, pre-deployment
@@ -1121,7 +1121,7 @@ fn erc6909_capture_with_batch_composes_via_open_weth_batch() {
         },
     ];
     let opts = degenbot_executor::composers::EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         use_v4_batch: true,
         ..Default::default()
     };
@@ -1825,7 +1825,7 @@ fn native_terminal_capture_lands_in_native_custody_and_no_non_weth_claim() {
         },
     ];
     let opts = degenbot_executor::composers::EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..Default::default()
     };
     let result = h
@@ -2241,7 +2241,7 @@ fn stub_pool_manager_writes_claims_at_the_declared_slot() {
         },
     ];
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..Default::default()
     };
     let result = h

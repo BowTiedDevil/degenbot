@@ -329,7 +329,6 @@ mod tests {
 
     const KEYS: &[KeyDecl] = &[
         key("dispatch", "min_profit_margin_bps", T_U64),
-        key("dispatch", "erc6909_profit", T_BOOL),
         key("diagnostics", "tracemalloc_secs", T_F64),
         key("diagnostics", "label", T_STR),
         key("nodes", "http", T_OPT_STRMAP),
@@ -416,7 +415,6 @@ mod tests {
         let text = faces.join("\n");
         assert!(text.contains("@type_check_only\nclass _ConfigDispatchFace:"));
         assert!(text.contains("    @property\n    def min_profit_margin_bps(self) -> int: ..."));
-        assert!(text.contains("    @property\n    def erc6909_profit(self) -> bool: ..."));
         assert!(text.contains("    @property\n    def tracemalloc_secs(self) -> float: ..."));
         // optional keys carry the None projection
         assert!(text.contains("    @property\n    def http(self) -> dict[str, str] | None: ..."));

@@ -298,11 +298,6 @@ class ExecutorPolicyValues:
     nothing for a caller to set.
     """
     @property
-    def erc6909_profit(self, /) -> bool:
-        """
-        The ERC6909 encode axis: `dispatch.erc6909_profit`.
-        """
-    @property
     def inject_code(self, /) -> bool:
         """
         The sim-injection stance: `simulation.inject_executor_code`.

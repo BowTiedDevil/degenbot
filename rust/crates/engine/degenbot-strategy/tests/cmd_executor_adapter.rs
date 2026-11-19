@@ -27,7 +27,6 @@ const EXECUTOR: Address = address!("DeAd0000000000000000000000000000000000Be");
 
 fn options(bribe_bips: u16) -> EncodeOptions {
     EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: false,
         initial_capital: InitialCapital::Held,
         funding: FundingSource::InPathFlash,

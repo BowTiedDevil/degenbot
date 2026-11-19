@@ -106,7 +106,7 @@ pub struct ShapeClass {
 pub enum Axis {
     /// `FundingSource` (InPathFlash vs SelfFund) branches the stream.
     Funding,
-    /// `ProfitCapture` (incl. the `erc6909_profit` legacy alias) branches the
+    /// `ProfitCapture` branches the
     /// stream (V4 `MINT`/`WETH_WITHDRAW` terminal capture).
     Capture,
     /// `Bribe` branches the stream. Never — bribes ride `pack_config`.

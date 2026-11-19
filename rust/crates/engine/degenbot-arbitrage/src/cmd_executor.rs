@@ -63,8 +63,7 @@ use crate::executor_runtime::{load_executor_runtime, ExecutorRuntimeError};
 /// deployment's simulation override plan. [`Self::opts`] therefore returns the
 /// caller's axes WITH the capital-derived pair applied, rather than keeping a
 /// second copy a caller could disagree with; `with_opts` sets the remaining axes
-/// (`erc6909_profit`, `use_v4_batch`, `capture`, `bribe`) and takes no position
-/// on those two.
+/// (`capture`, `use_v4_batch`, `bribe`) and takes no position on those two.
 #[derive(Clone, Copy, Debug)]
 pub struct CmdExecutorBinding {
     owner: Address,
@@ -144,7 +143,7 @@ impl CmdExecutorBinding {
     }
 
     /// Re-bind the encode policy (a consumer's own axis set, e.g. the inline
-    /// sim's `erc6909_profit`).
+    /// sim's profit-capture axis).
     ///
     /// [`Self::capital`] stays the authority for the two capital-derived axes:
     /// [`Self::opts`] applies them to whatever base this stores, so the value

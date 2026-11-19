@@ -196,7 +196,8 @@ def test_config_projection_stubs_are_typed() -> None:
     # values.<section>.<field>: every declared key typed to its declared kind.
     dispatch = _properties(_projection_class(tree, "_ConfigDispatchFace"))
     assert dispatch["min_profit_margin_bps"].id == "int"
-    assert dispatch["erc6909_profit"].id == "bool"
+    # an optional key carries the union: `str | None` parses as a BinOp
+    assert ast.unparse(dispatch["contracts_dir"]) == "str | None"
     # the closed projection: a name outside the declaration is not typed
     assert "not_a_key" not in dispatch
 

@@ -98,7 +98,7 @@ fn encode_cmd_stream_routes_two_hop_v2_v3_via_the_intake_pair() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// The `use_v4_batch` × `erc6909_profit` interplay. On the deployed artifact the combination COMPOSES via the
+// The `use_v4_batch` × `capture` interplay. On the deployed artifact the combination COMPOSES via the
 // `V4_BATCH_OPEN_WETH` (0x43) command: the batch skips its WETH tail-settle,
 // so the follow-up `V4_MINT_COMPACT` finds the live delta. (The
 // pre-deployment artifact's 0x42 tail-settle starved the mint — D0; the
@@ -447,7 +447,7 @@ fn batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
         vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
         vec![999_999_999_999_999_999, 999_999_999_999_999_999],
         EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             use_v4_batch: true,
             ..Default::default()
         },
@@ -471,7 +471,7 @@ fn erc6909_capture_without_batch_still_encodes() {
         vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
         vec![999_999_999_999_999_999, 999_999_999_999_999_999],
         EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             ..Default::default()
         },
     );
@@ -498,7 +498,7 @@ fn v4v4v4_batch_and_erc6909_capture_weth_terminal_composes_via_open_batch() {
         ],
         vec![999_999_999_999_999_999; 3],
         EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             use_v4_batch: true,
             ..Default::default()
         },
@@ -531,7 +531,7 @@ fn v4v4v4_erc6909_capture_without_batch_still_encodes() {
         ],
         vec![999_999_999_999_999_999; 3],
         EncodeOptions {
-            erc6909_profit: true,
+            capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
             ..Default::default()
         },
     );
@@ -565,7 +565,7 @@ fn nonbatch_capture_stream_bytes_are_stable() {
             vec![1_000_000_000_000_000_000, 1_200_000_000_000_000_000],
             vec![999_999_999_999_999_999, 999_999_999_999_999_999],
             EncodeOptions {
-                erc6909_profit: true,
+                capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
                 ..Default::default()
             },
         );
@@ -588,7 +588,7 @@ fn nonbatch_capture_stream_bytes_are_stable() {
             ],
             vec![999_999_999_999_999_999; 3],
             EncodeOptions {
-                erc6909_profit: true,
+                capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
                 ..Default::default()
             },
         );

@@ -2437,7 +2437,7 @@ mod rule_walker_tests {
             (
                 "erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: false,
                     ..Default::default()
                 },
@@ -2445,7 +2445,6 @@ mod rule_walker_tests {
             (
                 "batch",
                 EncodeOptions {
-                    erc6909_profit: false,
                     use_v4_batch: true,
                     ..Default::default()
                 },
@@ -2683,7 +2682,7 @@ mod rule_walker_tests {
             (
                 "erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: false,
                     ..Default::default()
                 },
@@ -2691,7 +2690,6 @@ mod rule_walker_tests {
             (
                 "batch",
                 EncodeOptions {
-                    erc6909_profit: false,
                     use_v4_batch: true,
                     ..Default::default()
                 },

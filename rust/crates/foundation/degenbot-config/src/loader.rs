@@ -128,6 +128,17 @@ pub(crate) const RETIRED_LAYOUT_ITEMS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Retired environment names the env layer refuses loudly: the key they
+/// exported is gone from the schema, and `apply_env` walks the SCHEMA rather
+/// than the process env, so an export would otherwise be a silent no-op on a
+/// session whose operator believed it had switched behaviour. Each entry names
+/// what the setting became.
+pub(crate) const RETIRED_ENV_NAMES: &[(&str, &str)] = &[(
+    "DEGENBOT_ERC6909_PROFIT",
+    "the ERC6909 profit-capture switch is retired: capture is the per-path encode \
+     axis (EncodeOptions::capture = ProfitCapture::Erc6909), not an operator key",
+)];
+
 /// Sanctioned free-form file sections the loader SKIPS: not typed, not
 /// retired. Read as raw tables by `file_path()` consumers sharing the
 /// same file.
@@ -599,6 +610,15 @@ impl LoadState {
     /// Layer 3: the environment. Iterates the SCHEMA (not the process env) so
     /// foreign DEGENBOT_*-prefixed vars never leak into the typed tree.
     fn apply_env(&mut self, env: &dyn EnvVars) {
+        // A retired export fails the load rather than silently doing nothing.
+        for (name, replacement) in RETIRED_ENV_NAMES {
+            if env.get(name).is_some() {
+                self.problems.push(format!(
+                    "retired environment variable {name}: {replacement}; \
+                     see {MIGRATION_DOC}"
+                ));
+            }
+        }
         for key in SCHEMA {
             // A family-shaped key is one env name PER entry, so it is read by
             // enumeration rather than by a lookup.

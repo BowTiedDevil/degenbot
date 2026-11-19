@@ -1133,7 +1133,7 @@ fn the_production_release_loads_its_committed_artifact() {
 fn a_missing_capability_declines_only_the_release_that_lacks_it() {
     let registry = registry_all();
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..EncodeOptions::default()
     };
 
@@ -1209,7 +1209,7 @@ fn required_capabilities_follow_the_encoder_axes() {
     let v4_path = v4v4_weth_terminal();
     let batched = EncodeOptions {
         use_v4_batch: true,
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..EncodeOptions::default()
     };
     assert_eq!(
@@ -1686,7 +1686,7 @@ fn heterogeneous_releases_select_their_own_encodings_beside_a_foreign_target() {
 fn a_capability_refusal_at_one_release_does_not_suppress_another() {
     let registry = registry_all();
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..EncodeOptions::default()
     };
 
@@ -1755,7 +1755,7 @@ fn a_capability_refusal_at_one_release_does_not_suppress_another() {
 fn an_all_targets_fanout_keeps_the_declining_lane_isolated() {
     let registry = registry_all();
     let opts = EncodeOptions {
-        erc6909_profit: true,
+        capture: degenbot_executor::grammar_ledger::ProfitCapture::Erc6909,
         ..EncodeOptions::default()
     };
     let bound_2 = BoundCmdExecutor::bind(

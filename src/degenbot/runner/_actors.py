@@ -145,10 +145,7 @@ def build_sim_ctx(
     # contract and the stance-gated call, and this adapter is its thin bridge.
     # The before-resume placement is structural rather than a separate rule: it
     # is the point where the session's sim context and the engine both exist.
-    engine_registry.engine.install_inline_simulator(
-        sim_ctx,
-        erc6909_profit=cfg.erc6909_profit,
-    )
+    engine_registry.engine.install_inline_simulator(sim_ctx)
     return sim_ctx
 
 

@@ -70,6 +70,8 @@ after SRMMM7 and the ADR-098 relocation — + runtime harness probes)
    `DispatchCandidate(erc6909_profit=...)` → `to_simulate_path` →
    `encode_request` (ADR-033 intake) → `resolve_axes` → the `Erc6909` axis
    → `check_mode=2` (end-to-end pinned by a `degenbot-arbitrage` unit test).
+   The selection is now the encode axis `capture = ProfitCapture::Erc6909`,
+   carried per path; there is no operator key and no driver constant.
    Stream effect is pure-V4-only (per `family_axis_support`: only
    `v4_v4`/`v4_v4_v4` branch the capture axis); every other family keeps
    custody capture and only the mode-2 ERC6909 floor arms — a safe, 
@@ -143,12 +145,13 @@ Corrections this amendment makes, superseding the original text:
 1. **Decision 4 — the decline is REVERSED** (hard cutover, no parallel
    flag). `grammar_shape::erc6909_batch_capture_declines` is deleted; the
    `v4_v4`/`v4_v4_v4` plans emit `V4_BATCH_OPEN_WETH` + the trailing
-   `V4_MINT_COMPACT` under `erc6909_profit`, and the declarative harness
+   `V4_MINT_COMPACT` under `capture = ProfitCapture::Erc6909`, and the
+   declarative harness
    pins the pair executing with the vault delta asserted (`check_mode=2`
    floor armed). The `encode-failed` decline route no longer exists.
 2. **Finding 3 — the combined stream is executable.** The runtime harness
    probe on the new artifact (revm, `harness_artifact_probes.rs`) pins
-   execution, `check_mode=2` pass under `erc6909_profit`, positive ERC6909
+   execution, `check_mode=2` pass under the `Erc6909` capture axis, positive ERC6909
    delta, native-balance non-regression; `verify-tier3-executor-artifact.sh`
    now re-runs that probe after every fresh compile.
 3. **Consequences** — "the interim decline stays until it ships" is

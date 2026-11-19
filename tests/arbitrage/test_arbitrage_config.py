@@ -284,7 +284,6 @@ class TestRunnerKnobResolution:
 
     _KNOB_FIELDS = (
         "max_registered_paths",
-        "erc6909_profit",
         "reg_progress_secs",
     )
 
@@ -297,22 +296,20 @@ class TestRunnerKnobResolution:
         return probe.config_values(self._KNOB_FIELDS, env=env)
 
     def test_the_env_layer_reaches_every_knob(self) -> None:
-        """One OS export each, all four honored."""
+        """One OS export each, all three honored."""
         env = {
             "DEGENBOT_MAX_PATHS": "50000",
             "DEGENBOT_MIN_PROFIT_MARGIN_BPS": "25",
-            "DEGENBOT_ERC6909_PROFIT": "1",
             "DEGENBOT_REG_PROGRESS_SECS": "15",
         }
         values = self._probe(**env)
 
         assert values["max_registered_paths"] == 50000
         assert probe.resolved_value(self._VERDICT_KNOB, env=env)["value"] == 25
-        assert values["erc6909_profit"] is True
         assert values["reg_progress_secs"] == pytest.approx(15.0)
 
     def test_the_file_layer_reaches_every_knob(self) -> None:
-        """The same four keys, written as an operator file.
+        """The same three keys, written as an operator file.
 
         The dotenv-only half of the old chain could not do this: the defaults
         lived beside the reader, and the file the operator edits was not a
@@ -320,7 +317,7 @@ class TestRunnerKnobResolution:
 
         """
         with probe.operator_file(
-            "[dispatch]\nmin_profit_margin_bps = 30\nerc6909_profit = true\n"
+            "[dispatch]\nmin_profit_margin_bps = 30\n"
             "[pathfinding]\nmax_registered_paths = 40000\nreg_progress_secs = 12.5\n"
         ) as written:
             values = probe.config_values(self._KNOB_FIELDS, operator_file=written)
@@ -328,7 +325,6 @@ class TestRunnerKnobResolution:
 
         assert values["max_registered_paths"] == 40000
         assert floor == 30
-        assert values["erc6909_profit"] is True
         assert values["reg_progress_secs"] == pytest.approx(12.5)
 
     def test_the_env_layer_beats_the_file_layer(self) -> None:
@@ -362,7 +358,6 @@ class TestRunnerKnobResolution:
 
         assert values["max_registered_paths"] == 100000
         assert probe.resolved_value(self._VERDICT_KNOB)["value"] == 0
-        assert values["erc6909_profit"] is False
         assert values["reg_progress_secs"] == pytest.approx(30.0)
 
 

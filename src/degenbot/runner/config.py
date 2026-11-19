@@ -196,7 +196,6 @@ class ArbitrageConfig:
     # cap, the inject guards) are NOT carried here: the core batch executor
     # converts them from the verdict through its own typed boundary, so a
     # driver-side copy would be a value the core ignores.
-    erc6909_profit: bool
     reg_progress_secs: float
     max_registered_paths: int
     # The runtime values the driver's leaves consume. Resolved once here, at
@@ -395,7 +394,6 @@ class ArbitrageConfig:
             startup_discovery=startup_discovery,
             registration_snapshot=registration_snapshot,
             dry_run=not live,
-            erc6909_profit=resolved_values.dispatch.erc6909_profit,
             reg_progress_secs=resolved_values.pathfinding.reg_progress_secs,
             max_registered_paths=resolved_values.pathfinding.max_registered_paths,
             # The ONE clamp owner for the batch size: the shell getter's twin

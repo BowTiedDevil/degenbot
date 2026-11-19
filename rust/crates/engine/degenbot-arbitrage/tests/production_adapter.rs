@@ -1108,7 +1108,6 @@ fn a_deployment_without_settlement_identities_is_representable() {
 #[test]
 fn the_builtin_binding_declares_no_probes_and_keeps_its_command_bytes() {
     let opts = EncodeOptions {
-        erc6909_profit: false,
         use_v4_batch: false,
         ..EncodeOptions::default()
     };

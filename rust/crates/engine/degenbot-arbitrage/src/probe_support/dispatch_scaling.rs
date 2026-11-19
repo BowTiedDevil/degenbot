@@ -349,7 +349,6 @@ fn binding() -> CmdExecutorBinding {
         WETH,
         PM,
         EncodeOptions {
-            erc6909_profit: false,
             use_v4_batch: false,
             ..EncodeOptions::default()
         },

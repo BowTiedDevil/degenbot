@@ -110,7 +110,7 @@ pub(crate) fn native_capture_declines(
 }
 
 /// Build the terminal-capture `PlanStep`s for a V4-crossing family (mirrors the
-/// emitters' terminal-capture block): `erc6909_profit` (WETH terminal) → an
+/// emitters' terminal-capture block): `capture = ProfitCapture::Erc6909` (WETH terminal) → an
 /// ERC6909 mint; otherwise a physical `V4TakeDelta` unless `use_v4_batch`
 /// auto-settles (a tok terminal still gets an explicit take — see the batch
 /// caller); plus `ProfitCapture::Native` on a WETH terminal → a `WethWithdraw`
@@ -566,7 +566,7 @@ mod tests {
     }
 
     /// The three v4_v4 terminal-output currencies the broadened slice covers
-    /// (WETH / a tok / native) — the `use_v4_batch` + `erc6909_profit` opts
+    /// (WETH / a tok / native) — the `use_v4_batch` + `capture` opts
     /// interact with each differently (`derive_2hop_v4v4` exact parity).
     #[derive(Clone, Copy)]
     enum Terminal {
@@ -1277,7 +1277,7 @@ mod tests {
         let _ = U256::ZERO;
     }
 
-    // ── opts: `use_v4_batch` + `erc6909_profit` (within the WETH-only
+    // ── opts: `use_v4_batch` + `capture` (within the WETH-only
     //    slice) — byte-parity with `derive_2hop_v4v4` AND gate validation. ──
 
     fn v4_v4_opts_inputs(
@@ -1317,7 +1317,6 @@ mod tests {
         // NO `V4TakeDelta` is emitted (the batch auto-captures the WETH
         // profit). Byte-parity with `derive_2hop_v4v4`'s batch arm.
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
-            erc6909_profit: false,
             use_v4_batch: true,
             ..Default::default()
         });
@@ -1343,10 +1342,10 @@ mod tests {
 
     #[test]
     fn v4_v4_plan_erc6909_byte_parity_and_validates() {
-        // `erc6909_profit=true`: `V4Mint` of the WETH profit (ERC6909 claim)
+        // `capture = Erc6909`: `V4Mint` of the WETH profit (ERC6909 claim)
         // replaces the `V4TakeDelta`.
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
-            erc6909_profit: true,
+            capture: crate::grammar_ledger::ProfitCapture::Erc6909,
             use_v4_batch: false,
             ..Default::default()
         });
@@ -1377,7 +1376,7 @@ mod tests {
         // is lifted: the stream composes as [V4Batch(open_weth), V4Mint,
         // V4SettleAll] and the pairing gate accepts it.
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
-            erc6909_profit: true,
+            capture: crate::grammar_ledger::ProfitCapture::Erc6909,
             use_v4_batch: true,
             ..Default::default()
         });
@@ -1419,7 +1418,7 @@ mod tests {
         // a `V4Mint` positioned before the swaps that create `PM[weth]` credit
         // must be rejected (the `Mint` gate op fails with `TakeBeforeCredit`).
         let (path, inputs) = v4_v4_opts_inputs(crate::composers::EncodeOptions {
-            erc6909_profit: true,
+            capture: crate::grammar_ledger::ProfitCapture::Erc6909,
             use_v4_batch: false,
             ..Default::default()
         });
@@ -1457,7 +1456,6 @@ mod tests {
             (
                 "batch",
                 EncodeOptions {
-                    erc6909_profit: false,
                     use_v4_batch: true,
                     ..Default::default()
                 },
@@ -1465,7 +1463,7 @@ mod tests {
             (
                 "erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: false,
                     ..Default::default()
                 },
@@ -1473,7 +1471,7 @@ mod tests {
             (
                 "batch+erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: true,
                     ..Default::default()
                 },
@@ -1505,7 +1503,6 @@ mod tests {
         let (path, inputs) = v4_v4_inputs(
             Terminal::Native,
             crate::composers::EncodeOptions {
-                erc6909_profit: false,
                 use_v4_batch: true,
                 ..Default::default()
             },
@@ -1542,7 +1539,7 @@ mod tests {
 
     #[test]
     fn v4_v4_gap_opt_matrix_byte_parity_and_validates() {
-        // The gap branch is opt-invariant (use_v4_batch + erc6909_profit are
+        // The gap branch is opt-invariant (use_v4_batch + capture are
         // inoperative across a gap — the derive forces individual swaps + a
         // physical take). Sweep all 4 opt modes for both gap topologies.
         // Gap adjudication: the 0x43 open-weth batch can never
@@ -1558,7 +1555,6 @@ mod tests {
             (
                 "batch",
                 EncodeOptions {
-                    erc6909_profit: false,
                     use_v4_batch: true,
                     ..Default::default()
                 },
@@ -1566,7 +1562,7 @@ mod tests {
             (
                 "erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: false,
                     ..Default::default()
                 },
@@ -1574,7 +1570,7 @@ mod tests {
             (
                 "batch+erc6909",
                 EncodeOptions {
-                    erc6909_profit: true,
+                    capture: crate::grammar_ledger::ProfitCapture::Erc6909,
                     use_v4_batch: true,
                     ..Default::default()
                 },

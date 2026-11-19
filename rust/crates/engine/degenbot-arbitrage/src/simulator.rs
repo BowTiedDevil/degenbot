@@ -131,7 +131,7 @@ pub fn execute_gas_limit() -> u64 {
 }
 
 // Production builds `config` through the axis-aware `config_for_options`
-// (physical mode by default, ERC6909 mode under `erc6909_profit`).
+// (physical mode by default, ERC6909 mode under `capture = ProfitCapture::Erc6909`).
 
 /// The int128 range bounds (ports `INT128_MIN`/`INT128_MAX` from
 /// `degenbot.arbitrage.encoding`, L19–L20).
@@ -2299,7 +2299,6 @@ mod tests {
             SMOKE_WETH,
             SMOKE_PM,
             EncodeOptions {
-                erc6909_profit: false,
                 use_v4_batch: false,
                 ..EncodeOptions::default()
             },
@@ -3230,7 +3229,6 @@ mod tests {
             weth,
             pm,
             EncodeOptions {
-                erc6909_profit: false,
                 use_v4_batch: false,
                 ..EncodeOptions::default()
             },

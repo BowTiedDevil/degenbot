@@ -46,11 +46,14 @@ vocabulary at the seam:
    cutover: every in-tree caller migrates in one pass; there is no parallel
    implementation (AGENTS.md: no back-compat layer; byte-identity is already
    gated by the golden corpus + revm matrix).
-4. **`erc6909_profit` stays a first-class option.** It is the operator's
-   toggle for Uniswap-V4 ERC6909-vault profit capture — modeled end to end
-   (axis, `check_mode = 2` on-chain assert, warm slots) but not yet
-   production-wired. It is a live feature knob, not dead weight; wiring it
-   correctly is follow-up task `SMOZG3`, not this ADR's scope.
+4. **ERC6909-vault capture stays a first-class option, spelled as its axis.**
+   `EncodeOptions.capture = ProfitCapture::Erc6909` selects Uniswap-V4
+   ERC6909-vault profit capture — modeled end to end (axis, `check_mode = 2`
+   on-chain assert, warm slots) but not yet production-wired at that point. It
+   is a live feature knob, not dead weight; wiring it correctly is follow-up
+   task `SMOZG3`, not this ADR's scope. `capture` is the sole spelling: the
+   boolean alias this ADR kept live was a second name for the same axis and is
+   deleted (FFBEKY), so the axis is the only way to select the capture arm.
 5. **The sweep** deletes the pass-through, fixes the facade and the
    `check_mode` doc to the code's reality, drops the ignored parameter (and its
    `_ffi.executor` stub ripple), and removes the dead tombstones.

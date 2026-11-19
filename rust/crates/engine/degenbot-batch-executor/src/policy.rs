@@ -34,9 +34,6 @@ pub struct ExecutorPolicy {
     /// The thin-margin floor: `dispatch.min_profit_margin_bps` verbatim
     /// (unsigned end to end — a magnitude, so there is no clamp to own).
     pub min_profit_margin_bps: u64,
-    /// The ERC6909 encode axis: `dispatch.erc6909_profit` (the v4-batch
-    /// axis has no declared key yet, so it stays a runtime value).
-    pub erc6909_profit: bool,
     /// The sim-injection stance: `simulation.inject_executor_code`.
     pub inject_code: bool,
     /// The submit-side guard: the SAME inject stance — the injected contract
@@ -51,7 +48,6 @@ impl From<&degenbot_config::BotConfig> for ExecutorPolicy {
         Self {
             sim_concurrency: verdict.simulation.pipeline_concurrency.max(1),
             min_profit_margin_bps: verdict.dispatch.min_profit_margin_bps,
-            erc6909_profit: verdict.dispatch.erc6909_profit,
             inject_code: inject,
             inject_code_guard: inject,
         }
@@ -250,7 +246,6 @@ mod tests {
             policy.min_profit_margin_bps,
             verdict.dispatch.min_profit_margin_bps
         );
-        assert!(!policy.erc6909_profit);
         assert!(!policy.inject_code);
         assert!(!policy.inject_code_guard);
     }
@@ -271,12 +266,10 @@ mod tests {
         let mut verdict = degenbot_config::BotConfig::default();
         verdict.simulation.pipeline_concurrency = 5;
         verdict.dispatch.min_profit_margin_bps = 30;
-        verdict.dispatch.erc6909_profit = true;
         verdict.simulation.inject_executor_code = true;
         let policy = ExecutorPolicy::from(&verdict);
         assert_eq!(policy.sim_concurrency, 5);
         assert_eq!(policy.min_profit_margin_bps, 30);
-        assert!(policy.erc6909_profit);
         assert!(policy.inject_code, "the sim stance follows the verdict");
         assert!(
             policy.inject_code_guard,
