@@ -89,7 +89,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [055](ADR-055-pending-tx-strategy-seams.md) | Pending-transaction strategy seams | accepted |
 | [056](ADR-056-retire-gated-serving-seam.md) | Retire the gated serving seam | accepted |
 | [057](ADR-057-strategy-host.md) | The strategy host — one process, many drivers | accepted (host-less settlement lane retired) |
-| [058](ADR-058-strategy-crate-split.md) | The strategy crate split | accepted |
+| [058](ADR-058-strategy-crate-split.md) | The strategy crate split | accepted (channel registration is the common pre-share phase) |
 | [059](ADR-059-pool-family-kernel.md) | The pool family kernel | accepted |
 | [060](ADR-060-collapse-v2-walk-representation-vs-interface.md) | Collapsing the V2 walk dispatch | accepted (Option B shipped; Option A refuted by probe) |
 | [061](ADR-061-pool-ingress-plane-capability.md) | Pool-state provisioning is a plane capability | accepted (placement reopened by ADR-067) |

@@ -4,10 +4,11 @@
 //!
 //! The order is load-bearing, and each step reads the previous one's product:
 //!
-//! 1. **Mint.** [`StrategyHost::mint`] registers the engine's named source
-//!    channels on a fresh hub inside the exclusive construction window the hub
-//!    type requires, and the host owns that hub from then on. Provisioning
-//!    only: nothing is started and no socket is opened.
+//! 1. **Mint.** [`StrategyHost::mint`] validates the engine's channel
+//!    declaration and registers its named source channels on a fresh hub inside
+//!    the exclusive construction window the hub type requires, and the host
+//!    owns that hub from then on. Provisioning only: nothing is started and no
+//!    socket is opened.
 //! 2. **Register.** Every row of the caller's facet table enters the driver
 //!    FSM in [`DriverPose::Registered`], carrying its admission status as a
 //!    value. A crate that can read the typed config resolves that status, so
@@ -184,9 +185,10 @@ impl EngineSession {
     ///
     /// # Errors
     ///
-    /// [`SessionBootError::Host`] when the host refuses a registration or an
-    /// attachment (two facet rows, or an arm under an unregistered id), and
-    /// [`SessionBootError::Hosted`] when the hosted sources cannot be minted.
+    /// [`SessionBootError::Host`] when the host refuses the engine's channel
+    /// declaration, a registration, or an attachment (two facet rows, or an arm
+    /// under an unregistered id), and [`SessionBootError::Hosted`] when the
+    /// hosted sources cannot be minted.
     pub fn boot(
         construction: SessionConstruction,
         facets: Vec<FacetBoot>,
@@ -201,10 +203,12 @@ impl EngineSession {
             state_root,
         } = construction;
 
-        // Mint: the hub's named channels are registered inside the exclusive
-        // construction window, and the host owns the hub afterwards.
+        // Mint: the engine's channel declaration is validated and its named
+        // channels are registered inside the exclusive construction window, and
+        // the host owns the hub afterwards.
         let (host, attached) =
-            StrategyHost::mint(registry, nonce, EngineChannelHandles::register_on);
+            StrategyHost::mint(registry, nonce, EngineChannelHandles::registration())
+                .map_err(HostError::ChannelRegistration)?;
         let host = Arc::new(Mutex::new(host));
 
         // Register the facet table in the caller's order, then the shared plane

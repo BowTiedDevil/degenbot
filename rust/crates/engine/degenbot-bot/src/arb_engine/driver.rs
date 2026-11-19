@@ -83,7 +83,7 @@ use crate::bot_core::block_pump::{BlockPump, LivenessPhase, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
 use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
-use crate::strategy_host::HostHub;
+use crate::strategy_host::{ChannelRegistration, HostHub};
 #[cfg(any(test, feature = "test-fixtures"))]
 use degenbot_ingestion::IngestEvent as WsEvent;
 
@@ -126,18 +126,20 @@ pub struct EngineChannelHandles {
 }
 
 impl EngineChannelHandles {
-    /// Register the engine's named source channels on `hub` and return their
-    /// producer ends.
+    /// The engine's declaration of its named source channels.
     ///
-    /// Taking `&mut Hub` is the point: a named channel is minted into the hub's
-    /// map, so registration must complete before the hub is shared as an `Arc`
-    /// and handed to a driver.
+    /// The engine reaches the hub the same way every strategy does: it declares
+    /// the names it will mint and the closure that mints them, and the host
+    /// validates the declaration before the hub is shared (see
+    /// [`ChannelRegistration`]).
     #[must_use]
-    pub fn register_on(hub: &mut Hub) -> Self {
-        let session = hub
-            .add_named_unbounded_source::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
-            .into_inner();
-        Self { session }
+    pub fn registration() -> ChannelRegistration<Self> {
+        ChannelRegistration::new(vec![SESSION_EVENT_CHANNEL_NAME], |hub: &mut Hub| {
+            let session = hub
+                .add_named_unbounded_source::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
+                .into_inner();
+            Self { session }
+        })
     }
 }
 
@@ -557,23 +559,23 @@ impl EngineDriver {
     }
 
     /// Adapter adoption: the caller already built the stage seam (the `PyO3`
-    /// wrapper path). The driver mints a private hub for the engine's named
-    /// source channels and composes; a host-minted hub uses
+    /// wrapper path). The driver mints a private hub through the engine's own
+    /// channel registration and composes; a host-minted hub uses
     /// [`Self::from_stages_with_hub`].
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
         let mut hub = Hub::new();
-        let channels = EngineChannelHandles::register_on(&mut hub);
+        let channels = EngineChannelHandles::registration().register_on(&mut hub);
         Self::assemble(bot, stages, Arc::new(hub), channels)
     }
 
     /// Adapter adoption against a host-minted hub.
     ///
     /// `attached` is the pair `StrategyHost::mint` produces: the shared hub and
-    /// the engine's named source channels registered on it by the mint closure
-    /// (for the engine, [`EngineChannelHandles::register_on`]). A named channel
-    /// is keyed by name per hub, so a hub backs at most one engine driver — a
-    /// second `claim_consumer` returns `None`.
+    /// the engine's named source channels its declaration minted on it (for the
+    /// engine, [`EngineChannelHandles::registration`]). A named channel is keyed
+    /// by name per hub, so a hub backs at most one engine driver — a second
+    /// `claim_consumer` returns `None`.
     #[must_use]
     pub fn from_stages_with_hub(
         bot: Arc<Bot>,
@@ -1528,8 +1530,9 @@ mod tests {
         let (host, attached) = StrategyHost::mint(
             Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
             Arc::new(NonceAuthority::new(7)),
-            EngineChannelHandles::register_on,
-        );
+            EngineChannelHandles::registration(),
+        )
+        .expect("the engine declares one channel");
 
         let bot = Arc::new(Bot::new(1));
         let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));

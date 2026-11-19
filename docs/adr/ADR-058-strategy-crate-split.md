@@ -91,7 +91,8 @@ settlement broadcast endpoints through the same plane surface instead of a
 second config copy.
 
 Settlement keeps a **special-case ledger** in `settlement.rs`, cited as the
-open-work map rather than normalizing the cases away:
+open-work map rather than normalizing the cases away — channel registration has
+since left that ledger for the common pre-share phase (below):
 
 - **Pump self-driving.** The engine pump owns the settlement block clock, so
 the host registers no spawn factory and `start_driving` skips it; generalizing
@@ -102,8 +103,13 @@ the pump is ADR-018's on-demand work.
 - **Process-global submission lane.** The settlement `NonceLane` is installed
   process-wide, because the settlement seam is the Python-driven arm of the one
   hosted process.
-- **Sole channel registrar.** `EngineChannelHandles::register_on` is the
-  closure `StrategyHost::mint` hands the exclusive `&mut Hub`.
+- **Common pre-share channel registration.** `EngineChannelHandles::registration()`
+  declares the engine's named channels as a `ChannelRegistration`, and
+  `StrategyHost::mint` validates that declaration — a duplicate name is a typed
+  refusal taken before the hub exists — then hands the exclusive `&mut Hub` to
+  every strategy's registration. Settlement is no longer the sole registrar:
+  a named channel is `&mut self`, so each strategy declares its set while the
+  hub is still unshared.
 - **ADR-057 head-liveness coupling.** The hosted head feed runs from the
   Python settlement consumer's accepted-header clock, guarded on hosted
   activity.

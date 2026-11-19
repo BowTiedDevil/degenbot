@@ -16,7 +16,8 @@
 //!
 //! # Special-case ledger
 //!
-//! Every place settlement remains special, each with why it stays:
+//! Every place settlement remains special, each with why it stays, and the one
+//! case that has left this ledger:
 //!
 //! - **Pump self-driving (no spawn factory).** The engine's arb pump owns the
 //!   settlement loop, so the host registers no [`DriverSpawnFactory`] for it and
@@ -35,10 +36,14 @@
 //!   `LaneNamespace`. Why: the settlement seam is the Python-driven arm of the
 //!   one hosted process, and every settlement submission must stamp through the
 //!   shared operator-account authority no matter which engine instance signs.
-//! - **Sole channel registrar.** `EngineChannelHandles::register_on` is the
-//!   closure `StrategyHost::mint` hands the exclusive `&mut Hub`, so the
-//!   engine's named channels register before the hub is shared. Why: named
-//!   channels are `&mut self`; the host cannot mint them after sharing.
+//! - **Channel registration moved to the shared pre-share phase.**
+//!   `EngineChannelHandles::registration()` declares the engine's named
+//!   channels, and `StrategyHost::mint` validates that declaration before it
+//!   hands the exclusive `&mut Hub` to any strategy's registration, so the
+//!   engine's channels register before the hub is shared. Why: named channels
+//!   are `&mut self`; nothing can mint them after sharing, and every strategy
+//!   needs the same window, so the settlement arm holds no registrar of its
+//!   own.
 //! - **ADR-057 head-liveness coupling.** The hosted head feed runs from the
 //!   Python settlement consumer's accepted-header clock, and
 //!   `has_hosted_activity` short-circuits a settlement-only boot so it pays no
