@@ -39,6 +39,8 @@
 //! V1: `supports_discount=true, has_discounted_balance_method=false`;
 //! V2/V3: both `true`; V4+: both `false`.
 
+use std::cmp::Ordering;
+
 use crate::{percent_mul, ray_div, ray_mul, wad_mul, WadRayError};
 use alloy::primitives::{I256, U256};
 
@@ -114,16 +116,24 @@ pub const fn gho_discount_strategy(revision: u32) -> DiscountStrategy {
 // ── the result types (ports `GhoScaledTokenMintResult` /
 //    `GhoScaledTokenBurnResult`) ────────────────────────────────────────────
 
-/// The GHO operation classification for a Mint event. Used by the parser's
-/// flow-classification; the
-/// apply fn ignores it (consumes `balance_delta` + `new_index`.
+/// The GHO operation classification for a Mint event, keyed on the event's
+/// `value` against its `balance_increase` — the fields the GHO vToken's `Mint`
+/// emission carries (`value = amount + balanceIncrease` in `_mintScaled`,
+/// `value = balanceIncrease - amount` in `_burnScaled`, and
+/// `value = balanceIncrease` on the discount accrual edition, which burns the
+/// discount's scaled share before emitting). Used by the parser's
+/// flow-classification; the apply fn ignores it (consumes `balance_delta` +
+/// `new_index`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GhoUserOperation {
-    /// GHO BORROW (`value >= balance_increase`).
+    /// GHO BORROW — `value > balance_increase`: the Mint carried a requested
+    /// amount.
     Borrow,
-    /// GHO REPAY (`balance_increase > value`).
+    /// GHO REPAY — `value < balance_increase`: `_burnScaled`'s Mint emission
+    /// when the accrued interest exceeds the repayment.
     Repay,
-    /// GHO INTEREST ACCRUAL (`value == balance_increase`).
+    /// GHO INTEREST ACCRUAL — `value == balance_increase`: no requested
+    /// amount, only the index-driven accrual.
     InterestAccrual,
 }
 
@@ -146,13 +156,15 @@ impl GhoUserOperation {
 /// column separate from the net `balance_delta`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhoScaledTokenMintResult {
-    /// The signed delta to add to the position's scaled balance. Positive for
-    /// GHO BORROW; negative for GHO REPAY / GHO INTEREST ACCRUAL.
+    /// The signed delta to add to the position's scaled balance. A borrow is
+    /// positive unless the discount's scaled share exceeds the requested
+    /// amount; a repay is negative; an interest accrual is the negated
+    /// discount share, or zero on a revision without a discount.
     pub balance_delta: I256,
     /// The event's `index` (the apply fn reconciles the position's
     /// `last_index` to this via max-with-prev).
     pub new_index: U256,
-    /// The flow classification (BORROW / REPAY / `INTEREST_ACCRUAL`).
+    /// The flow classification (borrow / repay / interest accrual).
     pub user_operation: GhoUserOperation,
     /// The discount-scaled amount (the `accrue_debt_on_action` result — 0 for
     /// revisions without discount support).
@@ -320,9 +332,10 @@ impl UnifiedGhoProcessor {
     }
 
     /// Process a GHO debt `Mint` event. Port of
-    /// `UnifiedGhoProcessor::process_mint_event`. The three arms:
-    /// `value >= balance_increase` (GHO BORROW), `balance_increase > value`
-    /// (GHO REPAY), `value == balance_increase` (pure interest accrual).
+    /// `UnifiedGhoProcessor::process_mint_event`. The classification is the
+    /// exhaustive `value.cmp(balance_increase)`: greater is a borrow, less a
+    /// repay, equal a pure interest accrual. Each arm carries its own signed
+    /// delta, so the sign falls out of the classification.
     ///
     /// # Arguments
     ///
@@ -350,142 +363,102 @@ impl UnifiedGhoProcessor {
         let discount_scaled =
             self.accrue_debt_on_action(prev_balance, prev_index, prev_discount, event_data.index)?;
 
-        // Track whether the BORROW branch took the negate side — the branch
-        // computes `|raw_delta - discount_scaled|` as a positive magnitude and
-        // the sign-wrap below uses this flag to pick the sign. The split is
-        // `if raw_delta > discount_scaled { raw_delta - discount_scaled } else
-        // { -(discount_scaled - raw_delta) }`.
-        let mut borrow_negate = false;
-
-        let (balance_delta, user_operation) = if event_data.value >= event_data.balance_increase {
-            // GHO BORROW: emitted in `_mintScaled`.
-            //
-            // For V5+ (no discount, CEIL mint rounding): prefer the
-            // pre-calculated `scaled_amount` from the enrichment layer (it's
-            // computed via TokenMath which matches the on-chain rayDiv exactly
-            // for V5+). Deriving from Mint event fields introduces 1-wei
-            // rounding errors because `balanceIncrease` is itself rounded from
-            // rayMul. For V4 / V1-V3: derive from event data using the
-            // processor's own rounding mode (the enrichment uses pool-level
-            // TokenMath which differs from V4 GHO's HALF_UP).
-            let raw_delta = if !self.discount.supports_discount
-                && self.rounding.mint == RayDivMode::Ceil
-                && event_data.scaled_amount.is_some()
-            {
-                // SAFETY: checked `is_some()` above.
-                event_data.scaled_amount.unwrap_or_default()
-            } else {
-                let requested = event_data.value.saturating_sub(event_data.balance_increase);
-                self.ray_div(requested, event_data.index, self.rounding.mint)?
-            };
-            let delta = if self.discount.supports_discount {
-                if raw_delta > discount_scaled {
-                    // raw_delta > discount_scaled → POSITIVE: raw - discount_scaled.
-                    raw_delta.saturating_sub(discount_scaled)
-                } else {
-                    // raw_delta <= discount_scaled → NEGATIVE: -(discount_scaled - raw_delta).
-                    // Compute the magnitude (= discount_scaled - raw_delta); mark
-                    // `borrow_negate=true` so the sign-wrap below returns -magnitude.
-                    // This captures BOTH the inequality (`raw_delta < discount_scaled`)
-                    // and the equality case (`raw_delta == discount_scaled`, which
-                    // happens when `value == balance_increase` → `raw_delta == 0`):
-                    // the negate side owns `raw_delta <= discount_scaled`.
-                    borrow_negate = true;
-                    discount_scaled.saturating_sub(raw_delta)
-                }
-            } else {
-                raw_delta
-            };
-            (delta, GhoUserOperation::Borrow)
-        } else if event_data.balance_increase > event_data.value {
-            // GHO REPAY: emitted in `_burnScaled` (the Mint event fires when
-            // interest > repayment amount). Use `actual_repay_amount` from a
-            // paired Repay event if provided to avoid the 1-wei rounding error.
-            let amount_repaid = actual_repay_amount
-                .unwrap_or_else(|| event_data.balance_increase.saturating_sub(event_data.value));
-            let repayment_scaled =
-                self.ray_div(amount_repaid, event_data.index, self.rounding.burn)?;
-            let delta =
-                if self.discount.supports_discount && self.discount.has_discounted_balance_method {
-                    // V2/V3: getDiscountedBalance. If `amount_repaid >=
-                    // balance_before_burn` → full repayment → burn all scaled
-                    // balance. Else partial → burn (repayment_scaled +
-                    // discount_scaled). (See `process_gho_debt_burn`'s V2/V3
-                    // branch for the `>=` rationale — crash #11 fix.)
-                    let balance_before = self.get_discounted_balance(
-                        prev_balance,
-                        prev_index,
-                        event_data.index,
-                        prev_discount,
-                    )?;
-                    if amount_repaid >= balance_before {
-                        // Full repayment: burn all scaled balance.
-                        prev_balance
+        let (balance_delta, user_operation) =
+            match event_data.value.cmp(&event_data.balance_increase) {
+                Ordering::Greater => {
+                    // GHO BORROW: emitted in `_mintScaled`.
+                    //
+                    // For V5+ (no discount, CEIL mint rounding): prefer the
+                    // pre-calculated `scaled_amount` from the enrichment layer
+                    // (it's computed via TokenMath which matches the on-chain
+                    // rayDiv exactly for V5+). Deriving from Mint event fields
+                    // introduces 1-wei rounding errors because `balanceIncrease` is
+                    // itself rounded from rayMul. For V4 / V1-V3: derive from event
+                    // data using the processor's own rounding mode (the enrichment
+                    // uses pool-level TokenMath which differs from V4 GHO's
+                    // HALF_UP).
+                    let raw_delta = if !self.discount.supports_discount
+                        && self.rounding.mint == RayDivMode::Ceil
+                        && event_data.scaled_amount.is_some()
+                    {
+                        // SAFETY: checked `is_some()` above.
+                        event_data.scaled_amount.unwrap_or_default()
                     } else {
-                        // Partial: burn (repayment_scaled + discount_scaled). The
-                        // Python returns `-(repayment_scaled + discount_scaled)`.
-                        repayment_scaled.saturating_add(discount_scaled)
-                    }
-                } else if self.discount.supports_discount {
-                    // V1 discount: no getDiscountedBalance method →
-                    // `_burn(user, (amountScaled + discountScaled).toUint128())`.
-                    repayment_scaled.saturating_add(discount_scaled)
-                } else {
-                    // No discount (V4+): just the repayment.
-                    repayment_scaled
-                };
-            (delta, GhoUserOperation::Repay)
-        } else {
-            // Pure interest accrual (`value == balance_increase`).
-            let delta = if self.discount.supports_discount {
-                // Emitted from `_accrueDebtOnAction` during discount updates.
-                // The balance decreases by the discount amount (burned by the
-                // contract).
-                discount_scaled
-            } else {
-                // No discount (V4+): just interest accrual.
-                // balance_increase = ray_mul(prev, index) - ray_mul(prev, prev_index)
-                // balance_increase_scaled = ray_div(balance_increase, index) — half-up.
-                let curr = ray_mul(prev_balance, event_data.index, None)?;
-                let prev = ray_mul(prev_balance, prev_index, None)?;
-                let balance_increase = curr.saturating_sub(prev);
-                ray_div(balance_increase, event_data.index, None)?
-            };
-            (delta, GhoUserOperation::InterestAccrual)
-        };
-
-        // Apply the sign: BORROW → may be positive or negative (the GHO
-        // BORROW discount-adjustment can negate); REPAY / INTEREST_ACCRUAL →
-        // always negative. `borrow_negate` selects the negate side of the
-        // borrow split — including the equality case (`raw_delta ==
-        // discount_scaled`) — so the `value == balance_increase`
-        // (Mint5-accrual) shape returns a NEGATIVE `-(discount_scaled)` rather
-        // than the POSITIVE `+discount_scaled` a strict `<` produced. That sign
-        // flip was the 48.79-GHO stuck balance on the 0x417afF write-off
-        // (block 17893923, logIdx 361).
-        let balance_delta_i256 = match user_operation {
-            GhoUserOperation::Borrow => {
-                if borrow_negate {
-                    // Mirror Python's
-                    // `balance_delta = -(discount_scaled - raw_delta)`:
-                    // `balance_delta` is the magnitude (= discount - raw);
-                    // negate to yield the signed result.
-                    -I256::try_from(balance_delta).map_err(|_| {
-                        GhoProcessorError::DeltaOverflow(format!(
-                            "negated borrow balance_delta {balance_delta} > I256::MAX"
-                        ))
-                    })?
-                } else {
-                    to_signed(balance_delta)?
+                        let requested =
+                            event_data.value.saturating_sub(event_data.balance_increase);
+                        self.ray_div(requested, event_data.index, self.rounding.mint)?
+                    };
+                    let delta = if self.discount.supports_discount {
+                        // `_mintScaled` splits on the same comparison one level down:
+                        // `if (amountScaled > discountScaled) { _mint(amountScaled -
+                        // discountScaled) } else { _burn(discountScaled - amountScaled) }`.
+                        // One signed subtraction covers both sides.
+                        to_signed(raw_delta)? - to_signed(discount_scaled)?
+                    } else {
+                        to_signed(raw_delta)?
+                    };
+                    (delta, GhoUserOperation::Borrow)
                 }
-            }
-            GhoUserOperation::Repay | GhoUserOperation::InterestAccrual => {
-                to_signed_neg(balance_delta)?
-            }
-        };
+                Ordering::Less => {
+                    // GHO REPAY: emitted in `_burnScaled` (the Mint event fires when
+                    // interest > repayment amount). Use `actual_repay_amount` from a
+                    // paired Repay event if provided to avoid the 1-wei rounding error.
+                    let amount_repaid = actual_repay_amount.unwrap_or_else(|| {
+                        event_data.balance_increase.saturating_sub(event_data.value)
+                    });
+                    let repayment_scaled =
+                        self.ray_div(amount_repaid, event_data.index, self.rounding.burn)?;
+                    let delta_abs = if self.discount.supports_discount
+                        && self.discount.has_discounted_balance_method
+                    {
+                        // V2/V3: getDiscountedBalance. If `amount_repaid >=
+                        // balance_before_burn` → full repayment → burn all scaled
+                        // balance. Else partial → burn (repayment_scaled +
+                        // discount_scaled). (See `process_gho_debt_burn`'s V2/V3
+                        // branch for the `>=` rationale — crash #11 fix.)
+                        let balance_before = self.get_discounted_balance(
+                            prev_balance,
+                            prev_index,
+                            event_data.index,
+                            prev_discount,
+                        )?;
+                        if amount_repaid >= balance_before {
+                            // Full repayment: burn all scaled balance.
+                            prev_balance
+                        } else {
+                            // Partial: burn (repayment_scaled + discount_scaled). The
+                            // Python returns `-(repayment_scaled + discount_scaled)`.
+                            repayment_scaled.saturating_add(discount_scaled)
+                        }
+                    } else if self.discount.supports_discount {
+                        // V1 discount: no getDiscountedBalance method →
+                        // `_burn(user, (amountScaled + discountScaled).toUint128())`.
+                        repayment_scaled.saturating_add(discount_scaled)
+                    } else {
+                        // No discount (V4+): just the repayment.
+                        repayment_scaled
+                    };
+                    (to_signed_neg(delta_abs)?, GhoUserOperation::Repay)
+                }
+                Ordering::Equal => {
+                    // Pure interest accrual: the Mint carried no requested amount.
+                    // Debt interest lives in the index, so a revision without a
+                    // discount moves no scaled balance at all. The discount
+                    // revisions settle the accrual through `_accrueDebtOnAction`,
+                    // burn the discount's scaled share and then emit
+                    // `Mint(0x0, user, balanceIncrease, balanceIncrease, index)` —
+                    // the only scaled movement is that burn.
+                    let delta = if self.discount.supports_discount {
+                        to_signed_neg(discount_scaled)?
+                    } else {
+                        I256::ZERO
+                    };
+                    (delta, GhoUserOperation::InterestAccrual)
+                }
+            };
 
         Ok(GhoScaledTokenMintResult {
-            balance_delta: balance_delta_i256,
+            balance_delta,
             new_index: event_data.index,
             user_operation,
             discount_scaled,
@@ -912,31 +885,128 @@ mod tests {
     }
 
     #[test]
-    fn mint_v4_value_equals_balance_increase_classifies_as_borrow() {
-        // Parity-gate quirk: the `else` (GHO_INTEREST_ACCRUAL) branch is DEAD
-        // CODE — `if value >= balance_increase` catches the `==` case, so
-        // `value == balance_increase` classifies as GHO_BORROW (not interest
-        // accrual). The BORROW branch computes `requested = 0` →
-        // `balance_delta = ray_div(0, index) = 0`, the same value the (dead)
-        // interest-accrual branch would compute for the no-discount case.
-        // This mirrors the quirk deliberately (NOT a bug to fix — the fixture
-        // rows encode the same classification): GHO_BORROW, delta=0.
-        let p = UnifiedGhoProcessor::new(4);
-        let ev = ScaledTokenEventData {
-            value: U256::from(5u64),
-            balance_increase: U256::from(5u64),
+    fn mint_equality_undiscounted_is_pure_interest_accrual() {
+        // `value == balance_increase` means the Mint carried NO requested
+        // amount: the event reports only the index-driven accrual. Debt
+        // interest accrues through the index advance, not through a scaled
+        // mint, so an undiscounted revision (V4/V5/V6) must leave the scaled
+        // balance untouched.
+        //
+        // Balance of the shape: `_mintScaled` / `_burnScaled` both require a
+        // non-zero amount (INVALID_MINT_AMOUNT / INVALID_BURN_AMOUNT) and
+        // emit `value = amount + balanceIncrease` / `value = balanceIncrease
+        // - amount`, so neither can produce equality; the arm exists to make
+        // the classification total, never to mint.
+        for rev in [4u32, 5, 6] {
+            let p = UnifiedGhoProcessor::new(rev);
+            let ev = ScaledTokenEventData {
+                value: U256::from(1_000u64),
+                balance_increase: U256::from(1_000u64),
+                index: RAY * U256::from(2u8),
+                scaled_amount: Some(U256::ZERO),
+            };
+            let r = p
+                .process_gho_debt_mint(&ev, U256::from(1_000u64), RAY, U256::ZERO, None)
+                .unwrap_or_else(|e| panic!("rev {rev}: {e:?}"));
+            assert_eq!(
+                r.user_operation,
+                GhoUserOperation::InterestAccrual,
+                "rev {rev}: value == balance_increase is interest accrual"
+            );
+            assert_eq!(
+                r.balance_delta,
+                I256::ZERO,
+                "rev {rev}: no requested amount, no discount → no scaled delta"
+            );
+            assert!(!r.is_repay(), "rev {rev}: accrual is not a repay");
+            assert!(
+                !r.should_refresh_discount,
+                "rev {rev}: no discount mechanism → no refresh"
+            );
+        }
+    }
+
+    #[test]
+    fn mint_equality_discounted_burns_only_the_discount_scaled_share() {
+        // Discounted equality is the contract's accrual edition:
+        // `_accrueDebtOnAction` settles the accrued interest, the token burns
+        // the discounted share (`_burn(user, discountScaled)`) and then emits
+        // `Mint(address(0), user, balanceIncrease, balanceIncrease, index)` —
+        // value == balance_increase by construction. The only scaled-balance
+        // movement is the discount burn, so delta = -discount_scaled and the
+        // requested amount never appears.
+        //
+        // prev=1000, prev_index=RAY, index=2 RAY, pct=5000 bps:
+        // balance_increase = 2000 - 1000 = 1000, discount = 500,
+        // discount_scaled = ray_div(500, 2 RAY) = 250.
+        for rev in [1u32, 2, 3] {
+            let p = UnifiedGhoProcessor::new(rev);
+            let ev = ScaledTokenEventData {
+                value: U256::from(1_000u64),
+                balance_increase: U256::from(1_000u64),
+                index: RAY * U256::from(2u8),
+                scaled_amount: None,
+            };
+            let r = p
+                .process_gho_debt_mint(&ev, U256::from(1_000u64), RAY, U256::from(5_000u64), None)
+                .unwrap_or_else(|e| panic!("rev {rev}: {e:?}"));
+            assert_eq!(
+                r.user_operation,
+                GhoUserOperation::InterestAccrual,
+                "rev {rev}: value == balance_increase is interest accrual"
+            );
+            assert_eq!(r.discount_scaled, U256::from(250u64), "rev {rev}");
+            assert_eq!(
+                r.balance_delta,
+                -I256::try_from(250u64).unwrap(),
+                "rev {rev}: the discount burn is the whole delta"
+            );
+            assert!(!r.is_repay(), "rev {rev}: accrual is not a repay");
+            assert!(r.should_refresh_discount, "rev {rev}: discount refreshes");
+        }
+    }
+
+    #[test]
+    fn mint_equality_neighbour_boundaries_classify_borrow_and_repay() {
+        // The exhaustive `cmp` partition: one wei above equality is a borrow
+        // of the requested amount, one wei below is a repay of the interest
+        // shortfall. Both discount modes.
+        let ev = |value: u64, balance_increase: u64| ScaledTokenEventData {
+            value: U256::from(value),
+            balance_increase: U256::from(balance_increase),
             index: RAY,
             scaled_amount: None,
         };
-        let r = p
-            .process_gho_debt_mint(&ev, U256::from(1_000u64), RAY, U256::ZERO, None)
-            .unwrap();
-        assert_eq!(r.balance_delta, I256::ZERO);
-        assert_eq!(
-            r.user_operation,
-            GhoUserOperation::Borrow,
-            "the == case hits BORROW (the Python quirk)"
-        );
+
+        for rev in [1u32, 4] {
+            let p = UnifiedGhoProcessor::new(rev);
+            let discount = if rev <= 3 {
+                U256::from(5_000u64)
+            } else {
+                U256::ZERO
+            };
+            // Zero prev balance + equal indices → discount_scaled = 0, so the
+            // neighbouring deltas are the requested/repay amounts verbatim.
+            let borrow = p
+                .process_gho_debt_mint(&ev(1_001, 1_000), U256::ZERO, RAY, discount, None)
+                .unwrap_or_else(|e| panic!("rev {rev}: {e:?}"));
+            assert_eq!(borrow.user_operation, GhoUserOperation::Borrow, "rev {rev}");
+            assert_eq!(
+                borrow.balance_delta,
+                I256::try_from(1u64).unwrap(),
+                "rev {rev}: value = balance_increase + 1 borrows 1 wei"
+            );
+
+            let repay = p
+                .process_gho_debt_mint(&ev(999, 1_000), U256::from(1_000u64), RAY, discount, None)
+                .unwrap_or_else(|e| panic!("rev {rev}: {e:?}"));
+            assert_eq!(repay.user_operation, GhoUserOperation::Repay, "rev {rev}");
+            assert_eq!(
+                repay.balance_delta,
+                -I256::try_from(1u64).unwrap(),
+                "rev {rev}: value = balance_increase - 1 repays 1 wei"
+            );
+        }
     }
 
     #[test]
@@ -1211,17 +1281,14 @@ mod tests {
     }
 
     #[test]
-    fn parity_mint_v1_value_equals_balance_increase_with_positive_discount_negates() {
-        // Regression: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
-        // parity quirk where `value == balance_increase` classifies as BORROW
-        // (the `else` interest-accrual branch is dead code). With a POSITIVE
-        // `discount_scaled`, the expected result is
-        // `balance_delta = -(discount_scaled - raw_delta)` = `-(discount_scaled -
-        // 0)` = `-discount_scaled`: a NEGATIVE burn from the position. A strict
-        // `<` in the sign-wrap (`balance_delta < discount_scaled`) MISSED the
-        // equality case (raw_delta == 0 → balance_delta == discount_scaled → not
-        // < → no negate → the positive complement). 2 × discount_scaled = 48.79
-        // GHO divergence, i.e. the stuck balance this row pins.
+    fn parity_mint_v1_discounted_equality_burns_only_the_discount_scaled_share() {
+        // Recorded row: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
+        // contract's accrual edition. `_accrueDebtOnAction` settles the accrued
+        // interest, `_burn(user, discountScaled)` moves the scaled balance, and
+        // the token emits `Mint(address(0), user, balanceIncrease,
+        // balanceIncrease, index)`: value == balance_increase by construction,
+        // so the whole delta is the discount burn and no requested amount is
+        // implied.
         //
         // Inputs captured from the live tx 0xdaf7a4e9...
         //   block 17893923  logIdx 361  vToken rev=1
@@ -1234,7 +1301,7 @@ mod tests {
         // The expected result:
         //   balance_delta   = -24395466556666203902 (-24.395467 GHO)
         //   discount_scaled = 24395466556666203902 (24.395467 GHO)
-        //   user_operation  = GhoUserOperation::GHO_BORROW
+        //   user_operation  = GhoUserOperation::InterestAccrual
         let p1 = UnifiedGhoProcessor::new(1);
         let ev = ScaledTokenEventData {
             value: U256::from(123_683_949_235_110_136_664u128),
@@ -1249,13 +1316,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             r.user_operation,
-            GhoUserOperation::Borrow,
-            "the == quirk → BORROW"
+            GhoUserOperation::InterestAccrual,
+            "the accrual edition classifies as interest accrual"
         );
         // The discount_scaled magnitude (≈24.395 GHO); allow a 10_000-wei
         // tolerance for the upstream ray_mul/ray_div HALF_UP rounding
-        // implementation divergence under separate investigation. The BUG here
-        // is the SIGN flip, not the magnitude.
+        // implementation divergence under separate investigation. This row
+        // pins the RECORDED magnitude and delta, not the classification.
         let expected_abs = U256::from(24_395_466_556_666_203_902u128);
         let diff = if r.discount_scaled >= expected_abs {
             r.discount_scaled - expected_abs
@@ -1269,38 +1336,10 @@ mod tests {
             expected_abs,
             diff
         );
-        // THE BUG: a strict `<` in the sign-wrap misses the equality case
-        // (raw_delta == 0 → balance_delta becomes discount_scaled, which is NOT
-        // < discount_scaled) and returns the POSITIVE complement instead of the
-        // NEGATIVE burn. With the negate side owning `<=`, the delta is the
-        // NEGATIVE of the discount_scaled magnitude.
         assert_eq!(
             r.balance_delta,
             -I256::try_from(r.discount_scaled).unwrap(),
-            "value==balance_increase with positive discount → NEGATIVE burn of the full discount_scaled (recorded fixture)"
-        );
-    }
-
-    #[test]
-    fn parity_mint_value_equals_balance_increase_quirk() {
-        // The parity quirk: value==balance_increase classifies as BORROW
-        // (the `else` interest-accrual branch is dead code — the `>=`
-        // catches `==`). delta = ray_div(0, RAY) = 0.
-        let p4 = UnifiedGhoProcessor::new(4);
-        let ev = ScaledTokenEventData {
-            value: U256::from(5u64),
-            balance_increase: U256::from(5u64),
-            index: RAY,
-            scaled_amount: None,
-        };
-        let r = p4
-            .process_gho_debt_mint(&ev, U256::from(1000u64), RAY, U256::ZERO, None)
-            .unwrap();
-        assert_eq!(r.balance_delta, I256::ZERO);
-        assert_eq!(
-            r.user_operation,
-            GhoUserOperation::Borrow,
-            "the == quirk → BORROW"
+            "discounted equality → the NEGATIVE discount_scaled burn, and nothing else (recorded fixture)"
         );
     }
 
