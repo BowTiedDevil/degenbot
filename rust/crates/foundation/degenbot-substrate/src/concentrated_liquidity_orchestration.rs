@@ -1712,8 +1712,8 @@ impl ConcentratedLiquidityOrchestration {
         self.v4_state_views.get(&pool_manager).copied()
     }
     /// The immutable admission verdict recorded for a pool, if any (PRG-2).
-    /// The `PyO3` `build_v4_pool` pre-check consults this BEFORE any RPC
-    /// work on the registration path.
+    /// The construction door's V4 get half consults this BEFORE any RPC work
+    /// on the registration path.
     #[must_use]
     pub fn admission_verdict(
         &self,
@@ -2129,23 +2129,20 @@ impl ConcentratedLiquidityOrchestration {
             self.mark_registration_live::<V4Family>(reg, (pm, pid));
         }
     }
-    /// One-read fast-path lookup for the `PyO3` `build_v4_pool` re-build guard
-    /// (missed-WS-pong incident 2026-08-28).
+    /// One-read lookup of an ALREADY-registered V4 pool under its
+    /// `(pool_manager, pool_id)` key.
     ///
-    /// The driver re-attempts `build_managed_pool` for V4 hops whose pools
-    /// are ALREADY registered in this shared core (DB-snapshot seeds). The
-    /// historical behavior re-ran the full builder (fresh slot0/liquidity
-    /// RPC reads + tick-map assembly) and only failed at the terminal
-    /// `register_v4_pool` with `AlreadyRegistered` — ~13k wasted builds per
-    /// block, whose RPC load + GIL/log flooding starved the WS keepalive. This
-    /// accessor resolves the existing registration under ONE read guard so the
-    /// `PyO3` layer can synthesize the builder's return surface (identity +
-    /// coverage + fees) with core-tracked values and NO RPC.
+    /// The construction door's V4 get half answers a registered pool from here
+    /// instead of replaying the builder (fresh slot0/liquidity reads + tick-map
+    /// assembly, which the terminal `register_v4_pool` would then refuse with
+    /// `AlreadyRegistered`). The registered pool key IS the key the build
+    /// minted, so this snapshot carries everything a repeated build answers —
+    /// with no RPC.
     ///
     /// Fee-exceeds-encoder pools are admission-rejected and never registered,
     /// so they miss here and keep their typed rejection. Hooked pools and
     /// dynamic-fee (`DYNAMIC_FEE_FLAG`) pools ARE registered (ADR-037 / F1) and
-    /// so hit this path like any other pool.
+    /// answer here like any other pool.
     #[must_use]
     pub(crate) fn try_registered_v4(
         &self,
@@ -3100,7 +3097,7 @@ impl BotState {
 /// One-read snapshot of an ALREADY-registered V4 pool's return-relevant
 /// state — the numeric pool id, immutable registration key, core-tracked
 /// protocol fee, and registration coverage. Produced by
-/// [`BotState::try_registered_v4`] for the `PyO3` `build_v4_pool` fast path.
+/// [`BotState::try_registered`] for the construction door's V4 get half.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisteredV4 {
     /// The auto-assigned numeric pool id in the shared core.

@@ -6,10 +6,9 @@
 //! standalone-Rust path gets the same registrations.
 //!
 //! Invariants preserved from the shell:
-//! - PRG-2: the keyed immutable V4 admission verdicts are consulted BEFORE
-//!   any registry read on the already-registered fast path
-//!   ([`Bot::registered_v4_payload`]), with the same typed refusal the live
-//!   registration would raise.
+//! - PRG-2: the keyed immutable V4 admission verdicts are consulted by the
+//!   construction door's V4 get half before any RPC work, with the same typed
+//!   refusal the live registration raises.
 //! - PRG-1: the single-flight build table stays on the shell (`PyBot`);
 //!   these functions take what they need as parameters and never touch
 //!   flight state.
@@ -19,13 +18,12 @@
 
 use alloy::primitives::Address;
 use degenbot_pools::TickWordSource;
-use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 
 use super::bot::Bot;
-use super::registration_ledger::{BuildFailure, RefusalKind, RegisterRefusal, RegistrationPhase};
+use super::registration_ledger::{RefusalKind, RegisterRefusal, RegistrationPhase};
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
@@ -45,13 +43,6 @@ use degenbot_pools::{RegisterV4PoolError, RegisterV4PoolParams};
 /// liquidity_net: i128, block: u64)` — the dict-entry shape the shell's
 /// `build_tick_rows_py` turns into a Python `{tick: (gross, net, block)}`.
 pub type TickRow = (i32, u128, i128, u64);
-
-/// The already-registered V4 registry-of-record echo: `(pool_id,
-/// currency0, currency1, pool_manager)` — identity straight off the core's
-/// immutable pool key. The fee/state-view values a consumer needs read off
-/// the registered handle itself (the handle is self-describing, ADR-085
-/// D4); this echo answers the ONE construction verb's GET arm.
-pub type V4RegisteredEcho = (u64, String, String, String);
 
 /// Parse one address string with the shell's historical message vocabulary.
 ///
@@ -589,61 +580,6 @@ impl Bot {
         Some((pool_id, tokens))
     }
 
-    /// The V4 registry-of-record payload (`pool_manager`, `pool_id`)-keyed —
-    /// the already-registered fast path. PRG-2: the keyed registration gate
-    /// refuses an immutable-admission pool (dynamic fee /
-    /// fee-exceeds-encoder-limit) BEFORE any registry read or RPC work on
-    /// the registration path, with the exact typed refusal the live
-    /// registration folds.
-    ///
-    /// # Errors
-    /// [`RefusalKind::RegisterRefused`] (the V4 admission arms) when a
-    /// recorded admission verdict refuses the pool.
-    pub fn registered_v4_echo(
-        &self,
-        pm: Address,
-        pid: &[u8; 32],
-    ) -> Result<Option<V4RegisteredEcho>, RefusalKind> {
-        if let Some(verdict) = self
-            .state_arc()
-            .read_at(LockSite::Orchestrator)
-            .concentrated_liquidity()
-            .admission_verdict(pm, pid)
-        {
-            let reason = match verdict {
-                AdmissionVerdict::DynamicFee { fee } => RegisterRefusal::Admission {
-                    failure: BuildFailure::DynamicFee,
-                    hook_flags: None,
-                    fee: Some(fee),
-                },
-                AdmissionVerdict::FeeExceedsEncoderLimit { fee } => RegisterRefusal::Admission {
-                    failure: BuildFailure::HighFee,
-                    hook_flags: None,
-                    fee: Some(fee),
-                },
-            };
-            return Err(RefusalKind::RegisterRefused {
-                family: Some(RegisteredPoolFamily::V4),
-                phase: RegistrationPhase::Register,
-                reason,
-            });
-        }
-        let Some(existing) = self
-            .state_arc()
-            .read_at(LockSite::Orchestrator)
-            .try_registered(pm, pid)
-        else {
-            return Ok(None);
-        };
-        let key = existing.pool_key;
-        Ok(Some((
-            existing.pool_id,
-            key.currency0.to_checksum(None),
-            key.currency1.to_checksum(None),
-            pm.to_checksum(None),
-        )))
-    }
-
     /// Assemble a V3 pool's tick map with the `Db → Chain` precedence
     /// (Decision 6 (B)) and normalize a hit into [`TickRow`] rows — the
     /// entry point the shell's `assemble_v3_tick_map` method drives with the
@@ -707,12 +643,13 @@ impl Bot {
 mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::bot_core::registration_ledger::BuildFailure;
     use alloy::primitives::aliases::U112;
+    use degenbot_pools::V4PoolKey;
     use degenbot_pools::{
         DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
         YDVariant, YVariant,
     };
-    use degenbot_pools::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
 
     /// The V2 door request the fixtures register through.
     fn v2_request(address: Address, token0: Address, factory: Address) -> PoolRegistration {
@@ -1031,63 +968,6 @@ mod tests {
         );
     }
 
-    /// PRG-2: the keyed immutable admission verdict is consulted BEFORE the
-    /// registry read on the already-registered fast path. A STATIC fee above
-    /// the executor's 2-byte field is refused at registration (recording the
-    /// verdict); the payload read then surfaces the SAME typed refusal
-    /// pre-registry.
-    #[test]
-    fn registered_v4_payload_consults_the_gate_before_the_registry() {
-        let bot = Bot::new(8453);
-        let pm = Address::from([0x50u8; 20]);
-        let pid = [0xABu8; 32];
-        let encoder_limit_params = v4_params(pm, pid, 320_000, Address::ZERO);
-        let err = bot
-            .register(PoolRegistration::V4(Box::new(encoder_limit_params)))
-            .expect_err("a 320k static fee is admission-refused");
-        assert!(
-            matches!(
-                err,
-                RefusalKind::RegisterRefused {
-                    reason: RegisterRefusal::Admission {
-                        failure: BuildFailure::HighFee,
-                        ..
-                    },
-                    ..
-                }
-            ),
-            "{err:?}"
-        );
-
-        // The gate verdict (recorded at refusal) is what the echo read
-        // answers — before (and independent of) any registry entry.
-        let gate_err = bot
-            .registered_v4_echo(pm, &pid)
-            .expect_err("the recorded verdict refuses the fast path too");
-        assert!(matches!(
-            gate_err,
-            RefusalKind::RegisterRefused {
-                reason: RegisterRefusal::Admission {
-                    failure: BuildFailure::HighFee,
-                    ..
-                },
-                ..
-            }
-        ));
-
-        // F1: the `DYNAMIC_FEE_FLAG` sentinel is NOT an admission verdict — the
-        // pool registers, so both the registration and the pre-registry echo
-        // answer it.
-        let dynamic_pid = [0xACu8; 32];
-        let dynamic_fee_params = v4_params(pm, dynamic_pid, V4_DYNAMIC_FEE_FLAG, Address::ZERO);
-        bot.register(PoolRegistration::V4(Box::new(dynamic_fee_params)))
-            .expect("a dynamic-fee pool registers (F1)");
-        assert!(
-            bot.registered_v4_echo(pm, &dynamic_pid).is_ok(),
-            "an admitted pool answers the fast path"
-        );
-    }
-
     /// F1: a REAL dynamic-fee pool (`fee == 0x0080_0000`, the upstream
     /// sentinel) REGISTERS — the sentinel is a flag, not a fee to refuse. The
     /// retained `DynamicFee` vocabulary (kept for the `PyO3` boundary and the
@@ -1153,44 +1033,6 @@ mod tests {
         assert_eq!(report.skip_count, 1);
         assert_eq!(report.skip_reasons["build-v4-refused"], 1);
         assert_eq!(report.v4_dynamic_fee_rejected, 1, "the arms stay distinct");
-    }
-
-    /// The registered V4 echo shapes the identity from the core's
-    /// immutable pool key — the ONE construction verb's GET arm answer.
-    #[test]
-    fn registered_v4_echo_shapes_the_registered_identity() {
-        let bot = Bot::new(8453);
-        let pm = Address::from([0x51u8; 20]);
-        let pid = [0xCDu8; 32];
-        let pool_id = bot
-            .register(PoolRegistration::V4(Box::new(v4_params(
-                pm,
-                pid,
-                3_000,
-                Address::ZERO,
-            ))))
-            .expect("a static-fee V4 pool registers");
-        let echo = bot
-            .registered_v4_echo(pm, &pid)
-            .expect("no verdict refusal")
-            .expect("registered → Some");
-        assert_eq!(echo.0, pool_id);
-        assert_eq!(
-            echo.1.to_lowercase(),
-            "0x0101010101010101010101010101010101010101"
-        );
-        assert_eq!(
-            echo.2.to_lowercase(),
-            "0x0202020202020202020202020202020202020202"
-        );
-        assert_eq!(echo.3.to_lowercase(), format!("{pm}").to_lowercase());
-
-        // An unregistered (manager, id) answers Ok(None) — the miss the
-        // single-flight lead path builds on.
-        assert!(bot
-            .registered_v4_echo(pm, &[0u8; 32])
-            .expect("no verdict for an unregistered id")
-            .is_none());
     }
 
     /// The facade `register_token` / `register_v4_state_view` /

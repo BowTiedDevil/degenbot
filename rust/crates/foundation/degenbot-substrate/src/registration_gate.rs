@@ -6,8 +6,8 @@
 //! executor's 2-byte encoding limit), the verdict is recorded keyed by
 //! `(pool_manager, pool_id)`. Every later registration-candidate pass —
 //! the crawl re-offers the same pools block after block — consults the gate
-//! BEFORE any RPC work on the registration path (the `PyO3` `build_v4_pool`
-//! pre-check), short-circuiting the resolve + slot0/liquidity fetch +
+//! BEFORE any RPC work on the registration path (the construction door's V4
+//! get half), short-circuiting the resolve + slot0/liquidity fetch +
 //! tick-map assembly with the same typed refusal.
 //!
 //! This dissolves the retired Python `SkipGate` fatal memo: Rust-computed
@@ -21,6 +21,7 @@
 
 use alloy::primitives::Address;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_pools::{BuildFailure, RegisterRefusal};
 use hashbrown::HashMap;
 
 /// An immutable V4 admission refusal (PRG-2 gate). Mirrors the fee-fact
@@ -45,6 +46,27 @@ impl AdmissionVerdict {
         match self {
             Self::DynamicFee { .. } => "dynamic-fee",
             Self::FeeExceedsEncoderLimit { .. } => "fee-encoder-limit",
+        }
+    }
+}
+
+impl From<AdmissionVerdict> for RegisterRefusal {
+    /// The verdict's ONE rendering in the write door's refusal vocabulary: a
+    /// pre-RPC consult answers exactly the refusal registering the pool would
+    /// have produced, so the boundary's exception surface never branches on
+    /// which path saw the fact first.
+    fn from(verdict: AdmissionVerdict) -> Self {
+        match verdict {
+            AdmissionVerdict::DynamicFee { fee } => Self::Admission {
+                failure: BuildFailure::DynamicFee,
+                hook_flags: None,
+                fee: Some(fee),
+            },
+            AdmissionVerdict::FeeExceedsEncoderLimit { fee } => Self::Admission {
+                failure: BuildFailure::HighFee,
+                hook_flags: None,
+                fee: Some(fee),
+            },
         }
     }
 }
@@ -120,6 +142,24 @@ mod tests {
         assert_eq!(
             gate.verdict(pm, pid).expect("v").kind(),
             "fee-encoder-limit"
+        );
+    }
+
+    /// The verdict renders the write door's own admission refusal — the same
+    /// two arms `From<&RegisterV4PoolError>` produces for the identical facts,
+    /// so a zero-I/O consult cannot answer a different refusal than the
+    /// registration it stands in for.
+    #[test]
+    fn a_verdict_renders_the_write_doors_admission_refusal() {
+        assert_eq!(
+            RegisterRefusal::from(AdmissionVerdict::FeeExceedsEncoderLimit { fee: 320_000 }),
+            RegisterRefusal::from(&crate::RegisterV4PoolError::FeeExceedsEncoderLimit {
+                fee: 320_000
+            }),
+        );
+        assert_eq!(
+            RegisterRefusal::from(AdmissionVerdict::DynamicFee { fee: 0x0080_0000 }),
+            RegisterRefusal::from(&crate::RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 }),
         );
     }
 }

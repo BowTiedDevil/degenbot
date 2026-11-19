@@ -440,8 +440,8 @@ impl BotState {
     ///
     /// V4 pools are NOT address-keyed (one `PoolManager` hosts many pool ids,
     /// keying is `(pool_manager, pool_id)`) and return `None` here; their
-    /// family tag is resolved by [`Self::registered_family_at`] and their fast
-    /// path is the existing `try_registered_v4`.
+    /// family tag is resolved by [`Self::registered_family_at`] and their
+    /// registered read is [`Self::try_registered`].
     #[must_use]
     pub fn registered_pool_by_address(
         &self,

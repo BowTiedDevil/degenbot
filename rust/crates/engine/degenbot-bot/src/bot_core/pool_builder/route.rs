@@ -121,7 +121,8 @@ pub enum ConstructionRefusal {
     Registration(RegisterRefusal),
 }
 
-/// The identity of a FRESH build.
+/// The identity a construction answers — minted by a fresh build, or read off
+/// the registered entry (V4) so a repeated build answers it identically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltIdentity {
     pub address: Address,
@@ -160,9 +161,11 @@ impl BuiltIdentity {
 pub struct ConstructedPool {
     /// The pool's engine `pool_id` in the shared `BotState`.
     pub pool_id: u64,
-    /// The fresh-build identity; `None` when the registry GET answered — the
-    /// already-registered pool's identity lives on the shared state, and the
-    /// get half never re-derives it.
+    /// The construction's identity. A V4 get half answers the identity the
+    /// registration holds (the pool key the build minted), so a repeated V4
+    /// build returns exactly the fresh construction's result; the address-keyed
+    /// families answer `None` — their identity lives on the shared state and
+    /// their get half does not re-derive it.
     pub built: Option<BuiltIdentity>,
 }
 
@@ -249,7 +252,49 @@ fn registered_address_pool(
     (registered == family).then_some(pool_id)
 }
 
-/// The `(PoolManager, pool_id)`-keyed GET half.
+/// The `(PoolManager, pool_id)`-keyed GET half: the immutable admission
+/// verdict (PRG-2) and the registry-of-record construction, under ONE read
+/// guard and no I/O.
+///
+/// A recorded verdict refuses with the write door's OWN typed refusal before
+/// any RPC — the pool can never register, so a build would pay the whole read
+/// cost to learn the same immutable fact. A registered pool answers the
+/// [`ConstructedPool`] a fresh build answers, identity included: the registered
+/// pool key IS the key the build minted, so a repeated build needs no
+/// caller-side synthesis and its ticks/coverage stay where the registration
+/// put them.
+fn registered_v4_construction(
+    bot: &Bot,
+    pool_manager: Address,
+    pool_id: &[u8; 32],
+) -> Result<Option<ConstructedPool>, ConstructionRefusal> {
+    let state = bot.state_arc();
+    let core = state.read_at(LockSite::Core);
+    if let Some(verdict) = core
+        .concentrated_liquidity()
+        .admission_verdict(pool_manager, pool_id)
+    {
+        return Err(ConstructionRefusal::Registration(RegisterRefusal::from(
+            verdict,
+        )));
+    }
+    let Some(registered) = core.try_registered(pool_manager, pool_id) else {
+        return Ok(None);
+    };
+    Ok(Some(ConstructedPool {
+        pool_id: registered.pool_id,
+        built: Some(BuiltIdentity {
+            address: pool_manager,
+            tokens: vec![registered.pool_key.currency0, registered.pool_key.currency1],
+            variant: String::new(),
+            factory: None,
+            v4_pool_id: Some(*pool_id),
+        }),
+    }))
+}
+
+/// The registry-echo half of the race fold: the winner's pool id, read after
+/// the write door's `AlreadyRegistered`.
 fn registered_v4_pool(bot: &Bot, pool_manager: Address, pool_id: &[u8; 32]) -> Option<u64> {
     bot.state_arc()
         .read_at(LockSite::Core)
@@ -497,11 +542,12 @@ async fn construct_v3(
     })
 }
 
-/// The V4 arm: registry GET on the `(manager, id)` pair, the DB two-step
-/// identity (`resolve_v4_identity` — manager row → V4 row → per-FK token
-/// rows, else the caller overrides), build + register + race fold. The
-/// admission refusals classify through the V4 taxonomy
-/// (`From<RegisterV4PoolError> for BuildFailure`).
+/// The V4 arm: the get half (admission verdict then registry GET on the
+/// `(manager, id)` pair, both zero-I/O), the DB two-step identity
+/// (`resolve_v4_identity` — manager row → V4 row → per-FK token rows, else the
+/// caller overrides), build + register + race fold. A registered pool answers
+/// the same typed result a fresh construction does, so a repeated build is
+/// idempotent here rather than at a caller.
 async fn construct_v4(
     bot: &Bot,
     pool_manager: Address,
@@ -511,11 +557,8 @@ async fn construct_v4(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<ConstructedPool, ConstructionRefusal> {
-    if let Some(id) = registered_v4_pool(bot, pool_manager, &pool_id) {
-        return Ok(ConstructedPool {
-            pool_id: id,
-            built: None,
-        });
+    if let Some(registered) = registered_v4_construction(bot, pool_manager, &pool_id)? {
+        return Ok(registered);
     }
     // An incomplete identity classifies through the ONE taxonomy arm
     // (`BuildFailure::MissingIdentity` -> the use site's ValueError) — the

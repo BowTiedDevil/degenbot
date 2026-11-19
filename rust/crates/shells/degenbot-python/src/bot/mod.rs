@@ -310,28 +310,6 @@ impl PyBot {
         py.detach(|| self.bot.registered_family_identity(addr, want))
     }
 
-    /// The V4 registry-of-record payload (`pool_manager`, `pool_id`)-keyed — the
-    /// already-registered fast path, EXTRACTED so the single-flight peer-wait
-    /// twin uses the same identity/fee/coverage surface as the original
-    /// inline block: identity from the core's immutable pool key,
-    /// protocol fee from the core's state machine, coverage as recorded.
-    fn registered_v4_echo(
-        &self,
-        py: Python<'_>,
-        pm: Address,
-        pid: &[u8; 32],
-    ) -> PyResult<Option<degenbot_bot::bot_core::V4RegisteredEcho>> {
-        // PRG-2: the keyed registration gate refuses an immutable-admission
-        // pool (dynamic fee / fee-exceeds-encoder-limit) BEFORE any RPC work
-        // on the registration path, with the exact exception class the live
-        // registration refusal would have raised (map_refusal). The
-        // verdict consult + echo shaping are core-owned
-        // ([`Bot::registered_v4_echo`]); this wrapper only releases the
-        // GIL across the read and maps the typed refusal.
-        py.detach(|| self.bot.registered_v4_echo(pm, pid))
-            .map_err(map_refusal)
-    }
-
     /// The `managed_v4` translation arm: `(pool_manager, pool_id)`-keyed, the
     /// id validated at construction. The identity overrides fill the DB
     /// two-step's gaps (all optional; the resolver prefers the DB row).
@@ -387,7 +365,6 @@ impl PyBot {
         family: RequestFamily,
         variant: Option<&str>,
         addr: &Address,
-        pool_id_hex: Option<&str>,
     ) -> PyResult<ConstructionEcho> {
         match built {
             Some(built) => {
@@ -406,7 +383,7 @@ impl PyBot {
                 })
             }
             None => self
-                .registered_echo(py, family, variant, addr, pool_id_hex)?
+                .registered_echo(py, family, variant, addr)
                 .ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!(
                         "construct_pool: registration answered pool id {pool_id} with no identity"
@@ -541,25 +518,21 @@ impl PyBot {
     }
 
     /// The registry-of-record identity echo for an already-registered
-    /// address — the flight pre-check AND the door's registry-GET race
-    /// answer read the SAME shaping. The pair-keyed families echo their
-    /// registered identity (parity with the builder's return surface); the
-    /// multi-token ones echo the family's own spelling with empty token
-    /// strings (their list rides the handle).
-    /// The registry-of-record identity echo for an already-registered
-    /// address — the flight pre-check AND the door's registry-GET race
-    /// answer read the SAME shaping. The pair-keyed families echo their
+    /// address-keyed pool — the flight pre-check AND the door's registry-GET
+    /// race answer read the SAME shaping. The pair-keyed families echo their
     /// registered pair (parity with the builder's return surface); every
-    /// family answers its FULL token set (`tokens`, ADR-085 D5). The V4
-    /// family reads its keyed echo (the PRG-2 gate consult rides it).
+    /// family answers its FULL token set (`tokens`, ADR-085 D5).
+    ///
+    /// The V4 family is `(pool_manager, pool_id)`-keyed and answers nothing
+    /// here: its registered result is the core door's — the same typed result
+    /// the fresh build answers, identity included.
     fn registered_echo(
         &self,
         py: Python<'_>,
         family: RequestFamily,
         variant: Option<&str>,
         addr: &Address,
-        pool_id_hex: Option<&str>,
-    ) -> PyResult<Option<ConstructionEcho>> {
+    ) -> Option<ConstructionEcho> {
         let keyed =
             |pool_id: u64, token0: String, token1: String, tokens: Vec<String>, variant: &str| {
                 ConstructionEcho {
@@ -571,17 +544,12 @@ impl PyBot {
                 }
             };
         match family {
-            RequestFamily::ManagedV4 => {
-                let Some(pid) = pool_id_hex.map(hex_string_to_pool_id).transpose()? else {
-                    return Ok(None);
-                };
-                Ok(self.registered_v4_echo(py, *addr, &pid)?.map(|echo| {
-                    let t0 = echo.1.clone();
-                    let t1 = echo.2.clone();
-                    keyed(echo.0, t0.clone(), t1.clone(), vec![t0, t1], "")
-                }))
-            }
-            RequestFamily::ConstantProduct if variant == Some("aerodrome") => Ok(self
+            // Two families answer no address-keyed echo: the V4 build's
+            // registered result is the core door's (the same typed result the
+            // fresh build answers, identity included), and the unmodeled family
+            // is refused at the boundary before any echo is shaped.
+            RequestFamily::ManagedV4 | RequestFamily::Unmodeled => None,
+            RequestFamily::ConstantProduct if variant == Some("aerodrome") => self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::AerodromeV2)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -591,20 +559,19 @@ impl PyBot {
                         tokens.iter().map(|t| t.to_checksum(None)).collect(),
                         "aerodrome",
                     )
-                })),
+                }),
             RequestFamily::ConstantProduct => {
-                Ok(self
-                    .registered_v2_payload(py, addr)
+                self.registered_v2_payload(py, addr)
                     .map(|(pool_id, t0, t1, _address, v)| {
                         keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
-                    }))
+                    })
             }
-            RequestFamily::ConcentratedLiquidity => Ok(self
+            RequestFamily::ConcentratedLiquidity => self
                 .registered_v3_payload(py, addr, self.bot.chain_id())
                 .map(|(pool_id, t0, t1, _address, v)| {
                     keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
-                })),
-            RequestFamily::Weighted => Ok(self
+                }),
+            RequestFamily::Weighted => self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerWeighted)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -614,8 +581,8 @@ impl PyBot {
                         tokens.iter().map(|t| t.to_checksum(None)).collect(),
                         "balancer_weighted",
                     )
-                })),
-            RequestFamily::Stableswap if variant == Some("balancer_stable") => Ok(self
+                }),
+            RequestFamily::Stableswap if variant == Some("balancer_stable") => self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerStable)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -625,8 +592,8 @@ impl PyBot {
                         tokens.iter().map(|t| t.to_checksum(None)).collect(),
                         "balancer_stable",
                     )
-                })),
-            RequestFamily::Stableswap => Ok(self
+                }),
+            RequestFamily::Stableswap => self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::Curve)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -636,10 +603,7 @@ impl PyBot {
                         tokens.iter().map(|t| t.to_checksum(None)).collect(),
                         "stableswap",
                     )
-                })),
-            // The unmodeled family is refused at the boundary before any
-            // echo is shaped.
-            RequestFamily::Unmodeled => Ok(None),
+                }),
         }
     }
 
@@ -1807,10 +1771,12 @@ impl PyBot {
         self.run_flight(
             py,
             &key,
-            // The registry-of-record pre-check: ONE shaping for every
-            // family (the V4 keyed read rides inside it, so the PRG-2
-            // admission-gate consult surfaces HERE, before any build work).
-            || self.registered_echo(py, family, variant, &addr, request.pool_id.as_deref()),
+            // The registry-of-record pre-check for the address-keyed
+            // families. A registered V4 pool is answered by the core door's
+            // get half (the same typed result as the fresh build, and its
+            // PRG-2 admission-gate consult), so the pre-check answers nothing
+            // for that family.
+            || Ok(self.registered_echo(py, family, variant, &addr)),
             || {
                 // The io fetch is core-owned; the failure maps to the
                 // method-prefixed legacy `RuntimeError`.
@@ -1858,7 +1824,6 @@ impl PyBot {
                     family,
                     variant,
                     &addr,
-                    request.pool_id.as_deref(),
                 )?;
                 Ok((pool_id, echo))
             },

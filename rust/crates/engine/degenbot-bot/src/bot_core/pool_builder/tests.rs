@@ -3543,8 +3543,12 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
 use crate::bot_core::pool_builder::construction_door::{ConstructionVerdict, PoolConstruction};
 use crate::bot_core::pool_builder::route;
 use crate::bot_core::Bot;
-use degenbot_pools::{BuildFailure, RegisteredPoolFamily};
+use degenbot_pools::{
+    BuildFailure, RegisterRefusal, RegisterV4PoolParams, RegisteredPoolFamily, V4PoolKey,
+    V4_DYNAMIC_FEE_FLAG,
+};
 use degenbot_substrate::state_lock::LockSite;
+use degenbot_substrate::PoolRegistration;
 
 /// The V3 construction fixture: the whole immutable batch a served rung reads
 /// (fee 3000 / tick spacing 60 / one-word tick map), so a route test answers
@@ -4082,7 +4086,10 @@ async fn construction_door_v4_constructs_registers_and_reuses() {
         Some(built.pool_id),
     );
 
-    // The door's `(manager, pool_id)`-keyed get half answers without I/O.
+    // The door's `(manager, pool_id)`-keyed get half answers the SAME typed
+    // result as the fresh construction, with NO I/O: a repeated registered
+    // build is idempotent in the core — the registered pool key IS the built
+    // identity, so no caller synthesizes a builder result.
     let io_down = io_with(FakeRpc::new());
     let again = bot
         .construct_pool(
@@ -4097,11 +4104,159 @@ async fn construction_door_v4_constructs_registers_and_reuses() {
             Some(11_000_000),
         )
         .await;
-    assert_eq!(again.pool_id(), door.pool_id());
-    assert!(
-        matches!(again, ConstructionVerdict::Constructed { pool, .. } if pool.built.is_none()),
-        "the keyed GET half re-derives no identity"
+    assert_eq!(
+        again, door,
+        "a registered build answers the fresh construction's exact result"
     );
+}
+
+/// The V4 door request the registered-pool cases share (the overrides are the
+/// fresh path's; the get half answers before they are consulted).
+fn v4_door_request(pm: Address, pid: [u8; 32]) -> PoolConstruction<'static> {
+    PoolConstruction::V4 {
+        pool_manager: pm,
+        pool_id: pid,
+        overrides: v4_full_overrides(pm),
+        db: None,
+    }
+}
+
+/// The V4 pool key fixture the registered-pool cases register under.
+fn v4_door_key(fee: u32, hooks: Address) -> V4PoolKey {
+    V4PoolKey {
+        currency0: TO,
+        currency1: SV,
+        fee,
+        tick_spacing: 1,
+        hooks,
+    }
+}
+
+/// F1 / ADR-037: a `DYNAMIC_FEE_FLAG`-keyed pool carrying a hook is ADMITTED,
+/// so the get half answers it like any other registered pool — the same typed
+/// result a fresh construction answers, with no I/O and no gate refusal.
+#[tokio::test]
+async fn construction_door_v4_answers_a_registered_dynamic_fee_hooked_pool() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0x81; 32];
+    let hook: Address = alloy::primitives::address!("0x00000000000000000000000000000000000000c0");
+    let bot = Bot::new(1);
+    let pool_id = bot
+        .register(PoolRegistration::V4(Box::new(RegisterV4PoolParams {
+            pool_manager: pm,
+            pool_id: pid,
+            pool_key: v4_door_key(V4_DYNAMIC_FEE_FLAG, hook),
+            hook_flags: 0x00c0,
+            ..RegisterV4PoolParams::default()
+        })))
+        .expect("a dynamic-fee hooked V4 pool registers (F1 / ADR-037)");
+
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            v4_door_request(pm, pid),
+            &io_with(FakeRpc::new()),
+            Some(11_000_000),
+        )
+        .await;
+
+    let constructed = verdict
+        .into_result()
+        .expect("an admitted registered pool answers the get half");
+    assert_eq!(constructed.pool_id, pool_id);
+    assert_eq!(
+        constructed.built,
+        Some(route::BuiltIdentity {
+            address: pm,
+            tokens: vec![TO, SV],
+            variant: String::new(),
+            factory: None,
+            v4_pool_id: Some(pid),
+        }),
+        "the get half answers the construction's own identity shape"
+    );
+}
+
+/// PRG-2: a recorded immutable admission verdict refuses the get half with the
+/// write door's OWN typed refusal, before any RPC — the pool can never
+/// register, so a build would pay the full read cost to learn the same fact.
+#[tokio::test]
+async fn construction_door_v4_fee_refused_pool_keeps_its_typed_refusal_without_io() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0x82; 32];
+    let bot = Bot::new(1);
+    bot.register(PoolRegistration::V4(Box::new(RegisterV4PoolParams {
+        pool_manager: pm,
+        pool_id: pid,
+        pool_key: v4_door_key(320_000, Address::ZERO),
+        ..RegisterV4PoolParams::default()
+    })))
+    .expect_err("a fee above the encoder limit is admission-refused");
+
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            v4_door_request(pm, pid),
+            &io_with(FakeRpc::new()),
+            Some(11_000_000),
+        )
+        .await;
+
+    assert_eq!(
+        verdict.refusal(),
+        Some(&route::ConstructionRefusal::Registration(
+            RegisterRefusal::Admission {
+                failure: BuildFailure::HighFee,
+                hook_flags: None,
+                fee: Some(320_000),
+            }
+        )),
+        "the recorded verdict crosses as the write door's refusal, never a build"
+    );
+    assert!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .try_registered(pm, &pid)
+            .is_none(),
+        "a refused pool is never registered"
+    );
+}
+
+/// A concurrent first build is registered ONCE and every caller receives the
+/// same typed result: the loser's `AlreadyRegistered` is a race artifact that
+/// folds to the winner's pool id.
+#[tokio::test]
+async fn construction_door_v4_concurrent_builds_answer_the_same_result() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+    let mut fake = v4_door_fake();
+    fake.set_yielding();
+    let io = io_with(fake);
+    let bot = Bot::new(1);
+    let plan = route::ConstructionRoute::generic_only();
+    let (first, second) = tokio::join!(
+        bot.construct_pool(&plan, v4_door_request(pm, pid), &io, Some(11_000_000)),
+        bot.construct_pool(&plan, v4_door_request(pm, pid), &io, Some(11_000_000)),
+    );
+    for verdict in [&first, &second] {
+        assert!(
+            matches!(
+                verdict,
+                ConstructionVerdict::Constructed {
+                    family: RegisteredPoolFamily::V4,
+                    ..
+                }
+            ),
+            "the race fold is never a refusal, got {verdict:?}"
+        );
+    }
+    assert_eq!(first, second, "both callers receive the same typed result");
+    let registered = bot
+        .state_arc()
+        .read_at(LockSite::Core)
+        .try_registered(pm, &pid)
+        .expect("one registration");
+    assert_eq!(Some(registered.pool_id), first.pool_id());
 }
 
 #[tokio::test]

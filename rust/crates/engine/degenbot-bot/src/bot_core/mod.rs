@@ -221,8 +221,8 @@ pub use pool_builder::route::{
 pub use refresh::{refresh_pool, RefreshError, RefreshOutcome};
 
 /// Registration: the address/tick shaping the shell's argument parsing
-/// delegates to, and the V4 echo payload.
-pub use registration::{parse_address_str, tick_rows, V4RegisteredEcho};
+/// delegates to.
+pub use registration::{parse_address_str, tick_rows};
 pub use reorg_coordinator::{ReorgCoordinator, ReorgError, ReorgOutcome};
 
 /// The stage-machine telemetry seam: the observer a driver wires its stage
