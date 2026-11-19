@@ -66,7 +66,7 @@
 //!    decision), and [`decide`] only caps the bid against the
 //!    budget/bundle ceilings.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -76,6 +76,7 @@ use crate::backrun_engine::BackrunSolver;
 use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_core::errors::ProviderError;
 use degenbot_execution::{CandidateId, DeploymentId};
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
@@ -100,6 +101,7 @@ use degenbot_substrate::connector_index::V2ConnectorIndex;
 use degenbot_substrate::nonce::NonceLane;
 use degenbot_substrate::SimAnchorOracle;
 use hashbrown::HashMap as HbMap;
+use parking_lot::Mutex as ParkingMutex;
 use parking_lot::RwLock;
 
 use crate::execution_context::ExecutionContext;
@@ -874,21 +876,242 @@ pub fn empty_frame_observe_reason(descriptors: &FrameDescriptors) -> ObserveReas
     }
 }
 
-/// Does `[target, backrun]` survive as one bundle? (read/sim only.)
+/// The `eth_callMany` bundle envelope: where the bundle object sits in
+/// `params[0]`.
 ///
-/// Endpoints disagree on the bundle envelope: the `MEVBlocker`
-/// searcher-doc shape carries `params[0] = { transactions: [...] }`, while
-/// mev-geth lineage nodes (reth included) parse `params[0]` as a LIST of
-/// blocks — `params[0] = [{ transactions: [...] }]`. Both shapes are
-/// attempted in that order; a parameter-shape or method-missing error on
-/// one endpoint must never read as "the bundle reverted".
-pub async fn simulate_candidate(
-    sim_provider: &AlloyProvider,
+/// The disagreement is a parsing fact, not a policy one: the blocker relay's
+/// searcher docs put the bundle at `params[0]`, while mev-geth lineage nodes
+/// (reth included) parse `params[0]` as a list of blocks. reth answers the
+/// object shape `-32602` ("invalid type: map, expected a sequence") —
+/// measured on the dev node, not assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BundleSimShape {
+    /// `params[0] = { transactions: [...] }` — the searcher docs' shape.
+    DocObject,
+    /// `params[0] = [{ transactions: [...] }]` — the mev-geth block list.
+    MevGethList,
+}
+
+impl BundleSimShape {
+    /// The documented object shape leads; the mev-geth list is a fallback
+    /// licensed ONLY by a typed shape refusal. A doc-compliant endpoint then
+    /// never sees a wasted probe, and a reth node pays exactly one refused probe
+    /// on its first frame — never one per candidate.
+    const PROBE_ORDER: [Self; 2] = [Self::DocObject, Self::MevGethList];
+
+    /// The JSON-RPC `params` for this envelope. The bundle object and the state
+    /// context come from the submission crate's bundle-sim builder — the one
+    /// authority for both wire facts — so the list shape only re-wraps the
+    /// object it already built.
+    fn params(self, transactions: &[serde_json::Value], state_block: &str) -> serde_json::Value {
+        let mut params =
+            degenbot_submission::bundle::eth_call_many_bundle_sim_params(transactions, state_block);
+        if self == Self::MevGethList {
+            if let Some(bundle) = params.get_mut(0) {
+                *bundle = serde_json::Value::Array(vec![bundle.clone()]);
+            }
+        }
+        params
+    }
+}
+
+/// What ONE `eth_callMany` attempt concluded — about the candidate and about the
+/// envelope it travelled in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BundleSimAnswer {
+    /// The envelope parsed, every leg of the bundle executed, and at least one
+    /// leg reported an outcome marker — an empty or unrelated answer is no pass.
+    Passed,
+    /// The envelope parsed and the bundle failed: a leg's result carries a
+    /// revert report, or the node reported the failure at method level. The
+    /// SHAPE is proven, so it is memoized even though the candidate dies.
+    Reverted,
+    /// The node refused the ENVELOPE (`-32601` method missing, `-32602` invalid
+    /// params). The only answer that licenses another shape.
+    ShapeRefused,
+    /// The endpoint could not answer: a transport failure, an unrelated RPC
+    /// error, or a `result` that is no bundle verdict at all. NOT shape
+    /// evidence, so nothing is memoized and no fallback probe is spent.
+    Unusable,
+}
+
+/// The JSON-RPC codes that mean "this endpoint does not parse this envelope".
+const METHOD_NOT_FOUND_CODE: i64 = -32601;
+const INVALID_PARAMS_CODE: i64 = -32602;
+
+/// The failure keys the documented answers use: the mev-geth per-call `error`
+/// (an EMPTY string on success) and the bundle-transaction `revertReason` (with
+/// its `snake_case` spelling). Matched by KEY at any depth, because the answers
+/// nest differently — reth returns blocks → calls → result objects, the searcher
+/// docs return a block map carrying `calls` — so one structural walk reads both.
+const LEG_FAILURE_KEYS: [&str; 3] = ["error", "revertReason", "revert_reason"];
+
+/// Does a failure-keyed field carry a report? `null` and the empty string are
+/// the shapes' "no error" spellings; anything else is a report.
+fn reports_failure(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(reason) => !reason.is_empty(),
+        _ => true,
+    }
+}
+
+/// Is this field a leg-OUTCOME marker — evidence that a leg ran and reported —
+/// as opposed to a failure report? reth's per-call `value`, the searcher docs'
+/// `returnData` (presence only: its bytes are never read), and the `null`/empty
+/// spellings of the failure keys all say a leg produced a result.
+fn is_leg_marker(key: &str, value: &serde_json::Value) -> bool {
+    match key {
+        "value" | "returnData" => !value.is_null(),
+        _ => LEG_FAILURE_KEYS.contains(&key) && !reports_failure(value),
+    }
+}
+
+/// Does the answer carry at least one leg-outcome marker anywhere? Without one a
+/// container reports no verdict at all: an empty object, an empty array, or a
+/// result of unrelated fields must never read as a pass.
+fn any_leg_marker(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(items) => items.iter().any(any_leg_marker),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .any(|(key, value)| is_leg_marker(key, value) || any_leg_marker(value)),
+        _ => false,
+    }
+}
+
+/// Read a successful JSON-RPC `result` as the bundle's verdict.
+///
+/// Read STRUCTURALLY: the failure keys decide, and `returnData` is consulted for
+/// PRESENCE only — it carries the legs' return bytes, so a payload that happens
+/// to spell "error" (or an endpoint echoing the word in a field) is ordinary
+/// data, never a failure report. Nothing here searches serialized text.
+///
+/// A pass needs positive evidence: at least one leg-outcome marker (see
+/// [`is_leg_marker`]). A container with none — empty, or only unrelated fields —
+/// carries no verdict and is [`BundleSimAnswer::Unusable`], so an unreadable
+/// answer can never admit a candidate.
+fn classify_result(result: &serde_json::Value) -> BundleSimAnswer {
+    fn any_failure(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Array(items) => items.iter().any(any_failure),
+            serde_json::Value::Object(map) => map.iter().any(|(key, value)| {
+                (LEG_FAILURE_KEYS.contains(&key.as_str()) && reports_failure(value))
+                    || any_failure(value)
+            }),
+            _ => false,
+        }
+    }
+
+    if !matches!(
+        result,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    ) {
+        // A null/scalar `result` is an endpoint that answered nothing: no
+        // evidence about the bundle and none about the envelope.
+        return BundleSimAnswer::Unusable;
+    }
+    if any_failure(result) {
+        BundleSimAnswer::Reverted
+    } else if any_leg_marker(result) {
+        BundleSimAnswer::Passed
+    } else {
+        // No leg reported anything: no bundle verdict and no envelope evidence.
+        BundleSimAnswer::Unusable
+    }
+}
+
+/// Read a FAILED `eth_callMany` request: the two shape codes are the only
+/// negotiation evidence, an EVM revert is the bundle's verdict (the envelope
+/// parsed far enough to execute it), and every other failure is the endpoint
+/// failing.
+fn classify_error(error: &ProviderError) -> BundleSimAnswer {
+    match error {
+        ProviderError::RpcError { code, .. }
+            if *code == METHOD_NOT_FOUND_CODE || *code == INVALID_PARAMS_CODE =>
+        {
+            BundleSimAnswer::ShapeRefused
+        }
+        ProviderError::ExecutionReverted { .. } => BundleSimAnswer::Reverted,
+        _ => BundleSimAnswer::Unusable,
+    }
+}
+
+/// One endpoint's envelope negotiation state.
+struct EndpointShape {
+    /// The envelope that proved itself by executing a bundle.
+    shape: ParkingMutex<Option<BundleSimShape>>,
+    /// Single-flight: one prober per endpoint. The permit serializes PROBES,
+    /// never cache reads — the shape and memo locks are released before a
+    /// request is awaited — so a slow endpoint stalls only the frames already
+    /// waiting for its verdict, and concurrent first frames cannot each send a
+    /// probe pair.
+    probe: tokio::sync::Mutex<()>,
+}
+
+impl Default for EndpointShape {
+    fn default() -> Self {
+        Self {
+            shape: ParkingMutex::new(None),
+            probe: tokio::sync::Mutex::new(()),
+        }
+    }
+}
+
+impl EndpointShape {
+    fn negotiated(&self) -> Option<BundleSimShape> {
+        *self.shape.lock()
+    }
+
+    fn settle(&self, shape: BundleSimShape) {
+        *self.shape.lock() = Some(shape);
+    }
+
+    fn forget(&self) {
+        *self.shape.lock() = None;
+    }
+}
+
+/// The process-scoped endpoint-capability memo: which bundle envelope each
+/// `eth_callMany` endpoint accepts.
+///
+/// Scope and identity: the frame path reaches the gate holding only the sim
+/// provider (there is no capability handle to thread through the driver), and
+/// the boot resolves ONE endpoint string per consumer, so the provider's
+/// `rpc_url()` is the identity the memo keys. Two spellings of one node
+/// negotiate twice — one duplicated probe, never a wrong verdict. The map is
+/// bounded by the process's endpoint set, so it needs no eviction.
+#[derive(Default)]
+struct BundleSimCaps {
+    endpoints: ParkingMutex<HashMap<String, Arc<EndpointShape>>>,
+}
+
+impl BundleSimCaps {
+    /// The one memo the frame path reaches without threading a handle.
+    fn shared() -> &'static Self {
+        static SHARED: std::sync::OnceLock<BundleSimCaps> = std::sync::OnceLock::new();
+        SHARED.get_or_init(Self::default)
+    }
+
+    fn endpoint(&self, endpoint: &str) -> Arc<EndpointShape> {
+        let mut endpoints = self.endpoints.lock();
+        Arc::clone(
+            endpoints
+                .entry(endpoint.to_string())
+                .or_insert_with(|| Arc::new(EndpointShape::default())),
+        )
+    }
+}
+
+/// The target-then-backrun call objects the sim executes atomically. A head-only
+/// sim of the backrun alone asks the wrong question: a legitimate backrun's
+/// profit exists ONLY after the target lands.
+fn sim_transactions(
     ev: &BackrunFeedEvent,
     exec: Address,
     owner: Address,
     cd: &Bytes,
-) -> bool {
+) -> Vec<serde_json::Value> {
     let target_call = serde_json::json!({
         "from": format!("0x{}", alloy::hex::encode(ev.from)),
         "to": format!("0x{}", alloy::hex::encode(ev.to.unwrap_or_default())),
@@ -899,27 +1122,96 @@ pub async fn simulate_candidate(
     });
     let backrun_call =
         degenbot_submission::bundle::backrun_sim_call(owner, exec, cd, 900_000, 30_000_000_000);
-    let params = degenbot_submission::bundle::eth_call_many_bundle_sim_params(
-        &[target_call, backrun_call],
-        "latest",
-    );
-    // params[0] = the bundle object (doc shape); the mev-geth shape wraps
-    // it in the blocks list.
-    let mut blocks_list = params.clone();
-    if let Some(arr) = blocks_list.as_array_mut() {
-        if let Some(first) = arr.first().cloned() {
-            arr[0] = serde_json::json!([first]);
-        }
+    vec![target_call, backrun_call]
+}
+
+/// One `eth_callMany` attempt in one envelope.
+async fn send_bundle_sim(
+    provider: &AlloyProvider,
+    shape: BundleSimShape,
+    transactions: &[serde_json::Value],
+) -> BundleSimAnswer {
+    match provider
+        .make_request("eth_callMany", shape.params(transactions, "latest"))
+        .await
+    {
+        Ok(result) => classify_result(&result),
+        Err(error) => classify_error(&error),
     }
-    for attempt in [params, blocks_list] {
-        if let Ok(resp) = sim_provider.make_request("eth_callMany", attempt).await {
-            let txt = serde_json::to_string(&resp).unwrap_or_default();
-            if !txt.contains("error") {
+}
+
+/// Probe this endpoint's envelopes until one answers with more than a shape
+/// refusal, memoizing the envelope that proves itself.
+///
+/// A waiting frame re-reads the memo after taking the permit, so it spends at
+/// most one request on the verdict the prober ahead of it settled. `skip` is the
+/// envelope this call already saw refused (the stale-memo path): that refusal is
+/// fresh evidence, so it is not re-probed here.
+async fn negotiate_shape(
+    endpoint: &EndpointShape,
+    provider: &AlloyProvider,
+    transactions: &[serde_json::Value],
+    skip: Option<BundleSimShape>,
+) -> bool {
+    let _flight = endpoint.probe.lock().await;
+    let shapes: Vec<BundleSimShape> = match endpoint.negotiated() {
+        Some(shape) => vec![shape],
+        None => BundleSimShape::PROBE_ORDER
+            .iter()
+            .copied()
+            .filter(|shape| Some(*shape) != skip)
+            .collect(),
+    };
+    for shape in shapes {
+        match send_bundle_sim(provider, shape, transactions).await {
+            BundleSimAnswer::Passed => {
+                endpoint.settle(shape);
                 return true;
             }
+            BundleSimAnswer::Reverted => {
+                endpoint.settle(shape);
+                return false;
+            }
+            BundleSimAnswer::Unusable => return false,
+            BundleSimAnswer::ShapeRefused => {}
         }
     }
     false
+}
+
+/// Does `[target, backrun]` survive as one bundle? (read/sim only.)
+///
+/// The gate negotiates the endpoint's `eth_callMany` envelope ONCE, then issues
+/// one request per candidate in the shape that endpoint proved it parses. A
+/// shape refusal is the only answer worth another envelope; a bundle revert is
+/// the candidate's verdict and an endpoint failure is the endpoint's. Neither
+/// reads as "the bundle reverted", and neither is re-probed.
+pub async fn simulate_candidate(
+    sim_provider: &AlloyProvider,
+    ev: &BackrunFeedEvent,
+    exec: Address,
+    owner: Address,
+    cd: &Bytes,
+) -> bool {
+    let transactions = sim_transactions(ev, exec, owner, cd);
+    let endpoint = BundleSimCaps::shared().endpoint(sim_provider.rpc_url());
+
+    // The negotiated path: ONE request per candidate.
+    if let Some(shape) = endpoint.negotiated() {
+        match send_bundle_sim(sim_provider, shape, &transactions).await {
+            BundleSimAnswer::Passed => return true,
+            BundleSimAnswer::Reverted | BundleSimAnswer::Unusable => return false,
+            // The endpoint refused an envelope it accepted before: the memo is
+            // stale (an operator repointed the url, the tier changed). Drop it
+            // and probe the REMAINING envelope under the single-flight gate —
+            // never the one that just refused this call.
+            BundleSimAnswer::ShapeRefused => {
+                endpoint.forget();
+                return negotiate_shape(&endpoint, sim_provider, &transactions, Some(shape)).await;
+            }
+        }
+    }
+    negotiate_shape(&endpoint, sim_provider, &transactions, None).await
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1889,9 +2181,47 @@ mod tests {
         }
     }
 
-    /// Drive the gate against one scripted endpoint and return whether it
-    /// admitted the bundle plus the exact request params it sent.
+    /// One scripted endpoint plus its provider, reusable across candidates: the
+    /// envelope memo is per endpoint, so a second candidate must ride the same
+    /// provider to prove the memo is what spares it a probe.
     #[expect(clippy::expect_used, reason = "test fixtures fail loudly")]
+    async fn gate_fixture(
+        dir: &std::path::Path,
+        reply: impl Fn(&serde_json::Value) -> Result<serde_json::Value, (i64, String)>
+            + Send
+            + Sync
+            + 'static,
+    ) -> (AlloyProvider, RequestLog) {
+        let (path, log) = recording_ipc_node(dir, reply);
+        let provider =
+            AlloyProvider::new(&format!("ipc://{}", path.display()), DEFAULT_MAX_RETRIES)
+                .await
+                .expect("a scripted socket builds a provider");
+        (provider, log)
+    }
+
+    /// One gate call, one candidate.
+    async fn gate(provider: &AlloyProvider) -> bool {
+        simulate_candidate(
+            provider,
+            &sim_frame(),
+            Address::repeat_byte(0x44),
+            Address::repeat_byte(0x55),
+            &Bytes::from(vec![0x01, 0x02]),
+        )
+        .await
+    }
+
+    /// The params of every request the fixture node received.
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    fn sent(log: &RequestLog) -> Vec<serde_json::Value> {
+        log.lock()
+            .expect("the recording lock is not poisoned")
+            .clone()
+    }
+
+    /// Drive the gate once against a fresh scripted endpoint and return whether
+    /// it admitted the bundle plus the exact request params it sent.
     async fn run_gate(
         dir: &std::path::Path,
         reply: impl Fn(&serde_json::Value) -> Result<serde_json::Value, (i64, String)>
@@ -1899,24 +2229,9 @@ mod tests {
             + Sync
             + 'static,
     ) -> (bool, Vec<serde_json::Value>) {
-        let (path, log) = recording_ipc_node(dir, reply);
-        let provider =
-            AlloyProvider::new(&format!("ipc://{}", path.display()), DEFAULT_MAX_RETRIES)
-                .await
-                .expect("a scripted socket builds a provider");
-        let admitted = simulate_candidate(
-            &provider,
-            &sim_frame(),
-            Address::repeat_byte(0x44),
-            Address::repeat_byte(0x55),
-            &Bytes::from(vec![0x01, 0x02]),
-        )
-        .await;
-        let requests = log
-            .lock()
-            .expect("the recording lock is not poisoned")
-            .clone();
-        (admitted, requests)
+        let (provider, log) = gate_fixture(dir, reply).await;
+        let admitted = gate(&provider).await;
+        (admitted, sent(&log))
     }
 
     /// The fallback is what makes reth work: an endpoint that rejects the
@@ -2048,6 +2363,345 @@ mod tests {
             "the revert came back on the mev-geth shape, distinct from the \
              method-missing case: {:?}",
             requests[1]
+        );
+    }
+
+    // ── the typed negotiation: envelope, answer, memo ───────────────────
+    //
+    // After negotiation the gate's contract is: one request per candidate, in
+    // the shape this endpoint proved it parses; a bundle revert is the
+    // candidate's own verdict; and only a SHAPE refusal is worth another
+    // envelope. The classifier cases drive the reader with no I/O; the socket
+    // cases pin what actually goes on the wire, across calls.
+
+    use super::{classify_error, classify_result, BundleSimAnswer, BundleSimShape};
+
+    /// Each envelope is its own documented wire form, built from the submission
+    /// crate's one bundle-sim params authority.
+    #[test]
+    fn each_envelope_carries_its_documented_shape() {
+        let txs = vec![serde_json::json!({"from": "0x0000000000000000000000000000000000000001"})];
+
+        let doc = BundleSimShape::DocObject.params(&txs, "latest");
+        let list = BundleSimShape::MevGethList.params(&txs, "latest");
+
+        assert!(
+            is_doc_shape(&doc),
+            "the object shape leads with the bundle: {doc}"
+        );
+        assert!(
+            is_mev_geth_shape(&list),
+            "the list shape wraps the bundle in a blocks list: {list}"
+        );
+        assert!(
+            !is_mev_geth_shape(&doc),
+            "the object shape is not a blocks list: {doc}"
+        );
+        assert!(
+            !is_doc_shape(&list),
+            "the list shape is not the bare bundle object: {list}"
+        );
+        assert_eq!(
+            doc[1], list[1],
+            "both envelopes carry the same state context"
+        );
+    }
+
+    /// Success is read structurally: `returnData` carries data, and an EMPTY
+    /// `error` (mev-geth's success spelling) is not a report. The rule this
+    /// replaces — serialize the whole response and look for the word "error" —
+    /// called every one of these a failure.
+    #[test]
+    fn a_successful_bundle_reads_as_a_pass_whatever_its_data_spells() {
+        // reth's measured success shape: blocks → calls → the leg's value only.
+        assert_eq!(
+            classify_result(&serde_json::json!([[{"value": "0x"}]])),
+            BundleSimAnswer::Passed
+        );
+        // `returnData` hex spelling "error", a decoded echo of the word, an
+        // empty `error` string and a null `revertReason`: all ordinary data.
+        assert_eq!(
+            classify_result(&serde_json::json!([{
+                "calls": [
+                    {"returnData": "0x6572726f72", "error": ""},
+                    {"returnData": "execution succeeded, no error", "revertReason": null},
+                ]
+            }])),
+            BundleSimAnswer::Passed
+        );
+        // A null result is not a bundle verdict, so it is no evidence at all.
+        assert_eq!(
+            classify_result(&serde_json::Value::Null),
+            BundleSimAnswer::Unusable
+        );
+    }
+
+    /// A container that reports no leg outcome is no verdict: an empty object,
+    /// an empty array, a container of unrelated fields, or a leg list that is
+    /// itself empty. Reading these as a pass would keep a false positive alive
+    /// under structural parsing precisely where the shape is unreadable.
+    #[test]
+    fn an_empty_or_unrelated_result_carries_no_verdict() {
+        for result in [
+            serde_json::json!({}),
+            serde_json::json!([]),
+            serde_json::json!([{"calls": []}]),
+            serde_json::json!({"0x1": {"calls": []}}),
+            serde_json::json!({"stateBlockNumber": 1, "totalGasUsed": 21000}),
+            serde_json::json!([[{"gasUsed": 21000, "status": "0x1"}]]),
+        ] {
+            assert_eq!(
+                classify_result(&result),
+                BundleSimAnswer::Unusable,
+                "no leg outcome is reported here: {result}"
+            );
+        }
+    }
+
+    /// A leg that reports failure is the bundle reverting, at either documented
+    /// nesting (reth's block list, the searcher docs' `calls`).
+    #[test]
+    fn a_reported_leg_failure_is_the_bundle_reverting() {
+        // reth's measured revert shape.
+        assert_eq!(
+            classify_result(&serde_json::json!([[{"error": "execution reverted"}]])),
+            BundleSimAnswer::Reverted
+        );
+        assert_eq!(
+            classify_result(&serde_json::json!({
+                "0x1": {"calls": [{"revertReason": "ERC20: transfer amount exceeds balance"}]}
+            })),
+            BundleSimAnswer::Reverted
+        );
+        assert_eq!(
+            classify_result(&serde_json::json!([{"calls": [{"error": {"code": -32000}}]}])),
+            BundleSimAnswer::Reverted,
+            "an object-valued error field is still a report"
+        );
+    }
+
+    /// Only the two shape codes license another envelope. A method-level EVM
+    /// revert is the bundle's verdict (the envelope parsed far enough to run
+    /// it), and a transport or unrelated RPC failure is the endpoint failing —
+    /// never shape evidence.
+    #[test]
+    fn only_a_shape_refusal_licenses_another_envelope() {
+        use degenbot_core::errors::ProviderError;
+
+        let rpc = |code: i64, message: &str| ProviderError::RpcError {
+            code,
+            message: message.to_string(),
+        };
+
+        assert_eq!(
+            classify_error(&rpc(-32601, "Method not found")),
+            BundleSimAnswer::ShapeRefused,
+            "a method-missing endpoint is the negotiation candidate"
+        );
+        assert_eq!(
+            classify_error(&rpc(-32602, "Invalid params")),
+            BundleSimAnswer::ShapeRefused,
+            "reth's answer to the object shape"
+        );
+        assert_eq!(
+            classify_error(&ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "execution reverted".to_string(),
+            }),
+            BundleSimAnswer::Reverted,
+            "a method-level revert is the bundle's failure, not a shape refusal"
+        );
+        assert_eq!(
+            classify_error(&rpc(-32000, "nonce too low")),
+            BundleSimAnswer::Unusable
+        );
+        assert_eq!(
+            classify_error(&ProviderError::Timeout {
+                message: "timed out".to_string(),
+            }),
+            BundleSimAnswer::Unusable
+        );
+    }
+
+    /// The negotiated doc shape costs ONE request per candidate: the second
+    /// frame neither re-probes nor falls back.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_negotiated_doc_shape_costs_one_request_per_candidate() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (provider, log) = gate_fixture(dir.path(), |_params| {
+            Ok(serde_json::json!([[{"value": "0x"}]]))
+        })
+        .await;
+
+        assert!(gate(&provider).await, "the first candidate passes");
+        assert!(gate(&provider).await, "the second candidate passes");
+
+        let requests = sent(&log);
+        assert_eq!(requests.len(), 2, "one request per candidate: {requests:?}");
+        assert!(
+            requests.iter().all(is_doc_shape),
+            "the doc shape is the memoized one: {requests:?}"
+        );
+    }
+
+    /// reth: the object shape is refused once, then every candidate rides the
+    /// list shape the endpoint proved it parses.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_reth_endpoint_is_probed_once_then_served_the_list_shape() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (provider, log) = gate_fixture(dir.path(), |params| {
+            if is_doc_shape(params) {
+                Err((-32602, "invalid type: map, expected a sequence".to_string()))
+            } else {
+                Ok(serde_json::json!([[{"value": "0x"}]]))
+            }
+        })
+        .await;
+
+        assert!(gate(&provider).await, "the first candidate passes");
+        assert!(gate(&provider).await, "the second candidate passes");
+
+        let requests = sent(&log);
+        assert_eq!(
+            requests.len(),
+            3,
+            "one refused object probe, then one list request per candidate: {requests:?}"
+        );
+        assert!(is_doc_shape(&requests[0]), "the probe leads: {requests:?}");
+        assert!(
+            is_mev_geth_shape(&requests[1]) && is_mev_geth_shape(&requests[2]),
+            "both candidates ride the negotiated list shape: {requests:?}"
+        );
+    }
+
+    /// A reverted bundle proves the envelope too: the endpoint parsed and ran
+    /// it. The memo records that, so the next candidate is not re-probed — and
+    /// the candidate still fails.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_reverted_bundle_proves_the_shape_and_is_not_re_probed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (provider, log) = gate_fixture(dir.path(), |_params| {
+            Ok(serde_json::json!([[{"error": "execution reverted"}]]))
+        })
+        .await;
+
+        assert!(!gate(&provider).await, "a reverted bundle never passes");
+        assert!(!gate(&provider).await, "the second candidate reverts too");
+
+        let requests = sent(&log);
+        assert_eq!(
+            requests.len(),
+            2,
+            "a revert is the bundle's verdict, not a shape refusal: {requests:?}"
+        );
+        assert!(
+            requests.iter().all(is_doc_shape),
+            "the revert proved the doc shape, so it is never re-probed: {requests:?}"
+        );
+    }
+
+    /// An unrelated JSON-RPC error must not masquerade as a shape refusal: it
+    /// fails closed on the FIRST request, with no fallback probe spent.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn an_unrelated_rpc_error_is_not_shape_evidence() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (provider, log) = gate_fixture(dir.path(), |_params| {
+            Err((-32000, "nonce too low".to_string()))
+        })
+        .await;
+
+        assert!(!gate(&provider).await, "the failure fails closed");
+
+        let requests = sent(&log);
+        assert_eq!(
+            requests.len(),
+            1,
+            "an unrelated RPC error spends no fallback probe: {requests:?}"
+        );
+    }
+
+    /// An endpoint that stops accepting the memoized envelope renegotiates once
+    /// instead of dropping every candidate forever — and does not re-probe the
+    /// shape that just refused this call.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn a_memoized_shape_the_endpoint_stops_accepting_is_renegotiated_once() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let stale = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stale);
+        let (provider, log) = gate_fixture(dir.path(), move |params| {
+            if is_doc_shape(params) && flag.load(Ordering::Relaxed) {
+                Err((-32601, "Method not found".to_string()))
+            } else {
+                Ok(serde_json::json!([[{"value": "0x"}]]))
+            }
+        })
+        .await;
+
+        assert!(
+            gate(&provider).await,
+            "the doc shape admits the first frame"
+        );
+        stale.store(true, Ordering::Relaxed);
+        assert!(
+            gate(&provider).await,
+            "the gate renegotiates rather than dropping every candidate forever"
+        );
+
+        let requests = sent(&log);
+        assert_eq!(
+            requests.len(),
+            3,
+            "the memoized request, the stale refusal, then the remaining envelope: {requests:?}"
+        );
+        assert!(is_doc_shape(&requests[0]), "{requests:?}");
+        assert!(
+            is_doc_shape(&requests[1]),
+            "the stale probe is the memoized shape: {requests:?}"
+        );
+        assert!(
+            is_mev_geth_shape(&requests[2]),
+            "renegotiation tries the envelope not just refused: {requests:?}"
+        );
+    }
+
+    /// Concurrent first frames negotiate ONCE: the second waits for the verdict
+    /// and spends exactly one request on the negotiated shape.
+    #[tokio::test]
+    #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
+    async fn concurrent_first_frames_negotiate_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (provider, log) = gate_fixture(dir.path(), |params| {
+            if is_doc_shape(params) {
+                Err((-32601, "Method not found".to_string()))
+            } else {
+                Ok(serde_json::json!([[{"value": "0x"}]]))
+            }
+        })
+        .await;
+
+        let (first, second) = tokio::join!(gate(&provider), gate(&provider));
+        assert!(first && second, "both candidates ride the negotiated shape");
+
+        let requests = sent(&log);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|params| is_doc_shape(params))
+                .count(),
+            1,
+            "one probe for the endpoint, not one per waiting frame: {requests:?}"
+        );
+        assert_eq!(
+            requests.len(),
+            3,
+            "the single refused probe, then one list request per candidate: {requests:?}"
         );
     }
 }
