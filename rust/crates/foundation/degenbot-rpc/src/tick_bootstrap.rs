@@ -27,13 +27,12 @@
 //! liquidity). The transports: [`AlloyProvider`] here, and the bot core's
 //! `ConstructionIo` (paced, `PyBotIo`-mirroring) over the same trait. One
 //! adapter ([`TransportTickWordSource`]) drives either transport, so the word
-//! range check, the error bucketing and the bridge exist once. The
-//! loop is also where the unreadable-bitmap contract decision lives
-//! ([`UnreadableBitmapPolicy`]): the registration arm degrades a malformed
-//! bitmap return to an empty word (the legacy graceful fallback — the pool
-//! registers Sparse instead of failing the build), while the miss path
-//! refuses. Before this loop the two arms carried divergent hand-rolled
-//! copies of the enumeration.
+//! range check, the error bucketing and the bridge exist once. The loop is
+//! also where the bitmap-failure contract lives: a bitmap read that fails to
+//! decode propagates the transport's error UNCHANGED, so no caller can
+//! reinterpret malformed return data as empty tick state — only a DECODED zero
+//! bitmap is a known-empty word (`Ok(None)`). Before this loop the two arms
+//! carried divergent hand-rolled copies of the enumeration.
 //!
 //! ## Sync bridging
 //!
@@ -57,29 +56,6 @@ use degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordS
 
 use crate::abi::{ContractRead, IUniswapV3Pool, IUniswapV4StateView, TickLiquidity};
 use crate::provider::AlloyProvider;
-
-/// The policy for a bitmap read whose return data fails to decode — the
-/// graceful-degrade contract decision for the tick-word choreography.
-///
-/// The two arms of the tick-word read disagree on purpose:
-///
-/// - the **registration arm** (`bootstrap_{v3,v4}_tick_map`, the build path)
-///   tolerates it: a provider that cannot serve `tickBitmap` registers the
-///   pool Sparse (`tick_data=None`, empty word) instead of failing the
-///   build — the legacy builder's graceful fallback, load-bearing for
-///   degraded providers;
-/// - the **miss path** (sparse swap simulation backfill) refuses: an
-///   unfetchable word is a fetch failure that must surface, not a silently
-///   empty region the walker would treat as authoritative and cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnreadableBitmapPolicy {
-    /// A malformed bitmap return fails the whole word read.
-    Refuse,
-    /// A malformed bitmap return degrades to an empty word (no initialized
-    /// ticks). Only the bitmap read is tolerated — a malformed TICK read
-    /// still fails the word under both policies.
-    TreatAsEmpty,
-}
 
 /// The two raw contract reads one tick-word choreography needs, addressed
 /// by the pool descriptor the key carries.
@@ -108,9 +84,9 @@ pub trait TickWordTransport: Send + Sync {
     ) -> impl Future<Output = Result<(U128, i128), ProviderError>> + Send;
 }
 
-/// The ONE tick-word choreography: read the bitmap (policy-guarded), skip
-/// an empty word, enumerate the 256 bits, read each initialized tick's
-/// liquidity, and stamp every `TickInfo` with `block`.
+/// The ONE tick-word choreography: read the bitmap, skip an empty word,
+/// enumerate the 256 bits, read each initialized tick's liquidity, and stamp
+/// every `TickInfo` with `block`.
 ///
 /// Written once so the registration arm and the miss path cannot diverge;
 /// the transports (`AlloyProvider`, the bot core's `ConstructionIo`)
@@ -119,27 +95,22 @@ pub trait TickWordTransport: Send + Sync {
 /// verdict ([`TickWordFetchError::OutOfRange`] at the
 /// [`TickWordSource`] boundary).
 ///
+/// A decoded zero bitmap is a known-empty word (`Ok(None)`). A bitmap read
+/// that fails refuses the whole word, decode failures included: malformed
+/// return data is never reinterpreted as empty tick state, because an empty
+/// word reads as "no initialized ticks here" to every downstream walker.
+///
 /// # Errors
 ///
-/// Returns the transport's [`ProviderError`] unchanged. The only
-/// reinterpretation is the [`UnreadableBitmapPolicy::TreatAsEmpty`] arm: a
-/// `DecodingError` on the bitmap read becomes an empty word.
+/// Returns the transport's [`ProviderError`] unchanged — the bitmap read's
+/// failure and every tick read's failure propagate as-is.
 pub async fn fetch_tick_word_via<T: TickWordTransport>(
     transport: &T,
     key: &TickWordKey,
     word: i16,
     block: u64,
-    policy: UnreadableBitmapPolicy,
 ) -> Result<Option<FetchedTickWord>, ProviderError> {
-    let bitmap = match transport.read_bitmap(key, word, block).await {
-        Ok(b) => b,
-        Err(ProviderError::DecodingError { .. })
-            if policy == UnreadableBitmapPolicy::TreatAsEmpty =>
-        {
-            U256::ZERO
-        }
-        Err(e) => return Err(e),
-    };
+    let bitmap = transport.read_bitmap(key, word, block).await?;
     if bitmap.is_zero() {
         return Ok(None);
     }
@@ -171,9 +142,9 @@ pub async fn fetch_tick_word_via<T: TickWordTransport>(
 /// shared choreography loop and sync-bridged for the trait's synchronous call
 /// sites.
 ///
-/// The word-range check, the unreadable-bitmap policy (a miss refuses), the
-/// error bucketing, and the bridge are therefore identical for every
-/// transport; a source differs only in the transport it wraps —
+/// The word-range check, the bitmap-failure refusal, the error bucketing,
+/// and the bridge are therefore identical for every transport; a source
+/// differs only in the transport it wraps —
 /// [`AlloyTickWordSource`] over an [`AlloyProvider`], the bot core's live-miss
 /// source over its construction I/O seam.
 pub struct TransportTickWordSource<T> {
@@ -308,16 +279,9 @@ impl<T: TickWordTransport> TickWordSource for TransportTickWordSource<T> {
         // range cannot name a real bitmap slot.
         let word_i16 = i16::try_from(word).map_err(|_| TickWordFetchError::OutOfRange)?;
 
-        // The miss path refuses: an unfetchable word must surface as a fetch
-        // error, not degrade to a silently empty region the walker would cache
-        // as authoritative.
-        let read = fetch_tick_word_via(
-            &self.transport,
-            key,
-            word_i16,
-            block,
-            UnreadableBitmapPolicy::Refuse,
-        );
+        // An unfetchable word must surface as a fetch error, not degrade to a
+        // silently empty region the walker would cache as authoritative.
+        let read = fetch_tick_word_via(&self.transport, key, word_i16, block);
 
         bridged_block_on(read).map_err(map_provider_err)
     }
@@ -643,6 +607,97 @@ mod tests {
         assert!(
             fetched.expect("ok").is_none(),
             "the all-zero bitmap is a known-empty word"
+        );
+    }
+
+    /// A transport with a scripted bitmap answer. The tick read is
+    /// deliberately an error: a bitmap-only verdict that reached it would
+    /// fail the assertion instead of silently passing.
+    #[derive(Clone)]
+    struct ScriptedBitmapTransport {
+        bitmap: Result<U256, ProviderError>,
+    }
+
+    impl TickWordTransport for ScriptedBitmapTransport {
+        fn read_bitmap(
+            &self,
+            _key: &TickWordKey,
+            _word: i16,
+            _block: u64,
+        ) -> impl Future<Output = Result<U256, ProviderError>> + Send {
+            std::future::ready(self.bitmap.clone())
+        }
+
+        fn read_tick(
+            &self,
+            _key: &TickWordKey,
+            _tick: i32,
+            _block: u64,
+        ) -> impl Future<Output = Result<(U128, i128), ProviderError>> + Send {
+            std::future::ready(Err(ProviderError::ExecutionReverted {
+                code: -32000,
+                message: "a bitmap verdict has no tick to read".into(),
+            }))
+        }
+    }
+
+    /// Malformed bitmap return data REFUSES the word: the decode failure
+    /// crosses the shared choreography unchanged and buckets to
+    /// `InvalidReturn` at the source boundary. Reinterpreting it as empty
+    /// tick state would hand every caller a word the provider never served.
+    #[test]
+    fn malformed_tick_bitmap_refuses_with_the_transport_error_unchanged() {
+        let transport = ScriptedBitmapTransport {
+            bitmap: Err(ProviderError::DecodingError {
+                message: "tickBitmap(int16) decode: malformed return data".into(),
+            }),
+        };
+        let key = TickWordKey::V3 {
+            address: V3_POOL,
+            tick_spacing: 1,
+        };
+
+        let error = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_tick_word_via(&transport, &key, 0, 100))
+            .expect_err("a malformed bitmap must refuse the word");
+        assert!(
+            matches!(
+                &error,
+                ProviderError::DecodingError { message }
+                    if message == "tickBitmap(int16) decode: malformed return data"
+            ),
+            "the decode error must cross the choreography unchanged, got {error:?}"
+        );
+
+        let source = TransportTickWordSource::from_transport(transport);
+        let refused = source
+            .fetch_tick_word(&key, 0, 100)
+            .expect_err("the source boundary refuses a decode failure");
+        assert_eq!(
+            refused,
+            TickWordFetchError::InvalidReturn,
+            "the decode bucket reaches the boundary as a refusal, never an empty word"
+        );
+    }
+
+    /// The genuinely empty word stays distinct from the malformed one: a
+    /// decoded zero bitmap is a successful read answering `Ok(None)`.
+    #[test]
+    fn zero_tick_bitmap_is_a_known_empty_word_at_the_shared_choreography() {
+        let transport = ScriptedBitmapTransport {
+            bitmap: Ok(U256::ZERO),
+        };
+        let key = TickWordKey::V3 {
+            address: V3_POOL,
+            tick_spacing: 1,
+        };
+
+        let word = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_tick_word_via(&transport, &key, 0, 100))
+            .expect("a decoded zero bitmap is a successful read");
+        assert!(
+            word.is_none(),
+            "a decoded zero bitmap is a known-empty word"
         );
     }
 }

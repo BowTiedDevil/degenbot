@@ -43,7 +43,7 @@ use degenbot_rpc::abi::{
     IPoolIdentity, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix, V2Reserves, V4Slot0,
 };
 use degenbot_rpc::erc20;
-use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
+use degenbot_rpc::tick_bootstrap::fetch_tick_word_via;
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
@@ -1498,6 +1498,10 @@ fn tick_word_i16(word: i64) -> Result<i16, PoolBuilderError> {
 /// Coverage is always [`PoolTickCoverage::Sparse`] (only the single current
 /// word is seeded), so the pool is **live immediately** (decision D4) and the
 /// live-pump miss-detection backfills neighbour words during swap simulation.
+/// A DECODED zero bitmap is a genuinely empty current word. A bitmap read that
+/// fails — malformed return data included — refuses the bootstrap with the
+/// provider's error, so a pool can never register `Sparse` over tick state its
+/// provider did not serve.
 pub(crate) async fn bootstrap_tick_map(
     io: &ConstructionIo,
     key: &TickWordKey,
@@ -1511,20 +1515,11 @@ pub(crate) async fn bootstrap_tick_map(
         );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("a concentrated-liquidity tick word fits in int16");
-    // The registration arm TOLERATES an unreadable bitmap (a provider that
-    // can't serve `tickBitmap` degrades to an empty word → empty ticks →
-    // Sparse, preserving the legacy builder's graceful fallback). The policy
-    // lives in the shared loop; genuine transport/network and tick-read
-    // failures still propagate, with full error fidelity.
-    match fetch_tick_word_via(
-        io,
-        key,
-        word_i16,
-        block,
-        UnreadableBitmapPolicy::TreatAsEmpty,
-    )
-    .await?
-    {
+    // Registration and the live-miss backfill share one refusal contract: an
+    // unreadable word is a fetch failure, and only a DECODED zero bitmap is an
+    // empty word. Treating a decode failure as empty would register a Sparse
+    // pool whose current word the provider never actually served.
+    match fetch_tick_word_via(io, key, word_i16, block).await? {
         Some(fetched) => Ok((fetched.ticks, fetched.bitmap.unwrap_or(U256::ZERO))),
         None => Ok((HashMap::new(), U256::ZERO)),
     }

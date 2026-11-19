@@ -11,14 +11,13 @@
 //!
 //! The source is the SHARED adapter
 //! ([`degenbot_rpc::tick_bootstrap::TransportTickWordSource`]) over this
-//! module's [`ConstructionIo`] transport: the word-range check, the miss path's
-//! REFUSE unreadable-bitmap policy, the error bucketing, and the sync bridge
-//! live there once. The registration Chain arm
-//! (`bootstrap_{v3,v4}_tick_map`) drives the same transport-generic loop, and
-//! differs only in policy — it degrades an unreadable bitmap to an empty word
-//! (the legacy graceful fallback). This module therefore owns exactly the
-//! io-side contract reads: the ABI tick fetchers over the tick-paced
-//! [`PacedRead`] view.
+//! module's [`ConstructionIo`] transport: the word-range check, the
+//! bitmap-failure refusal, the error bucketing, and the sync bridge live there
+//! once. The registration Chain arm (`bootstrap_{v3,v4}_tick_map`) drives the
+//! same transport-generic loop over the same refusal contract — a bitmap that
+//! fails to decode propagates its error rather than becoming an empty word.
+//! This module therefore owns exactly the io-side contract reads: the ABI tick
+//! fetchers over the tick-paced [`PacedRead`] view.
 
 use std::sync::Arc;
 

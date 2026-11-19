@@ -564,9 +564,9 @@ registration-time seed and the live-miss backfill — addressed by one key value
 pool id + spacing, the word position being a per-call argument). The V4 identity carries
 its `StateView` so the registered pool can name its own read descriptor. Under the
 trait sits one transport-generic choreography (bitmap read → 256-bit enumeration →
-per-tick liquidity reads) shared by both arms; the arms differ only in the
-unreadable-bitmap policy — registration degrades to an empty word (the graceful
-fallback), the miss path refuses.
+per-tick liquidity reads) shared by both arms, refusals included: a bitmap read that
+fails to decode propagates its error unchanged, so neither arm reinterprets malformed
+return data as empty tick state; only a decoded zero bitmap is a known-empty word.
 _Avoid_: one trait per call site for one choreography; a second hand-rolled copy of
 the enumerate loop per transport; a driver-supplied fetch callback; a fetcher that
 reads the state owner it is fetching for.

@@ -1522,6 +1522,49 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
     assert!(params.tick_data.is_empty());
 }
 
+/// Malformed `tickBitmap` data refuses the V3 build: the registration
+/// bootstrap propagates the provider's decode failure, so the pool is never
+/// assembled as a `Sparse` map over a word the provider did not serve. The
+/// genuinely empty word stays the successful `Sparse` seed (the sibling
+/// on-chain assembly test above).
+#[tokio::test]
+async fn build_v3_refuses_malformed_tick_bitmap_instead_of_registering_sparse() {
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"factory()"), addr_word(TO));
+    f.set(abi::selector(b"token0()"), addr_word(TO));
+    f.set(abi::selector(b"token1()"), addr_word(SV));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::selector(b"liquidity()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    // `tickBitmap(int16)` answers one `uint256` word; four bytes is not one.
+    f.set(abi::selector(b"tickBitmap(int16)"), vec![0u8; 4]);
+    let io = io_with(f);
+
+    let error = builder::build_v3(1, TO, None, &io, Some(9_000_000))
+        .await
+        .expect_err("a malformed bitmap is a decode refusal, never an empty word");
+    assert!(
+        matches!(
+            error,
+            builder::PoolBuilderError::Rpc(ProviderError::DecodingError { .. })
+        ),
+        "expected the bitmap decode refusal, got {error:?}"
+    );
+}
+
 /// A `slot0` tick word that is not a canonical `int24` refuses the build: the
 /// pool is never registered with its tick map seeded at tick 0 instead.
 #[tokio::test]
@@ -1624,6 +1667,46 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
     // lp_fee is no longer discarded - returned from the SAME
     // head-stamped slot0 read as protocol_fee (mock slot0 has lp_fee=50).
     assert_eq!(result.lp_fee, 50);
+}
+
+/// V4 twin of the malformed-bitmap V3 build refusal: `getTickBitmap` return
+/// data that does not decode refuses the build instead of seeding an empty
+/// `Sparse` word.
+#[tokio::test]
+async fn build_v4_refuses_malformed_tick_bitmap_instead_of_registering_sparse() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+
+    let mut f = v4_door_fake();
+    // `getTickBitmap(bytes32,int16)` answers one `uint256` word; four bytes is
+    // not one.
+    f.set(abi::selector(b"getTickBitmap(bytes32,int16)"), vec![0u8; 4]);
+    let io = io_with(f);
+
+    let error = builder::build_v4(
+        builder::V4PoolBuildIdentity {
+            pool_manager: pm,
+            state_view: pm,
+            pool_id: pid,
+            currency0: TO,
+            currency1: SV,
+            fee: 500,
+            tick_spacing: 1,
+            hook_address: Address::ZERO,
+        },
+        None,
+        &io,
+        Some(11_000_000),
+    )
+    .await
+    .expect_err("a malformed bitmap is a decode refusal, never an empty word");
+    assert!(
+        matches!(
+            error,
+            builder::PoolBuilderError::Rpc(ProviderError::DecodingError { .. })
+        ),
+        "expected the bitmap decode refusal, got {error:?}"
+    );
 }
 
 /// A `TickMapDb` fake returning a canned `LiquidityMap` (V3 + V4 both query it).
@@ -3225,7 +3308,7 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
 use crate::bot_core::pool_builder::construction_door::{ConstructionVerdict, PoolConstruction};
 use crate::bot_core::pool_builder::route;
 use crate::bot_core::Bot;
-use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::{BuildFailure, RegisteredPoolFamily};
 use degenbot_substrate::state_lock::LockSite;
 
 /// The V3 construction fixture: the whole immutable batch a served rung reads
@@ -3822,6 +3905,120 @@ async fn construction_door_v4_registers_the_state_view_and_tick_word_source() {
         .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
         .is_some_and(|state| state.fetcher.is_some());
     assert!(fetcher_attached, "the door attaches the tick-word source");
+}
+
+/// The construction door refuses a V3 pool whose `tickBitmap` return data does
+/// not decode, and leaves the registry EMPTY: a malformed word must never
+/// become an empty `Sparse` map (the live-miss backfill refuses the same data).
+#[tokio::test]
+async fn construction_door_refuses_malformed_v3_tick_bitmap_without_registering() {
+    let pool = TO;
+    let mut f = FakeRpc::new();
+    f.set(abi::selector(b"token0()"), addr_word(TO));
+    f.set(abi::selector(b"token1()"), addr_word(SV));
+    f.set(
+        abi::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        abi::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::selector(b"slot0()"),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::selector(b"liquidity()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(abi::selector(b"tickBitmap(int16)"), vec![0u8; 4]);
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V3 {
+                address: pool,
+                factory: Some(TO),
+                db: None,
+                fetcher: None,
+                slot_layout: None,
+            },
+            &io,
+            Some(9_000_000),
+        )
+        .await;
+
+    assert!(
+        !verdict.is_constructed(),
+        "the malformed bitmap must refuse"
+    );
+    assert!(
+        matches!(
+            verdict.refusal(),
+            Some(route::ConstructionRefusal::Skipped(BuildFailure::Rpc(message)))
+                if message.contains("tickBitmap")
+        ),
+        "expected the bitmap decode refusal, got {:?}",
+        verdict.refusal()
+    );
+    assert!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .registered_pool_by_address(&pool)
+            .is_none(),
+        "a malformed bitmap must never register a Sparse pool"
+    );
+}
+
+/// The V4 twin: a malformed `getTickBitmap` refuses the construction door and
+/// registers nothing.
+#[tokio::test]
+async fn construction_door_refuses_malformed_v4_tick_bitmap_without_registering() {
+    let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
+    let pid: [u8; 32] = [0xcd; 32];
+
+    let mut f = v4_door_fake();
+    f.set(abi::selector(b"getTickBitmap(bytes32,int16)"), vec![0u8; 4]);
+    let io = io_with(f);
+    let bot = Bot::new(1);
+
+    let verdict = bot
+        .construct_pool(
+            &route::ConstructionRoute::generic_only(),
+            PoolConstruction::V4 {
+                pool_manager: pm,
+                pool_id: pid,
+                overrides: v4_full_overrides(pm),
+                db: None,
+            },
+            &io,
+            Some(11_000_000),
+        )
+        .await;
+
+    assert!(
+        !verdict.is_constructed(),
+        "the malformed bitmap must refuse"
+    );
+    assert!(
+        matches!(
+            verdict.refusal(),
+            Some(route::ConstructionRefusal::Skipped(BuildFailure::Rpc(message)))
+                if message.contains("getTickBitmap")
+        ),
+        "expected the bitmap decode refusal, got {:?}",
+        verdict.refusal()
+    );
+    assert!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .try_registered(pm, &pid)
+            .is_none(),
+        "a malformed bitmap must never register a Sparse pool"
+    );
 }
 
 // --- The construction door's family arms (ADR-085 D1) ---
