@@ -526,7 +526,7 @@ pub(crate) mod solve {
     use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
     use crate::solve::solve_golden_section_path_int;
-    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
+    use crate::solve::{MixedPathError, ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Balancer V2 stable pool hop (`StableSwap` invariant),
     /// ready for the stable solve branch.
@@ -585,7 +585,7 @@ pub(crate) mod solve {
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
     ) -> crate::solve::SolveArmOutcome {
-        crate::solve::SolveArmOutcome::walked(
+        crate::solve::SolveArmOutcome::from_path_solve(
             solve_balancer_stable_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -594,23 +594,30 @@ pub(crate) mod solve {
     /// Balancer stable solve — the shared golden-section template
     /// (`solve_golden_section_path_int`) over the stable math leaf
     /// (`calc_out_given_in` with a pre-computed invariant).
-    fn solve_balancer_stable_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use degenbot_math::v2::IntHopState;
-
+    fn solve_balancer_stable_path_int(
+        resolved: &ResolvedMixedPath,
+    ) -> Result<Option<SolvePathResult>, MixedPathError> {
         let hops = &resolved.hops;
 
         // V2-equivalent IntHopState per hop: stable hops use
         // balances[idx_in]/balances[idx_out] + the retained fee fraction;
         // V2 hops pass through unchanged.
-        let v2_equiv: Vec<IntHopState> = hops
+        let Some(v2_equiv) = hops
             .iter()
             .map(balancer_stable_hop_v2_equiv)
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            // The projection is the bracket HINT, not the quote: a hop it has
+            // no row for declines the search without pricing anything.
+            return Ok(None);
+        };
 
         solve_golden_section_path_int(
             &v2_equiv,
-            &|x| simulate_balancer_stable_path(x, hops),
-            &|x| simulate_balancer_stable_path_outputs(x, hops),
+            // The stable leaf is total, so this arm has no pricing failure of
+            // its own to report.
+            &|x| Ok::<U256, MixedPathError>(simulate_balancer_stable_path(x, hops)),
+            &|x| Ok::<Vec<U256>, MixedPathError>(simulate_balancer_stable_path_outputs(x, hops)),
         )
     }
 

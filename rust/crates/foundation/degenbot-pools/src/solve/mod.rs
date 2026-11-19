@@ -93,8 +93,9 @@ pub use concentrated_liquidity::WalkSolution;
 pub use mixed::solve::{solve_path, solve_path_with_min_profit, SolveOutcome};
 pub use mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType, MixedPath,
-    MixedPoolRef, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolveArmOutcome,
-    SolvePathResult, UnsupportedHopIdentity, V3SnapshotData, V4SnapshotData, INT128_MAX,
+    MixedPathError, MixedPathErrorKind, MixedPoolRef, PoolHop, ResolvedHop, ResolvedMixedPath,
+    SolidlyHopState, SolveArmOutcome, SolvePathResult, UnsupportedHopIdentity, V3SnapshotData,
+    V4SnapshotData, INT128_MAX,
 };
 // Internal plumbing: the per-family solve entry and the dispatch rows the
 // family arms and the line-derivation kernel share.

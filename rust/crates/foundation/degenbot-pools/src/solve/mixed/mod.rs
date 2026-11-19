@@ -25,7 +25,10 @@ use crate::solve::gas_floor::HopGasProfile;
 use crate::{
     BalanceVectorVariant, Caveats, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
-use degenbot_math::v2::IntHopState;
+use degenbot_math::balancer::BalancerMathError;
+use degenbot_math::solidly::SolidlyMathError;
+use degenbot_math::v2::{HopSwapError, IntHopState};
+use degenbot_uniswap::dex_identity::DexVariant;
 
 // ---------------------------------------------------------------------------
 // Snapshot data (V3/V4 registration intake)
@@ -398,21 +401,116 @@ pub struct ResolvedMixedPath {
     pub caveats: Caveats,
 }
 
-/// Result from solving a single arbitrage path.
+// ---------------------------------------------------------------------------
+// Path-simulation failures
+// ---------------------------------------------------------------------------
+
+/// One hop could not be priced: its math leaf reverted, or the path carried a
+/// hop the engine has no simulated branch for.
 ///
-/// Includes optimality data, per-hop output amounts for the encoder, and
-/// per-hop consumed input amounts for correct profit calculation and V4
-/// int128 overflow detection.
-/// The family's path-level solve return (the [`SolveFn`] row shape): the
-/// value when profitable, the typed refusal when the arm declined without
-/// walking (see [`crate::solve::concentrated_liquidity::WalkRefusal`] for the walked/unwalked boundary),
-/// plus the walk telemetry. Replaces the old
-/// `(Option<SolvePathResult>, WalkStats)` tuple, which conflated refusal with
-/// unprofitability.
+/// WHY typed: `U256::ZERO` is a legitimate quote (on-chain `getAmountOut(0) =
+/// 0`, and a dust input floors to zero), so a simulation that answered zero on
+/// failure handed the solve a number it could not tell apart from a real one —
+/// and "no profit" is the one verdict that discards a path without a trace. The
+/// failing hop's position and the engine family ride the error, so a consumer
+/// can name the leg without re-walking the path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MixedPathError {
+    /// Position of the failing hop in path order (`0` for an empty path, which
+    /// has no hop to name).
+    pub hop_index: usize,
+    /// The family engine the simulation was running — the path's dispatch row.
+    pub family: HopType,
+    /// What went wrong at that hop.
+    pub kind: MixedPathErrorKind,
+}
+
+impl MixedPathError {
+    /// Attach the path position and engine family to a hop-level failure.
+    pub(crate) fn at(kind: MixedPathErrorKind, hop_index: usize, family: HopType) -> Self {
+        Self {
+            hop_index,
+            family,
+            kind,
+        }
+    }
+}
+
+/// The failure a [`MixedPathError`] names at one hop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixedPathErrorKind {
+    /// A V2 constant-product hop's `getAmountOut` reverted (its on-chain
+    /// `SafeMath` conditions).
+    V2(HopSwapError),
+    /// A Solidly/Aerodrome/Camelot leaf reverted.
+    Solidly(SolidlyMathError),
+    /// A Balancer leaf reverted.
+    Balancer(BalancerMathError),
+    /// The hop carries a `stable` flag on a DEX whose leaves have no stable
+    /// branch: there is no math to call.
+    UnsupportedVariant { variant: DexVariant },
+    /// The path presented a hop family this engine cannot simulate — the
+    /// dispatch row and the resolved hop disagree.
+    UnexpectedHop { hop_type: HopType },
+    /// A path with no hops: there is no amount to quote. Reported at hop index
+    /// `0`.
+    EmptyPath,
+}
+
+impl core::fmt::Display for MixedPathError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Self {
+            hop_index,
+            family,
+            kind,
+        } = self;
+        write!(
+            f,
+            "mixed path hop {hop_index} ({}): {kind}",
+            family.as_tag()
+        )
+    }
+}
+
+impl std::error::Error for MixedPathError {}
+
+impl core::fmt::Display for MixedPathErrorKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::V2(error) => write!(f, "V2 constant-product leaf reverted: {error:?}"),
+            Self::Solidly(error) => write!(f, "Solidly math leaf reverted: {error:?}"),
+            Self::Balancer(error) => write!(f, "Balancer math leaf reverted: {error:?}"),
+            Self::UnsupportedVariant { variant } => {
+                write!(f, "stable flag on a DEX with no stable leaf: {variant:?}")
+            }
+            Self::UnexpectedHop { hop_type } => {
+                write!(
+                    f,
+                    "hop family this engine does not simulate: {}",
+                    hop_type.as_tag()
+                )
+            }
+            Self::EmptyPath => write!(f, "path has no hops"),
+        }
+    }
+}
+
+/// The family's path-level solve return (the [`SolveFn`] row shape): the value
+/// when profitable, the typed refusal when the arm declined without walking
+/// (see [`crate::solve::concentrated_liquidity::WalkRefusal`] for the
+/// walked/unwalked boundary), the typed hop failure when the arm ran but could
+/// not price a quote, plus the walk telemetry.
 #[derive(Debug)]
 pub struct SolveArmOutcome {
+    /// The arm's value, or `None` when it found no profit **or** could not
+    /// price one (see [`Self::error`]).
     pub result: Option<SolvePathResult>,
+    /// Set only when the surface declined the shape before any search.
     pub refusal: Option<crate::solve::concentrated_liquidity::WalkRefusal>,
+    /// Set only when the search ran and a hop could not be priced: there is no
+    /// quote to return, and the reason is a fact about the path rather than
+    /// about its profitability.
+    pub error: Option<MixedPathError>,
     pub stats: crate::solve::concentrated_liquidity::WalkStats,
 }
 
@@ -426,6 +524,7 @@ impl SolveArmOutcome {
         Self {
             result,
             refusal: None,
+            error: None,
             stats,
         }
     }
@@ -435,7 +534,25 @@ impl SolveArmOutcome {
         Self {
             result: None,
             refusal: Some(refusal),
+            error: None,
             stats: crate::solve::concentrated_liquidity::WalkStats::default(),
+        }
+    }
+
+    /// The arm's search answered a fallible simulation: the quote, or the hop
+    /// failure that stopped the arm from pricing one.
+    pub(crate) fn from_path_solve(
+        result: Result<Option<SolvePathResult>, MixedPathError>,
+        stats: crate::solve::concentrated_liquidity::WalkStats,
+    ) -> Self {
+        match result {
+            Ok(result) => Self::walked(result, stats),
+            Err(error) => Self {
+                result: None,
+                refusal: None,
+                error: Some(error),
+                stats,
+            },
         }
     }
 }

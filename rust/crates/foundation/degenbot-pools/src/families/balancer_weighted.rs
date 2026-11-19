@@ -366,7 +366,10 @@ pub(crate) mod solve {
     use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
     use crate::solve::solve_golden_section_path_int;
-    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
+    use crate::solve::{
+        HopType, MixedPathError, MixedPathErrorKind, ResolvedHop, ResolvedMixedPath,
+        SolvePathResult,
+    };
 
     /// Resolved state for a Balancer V2 weighted pool hop, ready for the
     /// weighted solve branch. Carries everything the
@@ -429,7 +432,7 @@ pub(crate) mod solve {
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
     ) -> crate::solve::SolveArmOutcome {
-        crate::solve::SolveArmOutcome::walked(
+        crate::solve::SolveArmOutcome::from_path_solve(
             solve_balancer_weighted_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -443,21 +446,27 @@ pub(crate) mod solve {
     /// V2-equivalent bracket hint treats each weighted hop as a constant-product
     /// hop — exact for 50/50 pools, approximate for other weights (a narrowing
     /// hint only, never a rejection).
-    fn solve_balancer_weighted_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use degenbot_math::v2::IntHopState;
-
+    fn solve_balancer_weighted_path_int(
+        resolved: &ResolvedMixedPath,
+    ) -> Result<Option<SolvePathResult>, MixedPathError> {
         let hops = &resolved.hops;
         if hops.len() < 2 {
-            return None;
+            return Ok(None);
         }
 
         // V2-equivalent IntHopState per hop: weighted hops use
         // balance_in/balance_out + the retained fee fraction; V2 hops pass
         // through unchanged.
-        let v2_equiv: Vec<IntHopState> = hops
+        let Some(v2_equiv) = hops
             .iter()
             .map(balancer_weighted_hop_v2_equiv)
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            // The projection is the bracket HINT, not the quote: a fee pair
+            // outside the hint's `u64` domain (or a hop the hint has no row
+            // for) declines the search without pricing anything.
+            return Ok(None);
+        };
 
         solve_golden_section_path_int(
             &v2_equiv,
@@ -494,73 +503,122 @@ pub(crate) mod solve {
     }
 
     /// Simulate a Balancer-weighted-or-V2 path, returning only the final output.
-    #[must_use]
-    pub(crate) fn simulate_balancer_weighted_path(x: U256, hops: &[ResolvedHop]) -> U256 {
-        simulate_balancer_weighted_path_outputs(x, hops)
-            .last()
-            .copied()
-            .unwrap_or(U256::ZERO)
+    ///
+    /// # Errors
+    ///
+    /// [`MixedPathError`] names the hop a leaf refused to price, the hop family
+    /// this engine cannot simulate, or a path with no hops. A zero amount is
+    /// NOT an error: it prices as zero output, exactly as the leaves do.
+    pub(crate) fn simulate_balancer_weighted_path(
+        x: U256,
+        hops: &[ResolvedHop],
+    ) -> Result<U256, MixedPathError> {
+        let outputs = simulate_balancer_weighted_path_outputs(x, hops)?;
+        outputs.last().copied().ok_or(MixedPathError::at(
+            MixedPathErrorKind::EmptyPath,
+            0,
+            HopType::BalancerWeighted,
+        ))
     }
 
     /// Simulate a Balancer-weighted-or-V2 path, returning per-hop outputs.
-    fn simulate_balancer_weighted_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
+    ///
+    /// A zero amount legitimately ends the chain: every remaining hop records a
+    /// zero output without calling its leaf (the chain never recovers from a
+    /// floored output). That is a genuine zero quote, distinct from the errors
+    /// below.
+    ///
+    /// # Errors
+    ///
+    /// [`MixedPathError`] carries the failing hop's index and family plus the
+    /// leaf's own reason.
+    fn simulate_balancer_weighted_path_outputs(
+        x: U256,
+        hops: &[ResolvedHop],
+    ) -> Result<Vec<U256>, MixedPathError> {
         let mut amount = x;
         let mut outputs = Vec::with_capacity(hops.len());
-        for hop in hops {
+        for (hop_index, hop) in hops.iter().enumerate() {
             if amount.is_zero() {
                 outputs.push(U256::ZERO);
                 continue;
             }
             let out = match hop {
-                ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
+                ResolvedHop::V2 { state } => state.swap(amount).map_err(|error| {
+                    MixedPathError::at(
+                        MixedPathErrorKind::V2(error),
+                        hop_index,
+                        HopType::BalancerWeighted,
+                    )
+                })?,
                 ResolvedHop::BalancerWeighted { state } => {
-                    simulate_balancer_weighted_hop(amount, state)
+                    simulate_balancer_weighted_hop(amount, state).map_err(|kind| {
+                        MixedPathError::at(kind, hop_index, HopType::BalancerWeighted)
+                    })?
                 }
-                _ => U256::ZERO,
+                // Only V2 and weighted hops reach this engine (its dispatch row
+                // admits exactly those two families); another family here means
+                // the row and the resolved path disagree, which leaves the hop
+                // unpriced rather than worth zero.
+                other => {
+                    return Err(MixedPathError::at(
+                        MixedPathErrorKind::UnexpectedHop {
+                            hop_type: other.hop_type(),
+                        },
+                        hop_index,
+                        HopType::BalancerWeighted,
+                    ))
+                }
             };
             outputs.push(out);
             amount = out;
         }
-        outputs
+        Ok(outputs)
     }
 
     /// Evaluate a single Balancer weighted hop's output via
     /// `degenbot_math::balancer::weighted_math::calc_out_given_in`. The swap
     /// fee is subtracted from the input first (Balancer convention:
     /// `amount_in_after_fee = amount_in - mul_up(amount_in, swap_fee)`),
-    /// then the invariant math runs on the after-fee amount. Returns
-    /// `U256::ZERO` on overflow / error (matching the defensive fallback in
-    /// `mixed::families::solidly::simulate_solidly_hop`).
-    fn simulate_balancer_weighted_hop(amount_in: U256, hop: &BalancerWeightedHopState) -> U256 {
+    /// then the invariant math runs on the after-fee amount.
+    ///
+    /// The caller attaches the hop's path position: this fn knows the leaf, not
+    /// where the hop sits.
+    fn simulate_balancer_weighted_hop(
+        amount_in: U256,
+        hop: &BalancerWeightedHopState,
+    ) -> Result<U256, MixedPathErrorKind> {
         use degenbot_math::balancer::fixed_point::mul_up;
         use degenbot_math::balancer::weighted_math::calc_out_given_in;
         if amount_in.is_zero() {
-            return U256::ZERO;
+            return Ok(U256::ZERO);
         }
         // Upscale input to 18-decimal fixed-point (plain integer multiply,
         // NOT mul_down — scaling factors are integer multipliers, not FXP).
         let amount_in_upscaled = amount_in.saturating_mul(hop.scaling_factor_in);
         // Subtract swap fee: amount_in_after_fee = amount_in - mul_up(amount_in, swap_fee).
-        let Ok(fee_amount) = mul_up(amount_in_upscaled, hop.swap_fee) else {
-            return U256::ZERO;
-        };
+        let fee_amount =
+            mul_up(amount_in_upscaled, hop.swap_fee).map_err(MixedPathErrorKind::Balancer)?;
         let amount_in_after_fee = amount_in_upscaled.saturating_sub(fee_amount);
-        let Ok(amount_out_upscaled) = calc_out_given_in(
+        let amount_out_upscaled = calc_out_given_in(
             hop.balance_in,
             hop.weight_in,
             hop.balance_out,
             hop.weight_out,
             amount_in_after_fee,
             hop.pow_version,
-        ) else {
-            return U256::ZERO;
-        };
+        )
+        .map_err(MixedPathErrorKind::Balancer)?;
         // Downscale output from 18-decimal to native decimals (plain integer
-        // division, NOT div_down — matches Python's `amount // scaling_factor`).
+        // division, NOT div_down — matches the deployed `amount // scaling_factor`).
+        // A zero scaling factor is the fixed-point ZERO_DIVISION the deployed
+        // pool reverts on.
         if hop.scaling_factor_out.is_zero() {
-            return U256::ZERO;
+            return Err(MixedPathErrorKind::Balancer(
+                degenbot_math::balancer::BalancerMathError::ZeroDivision,
+            ));
         }
-        amount_out_upscaled / hop.scaling_factor_out
+        Ok(amount_out_upscaled / hop.scaling_factor_out)
     }
 
     /// The Balancer-weighted family's line builder: the concave entry tangent plus
@@ -644,7 +702,10 @@ pub(crate) mod solve {
         use proptest::prelude::*;
 
         use crate::solve::gate::path_output_bound_at;
+        use crate::solve::{HopType, MixedPathError, MixedPathErrorKind};
         use degenbot_math::balancer::constants::ONE;
+        use degenbot_math::balancer::BalancerMathError;
+        use degenbot_math::v2::{HopSwapError, IntHopState};
 
         proptest! {
             /// Balancer weighted: the concave tangent (entry marginal rate) + the
@@ -678,9 +739,12 @@ pub(crate) mod solve {
                 };
                 let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::solve::runtime::SolveRuntimeConfig::default())
                     .unwrap_or(U256::ZERO);
-                let true_out = simulate_balancer_weighted_hop(U256::from(x), &state);
-                // Skip cases the math leaf itself rejects (returns 0 with x>0):
-                // those are not soundness-relevant.
+                let Ok(true_out) = simulate_balancer_weighted_hop(U256::from(x), &state) else {
+                    return Ok(());
+                };
+                // Skip cases the math leaf prices at zero with x>0 (a dust
+                // input on a coarse fixed-point curve): those are not
+                // soundness-relevant.
                 if x > 0 && true_out.is_zero() {
                     return Ok(());
                 }
@@ -689,6 +753,142 @@ pub(crate) mod solve {
                     "weighted bound {bound} < true {true_out} (bin={b_in},bout={b_out},w={w_in_pct},x={x})"
                 );
             }
+        }
+
+        // ===================================================================
+        // The path-simulation failure surface: a leaf revert or a hop no
+        // family engine simulates is a NAMED error, never a zero quote.
+        // ===================================================================
+
+        /// A balanced 50/50 weighted hop at `balance` (18-decimal balances and
+        /// unit scaling); `scaling_out` is the failing knob the zero-division
+        /// test turns.
+        fn weighted_state(balance: u64, scaling_out: U256) -> BalancerWeightedHopState {
+            BalancerWeightedHopState {
+                balance_in: U256::from(balance),
+                balance_out: U256::from(balance),
+                weight_in: ONE / U256::from(2u64),
+                weight_out: ONE / U256::from(2u64),
+                swap_fee: U256::from(3u64) * U256::from(10u64).pow(U256::from(15u64)),
+                pow_version: PowVersion::V2,
+                scaling_factor_in: U256::ONE,
+                scaling_factor_out: scaling_out,
+            }
+        }
+
+        fn weighted_hop(balance: u64) -> ResolvedHop {
+            ResolvedHop::BalancerWeighted {
+                state: weighted_state(balance, U256::ONE),
+            }
+        }
+
+        /// The weighted leaf's 30%-of-balance input cap is an ERROR at the hop
+        /// it fired on, not a zero output the solve would read as unprofitable.
+        #[test]
+        fn path_simulation_names_the_hop_a_leaf_revert_stopped_at() {
+            let balance = 1_000_000_000_000_000_000u64;
+            let hops = vec![
+                ResolvedHop::V2 {
+                    state: IntHopState::new(U256::from(balance), U256::from(balance), 997, 1000),
+                },
+                weighted_hop(balance),
+            ];
+            // The whole V2 reserve in returns ~half of it, far past the
+            // weighted hop's cap.
+            assert_eq!(
+                simulate_balancer_weighted_path(U256::from(balance), &hops),
+                Err(MixedPathError {
+                    hop_index: 1,
+                    family: HopType::BalancerWeighted,
+                    kind: MixedPathErrorKind::Balancer(BalancerMathError::MaxInRatio),
+                })
+            );
+        }
+
+        /// A V2 hop on a weighted path carries its own revert through the same
+        /// typed error.
+        #[test]
+        fn path_simulation_carries_a_v2_hop_revert() {
+            let half = U256::MAX / U256::from(2u64);
+            let hops = vec![
+                ResolvedHop::V2 {
+                    state: IntHopState::new(half, half, 997, 1000),
+                },
+                weighted_hop(1_000_000_000_000_000_000u64),
+            ];
+            assert_eq!(
+                simulate_balancer_weighted_path(half, &hops),
+                Err(MixedPathError {
+                    hop_index: 0,
+                    family: HopType::BalancerWeighted,
+                    kind: MixedPathErrorKind::V2(HopSwapError::Overflow),
+                })
+            );
+        }
+
+        /// A zero output scaling factor is a division by zero, not a zero
+        /// quote.
+        #[test]
+        fn hop_simulation_refuses_a_zero_output_scaling_factor() {
+            let state = weighted_state(1_000_000_000_000_000_000u64, U256::ZERO);
+            assert_eq!(
+                simulate_balancer_weighted_hop(U256::from(1_000_000_000_000_000u64), &state),
+                Err(MixedPathErrorKind::Balancer(
+                    BalancerMathError::ZeroDivision
+                ))
+            );
+        }
+
+        /// A hop family this engine cannot simulate is an ERROR, not a zero
+        /// output.
+        #[test]
+        fn path_simulation_refuses_a_hop_from_another_family() {
+            let one = U256::from(1_000_000_000_000_000_000u64);
+            let hops = vec![
+                weighted_hop(1_000_000_000_000_000_000u64),
+                ResolvedHop::SolidlyStable {
+                    state: crate::solve::SolidlyHopState {
+                        reserves_0: one,
+                        reserves_1: one,
+                        decimals_0: one,
+                        decimals_1: one,
+                        token_in: 0,
+                        fee_numer: U256::from(3u64),
+                        fee_denom: U256::from(1000u64),
+                        stable: true,
+                        variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Stable,
+                    },
+                },
+            ];
+            assert_eq!(
+                simulate_balancer_weighted_path(U256::from(1_000_000_000_000_000u64), &hops),
+                Err(MixedPathError {
+                    hop_index: 1,
+                    family: HopType::BalancerWeighted,
+                    kind: MixedPathErrorKind::UnexpectedHop {
+                        hop_type: HopType::SolidlyStable,
+                    },
+                })
+            );
+        }
+
+        /// Zero input and a quote the leaves floor to zero are genuine zero
+        /// quotes, not failures.
+        #[test]
+        fn path_simulation_prices_zero_in_and_a_floored_zero_out() {
+            let hops = vec![
+                weighted_hop(1_000_000_000_000_000_000u64),
+                weighted_hop(1_000_000_000_000_000_000u64),
+            ];
+            assert_eq!(
+                simulate_balancer_weighted_path(U256::ZERO, &hops),
+                Ok(U256::ZERO)
+            );
+            assert_eq!(
+                simulate_balancer_weighted_path(U256::from(1u64), &hops),
+                Ok(U256::ZERO),
+                "a dust input floors to zero output rather than failing"
+            );
         }
     }
 }

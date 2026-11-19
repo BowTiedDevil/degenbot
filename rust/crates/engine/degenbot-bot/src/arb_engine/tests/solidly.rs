@@ -64,8 +64,11 @@ fn grid_scan_best(
     let mut best = U256::ZERO;
     let mut x = U256::from(1u64);
     while x <= max_reserve {
-        let out = ::degenbot_pools::solve::simulate_solidly_path(x, &resolved.hops);
-        best = best.max(out.saturating_sub(x));
+        // A grid input the leaf itself rejects cannot be the peak: the scan
+        // keeps the best PRICED input.
+        if let Ok(out) = ::degenbot_pools::solve::simulate_solidly_path(x, &resolved.hops) {
+            best = best.max(out.saturating_sub(x));
+        }
         x += grid_step;
     }
     best
@@ -406,5 +409,62 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
         ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
             .result
             .is_none()
+    );
+}
+
+/// A path whose hop cannot be priced is a TYPED failure at the engine's solve
+/// entry: the consumer sees which hop and why instead of an unprofitable
+/// zero-output result.
+#[test]
+fn solve_path_surfaces_a_leaf_failure_as_a_typed_error() {
+    let one = U256::from(1_000_000_000_000_000_000u64);
+    let resolved = ::degenbot_pools::solve::ResolvedMixedPath {
+        hops: vec![
+            ::degenbot_pools::solve::ResolvedHop::V2 {
+                state: degenbot_math::v2::IntHopState::new(one, one, 997, 1000),
+            },
+            // `token_in` names no direction, so the Solidly leaf reverts for
+            // every amount.
+            ::degenbot_pools::solve::ResolvedHop::SolidlyStable {
+                state: ::degenbot_pools::solve::SolidlyHopState {
+                    // The direction the gate reads (`token_in != 0` orients
+                    // from `reserves_1` to `reserves_0`) is priced above 1:1, so
+                    // the path reaches the arm rather than gate-skipping.
+                    reserves_0: one + one / U256::from(10u64),
+                    reserves_1: one,
+                    decimals_0: one,
+                    decimals_1: one,
+                    token_in: 2,
+                    fee_numer: U256::from(3u64),
+                    fee_denom: U256::from(1000u64),
+                    stable: false,
+                    variant: DexVariant::AerodromeV2Volatile,
+                },
+            },
+        ],
+        valid: true,
+        state_nonces: vec![1, 2],
+        max_update_block: 0,
+        ..Default::default()
+    };
+    let outcome =
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline());
+    assert!(
+        outcome.result.is_none(),
+        "an unpriceable path yields nothing to execute"
+    );
+    let error = outcome
+        .error
+        .expect("the leaf revert must ride the solve outcome");
+    assert_eq!(error.hop_index, 1);
+    assert_eq!(
+        error.family,
+        ::degenbot_pools::solve::HopType::SolidlyStable
+    );
+    assert_eq!(
+        error.kind,
+        ::degenbot_pools::solve::MixedPathErrorKind::Solidly(
+            degenbot_math::solidly::SolidlyMathError::InvalidTokenIn
+        )
     );
 }

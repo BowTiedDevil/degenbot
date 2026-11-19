@@ -853,7 +853,10 @@ pub(crate) mod solve {
     };
     use crate::solve::runtime::SolveRuntimeConfig;
     use crate::solve::solve_golden_section_path_int;
-    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
+    use crate::solve::{
+        HopType, MixedPathError, MixedPathErrorKind, ResolvedHop, ResolvedMixedPath,
+        SolvePathResult,
+    };
 
     /// Resolved state for a Solidly/Aerodrome/Camelot hop, ready for the
     /// Solidly solve branch. Carries everything the `degenbot-solidly-math`
@@ -944,7 +947,7 @@ pub(crate) mod solve {
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
     ) -> crate::solve::SolveArmOutcome {
-        crate::solve::SolveArmOutcome::walked(
+        crate::solve::SolveArmOutcome::from_path_solve(
             solve_solidly_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -957,12 +960,12 @@ pub(crate) mod solve {
     /// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
     /// proxy only narrows the search bracket; it never rejects (sound
     /// profitability screening lives in the profit-envelope gate).
-    fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use degenbot_math::v2::IntHopState;
-
+    fn solve_solidly_path_int(
+        resolved: &ResolvedMixedPath,
+    ) -> Result<Option<SolvePathResult>, MixedPathError> {
         let hops = &resolved.hops;
         if hops.len() < 2 {
-            return None;
+            return Ok(None);
         }
 
         // V2-equivalent IntHopState per hop: Solidly hops orient reserves by
@@ -970,10 +973,16 @@ pub(crate) mod solve {
         // fraction `fee_numer/fee_denom`; IntHopState wants the retained
         // fraction `gamma_numer/fee_denom`, so `gamma_numer = fee_denom -
         // fee_numer`). V2 hops pass through unchanged.
-        let v2_equiv: Vec<IntHopState> = hops
+        let Some(v2_equiv) = hops
             .iter()
             .map(solidly_hop_v2_equiv)
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            // The projection is the bracket HINT, not the quote: a fee pair
+            // outside the hint's `u64` domain (or a hop the hint has no row
+            // for) declines the search without pricing anything.
+            return Ok(None);
+        };
 
         solve_golden_section_path_int(&v2_equiv, &|x| simulate_solidly_path(x, hops), &|x| {
             simulate_solidly_path_outputs(x, hops)
@@ -1009,54 +1018,92 @@ pub(crate) mod solve {
     /// Simulate a Solidly-or-V2 path, returning only the final output.
     /// Per-hop dispatch: Solidly hops call the `degenbot-solidly-math` leaf
     /// selected by `(variant, stable)`; V2 hops reuse `IntHopState::swap`.
-    #[must_use]
-    pub fn simulate_solidly_path(x: U256, hops: &[ResolvedHop]) -> U256 {
-        simulate_solidly_path_outputs(x, hops)
-            .last()
-            .copied()
-            .unwrap_or(U256::ZERO)
+    ///
+    /// # Errors
+    ///
+    /// [`MixedPathError`] names the hop a leaf refused to price, the hop family
+    /// this engine cannot simulate, or a path with no hops. A zero amount is
+    /// NOT an error: it prices as zero output, exactly as on-chain
+    /// `getAmountOut(0) = 0` does.
+    pub fn simulate_solidly_path(x: U256, hops: &[ResolvedHop]) -> Result<U256, MixedPathError> {
+        let outputs = simulate_solidly_path_outputs(x, hops)?;
+        outputs.last().copied().ok_or(MixedPathError::at(
+            MixedPathErrorKind::EmptyPath,
+            0,
+            HopType::SolidlyStable,
+        ))
     }
 
     /// Simulate a Solidly-or-V2 path, returning per-hop outputs.
     /// `hop_outputs[i]` = output of hop `i` given `hop_outputs[i-1]` as input
-    /// (or `x` for `i==0`). Returns `U256::ZERO` per hop once the chain breaks
-    /// at a zero amount (matching the Python `_simulate_mixed_path_int`'s
-    /// early-out).
-    #[must_use]
-    fn simulate_solidly_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
+    /// (or `x` for `i==0`).
+    ///
+    /// A zero amount legitimately ends the chain: every remaining hop records a
+    /// zero output without calling its leaf, matching the on-chain
+    /// `getAmountOut(0) = 0` (and the chain never recovers from a floored
+    /// output). That is a genuine zero quote, distinct from the errors below.
+    ///
+    /// # Errors
+    ///
+    /// [`MixedPathError`] carries the failing hop's index and family plus the
+    /// leaf's own reason.
+    fn simulate_solidly_path_outputs(
+        x: U256,
+        hops: &[ResolvedHop],
+    ) -> Result<Vec<U256>, MixedPathError> {
         let mut amount = x;
         let mut outputs = Vec::with_capacity(hops.len());
-        for hop in hops {
+        for (hop_index, hop) in hops.iter().enumerate() {
             if amount.is_zero() {
                 outputs.push(U256::ZERO);
                 continue;
             }
             let out = match hop {
-                ResolvedHop::V2 { state } => state.swap(amount).unwrap_or(U256::ZERO),
-                ResolvedHop::SolidlyStable { state } => simulate_solidly_hop(amount, state),
-                // Non-V2/Solidly hops can't reach here — the solve dispatch
-                // rejects Solidly+concentrated liquidity paths before calling this.
-                _ => U256::ZERO,
+                ResolvedHop::V2 { state } => state.swap(amount).map_err(|error| {
+                    MixedPathError::at(
+                        MixedPathErrorKind::V2(error),
+                        hop_index,
+                        HopType::SolidlyStable,
+                    )
+                })?,
+                ResolvedHop::SolidlyStable { state } => simulate_solidly_hop(amount, state)
+                    .map_err(|kind| MixedPathError::at(kind, hop_index, HopType::SolidlyStable))?,
+                // Only V2 and Solidly hops reach this engine (its dispatch row
+                // admits exactly those two families); another family here means
+                // the row and the resolved path disagree, which leaves the hop
+                // unpriced rather than worth zero.
+                other => {
+                    return Err(MixedPathError::at(
+                        MixedPathErrorKind::UnexpectedHop {
+                            hop_type: other.hop_type(),
+                        },
+                        hop_index,
+                        HopType::SolidlyStable,
+                    ))
+                }
             };
             outputs.push(out);
             amount = out;
         }
-        outputs
+        Ok(outputs)
     }
 
     /// Evaluate a single Solidly hop's output via the `degenbot-solidly-math`
-    /// leaf, selected by `(variant, stable)`. Returns `U256::ZERO` on
-    /// overflow / invalid `token_in` (the leaf's `Err` variants), matching the
-    /// Python `_simulate_mixed_path_int`'s defensive fallback.
-    fn simulate_solidly_hop(amount_in: U256, hop: &SolidlyHopState) -> U256 {
+    /// leaf, selected by `(variant, stable)`.
+    ///
+    /// The caller attaches the hop's path position: this fn knows the leaf, not
+    /// where the hop sits.
+    fn simulate_solidly_hop(
+        amount_in: U256,
+        hop: &SolidlyHopState,
+    ) -> Result<U256, MixedPathErrorKind> {
         use degenbot_math::solidly::{
             calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
         };
-        use degenbot_uniswap::dex_identity::DexVariant;
         if amount_in.is_zero() {
-            return U256::ZERO;
+            return Ok(U256::ZERO);
         }
-        let out = match (hop.variant, hop.stable) {
+        match (hop.variant, hop.stable) {
             (DexVariant::AerodromeV2Stable | DexVariant::AerodromeV2Volatile, true) => {
                 calc_exact_in_stable_solidly(
                     amount_in,
@@ -1068,6 +1115,7 @@ pub(crate) mod solve {
                     hop.fee_numer,
                     hop.fee_denom,
                 )
+                .map_err(MixedPathErrorKind::Solidly)
             }
             (DexVariant::CamelotV2Stable | DexVariant::CamelotV2Volatile, true) => {
                 calc_exact_in_stable_camelot(
@@ -1080,6 +1128,7 @@ pub(crate) mod solve {
                     hop.fee_numer,
                     hop.fee_denom,
                 )
+                .map_err(MixedPathErrorKind::Solidly)
             }
             (_, false) => calc_exact_in_volatile(
                 amount_in,
@@ -1088,12 +1137,14 @@ pub(crate) mod solve {
                 hop.reserves_1,
                 hop.fee_numer,
                 hop.fee_denom,
-            ),
-            // A non-Solidly variant with `stable=true` is impossible — these
-            // DEXes have no stable pool family. Falls back to zero output.
-            _ => return U256::ZERO,
-        };
-        out.unwrap_or(U256::ZERO)
+            )
+            .map_err(MixedPathErrorKind::Solidly),
+            // A `stable = true` hop on a DEX with no stable pool family has no
+            // leaf to call.
+            _ => Err(MixedPathErrorKind::UnsupportedVariant {
+                variant: hop.variant,
+            }),
+        }
     }
 
     /// The Solidly family's line builder: volatile pools take the Möbius rises,
@@ -1367,6 +1418,9 @@ pub(crate) mod solve {
 
         use crate::solve::gate::{path_output_bound_at, Envelope};
         use crate::solve::solve_path_with_min_profit;
+        use crate::solve::{HopType, MixedPathError, MixedPathErrorKind};
+        use degenbot_math::solidly::SolidlyMathError;
+        use degenbot_math::v2::{HopSwapError, IntHopState};
 
         #[test]
         fn m6776w_solidly_volatile_fee_floor_counterexample_is_bounded() {
@@ -1395,7 +1449,8 @@ pub(crate) mod solve {
                 stable: false,
                 variant: DexVariant::AerodromeV2Volatile,
             };
-            let true_out = simulate_solidly_hop(U256::from(x), &state);
+            let true_out = simulate_solidly_hop(U256::from(x), &state)
+                .expect("the leaf prices the fee-floor counterexample input");
             assert_eq!(true_out, U256::from(495u64));
             assert!(
                 bound.is_some_and(|bound| bound >= true_out),
@@ -1516,7 +1571,9 @@ pub(crate) mod solve {
                     stable: false,
                     variant: DexVariant::AerodromeV2Volatile,
                 };
-                let true_out = simulate_solidly_hop(U256::from(x), &state);
+                let Ok(true_out) = simulate_solidly_hop(U256::from(x), &state) else {
+                    return Ok(());
+                };
                 prop_assert!(
                     bound >= true_out,
                     "solidly-volatile bound {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
@@ -1547,7 +1604,9 @@ pub(crate) mod solve {
                     stable: true,
                     variant: DexVariant::AerodromeV2Stable,
                 };
-                let true_out = simulate_solidly_hop(U256::from(x), &state);
+                let Ok(true_out) = simulate_solidly_hop(U256::from(x), &state) else {
+                    return Ok(());
+                };
                 prop_assert!(
                     bound >= true_out,
                     "solidly-stable cap {bound} < true {true_out} (r0={r0},r1={r1},x={x},t={token_in})"
@@ -1630,6 +1689,157 @@ pub(crate) mod solve {
                 "the flat cap is the output reserve"
             );
             assert_eq!(wide_cap, r_out_18);
+        }
+
+        // ===================================================================
+        // The path-simulation failure surface: a leaf revert or a hop no
+        // family engine simulates is a NAMED error, never a zero quote.
+        // ===================================================================
+
+        /// 0.1% of a 1e18 reserve: enough to price, small enough never to sit
+        /// on an arithmetic boundary of the leaves.
+        const SIM_INPUT: u64 = 1_000_000_000_000_000;
+
+        /// A balanced 18-decimal Solidly hop; the error tests turn `token_in`,
+        /// `stable`, and `variant` into the failing knob.
+        fn solidly_state(token_in: u8, stable: bool, variant: DexVariant) -> SolidlyHopState {
+            let one = U256::from(1_000_000_000_000_000_000u64);
+            SolidlyHopState {
+                reserves_0: one,
+                reserves_1: one,
+                decimals_0: one,
+                decimals_1: one,
+                token_in,
+                fee_numer: U256::from(3u64),
+                fee_denom: U256::from(1000u64),
+                stable,
+                variant,
+            }
+        }
+
+        fn solidly_hop(token_in: u8) -> ResolvedHop {
+            ResolvedHop::SolidlyStable {
+                state: solidly_state(token_in, true, DexVariant::AerodromeV2Stable),
+            }
+        }
+
+        /// A hop from another family, to prove the Solidly engine refuses it
+        /// instead of pricing it as zero.
+        fn foreign_hop() -> ResolvedHop {
+            let half = U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64));
+            ResolvedHop::BalancerWeighted {
+                state: crate::solve::BalancerWeightedHopState {
+                    balance_in: U256::from(1_000_000_000_000_000_000u64),
+                    balance_out: U256::from(1_000_000_000_000_000_000u64),
+                    weight_in: half,
+                    weight_out: half,
+                    swap_fee: U256::from(3u64) * U256::from(10u64).pow(U256::from(15u64)),
+                    pow_version: degenbot_math::balancer::constants::PowVersion::V2,
+                    scaling_factor_in: U256::ONE,
+                    scaling_factor_out: U256::ONE,
+                },
+            }
+        }
+
+        /// A leaf revert names the hop it happened at: the second hop's invalid
+        /// `token_in` is an ERROR at index 1, carrying the family and the
+        /// leaf's own reason — never a zero quote a caller would read as an
+        /// unprofitable path.
+        #[test]
+        fn path_simulation_names_the_hop_a_leaf_revert_stopped_at() {
+            let hops = vec![solidly_hop(0), solidly_hop(2)];
+            assert_eq!(
+                simulate_solidly_path(U256::from(SIM_INPUT), &hops),
+                Err(MixedPathError {
+                    hop_index: 1,
+                    family: HopType::SolidlyStable,
+                    kind: MixedPathErrorKind::Solidly(SolidlyMathError::InvalidTokenIn),
+                })
+            );
+        }
+
+        /// A V2 hop beside a Solidly hop carries its own revert, at its own
+        /// index, through the same typed error.
+        #[test]
+        fn path_simulation_carries_a_v2_hop_revert() {
+            let half = U256::MAX / U256::from(2u64);
+            let hops = vec![
+                // `x * gamma_numer` overflows `uint256` — the on-chain
+                // `getAmountOut` SafeMath revert.
+                ResolvedHop::V2 {
+                    state: IntHopState::new(half, half, 997, 1000),
+                },
+                solidly_hop(0),
+            ];
+            assert_eq!(
+                simulate_solidly_path(half, &hops),
+                Err(MixedPathError {
+                    hop_index: 0,
+                    family: HopType::SolidlyStable,
+                    kind: MixedPathErrorKind::V2(HopSwapError::Overflow),
+                })
+            );
+        }
+
+        /// A hop family this engine cannot simulate is an ERROR, not a zero
+        /// output.
+        #[test]
+        fn path_simulation_refuses_a_hop_from_another_family() {
+            let hops = vec![solidly_hop(0), foreign_hop()];
+            assert_eq!(
+                simulate_solidly_path(U256::from(SIM_INPUT), &hops),
+                Err(MixedPathError {
+                    hop_index: 1,
+                    family: HopType::SolidlyStable,
+                    kind: MixedPathErrorKind::UnexpectedHop {
+                        hop_type: HopType::BalancerWeighted,
+                    },
+                })
+            );
+        }
+
+        /// A `stable` flag on a DEX with no stable family has no leaf to call.
+        #[test]
+        fn hop_simulation_refuses_a_stable_flag_without_a_stable_leaf() {
+            let state = solidly_state(0, true, DexVariant::UniswapV2);
+            assert_eq!(
+                simulate_solidly_hop(U256::from(SIM_INPUT), &state),
+                Err(MixedPathErrorKind::UnsupportedVariant {
+                    variant: DexVariant::UniswapV2,
+                })
+            );
+        }
+
+        /// Zero input and a quote the leaf floors to zero are genuine zero
+        /// quotes, not failures: on-chain `getAmountOut(0) = 0`, and a dust input floors
+        /// the first hop to zero, leaving every later hop a zero input.
+        #[test]
+        fn path_simulation_prices_zero_in_and_a_floored_zero_out() {
+            let hops = vec![
+                ResolvedHop::SolidlyStable {
+                    state: solidly_state(0, false, DexVariant::AerodromeV2Volatile),
+                },
+                solidly_hop(1),
+            ];
+            assert_eq!(simulate_solidly_path(U256::ZERO, &hops), Ok(U256::ZERO));
+            assert_eq!(
+                simulate_solidly_path(U256::from(1u64), &hops),
+                Ok(U256::ZERO),
+                "a dust input floors to zero output rather than failing"
+            );
+        }
+
+        /// A path with no hops has no quote to give.
+        #[test]
+        fn path_simulation_has_no_quote_for_an_empty_path() {
+            assert_eq!(
+                simulate_solidly_path(U256::from(SIM_INPUT), &[]),
+                Err(MixedPathError {
+                    hop_index: 0,
+                    family: HopType::SolidlyStable,
+                    kind: MixedPathErrorKind::EmptyPath,
+                })
+            );
         }
     }
 }

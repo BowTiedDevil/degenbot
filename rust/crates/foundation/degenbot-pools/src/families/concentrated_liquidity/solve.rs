@@ -181,6 +181,7 @@ pub(crate) fn solve_walkable_path_int(
             }
         }),
         refusal: out.refusal,
+        error: None,
         stats: out.stats,
     }
 }

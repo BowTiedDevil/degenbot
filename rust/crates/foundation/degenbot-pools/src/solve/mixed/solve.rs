@@ -32,7 +32,8 @@ use crate::solve::gate::{
 use crate::solve::runtime::SolveRuntimeConfig;
 
 use crate::solve::{
-    HopType, ResolvedHop, ResolvedMixedPath, SolveArmOutcome, SolvePathResult, INT128_MAX,
+    HopType, MixedPathError, ResolvedHop, ResolvedMixedPath, SolveArmOutcome, SolvePathResult,
+    INT128_MAX,
 };
 
 /// Dispatches based on path composition:
@@ -55,6 +56,10 @@ pub struct SolveOutcome {
     /// [`crate::solve::concentrated_liquidity::WalkRefusal`]); `None` on every walked outcome,
     /// profitable or not. The envelope gate's rejection rides [`Self::envelope`].
     pub refusal: Option<crate::solve::concentrated_liquidity::WalkRefusal>,
+    /// Set only when the arm ran and a hop's math leaf refused to price the
+    /// quote it would have returned: `result` is `None` for a reason that is
+    /// NOT "no profit", and the failing hop rides the error.
+    pub error: Option<MixedPathError>,
     /// The gate's typed fact, carried independently of walk telemetry.
     /// Planning maps `Bound` at or below its floor to the no-envelope-profit
     /// rejection; `Unsupported` remains solve-unscreened.
@@ -100,6 +105,7 @@ pub fn solve_path_with_min_profit(
                 return SolveOutcome {
                     result: None,
                     refusal: None,
+                    error: None,
                     envelope,
                     stats: crate::solve::concentrated_liquidity::WalkStats::default(),
                     gate_stats,
@@ -128,6 +134,7 @@ pub fn solve_path_with_min_profit(
     SolveOutcome {
         result: arm.result,
         refusal: arm.refusal,
+        error: arm.error,
         envelope,
         stats: arm.stats,
         gate_stats,
@@ -536,6 +543,7 @@ pub fn solve_path_inner(
     SolveArmOutcome {
         result,
         refusal: arm.refusal,
+        error: arm.error,
         stats: arm.stats,
     }
 }
@@ -570,11 +578,17 @@ const GOLDEN_SECTION_ITERATIONS: usize = 25;
 /// scale, and still ~12 orders of magnitude below gas. No family's jog reaches
 /// an executable profit signal, so the sweep costs simulations without ever
 /// changing a dispatch decision.
-pub(crate) fn solve_golden_section_path_int(
+///
+/// Fallible simulation: `simulate` and `simulate_outputs` answer the family's
+/// own error type `E` instead of a sentinel. A PROBE that errors steers the
+/// bracket as a zero-profit input ([`probe_profit`]); the quote the template
+/// RETURNS is evaluated by [`verify_best`], whose error propagates — so a path
+/// the leaf cannot price is never reported as an unprofitable one.
+pub(crate) fn solve_golden_section_path_int<E>(
     v2_equiv: &[degenbot_math::v2::IntHopState],
-    simulate: &impl Fn(U256) -> U256,
-    simulate_outputs: &impl Fn(U256) -> Vec<U256>,
-) -> Option<SolvePathResult> {
+    simulate: &impl Fn(U256) -> Result<U256, E>,
+    simulate_outputs: &impl Fn(U256) -> Result<Vec<U256>, E>,
+) -> Result<Option<SolvePathResult>, E> {
     use crate::solve::mobius_int::compute_int_mobius_coefficients;
     use crate::solve::mobius_int_anchor::compute_mobius_model_optimal_input;
 
@@ -591,7 +605,11 @@ pub(crate) fn solve_golden_section_path_int(
     // When the proxy finds no anchor (`x_mobius` zero) the search falls back
     // to the full `[1, max_reserve]` bracket with a width-sized iteration
     // count.
-    let coeffs = compute_int_mobius_coefficients(v2_equiv).ok()?;
+    // An unbuildable proxy declines the search: nothing was priced, so there
+    // is no quote for the failure to be about.
+    let Ok(coeffs) = compute_int_mobius_coefficients(v2_equiv) else {
+        return Ok(None);
+    };
     let x_mobius = compute_mobius_model_optimal_input(&coeffs);
 
     // --- Bracket: [1, max_reserve], narrowed around the Möbius optimum ---
@@ -603,7 +621,7 @@ pub(crate) fn solve_golden_section_path_int(
         .max()
         .unwrap_or(U256::ZERO);
     if max_reserve.is_zero() {
-        return None;
+        return Ok(None);
     }
     let mut x_low = one;
     let mut x_high = max_reserve;
@@ -648,8 +666,8 @@ pub(crate) fn solve_golden_section_path_int(
     };
     let mut x1 = x_high - phi_span(x_low, x_high);
     let mut x2 = x_low + phi_span(x_low, x_high);
-    let mut p1 = simulate(x1).saturating_sub(x1);
-    let mut p2 = simulate(x2).saturating_sub(x2);
+    let mut p1 = probe_profit(simulate, x1);
+    let mut p2 = probe_profit(simulate, x2);
 
     for _ in 0..iterations {
         if p1 < p2 {
@@ -657,13 +675,13 @@ pub(crate) fn solve_golden_section_path_int(
             x1 = x2;
             p1 = p2;
             x2 = x_low + phi_span(x_low, x_high);
-            p2 = simulate(x2).saturating_sub(x2);
+            p2 = probe_profit(simulate, x2);
         } else {
             x_high = x2;
             x2 = x1;
             p2 = p1;
             x1 = x_high - phi_span(x_low, x_high);
-            p1 = simulate(x1).saturating_sub(x1);
+            p1 = probe_profit(simulate, x1);
         }
     }
 
@@ -671,39 +689,54 @@ pub(crate) fn solve_golden_section_path_int(
     verify_best(simulate, simulate_outputs, x_opt)
 }
 
+/// One golden-section PROBE's profit: the simulated output minus the input, or
+/// zero when the leaf refuses that input.
+///
+/// WHY a refusal reads as zero HERE and nowhere else: a probe asks a
+/// hypothetical question at an input the loop never returns — the answer only
+/// steers the bracket. An input the leaf rejects lies outside the pool's swap
+/// domain (Balancer's 30%-of-balance input cap is the common case), so it cannot
+/// be the argmax; reading it as "no profit" moves the bracket away from it
+/// exactly as a real zero output would. The quote that IS returned is evaluated
+/// separately in [`verify_best`], where a refusal propagates.
+fn probe_profit<E>(simulate: &impl Fn(U256) -> Result<U256, E>, x: U256) -> U256 {
+    simulate(x).map_or(U256::ZERO, |out| out.saturating_sub(x))
+}
+
 /// Result construction for the golden-section template: evaluate the loop's
 /// closing midpoint `center` once against the real leaf and build the
-/// [`SolvePathResult`] from that evaluation. Returns `None` when it is not
-/// profitable.
+/// [`SolvePathResult`] from that evaluation. `Ok(None)` when it is not
+/// profitable, `Err` when the leaf cannot price it — the quote the caller would
+/// otherwise have to read as an unprofitable zero.
 ///
 /// WHY the midpoint stands in for an integer polish: see
 /// [`solve_golden_section_path_int`]'s anchor rationale — the loop converges to
 /// the smooth argmax of the real leaf, and the leaf's floor jog (≤ 1 wei
 /// Solidly/Curve, ≤ 4 wei weighted at 4e18, ≤ 1014 wei a 2:1 stable hop at
 /// 1e18) is orders of magnitude below any executable profit signal.
-fn verify_best(
-    simulate: &impl Fn(U256) -> U256,
-    simulate_outputs: &impl Fn(U256) -> Vec<U256>,
+fn verify_best<E>(
+    simulate: &impl Fn(U256) -> Result<U256, E>,
+    simulate_outputs: &impl Fn(U256) -> Result<Vec<U256>, E>,
     center: U256,
-) -> Option<SolvePathResult> {
-    let profit = simulate(center).saturating_sub(center);
+) -> Result<Option<SolvePathResult>, E> {
+    let profit = simulate(center)?.saturating_sub(center);
     if profit.is_zero() {
-        return None;
+        return Ok(None);
     }
 
-    let hop_outputs = simulate_outputs(center);
+    let hop_outputs = simulate_outputs(center)?;
     let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
     consumed_inputs.push(center);
     for i in 1..hop_outputs.len() {
         consumed_inputs.push(hop_outputs[i - 1]);
     }
-    Some(SolvePathResult {
+    Ok(Some(SolvePathResult {
         optimal_input: center,
         profit,
         hop_outputs,
         consumed_inputs,
         ..Default::default()
-    })
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +752,7 @@ mod gate_tests {
     use crate::families::concentrated_liquidity::solve::{
         concentrated_liquidity_hop_lines, concentrated_liquidity_to_math, solve_walkable_path_int,
     };
-    use crate::solve::ResolvedMixedPath;
+    use crate::solve::{MixedPathErrorKind, ResolvedMixedPath};
     use crate::Caveats;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;
@@ -1101,5 +1134,105 @@ mod gate_tests {
                 "{hop_type:?} entry row must register the family's own entry fns, not a cross-wired or refusal pointer (mismatch is (field, registered, expected))"
             );
         }
+    }
+
+    /// A Solidly hop whose `token_in` names no direction: the leaf reverts for
+    /// every amount, so no quote on this path exists. Volatile, with the
+    /// direction the gate reads (`token_in != 0` orients the reserves from
+    /// `reserves_1` to `reserves_0`) priced above 1:1, so the envelope gate sees
+    /// a profitable shape and runs the arm instead of pre-skipping it.
+    fn unpriceable_solidly_hop() -> ResolvedHop {
+        ResolvedHop::SolidlyStable {
+            state: crate::solve::SolidlyHopState {
+                reserves_0: U256::from(1_100_000u64),
+                reserves_1: U256::from(1_000_000u64),
+                decimals_0: U256::from(1_000_000u64),
+                decimals_1: U256::from(1_000_000u64),
+                token_in: 2,
+                fee_numer: U256::from(3u64),
+                fee_denom: U256::from(1000u64),
+                stable: false,
+                variant: DexVariant::AerodromeV2Volatile,
+            },
+        }
+    }
+
+    fn unpriceable_path() -> ResolvedMixedPath {
+        ResolvedMixedPath {
+            hops: vec![v2_hop(1_000_000, 1_000_000), unpriceable_solidly_hop()],
+            valid: true,
+            state_nonces: vec![1, 2],
+            max_update_block: 0,
+            ..Default::default()
+        }
+    }
+
+    /// An arm that ran and could not price its quote says so: `result: None`
+    /// (nothing executable) AND the named hop failure, never a zero-output
+    /// quote the caller would read as "unprofitable".
+    #[test]
+    fn an_unpriceable_hop_is_a_named_error_not_an_unprofitable_result() {
+        let outcome = solve_path_inner(&unpriceable_path(), &GateDeps::offline(), None);
+        assert!(outcome.result.is_none());
+        assert!(
+            outcome.refusal.is_none(),
+            "the arm ran its search; it did not decline the shape"
+        );
+        assert_eq!(
+            outcome.error,
+            Some(MixedPathError {
+                hop_index: 1,
+                family: HopType::SolidlyStable,
+                kind: MixedPathErrorKind::Solidly(
+                    degenbot_math::solidly::SolidlyMathError::InvalidTokenIn
+                ),
+            })
+        );
+    }
+
+    /// The typed failure renders for an operator and composes as an error: the
+    /// message names the failing hop, the engine family, and the leaf's own
+    /// reason, and the value is a `std::error::Error`.
+    #[test]
+    fn a_mixed_path_error_renders_the_hop_the_family_and_the_leaf_reason() {
+        let error = MixedPathError {
+            hop_index: 1,
+            family: HopType::SolidlyStable,
+            kind: MixedPathErrorKind::Solidly(
+                degenbot_math::solidly::SolidlyMathError::InvalidTokenIn,
+            ),
+        };
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("hop 1"),
+            "the message must name the failing hop index: {rendered}"
+        );
+        assert!(
+            rendered.contains(HopType::SolidlyStable.as_tag()),
+            "the message must name the engine family: {rendered}"
+        );
+        assert!(
+            rendered.contains("InvalidTokenIn"),
+            "the message must carry the leaf's own reason: {rendered}"
+        );
+        let composed: &dyn std::error::Error = &error;
+        assert!(
+            composed.source().is_none(),
+            "the leaf errors are not `Error`s here, so the failure has no inner source"
+        );
+    }
+
+    /// The failure reaches the solve entry's whole return, not just the arm's:
+    /// a consumer reading [`SolveOutcome`] sees the hop that could not be
+    /// priced.
+    #[test]
+    fn the_solve_outcome_carries_the_hop_failure() {
+        let outcome =
+            solve_path_with_min_profit(&unpriceable_path(), U256::ZERO, &GateDeps::offline());
+        assert!(outcome.result.is_none());
+        assert_eq!(
+            outcome.error.map(|error| (error.hop_index, error.family)),
+            Some((1, HopType::SolidlyStable))
+        );
     }
 }

@@ -709,7 +709,7 @@ pub(crate) mod solve {
     use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
     use crate::solve::solve_golden_section_path_int;
-    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
+    use crate::solve::{MixedPathError, ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Curve stableswap pool hop, ready for the curve
     /// solve branch.
@@ -782,7 +782,7 @@ pub(crate) mod solve {
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
     ) -> crate::solve::SolveArmOutcome {
-        crate::solve::SolveArmOutcome::walked(
+        crate::solve::SolveArmOutcome::from_path_solve(
             solve_curve_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -791,21 +791,30 @@ pub(crate) mod solve {
     /// Curve stableswap solve — the shared golden-section template
     /// (`solve_golden_section_path_int`) over the Curve stableswap math leaf
     /// (`stableswap_get_y` + fee/rate conversion).
-    fn solve_curve_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        use degenbot_math::v2::IntHopState;
-
+    fn solve_curve_path_int(
+        resolved: &ResolvedMixedPath,
+    ) -> Result<Option<SolvePathResult>, MixedPathError> {
         let hops = &resolved.hops;
 
         // V2-equivalent IntHopState per hop: Curve hops use xp[idx_in]/xp[idx_out]
         // + the retained fee fraction; V2 hops pass through unchanged.
-        let v2_equiv: Vec<IntHopState> = hops
+        let Some(v2_equiv) = hops
             .iter()
             .map(curve_hop_v2_equiv)
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()
+        else {
+            // The projection is the bracket HINT, not the quote: a hop it has
+            // no row for declines the search without pricing anything.
+            return Ok(None);
+        };
 
-        solve_golden_section_path_int(&v2_equiv, &|x| simulate_curve_path(x, hops), &|x| {
-            simulate_curve_path_outputs(x, hops)
-        })
+        solve_golden_section_path_int(
+            &v2_equiv,
+            // The Curve leaf is total, so this arm has no pricing failure of
+            // its own to report.
+            &|x| Ok::<U256, MixedPathError>(simulate_curve_path(x, hops)),
+            &|x| Ok::<Vec<U256>, MixedPathError>(simulate_curve_path_outputs(x, hops)),
+        )
     }
 
     /// V2-equivalent [`IntHopState`] for a Curve stableswap hop.

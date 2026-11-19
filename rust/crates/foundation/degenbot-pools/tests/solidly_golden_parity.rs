@@ -147,7 +147,9 @@ fn brute_force_max(case: &Case, center: U256) -> (U256, U256) {
     let mut best_profit = U256::ZERO;
     let mut x = lo;
     while x <= hi {
-        let profit = simulate_solidly_path(x, &case.path.hops).saturating_sub(x);
+        // A swept input the leaf rejects cannot be the discrete optimum.
+        let profit = simulate_solidly_path(x, &case.path.hops)
+            .map_or(U256::ZERO, |out| out.saturating_sub(x));
         if profit > best_profit {
             best_profit = profit;
             best_input = x;
