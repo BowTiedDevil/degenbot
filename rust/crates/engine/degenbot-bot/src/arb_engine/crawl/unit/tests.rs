@@ -1209,6 +1209,149 @@ async fn the_benign_cap_answers_at_the_register_stage_for_both_adapters() {
     assert!(report.fold_identities_hold());
 }
 
+// ── the early answers, and the witness that must survive them ─────────────
+
+/// A V4-bearing candidate over the fixture cycle: one V4 hop and one V2 hop on
+/// USDC↔WETH, so the resolver closes the cycle and the candidate reaches
+/// registration with a V4 hop in it.
+fn v4_cycle_unit(seq: u64) -> CrawlUnit {
+    CrawlUnit {
+        seq,
+        hops: vec![v4_hop(), v2_hop()],
+        directions: None,
+    }
+}
+
+fn v4_cycle_harness(settings: AdmissionSettings) -> Harness {
+    let mut rpc = FakeRpc::new();
+    set_v4(&mut rpc);
+    set_v2(&mut rpc, &dex_identity::UNISWAP_V2, USDC, WETH);
+    Harness::with_settings(
+        rpc,
+        Arc::new(V4Db {
+            fee: 500,
+            hooks: Address::ZERO,
+        }),
+        settings,
+    )
+}
+
+/// The dup fast-path answers at ELIGIBILITY (before verify) and must still carry
+/// the candidate's V4 witness: the fold counts `v4_pool_count` on created AND
+/// duplicate outcomes, so a witness lost on the early answer under-counts V4
+/// advertisement.
+#[tokio::test]
+async fn the_duplicate_fast_path_carries_the_v4_witness() {
+    let harness = v4_cycle_harness(default_settings());
+    let first = harness.run(&v4_cycle_unit(0)).await.unwrap();
+    assert_eq!(first.answering_stage(), Some(UnitStage::Register));
+    assert!(
+        matches!(
+            first.outcome,
+            RegistrationUnitOutcome::Registered {
+                created: true,
+                v4_hops: 1
+            }
+        ),
+        "a created registration carries the candidate's one V4 hop: {:?}",
+        first.outcome
+    );
+    let sig = first
+        .hop_sig
+        .clone()
+        .expect("a registered unit holds a sig");
+
+    let dup = harness.run(&v4_cycle_unit(1)).await.unwrap();
+    assert_eq!(
+        dup.answering_stage(),
+        Some(UnitStage::Eligibility),
+        "the registered-path memo answers the dup before verify"
+    );
+    assert!(
+        matches!(
+            dup.outcome,
+            RegistrationUnitOutcome::Registered {
+                created: false,
+                v4_hops: 1
+            }
+        ),
+        "the early dup answer carries the candidate's one V4 hop: {:?}",
+        dup.outcome
+    );
+    assert_eq!(dup.hop_sig, Some(sig), "the dup answers the admitted sig");
+    assert_eq!(harness.stages.path_count(), 1, "no second path registered");
+
+    let report = fold(&[first, dup]);
+    assert_eq!(
+        report.v4_pool_count, 2,
+        "the witness folds on the created AND the duplicate outcome"
+    );
+    assert_eq!(report.path_count, 1);
+    assert_eq!(report.dup_count, 1);
+}
+
+/// The cap stop is the register stage's benign answer: it submits the admitted
+/// signature and folds no V4 witness (a cap stop is not a registration).
+#[tokio::test]
+async fn the_cap_stop_submits_the_admitted_signature() {
+    let harness = v4_cycle_harness(default_settings());
+    harness.stages.set_path_cap(Some(0));
+    let receipt = harness.run(&v4_cycle_unit(0)).await.unwrap();
+    assert_eq!(receipt.answering_stage(), Some(UnitStage::Register));
+    assert_eq!(receipt.outcome, RegistrationUnitOutcome::Cap);
+    assert_eq!(
+        receipt.hop_sig.as_ref().map(Vec::len),
+        Some(2),
+        "the cap stop reached register with the two-hop admitted signature"
+    );
+    let report = fold(&[receipt]);
+    assert!(report.capped);
+    assert_eq!(
+        report.v4_pool_count, 0,
+        "only a completed registration contributes the V4 witness"
+    );
+}
+
+/// A policy denial answers at ELIGIBILITY and never reaches verify or register,
+/// and the deny is memoized for the next sighting of the same signature.
+#[tokio::test]
+async fn a_policy_denial_answers_before_verify() {
+    let harness = v4_cycle_harness(AdmissionSettings {
+        policy: CrawlPathPolicy {
+            tokens: TokenFilter {
+                deny: [WETH].into_iter().collect(),
+                ..TokenFilter::default()
+            },
+            ..CrawlPathPolicy::default()
+        },
+        ..default_settings()
+    });
+    let receipt = harness.run(&v4_cycle_unit(0)).await.unwrap();
+    assert_eq!(receipt.answering_stage(), Some(UnitStage::Eligibility));
+    assert!(
+        matches!(receipt.outcome, RegistrationUnitOutcome::Reject { .. }),
+        "a policy deny is a counted reject: {:?}",
+        receipt.outcome
+    );
+    assert_eq!(
+        harness.verify().verified_pool_count(),
+        0,
+        "an eligibility answer never reaches verify"
+    );
+    assert_eq!(harness.stages.path_count(), 0);
+
+    let again = harness.run(&v4_cycle_unit(1)).await.unwrap();
+    assert_eq!(again.answering_stage(), Some(UnitStage::Eligibility));
+    assert!(
+        matches!(
+            again.outcome,
+            RegistrationUnitOutcome::Reject { detail: None }
+        ),
+        "the rejected-path memo answers without the policy's detail: {:?}",
+        again.outcome
+    );
+}
+
 /// A STABLE build refusal is a pool fact (the second sighting answers at the
 /// memo stage); a TRANSIENT one is never memoized (the second sighting rebuilds).
 #[tokio::test]

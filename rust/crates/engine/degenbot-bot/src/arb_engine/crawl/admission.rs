@@ -16,6 +16,17 @@
 //! 5. **register** — the engine registry's path registration + eager solve,
 //!    with the cap refusal answering the benign `Cap` outcome.
 //!
+//! # The stage order is a typestate
+//!
+//! Each stage either answers the candidate with its one [`CrawlReceipt`] or
+//! hands the next state on: `UnitRun` (nothing known but the clock) → `Built`
+//! (every hop constructed and registered) → `Eligible` (the gate admitted the
+//! candidate's hop signature). The eligibility gate is the only producer of
+//! `Eligible` and the register stage takes nothing else, so the order cannot be
+//! reordered or half-run by a later edit, and `Eligible` holds the admitted
+//! signature as a value: a run that reaches registration without one has no
+//! spelling.
+//!
 //! # One implementation, two adapters
 //!
 //! The *crawl* ([`crate::arb_engine::crawl::unit`]) feeds this from discovered
@@ -353,24 +364,23 @@ impl RegistrationAdmission {
         directions: Option<&[bool]>,
         db: Option<&dyn TickMapDb>,
     ) -> Result<CrawlReceipt, CrawlAbort> {
-        let mut run = UnitRun::new();
-        if let Some(receipt) = self.memo_stage(seq, hops, &mut run) {
-            return Ok(receipt);
-        }
-        if let Some(receipt) = self.build_stage(seq, hops, &mut run, db).await? {
-            return Ok(receipt);
-        }
-        if let Some(receipt) = self.eligibility_stage(seq, directions, &mut run)? {
-            return Ok(receipt);
-        }
-        self.verify_stage(&run).await?;
-        run.clock.lap();
-        let Some(hop_sig) = run.hop_sig.clone() else {
-            return Err(CrawlAbort::Invariant {
-                detail: "the register stage ran without an admitted hop signature".to_owned(),
-            });
+        // The candidate's progress IS its type: each stage answers the unit or
+        // hands the next state on, so the register stage cannot be reached with
+        // a run the eligibility gate did not admit.
+        let run = match self.memo_stage(seq, hops, UnitRun::new()) {
+            StageAnswer::Answered(receipt) => return Ok(receipt),
+            StageAnswer::Continue(run) => run,
         };
-        Ok(self.register_stage(seq, &mut run, hop_sig))
+        let built = match self.build_stage(seq, hops, run, db).await? {
+            StageAnswer::Answered(receipt) => return Ok(receipt),
+            StageAnswer::Continue(built) => built,
+        };
+        let eligible = match self.eligibility_stage(seq, directions, built)? {
+            StageAnswer::Answered(receipt) => return Ok(receipt),
+            StageAnswer::Continue(eligible) => eligible,
+        };
+        let eligible = self.verify_stage(eligible).await?;
+        Ok(self.register_stage(seq, eligible))
     }
 
     /// The MEMO stage: a hop whose stable build refusal is already a pool fact
@@ -380,15 +390,15 @@ impl RegistrationAdmission {
         &self,
         seq: u64,
         hops: &[DiscoveredHop],
-        run: &mut UnitRun,
-    ) -> Option<CrawlReceipt> {
+        mut run: UnitRun,
+    ) -> StageAnswer<UnitRun> {
         for hop in hops {
             let key = hop.pre_build_identity();
             let memoized = self
                 .ledger
                 .with(|ledger| ledger.unregistrable_record(key.as_ref()).cloned());
             if let Some(record) = memoized {
-                return Some(run.clock.answer(
+                return StageAnswer::Answered(run.clock.answer(
                     seq,
                     skip(record.outcome, record.counts_as_skip, None),
                     None,
@@ -397,7 +407,7 @@ impl RegistrationAdmission {
             }
         }
         run.clock.lap();
-        None
+        StageAnswer::Continue(run)
     }
 
     /// The BUILD stage: each hop through the one construction door,
@@ -406,9 +416,9 @@ impl RegistrationAdmission {
         &self,
         seq: u64,
         hops: &[DiscoveredHop],
-        run: &mut UnitRun,
+        mut run: UnitRun,
         db: Option<&dyn TickMapDb>,
-    ) -> Result<Option<CrawlReceipt>, CrawlAbort> {
+    ) -> Result<StageAnswer<Built>, CrawlAbort> {
         let head = match self.io.get_block_number().await {
             Ok(head) => head,
             // The head read is build I/O: a failure classifies as a transient
@@ -420,7 +430,7 @@ impl RegistrationAdmission {
                     PoolKind::V2,
                     Some(format!("chain head read: {err}")),
                 );
-                return Ok(Some(run.clock.answer(
+                return Ok(StageAnswer::Answered(run.clock.answer(
                     seq,
                     skip(refusal.outcome, refusal.counts_as_skip, refusal.detail),
                     None,
@@ -435,6 +445,8 @@ impl RegistrationAdmission {
         // intake gate.
         let db = if block >= head { db } else { None };
 
+        let mut pool_ids = Vec::new();
+
         for hop in hops {
             // A V4 hop with no on-chain pool id cannot be built at all — a
             // bounded skip, and one no memo can hold (the edge carries no
@@ -446,7 +458,7 @@ impl RegistrationAdmission {
                     ..
                 }
             ) {
-                return Ok(Some(run.clock.answer(
+                return Ok(StageAnswer::Answered(run.clock.answer(
                     seq,
                     skip(RegistrationOutcome::V4NoHash, true, None),
                     None,
@@ -454,7 +466,7 @@ impl RegistrationAdmission {
                 )));
             }
             match self.build_hop(hop, block, db).await {
-                Ok(pool_id) => run.pool_ids.push(pool_id),
+                Ok(pool_id) => pool_ids.push(pool_id),
                 Err(refusal) => match classify_construction_refusal(&refusal, *hop) {
                     HopRefusal::Abort(kind) => return Err(CrawlAbort::Construction(kind)),
                     HopRefusal::Skip(refusal) => {
@@ -484,7 +496,7 @@ impl RegistrationAdmission {
                                 }
                             }
                         }
-                        return Ok(Some(run.clock.answer(
+                        return Ok(StageAnswer::Answered(run.clock.answer(
                             seq,
                             skip(refusal.outcome, refusal.counts_as_skip, refusal.detail),
                             None,
@@ -494,24 +506,34 @@ impl RegistrationAdmission {
                 },
             }
         }
-        run.v4_hops = hops
+        let v4_hops = hops
             .iter()
             .filter(|hop| matches!(hop, DiscoveredHop::V4 { .. }))
             .count();
         run.clock.lap();
-        Ok(None)
+        Ok(StageAnswer::Continue(Built {
+            clock: run.clock,
+            pool_ids,
+            v4_hops,
+        }))
     }
 
     /// The ELIGIBILITY stage: direction resolution, the rejected-path memo read,
-    /// the policy verdict, then the one mechanical gate.
+    /// the policy verdict, then the one mechanical gate. Every early answer here
+    /// carries the built candidate's V4 count beside the receipt.
     fn eligibility_stage(
         &self,
         seq: u64,
         directions: Option<&[bool]>,
-        run: &mut UnitRun,
-    ) -> Result<Option<CrawlReceipt>, CrawlAbort> {
-        let Some(facts) = self.registered_hops(&run.pool_ids) else {
-            return Ok(Some(run.clock.answer(
+        built: Built,
+    ) -> Result<StageAnswer<Eligible>, CrawlAbort> {
+        let Built {
+            mut clock,
+            pool_ids,
+            v4_hops,
+        } = built;
+        let Some(facts) = self.registered_hops(&pool_ids) else {
+            return Ok(StageAnswer::Answered(clock.answer(
                 seq,
                 reject(Some(
                     "a hop the crawl just built is not registered".to_owned(),
@@ -520,14 +542,13 @@ impl RegistrationAdmission {
                 None,
             )));
         };
-        run.facts = facts;
 
-        let resolved = self.resolve_hop_directions(directions, run)?;
+        let resolved = self.resolve_hop_directions(directions, &facts)?;
         let effective = directions.or(resolved.as_deref());
         let candidate_sig: Option<HopSignature> = effective
-            .filter(|directions| directions.len() == run.pool_ids.len())
+            .filter(|directions| directions.len() == pool_ids.len())
             .map(|directions| {
-                run.pool_ids
+                pool_ids
                     .iter()
                     .copied()
                     .zip(directions.iter().copied())
@@ -538,7 +559,7 @@ impl RegistrationAdmission {
             // A deterministic deny already recorded for this signature:
             // answering from the memo keeps the policy from re-running.
             if self.ledger.with(|ledger| ledger.path_rejected(sig)) {
-                return Ok(Some(run.clock.answer(
+                return Ok(StageAnswer::Answered(clock.answer(
                     seq,
                     reject(None),
                     Some(sig.clone()),
@@ -551,7 +572,7 @@ impl RegistrationAdmission {
             Some(sig) => match self.policy_verdict(seq, sig)? {
                 Some(answer) => answer,
                 None => {
-                    return Ok(Some(run.clock.answer(
+                    return Ok(StageAnswer::Answered(clock.answer(
                         seq,
                         reject(Some(
                             "a built hop has no composition facts in state".to_owned(),
@@ -565,16 +586,16 @@ impl RegistrationAdmission {
         };
 
         let admission = self.ledger.with(|ledger| {
-            ledger.admit_path_with_policy(&run.pool_ids, directions, resolved.as_deref(), verdict)
+            ledger.admit_path_with_policy(&pool_ids, directions, resolved.as_deref(), verdict)
         });
         match admission {
-            PathAdmission::DirectionMismatch => Ok(Some(run.clock.answer(
+            PathAdmission::DirectionMismatch => Ok(StageAnswer::Answered(clock.answer(
                 seq,
                 skip(RegistrationOutcome::DirectionMismatch, true, None),
                 None,
                 None,
             ))),
-            PathAdmission::PolicyDenied => Ok(Some(run.clock.answer(
+            PathAdmission::PolicyDenied => Ok(StageAnswer::Answered(clock.answer(
                 seq,
                 reject(policy_detail),
                 candidate_sig,
@@ -582,7 +603,7 @@ impl RegistrationAdmission {
             ))),
             // Another seat memoized the deny between the read above and this
             // ask: the same bounded outcome, without a detail.
-            PathAdmission::RejectedPathMemo => Ok(Some(run.clock.answer(
+            PathAdmission::RejectedPathMemo => Ok(StageAnswer::Answered(clock.answer(
                 seq,
                 reject(None),
                 candidate_sig,
@@ -590,19 +611,23 @@ impl RegistrationAdmission {
             ))),
             // The dup fast-path: a signature already registered answers with the
             // engine dedup's shape (`created = false`) without touching verify.
-            PathAdmission::AlreadyRegistered => Ok(Some(run.clock.answer(
+            PathAdmission::AlreadyRegistered => Ok(StageAnswer::Answered(clock.answer(
                 seq,
                 RegistrationUnitOutcome::Registered {
                     created: false,
-                    v4_hops: run.v4_hops,
+                    v4_hops,
                 },
                 candidate_sig,
                 None,
             ))),
             PathAdmission::Admitted { hop_sig } => {
-                run.hop_sig = Some(hop_sig);
-                run.clock.lap();
-                Ok(None)
+                clock.lap();
+                Ok(StageAnswer::Continue(Eligible {
+                    clock,
+                    hop_sig,
+                    facts,
+                    v4_hops,
+                }))
             }
         }
     }
@@ -615,14 +640,13 @@ impl RegistrationAdmission {
     fn resolve_hop_directions(
         &self,
         directions: Option<&[bool]>,
-        run: &UnitRun,
+        facts: &[RegisteredHopFacts],
     ) -> Result<Option<Vec<bool>>, CrawlAbort> {
         match directions {
-            Some(pin) if pin.len() == run.pool_ids.len() => Ok(Some(pin.to_vec())),
+            Some(pin) if pin.len() == facts.len() => Ok(Some(pin.to_vec())),
             Some(_) => Ok(None),
             None => {
-                let spellings: Vec<(String, String, String)> = run
-                    .facts
+                let spellings: Vec<(String, String, String)> = facts
                     .iter()
                     .map(|facts| {
                         (
@@ -636,8 +660,7 @@ impl RegistrationAdmission {
                 // sentinels resolve to the conceptual native token only in
                 // their own protocol's context (ADR-097 D3), so raw zero
                 // never crosses the resolver as a generic token spelling.
-                let hops: Vec<DirectionHop<'_>> = run
-                    .facts
+                let hops: Vec<DirectionHop<'_>> = facts
                     .iter()
                     .zip(spellings.iter())
                     .map(|(facts, (token0, token1, identity))| DirectionHop {
@@ -656,17 +679,28 @@ impl RegistrationAdmission {
         }
     }
 
-    /// The verify stage: one lifecycle per pool, at most once per session.
-    async fn verify_stage(&self, run: &UnitRun) -> Result<(), CrawlAbort> {
-        for facts in &run.facts {
+    /// The verify stage: one lifecycle per pool, at most once per session. The
+    /// admitted run passes through with its verify lap closed.
+    async fn verify_stage(&self, mut eligible: Eligible) -> Result<Eligible, CrawlAbort> {
+        for facts in &eligible.facts {
             self.verify_hop(facts).await?;
         }
-        Ok(())
+        eligible.clock.lap();
+        Ok(eligible)
     }
 
     /// The REGISTER stage: the engine registry's path registration + eager
     /// solve, with the cap refusal answering the benign `Cap` outcome.
-    fn register_stage(&self, seq: u64, run: &mut UnitRun, hop_sig: HopSignature) -> CrawlReceipt {
+    ///
+    /// Its input is the admitted `Eligible` state and nothing else, so the
+    /// signature submitted here is always the one the gate admitted.
+    fn register_stage(&self, seq: u64, eligible: Eligible) -> CrawlReceipt {
+        let Eligible {
+            mut clock,
+            hop_sig,
+            v4_hops,
+            ..
+        } = eligible;
         let hops: Vec<PoolHop> = hop_sig
             .iter()
             .map(|&(pool_id, zero_for_one)| PoolHop {
@@ -697,12 +731,9 @@ impl RegistrationAdmission {
                         "a completed registration retracts a settled path deny: the engine holds the path, so the deny was stale"
                     );
                 }
-                run.clock.answer(
+                clock.answer(
                     seq,
-                    RegistrationUnitOutcome::Registered {
-                        created,
-                        v4_hops: run.v4_hops,
-                    },
+                    RegistrationUnitOutcome::Registered { created, v4_hops },
                     Some(hop_sig),
                     Some(path_id),
                 )
@@ -710,12 +741,11 @@ impl RegistrationAdmission {
             // The benign registered-path cap stop. The latch the loop stops on
             // is the controller's (C4); the admission only names the outcome.
             Err(PathRegistrationError::RegistryFull { .. }) => {
-                run.clock
-                    .answer(seq, RegistrationUnitOutcome::Cap, Some(hop_sig), None)
+                clock.answer(seq, RegistrationUnitOutcome::Cap, Some(hop_sig), None)
             }
             // A transient register failure is deliberately NEVER negatively
             // memoized: a raced build or a blip must stay retryable.
-            Err(PathRegistrationError::Invalid(detail)) => run.clock.answer(
+            Err(PathRegistrationError::Invalid(detail)) => clock.answer(
                 seq,
                 RegistrationUnitOutcome::RegisterFailed {
                     detail: Some(detail),
@@ -1025,32 +1055,63 @@ pub(crate) enum HopRefusal {
     Skip(BuildRefusal),
 }
 
-/// One candidate's working set, threaded through the stages in execution order.
+/// One candidate at the memo stage: nothing is known yet but the clock.
 struct UnitRun {
     /// The stage clock: one mark, lapped at each stage boundary.
     clock: StageClock,
-    /// The built hop pool ids, in hop order.
-    pool_ids: Vec<u64>,
-    /// The registered state-side facts of every built hop (the eligibility and
-    /// verify stages' shared read).
-    facts: Vec<RegisteredHopFacts>,
-    /// The hop signature the gate admitted — what the register stage submits.
-    hop_sig: Option<HopSignature>,
-    /// V4 hops that reached the registration stage: the `v4_pool_count` witness,
-    /// folded on `Registered` outcomes only.
-    v4_hops: usize,
 }
 
 impl UnitRun {
     fn new() -> Self {
         Self {
             clock: StageClock::new(),
-            pool_ids: Vec::new(),
-            facts: Vec::new(),
-            hop_sig: None,
-            v4_hops: 0,
         }
     }
+}
+
+/// What one stage answered: the candidate's receipt, or the state the next stage
+/// runs.
+///
+/// The two arms are the whole transition vocabulary — a stage terminates the
+/// unit or hands the next state on, and no stage can fabricate a later state's
+/// values.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the answered arm is the receipt the stage hands back by value, and the value is consumed in the same expression; boxing it would add a heap hop per candidate to shrink an enum nothing stores"
+)]
+enum StageAnswer<Next> {
+    /// The stage answered the candidate: this receipt is its whole result.
+    Answered(CrawlReceipt),
+    /// The stage passed the candidate on in its next state.
+    Continue(Next),
+}
+
+/// A candidate whose every hop is built and registered as a pool.
+struct Built {
+    /// The stage clock, carried across the stage boundary.
+    clock: StageClock,
+    /// The built hop pool ids, in hop order.
+    pool_ids: Vec<u64>,
+    /// V4 hops the candidate carried — the `v4_pool_count` witness, folded on
+    /// `Registered` outcomes (created and duplicate alike).
+    v4_hops: usize,
+}
+
+/// A candidate the eligibility gate admitted: the ONE state the register stage
+/// accepts.
+///
+/// The admitted hop signature is a value here, never an `Option`, so a run that
+/// reached registration without one has no spelling: no arm fails on it.
+struct Eligible {
+    /// The stage clock, carried across the stage boundary.
+    clock: StageClock,
+    /// The hop signature the gate admitted — what the register stage submits.
+    hop_sig: HopSignature,
+    /// The registered state-side facts of every built hop (the verify stage's
+    /// input).
+    facts: Vec<RegisteredHopFacts>,
+    /// V4 hops the candidate carried — the `v4_pool_count` witness.
+    v4_hops: usize,
 }
 
 /// Classify one construction refusal into the candidate's answer.
@@ -1156,5 +1217,51 @@ impl StageClock {
             split: self.split,
             path_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The stage seam's own type pins.
+    //!
+    //! The repo has no compile-fail harness (no `trybuild` corpus), so the
+    //! typestate's compile-time claim is asserted where rustc still enforces it:
+    //! a fn-pointer coercion names a stage's exact signature, and it stops
+    //! compiling the moment the seam widens back to an unadmitted run or to an
+    //! optional signature.
+
+    use super::*;
+
+    /// The eligibility stage's answer: the gate hands the admitted state on, or
+    /// the receipt terminates the unit.
+    type GateAnswer = Result<StageAnswer<Eligible>, CrawlAbort>;
+
+    /// The admitted state's hop signature, read as a value: the coercion at the
+    /// call site is what proves the field's type.
+    fn admitted_signature(eligible: &Eligible) -> &HopSignature {
+        &eligible.hop_sig
+    }
+
+    /// The register stage takes the eligibility gate's answer and nothing else,
+    /// by value.
+    ///
+    /// The coercions are the assertion: this file stops compiling if the stage
+    /// widens to a `&mut UnitRun`, a `Built`, an `Option<HopSignature>`, or a
+    /// signature threaded beside the state instead of inside it.
+    #[test]
+    fn the_register_seam_is_the_admitted_state() {
+        let register: fn(&RegistrationAdmission, u64, Eligible) -> CrawlReceipt =
+            RegistrationAdmission::register_stage;
+        let signature: fn(&Eligible) -> &HopSignature = admitted_signature;
+        let _ = (register, signature);
+    }
+
+    /// The eligibility gate either answers with the candidate's receipt or hands
+    /// the admitted state on: there is no third arm carrying a half-admitted run.
+    #[test]
+    fn the_eligibility_gate_answers_or_hands_on_the_admitted_state() {
+        let gate: fn(&RegistrationAdmission, u64, Option<&[bool]>, Built) -> GateAnswer =
+            RegistrationAdmission::eligibility_stage;
+        let _ = gate;
     }
 }
