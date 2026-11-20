@@ -15,12 +15,14 @@
 //!
 //! # Design
 //!
-//! - A pure [`CadenceState`] records header-arrival wall-clock intervals
-//!   (trailing window of [`WINDOW`] samples; intervals outside
+//! - [`CadenceState`] is a phase machine over header-arrival wall-clock
+//!   intervals (trailing window of [`WINDOW`] samples; intervals outside
 //!   [`MIN_INTERVAL_SECS`]..[`MAX_INTERVAL_SECS`] — gaps, reorg double-fires,
 //!   burst double-headers — are discarded but still re-anchor the clock).
-//!   Once [`MIN_BLOCKS`] valid samples accumulate, the delay target is
-//!   `mult x mean`, clamped to [`MIN_DELAY_MS`]..[`MAX_DELAY_MS`].
+//!   The first header anchors, the [`MIN_BLOCKS`]th valid sample ends warm-up
+//!   by applying the first target (`mult x mean`, clamped to
+//!   [`MIN_DELAY_MS`]..[`MAX_DELAY_MS`]), and every header answers a
+//!   [`CadenceOutcome`] naming the apply or the suppressed target.
 //! - Re-application is rate-limited by a 10% hysteresis band on the applied
 //!   value so the mimalloc option is not churned every block.
 //! - Config precedence: fixed `DEGENBOT_MIMALLOC_PURGE_DELAY_MS` overrides
@@ -38,7 +40,7 @@
 //! pump task's header arm (plus one startup init), and option writes are
 //! idempotent monotone values, so contention is structurally excluded.
 
-use degenbot_core::{op_info, op_warn};
+use degenbot_core::{op_debug, op_info, op_warn};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -94,14 +96,13 @@ pub fn clamp_delay_ms(ms: i64) -> i64 {
     ms.clamp(MIN_DELAY_MS, MAX_DELAY_MS)
 }
 
-/// Trailing-window simple mean x multiplier, clamped. `None` until
-/// `min_blocks` interval samples exist — the engine must have seen enough
-/// blocks before it is allowed to retune mimalloc.
+/// Trailing-window simple mean x multiplier, clamped.
+///
+/// Readiness is the tracker's phase, not this function's: the warm-up
+/// transition is the only caller, and only with `min_blocks` or more intervals
+/// in the window.
 #[must_use]
-pub fn compute_purge_delay_ms(intervals: &[f64], mult: f64, min_blocks: usize) -> Option<i64> {
-    if intervals.len() < min_blocks {
-        return None;
-    }
+pub fn compute_purge_delay_ms(intervals: &[f64], mult: f64) -> i64 {
     #[expect(
         clippy::cast_precision_loss,
         reason = "window length is bounded far below 2^52"
@@ -112,7 +113,7 @@ pub fn compute_purge_delay_ms(intervals: &[f64], mult: f64, min_blocks: usize) -
         reason = "delay_ms is clamped to <= 600_000 before the round, i64-safe"
     )]
     let ms = (mean * 1000.0 * mult).round() as i64;
-    Some(clamp_delay_ms(ms))
+    clamp_delay_ms(ms)
 }
 
 /// Resolved startup configuration from the environment.
@@ -146,11 +147,40 @@ pub fn config_from_cfg(cfg: &::degenbot_config::schema::AllocatorConfig) -> Purg
     }
 }
 
+/// Which measurement stage the cadence tracker is in.
+///
+/// The phase owns the clock anchor and the applied delay, so the two can never
+/// disagree, and "nothing to re-tune from yet" is a phase rather than a `None`
+/// return shared with the hysteresis verdict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CadencePhase {
+    /// No header observed yet: the next arrival anchors the clock and measures
+    /// nothing.
+    AwaitingAnchor,
+    /// Anchored, short of `min_blocks` valid intervals: no target exists.
+    Warming { anchor_ms: u64 },
+    /// A target has been applied: `applied_ms` is the live purge delay, held
+    /// until a target leaves the hysteresis band.
+    Tuning { anchor_ms: u64, applied_ms: i64 },
+}
+
+/// What one header arrival did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CadenceOutcome {
+    /// The first header: the clock is anchored, no interval exists yet.
+    Anchored,
+    /// Too few valid intervals to compute a target: nothing is applied.
+    Warming,
+    /// The target cleared the hysteresis band and is now the applied delay.
+    Tuned { delay_ms: i64 },
+    /// The target stayed inside the band: `applied_ms` is still the live delay.
+    Suppressed { target_ms: i64, applied_ms: i64 },
+}
+
 /// Cadence tracker: pure, testable, one instance per pump.
 struct CadenceState {
     window: VecDeque<f64>,
-    last_header_ms: Option<u64>,
-    applied_ms: Option<i64>,
+    phase: CadencePhase,
     mult: f64,
     min_blocks: usize,
 }
@@ -159,45 +189,84 @@ impl CadenceState {
     fn new(mult: f64, min_blocks: usize) -> Self {
         Self {
             window: VecDeque::with_capacity(WINDOW),
-            last_header_ms: None,
-            applied_ms: None,
+            phase: CadencePhase::AwaitingAnchor,
             mult,
             min_blocks,
         }
     }
 
-    /// Record a header arrival at `now_ms`; return the newly-applied delay
-    /// only when the hysteresis band allows a re-apply.
-    fn observe(&mut self, now_ms: u64) -> Option<i64> {
-        if let Some(last) = self.last_header_ms {
-            let dt_secs =
-                f64::from(u32::try_from(now_ms.saturating_sub(last)).unwrap_or(u32::MAX)) / 1000.0;
-            if (MIN_INTERVAL_SECS..=MAX_INTERVAL_SECS).contains(&dt_secs) {
-                self.window.push_back(dt_secs);
-                while self.window.len() > WINDOW {
-                    self.window.pop_front();
-                }
+    /// Record a header arrival at `now_ms` and answer what it did.
+    ///
+    /// An out-of-band interval (gap, reorg double-fire, sub-second
+    /// double-header) never enters the window, but the arrival still re-anchors
+    /// the clock so the NEXT interval measures from this header.
+    fn observe(&mut self, now_ms: u64) -> CadenceOutcome {
+        let (anchor_ms, applied_ms) = match self.phase {
+            CadencePhase::AwaitingAnchor => {
+                self.phase = CadencePhase::Warming { anchor_ms: now_ms };
+                return CadenceOutcome::Anchored;
             }
-            // Invalid intervals (gaps, reorg double-fires, sub-second
-            // double-headers) never enter the window, but the clock always
-            // re-anchors so the NEXT interval measures from this header.
-        }
-        self.last_header_ms = Some(now_ms);
-        let target =
-            compute_purge_delay_ms(self.window.make_contiguous(), self.mult, self.min_blocks)?;
-        // Hysteresis: only re-apply when the target moved >10% off the
-        // applied value (or nothing was applied yet).
-        let changed = match self.applied_ms {
-            None => true,
-            // Integer form of the 10 percent band (no float casts).
-            Some(prev) => (target - prev).abs() * 10 > prev,
+            CadencePhase::Warming { anchor_ms } => (anchor_ms, None),
+            CadencePhase::Tuning {
+                anchor_ms,
+                applied_ms,
+            } => (anchor_ms, Some(applied_ms)),
         };
-        if !changed {
-            return None;
+        self.record_interval(anchor_ms, now_ms);
+
+        let Some(applied_ms) = applied_ms else {
+            if self.window.len() < self.min_blocks {
+                self.phase = CadencePhase::Warming { anchor_ms: now_ms };
+                return CadenceOutcome::Warming;
+            }
+            // Warm-up is over. Nothing is applied yet, so there is no band to
+            // suppress against: the first target tunes.
+            let delay_ms = compute_purge_delay_ms(self.window.make_contiguous(), self.mult);
+            self.phase = CadencePhase::Tuning {
+                anchor_ms: now_ms,
+                applied_ms: delay_ms,
+            };
+            return CadenceOutcome::Tuned { delay_ms };
+        };
+
+        let target_ms = compute_purge_delay_ms(self.window.make_contiguous(), self.mult);
+        if within_band(applied_ms, target_ms) {
+            self.phase = CadencePhase::Tuning {
+                anchor_ms: now_ms,
+                applied_ms,
+            };
+            return CadenceOutcome::Suppressed {
+                target_ms,
+                applied_ms,
+            };
         }
-        self.applied_ms = Some(target);
-        Some(target)
+        self.phase = CadencePhase::Tuning {
+            anchor_ms: now_ms,
+            applied_ms: target_ms,
+        };
+        CadenceOutcome::Tuned {
+            delay_ms: target_ms,
+        }
     }
+
+    /// Push the interval when it is a plausible block cadence.
+    fn record_interval(&mut self, anchor_ms: u64, now_ms: u64) {
+        let dt_secs =
+            f64::from(u32::try_from(now_ms.saturating_sub(anchor_ms)).unwrap_or(u32::MAX)) / 1000.0;
+        if (MIN_INTERVAL_SECS..=MAX_INTERVAL_SECS).contains(&dt_secs) {
+            self.window.push_back(dt_secs);
+            while self.window.len() > WINDOW {
+                self.window.pop_front();
+            }
+        }
+    }
+}
+
+/// The 10 percent hysteresis band in integer math (no float casts): a target
+/// this close to `applied_ms` leaves the applied delay alone, so the mimalloc
+/// option is not churned every block.
+fn within_band(applied_ms: i64, target_ms: i64) -> bool {
+    (target_ms - applied_ms).abs() * 10 <= applied_ms
 }
 
 #[cfg(any(feature = "allocator-ctrl", test))]
@@ -330,8 +399,19 @@ fn observe_at(now_ms: u64) {
         let cfg = config_from_cfg(&degenbot_substrate::stance::config().allocator);
         CadenceState::new(cfg.mult, MIN_BLOCKS)
     });
-    if let Some(delay_ms) = state.observe(now_ms) {
-        apply_delay_ms(delay_ms);
+    match state.observe(now_ms) {
+        CadenceOutcome::Anchored | CadenceOutcome::Warming => {}
+        CadenceOutcome::Tuned { delay_ms } => apply_delay_ms(delay_ms),
+        // Debug, not info: once tuned this fires on every header.
+        CadenceOutcome::Suppressed {
+            target_ms,
+            applied_ms,
+        } => op_debug!(
+            domain = pump,
+            target_ms,
+            applied_ms,
+            "purge-delay target inside the hysteresis band"
+        ),
     }
 }
 
@@ -345,60 +425,106 @@ mod tests {
         CadenceState::new(DEFAULT_MULT, MIN_BLOCKS)
     }
 
+    /// Observe a clean 12s cadence through warm-up; returns the last header's
+    /// timestamp. The final observation tunes to `24_000`ms.
+    fn fill_warm_up(s: &mut CadenceState) -> u64 {
+        let min_blocks = MIN_BLOCKS as u64;
+        assert_eq!(s.observe(0), CadenceOutcome::Anchored);
+        for i in 1..=min_blocks {
+            let _ = s.observe(i * 12_000);
+        }
+        min_blocks * 12_000
+    }
+
     #[test]
-    fn compute_returns_none_below_min_blocks() {
-        let ivs = [12.0; MIN_BLOCKS - 1];
-        assert_eq!(compute_purge_delay_ms(&ivs, DEFAULT_MULT, MIN_BLOCKS), None);
+    fn first_header_anchors_and_applies_nothing() {
+        let mut s = state();
+        assert_eq!(s.observe(1_000), CadenceOutcome::Anchored);
+        assert_eq!(s.phase, CadencePhase::Warming { anchor_ms: 1_000 });
+        assert!(
+            s.window.is_empty(),
+            "no interval exists before a second header"
+        );
+    }
+
+    #[test]
+    fn warm_up_outcome_is_distinct_from_suppression() {
+        let mut s = state();
+        assert_eq!(s.observe(0), CadenceOutcome::Anchored);
+        for i in 1..MIN_BLOCKS as u64 {
+            assert_eq!(s.observe(i * 12_000), CadenceOutcome::Warming);
+        }
+        assert_eq!(s.window.len(), MIN_BLOCKS - 1);
+        assert!(matches!(s.phase, CadencePhase::Warming { .. }));
+    }
+
+    #[test]
+    fn first_apply_tunes_without_a_band_check() {
+        let mut s = state();
+        let last = fill_warm_up(&mut s);
+        assert_eq!(
+            s.phase,
+            CadencePhase::Tuning {
+                anchor_ms: last,
+                applied_ms: 24_000,
+            }
+        );
+        assert_eq!(s.window.len(), MIN_BLOCKS);
     }
 
     #[test]
     fn compute_scales_mean_by_multiplier() {
         let ivs = [13.16; MIN_BLOCKS];
-        assert_eq!(
-            compute_purge_delay_ms(&ivs, DEFAULT_MULT, MIN_BLOCKS),
-            Some(26_320)
-        );
+        assert_eq!(compute_purge_delay_ms(&ivs, DEFAULT_MULT), 26_320);
     }
 
     #[test]
     fn compute_clamps_to_bounds() {
         let fast = [1.0; MIN_BLOCKS];
-        assert_eq!(
-            compute_purge_delay_ms(&fast, DEFAULT_MULT, MIN_BLOCKS),
-            Some(MIN_DELAY_MS)
-        );
+        assert_eq!(compute_purge_delay_ms(&fast, DEFAULT_MULT), MIN_DELAY_MS);
         let slow = [900.0; MIN_BLOCKS];
+        assert_eq!(compute_purge_delay_ms(&slow, DEFAULT_MULT), MAX_DELAY_MS);
+    }
+
+    #[test]
+    fn invalid_interval_reanchors_without_applying() {
+        let mut s = state();
+        assert_eq!(s.observe(0), CadenceOutcome::Anchored);
+        for i in 1..MIN_BLOCKS as u64 {
+            let _ = s.observe(i * 12_000);
+        }
+        let last = (MIN_BLOCKS as u64 - 1) * 12_000;
+        // A 400s gap lies outside the cadence band: no sample, no apply.
+        assert_eq!(s.observe(last + 400_000), CadenceOutcome::Warming);
         assert_eq!(
-            compute_purge_delay_ms(&slow, DEFAULT_MULT, MIN_BLOCKS),
-            Some(MAX_DELAY_MS)
+            s.phase,
+            CadencePhase::Warming {
+                anchor_ms: last + 400_000
+            }
+        );
+        assert_eq!(s.window.len(), MIN_BLOCKS - 1, "a gap is not a sample");
+        // The next 12s interval measures from the re-anchored header; had the
+        // clock stayed on `last`, this arrival would read as a 412s gap.
+        assert_eq!(
+            s.observe(last + 400_000 + 12_000),
+            CadenceOutcome::Tuned { delay_ms: 24_000 }
         );
     }
 
     #[test]
-    fn observe_ignores_invalid_intervals_but_reanchors_clock() {
+    fn out_of_band_interval_while_tuning_holds_the_applied_delay() {
         let mut s = state();
-        assert_eq!(s.observe(1_000), None); // first header: anchors
-        assert_eq!(s.observe(401_000), None); // 400s gap: rejected
-        assert_eq!(s.observe(401_100), None); // 0.1s double-fire: rejected
-        assert_eq!(s.observe(401_150), None); // 0.05s: rejected
-        assert_eq!(s.last_header_ms, Some(401_150), "clock re-anchored");
-        for i in 1..=MIN_BLOCKS as u64 {
-            let _ = s.observe(401_150 + i * 12_000);
-        }
-        assert_eq!(s.window.len(), MIN_BLOCKS, "valid intervals recorded");
-    }
-
-    #[test]
-    fn observe_emits_delay_exactly_once_at_threshold() {
-        let mut s = state();
-        let mut applied: Vec<i64> = Vec::new();
-        s.observe(1_000);
-        for i in 1..=WINDOW as u64 {
-            if let Some(d) = s.observe(1_000 + i * 12_000) {
-                applied.push(d);
+        let mut now = fill_warm_up(&mut s);
+        now += 300; // sub-second double-fire
+        assert_eq!(
+            s.observe(now),
+            CadenceOutcome::Suppressed {
+                target_ms: 24_000,
+                applied_ms: 24_000,
             }
-        }
-        assert_eq!(applied, vec![24_000]);
+        );
+        assert_eq!(s.window.len(), MIN_BLOCKS, "a double-fire is not a sample");
+        assert!(matches!(s.phase, CadencePhase::Tuning { anchor_ms, .. } if anchor_ms == now));
     }
 
     #[test]
@@ -412,49 +538,61 @@ mod tests {
     }
 
     #[test]
-    fn hysteresis_suppresses_small_drift() {
+    fn suppressed_outcome_carries_target_and_applied() {
         let mut s = state();
-        s.observe(0);
-        for i in 1..=MIN_BLOCKS as u64 {
-            let _ = s.observe(i * 12_000); // applies 24_000
-        }
-        assert_eq!(s.applied_ms, Some(24_000));
-        // 13s mean -> target 26_000; 2000 <= 10% of 24_000 -> suppressed
-        let mut got = None;
-        for n in (MIN_BLOCKS + 1)..=(MIN_BLOCKS + WINDOW) {
-            got = s.observe(u64::try_from(n).unwrap_or(u64::MAX) * 13_000);
-        }
-        assert_eq!(got, None);
+        let mut now = fill_warm_up(&mut s);
+        // One 13s sample against 20 x 12s: target 24_095ms, inside the band.
+        now += 13_000;
+        assert_eq!(
+            s.observe(now),
+            CadenceOutcome::Suppressed {
+                target_ms: 24_095,
+                applied_ms: 24_000,
+            }
+        );
+        assert!(
+            matches!(s.phase, CadencePhase::Tuning { applied_ms, .. } if applied_ms == 24_000),
+            "suppression keeps the applied delay"
+        );
     }
 
     #[test]
-    fn hysteresis_permits_real_changes() {
+    fn hysteresis_suppresses_drift_inside_the_band() {
         let mut s = state();
-        s.observe(0);
-        for i in 1..=MIN_BLOCKS as u64 {
-            let _ = s.observe(i * 12_000); // applies 24_000
+        let mut now = fill_warm_up(&mut s);
+        for _ in 0..WINDOW {
+            now += 13_000;
+            assert!(
+                matches!(s.observe(now), CadenceOutcome::Suppressed { .. }),
+                "13s under a 24_000ms band must never re-apply"
+            );
         }
-        // Drain the window to all-40s intervals: the target mean migrates
-        // stepwise and hysteresis legitimately applies intermediate values,
-        // freezing when the target's drift falls inside the 10% band. Final
-        // pure-40s target = 40s x 2 = 80_000ms; the applied value must have
-        // re-applied at least once past 24_000 and sit within the band.
-        let mut last_change: Option<i64> = None;
-        for i in (MIN_BLOCKS + 1)..=(MIN_BLOCKS + WINDOW) {
-            if let Some(d) = s.observe(i as u64 * 40_000) {
-                last_change = Some(d);
+        assert!(matches!(s.phase, CadencePhase::Tuning { applied_ms, .. } if applied_ms == 24_000));
+    }
+
+    #[test]
+    fn hysteresis_retunes_drift_outside_the_band() {
+        let mut s = state();
+        let mut now = fill_warm_up(&mut s);
+        // Drain the window to all-40s samples: the target migrates stepwise and
+        // freezes once a step falls inside the band, so the applied value must
+        // have retuned past the warm-up 24_000ms and end within the band of the
+        // pure-40s target (40s x 2.0).
+        let mut applied = 24_000;
+        for _ in 0..WINDOW {
+            now += 40_000;
+            if let CadenceOutcome::Tuned { delay_ms } = s.observe(now) {
+                applied = delay_ms;
             }
         }
-        assert!(
-            last_change.is_some(),
-            "40s cadence must re-apply past 24_000"
-        );
-        let applied = s.applied_ms.unwrap_or_default();
-        let final_target = 80_000i64; // 40s x 2.0
-                                      // Integer form of the same 10 percent band.
+        assert!(applied > 24_000, "a 40s cadence must retune past 24_000");
+        let final_target = 80_000;
         assert!(
             (final_target - applied).abs() * 10 <= applied,
-            "applied {applied} must freeze within 10% of target {final_target}"
+            "applied {applied} must sit within 10% of target {final_target}"
+        );
+        assert!(
+            matches!(s.phase, CadencePhase::Tuning { applied_ms, .. } if applied_ms == applied)
         );
     }
 
