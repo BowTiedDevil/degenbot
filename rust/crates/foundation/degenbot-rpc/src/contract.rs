@@ -31,6 +31,8 @@ use alloy::sol_types::SolCall;
 use dashmap::DashMap;
 use degenbot_abi::abi_types::cached::CachedAbiTypes;
 use degenbot_abi::abi_types::type_::AbiType;
+#[cfg(test)]
+use degenbot_abi::abi_types::type_::BitWidth;
 use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::signature_parser;
 use degenbot_core::errors::{ContractError, ContractResult, ProviderResult};
@@ -475,15 +477,15 @@ mod tests {
         );
         assert_eq!(
             AbiType::parse("uint256").expect("uint256 should parse"),
-            AbiType::Uint(256)
+            AbiType::Uint(BitWidth::BITS_256)
         );
         assert_eq!(
             AbiType::parse("uint8").expect("uint8 should parse"),
-            AbiType::Uint(8)
+            AbiType::Uint(BitWidth::BITS_8)
         );
         assert_eq!(
             AbiType::parse("int256").expect("int256 should parse"),
-            AbiType::Int(256)
+            AbiType::Int(BitWidth::BITS_256)
         );
         assert_eq!(
             AbiType::parse("bytes").expect("bytes should parse"),
@@ -505,7 +507,7 @@ mod tests {
         );
         assert_eq!(
             AbiType::parse("uint256[5]").expect("uint256[5] should parse"),
-            AbiType::FixedArray(Box::new(AbiType::Uint(256)), 5)
+            AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 5)
         );
     }
 
@@ -518,8 +520,14 @@ mod tests {
     #[test]
     fn test_abi_type_aliases() {
         // The unified AbiType supports aliases
-        assert_eq!(AbiType::parse("uint").unwrap(), AbiType::Uint(256));
-        assert_eq!(AbiType::parse("int").unwrap(), AbiType::Int(256));
+        assert_eq!(
+            AbiType::parse("uint").unwrap(),
+            AbiType::Uint(BitWidth::BITS_256)
+        );
+        assert_eq!(
+            AbiType::parse("int").unwrap(),
+            AbiType::Int(BitWidth::BITS_256)
+        );
         assert_eq!(AbiType::parse("function").unwrap(), AbiType::FixedBytes(24));
     }
 
@@ -530,7 +538,7 @@ mod tests {
         assert_eq!(sig.name, "transfer");
         assert_eq!(sig.inputs.len(), 2);
         assert_eq!(sig.inputs[0], AbiType::Address);
-        assert_eq!(sig.inputs[1], AbiType::Uint(256));
+        assert_eq!(sig.inputs[1], AbiType::Uint(BitWidth::BITS_256));
         assert!(sig.outputs.is_empty());
         assert_eq!(sig.selector.len(), 4);
 
@@ -539,7 +547,7 @@ mod tests {
         assert_eq!(sig.name, "balanceOf");
         assert_eq!(sig.inputs.len(), 1);
         assert_eq!(sig.outputs.len(), 1);
-        assert_eq!(sig.outputs[0], AbiType::Uint(256));
+        assert_eq!(sig.outputs[0], AbiType::Uint(BitWidth::BITS_256));
     }
 
     #[test]
@@ -598,12 +606,12 @@ mod tests {
 
     #[test]
     fn test_encode_uint() {
-        let encoded =
-            AbiValue::from_str_arg(&AbiType::Uint(256), "12345").expect("uint256 should parse");
+        let encoded = AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), "12345")
+            .expect("uint256 should parse");
         match encoded {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n.to_string(), "12345");
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -645,43 +653,50 @@ mod tests {
     fn test_abi_type_is_dynamic() {
         assert!(!AbiType::Address.is_dynamic());
         assert!(!AbiType::Bool.is_dynamic());
-        assert!(!AbiType::Uint(256).is_dynamic());
+        assert!(!AbiType::Uint(BitWidth::BITS_256).is_dynamic());
         assert!(!AbiType::FixedBytes(32).is_dynamic());
         assert!(AbiType::Bytes.is_dynamic());
         assert!(AbiType::String.is_dynamic());
         assert!(AbiType::Array(Box::new(AbiType::String)).is_dynamic());
-        assert!(AbiType::Array(Box::new(AbiType::Uint(256))).is_dynamic()); // Arrays are dynamic
+        assert!(AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))).is_dynamic());
+        // Arrays are dynamic
     }
 
     #[test]
     fn test_encode_uint_hex() {
         // Hex-encoded uint should produce the same result as decimal
-        let encoded_hex = AbiValue::from_str_arg(&AbiType::Uint(256), "0x3039").unwrap();
-        let encoded_dec = AbiValue::from_str_arg(&AbiType::Uint(256), "12345").unwrap();
+        let encoded_hex =
+            AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), "0x3039").unwrap();
+        let encoded_dec =
+            AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), "12345").unwrap();
         assert_eq!(encoded_hex, encoded_dec);
 
         // Uppercase 0X prefix
-        let encoded_upper = AbiValue::from_str_arg(&AbiType::Uint(256), "0X3039").unwrap();
+        let encoded_upper =
+            AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), "0X3039").unwrap();
         assert_eq!(encoded_upper, encoded_dec);
     }
 
     #[test]
     fn test_encode_int_hex() {
         // Hex-encoded int should produce the same result as decimal
-        let encoded_hex = AbiValue::from_str_arg(&AbiType::Int(256), "0x3039").unwrap();
-        let encoded_dec = AbiValue::from_str_arg(&AbiType::Int(256), "12345").unwrap();
+        let encoded_hex =
+            AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), "0x3039").unwrap();
+        let encoded_dec =
+            AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), "12345").unwrap();
         assert_eq!(encoded_hex, encoded_dec);
 
         // Uppercase 0X prefix
-        let encoded_upper = AbiValue::from_str_arg(&AbiType::Int(256), "0X3039").unwrap();
+        let encoded_upper =
+            AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), "0X3039").unwrap();
         assert_eq!(encoded_upper, encoded_dec);
 
         // Negative decimal should still work
-        let encoded_neg = AbiValue::from_str_arg(&AbiType::Int(256), "-1").unwrap();
+        let encoded_neg = AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), "-1").unwrap();
         match encoded_neg {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, I256::MINUS_ONE);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int variant"),
         }
@@ -690,7 +705,7 @@ mod tests {
     #[test]
     fn test_encode_uint_invalid_hex() {
         // Invalid hex should produce a clear error
-        let result = AbiValue::from_str_arg(&AbiType::Uint(256), "0xZZZZ");
+        let result = AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), "0xZZZZ");
         assert!(result.is_err());
     }
 
@@ -715,7 +730,7 @@ mod tests {
             .expect("spaces inside parens should work");
         assert_eq!(sig.name, "balanceOf");
         assert_eq!(sig.outputs.len(), 1);
-        assert_eq!(sig.outputs[0], AbiType::Uint(256));
+        assert_eq!(sig.outputs[0], AbiType::Uint(BitWidth::BITS_256));
     }
 
     #[test]
@@ -774,7 +789,7 @@ mod tests {
         let sig = FunctionSignature::parse("foo(address)returns(uint256,bool)")
             .expect("multiple outputs should parse");
         assert_eq!(sig.outputs.len(), 2);
-        assert_eq!(sig.outputs[0], AbiType::Uint(256));
+        assert_eq!(sig.outputs[0], AbiType::Uint(BitWidth::BITS_256));
         assert_eq!(sig.outputs[1], AbiType::Bool);
     }
 
@@ -784,8 +799,11 @@ mod tests {
 
     #[test]
     fn test_encode_empty_dynamic_array() {
-        let encoded = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[]")
-            .expect("should encode empty array");
+        let encoded = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            "[]",
+        )
+        .expect("should encode empty array");
         match encoded {
             AbiValue::Array(arr) => assert!(arr.is_empty()),
             _ => panic!("Expected Array variant"),
@@ -794,9 +812,11 @@ mod tests {
 
     #[test]
     fn test_encode_dynamic_uint_array() {
-        let value =
-            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
-                .expect("should encode uint256[]");
+        let value = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            "[1, 2, 3]",
+        )
+        .expect("should encode uint256[]");
         match value {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 3);
@@ -809,7 +829,7 @@ mod tests {
     fn test_encode_fixed_uint_array() {
         // [10, 20, 30] as uint256[3]
         let value = AbiValue::from_str_arg(
-            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            &AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 3),
             "[10, 20, 30]",
         )
         .expect("should encode uint256[3]");
@@ -825,7 +845,7 @@ mod tests {
     fn test_encode_fixed_array_wrong_size() {
         // uint256[3] with 2 elements should error
         let result = AbiValue::from_str_arg(
-            &AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            &AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 3),
             "[1, 2]",
         );
         assert!(result.is_err());
@@ -881,7 +901,7 @@ mod tests {
     #[test]
     fn test_encode_arguments_static_then_dynamic() {
         // f(uint256, bytes) with (1, 0x1234)
-        let types = vec![AbiType::Uint(256), AbiType::Bytes];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bytes];
         let args = vec!["1".to_string(), "0x1234".to_string()];
 
         let encoded = encode_arguments(&types, &args).expect("should encode mixed args");
@@ -907,7 +927,7 @@ mod tests {
     fn test_encode_arguments_static_dynamic_static_dynamic() {
         // f(uint256, string, bool, bytes) with (42, "hello", true, 0xabcd)
         let types = vec![
-            AbiType::Uint(256),
+            AbiType::Uint(BitWidth::BITS_256),
             AbiType::String,
             AbiType::Bool,
             AbiType::Bytes,
@@ -927,7 +947,7 @@ mod tests {
     fn test_encode_arguments_static_fixed_array_and_dynamic() {
         // f(uint256[3], bytes) with ([10, 20, 30], 0xff)
         let types = vec![
-            AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3),
+            AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 3),
             AbiType::Bytes,
         ];
         let args = vec!["[10, 20, 30]".to_string(), "0xff".to_string()];
@@ -940,8 +960,8 @@ mod tests {
     fn test_encode_arguments_dynamic_array_with_static_elements() {
         // f(uint256[], uint256) with ([1,2,3], 42)
         let types = vec![
-            AbiType::Array(Box::new(AbiType::Uint(256))),
-            AbiType::Uint(256),
+            AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            AbiType::Uint(BitWidth::BITS_256),
         ];
         let args = vec!["[1, 2, 3]".to_string(), "42".to_string()];
 
@@ -960,8 +980,11 @@ mod tests {
         data[0..32].copy_from_slice(&alloy::primitives::U256::from(32).to_be_bytes_vec());
         data[32..64].copy_from_slice(&alloy::primitives::U256::from(0).to_be_bytes_vec());
 
-        let values = decode_return_data(&data, &[AbiType::Array(Box::new(AbiType::Uint(256)))])
-            .expect("should decode empty array");
+        let values = decode_return_data(
+            &data,
+            &[AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256)))],
+        )
+        .expect("should decode empty array");
 
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], "[]");
@@ -970,7 +993,7 @@ mod tests {
     #[test]
     fn test_decode_dynamic_uint_array() {
         // Use encoder to create test data, then decode it
-        let types = vec![AbiType::Array(Box::new(AbiType::Uint(256)))];
+        let types = vec![AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256)))];
         let args = vec!["[1, 2, 3]".to_string()];
 
         let encoded = encode_arguments(&types, &args).expect("should encode");
@@ -984,7 +1007,10 @@ mod tests {
     #[test]
     fn test_decode_fixed_uint_array() {
         // Encode [10, 20, 30] as uint256[3]
-        let types = vec![AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3)];
+        let types = vec![AbiType::FixedArray(
+            Box::new(AbiType::Uint(BitWidth::BITS_256)),
+            3,
+        )];
         let args = vec!["[10, 20, 30]".to_string()];
 
         let encoded = encode_arguments(&types, &args).expect("should encode");
@@ -1011,9 +1037,18 @@ mod tests {
     #[test]
     fn test_array_roundtrip() {
         let test_cases = vec![
-            ("[]", AbiType::Array(Box::new(AbiType::Uint(256)))),
-            ("[1]", AbiType::Array(Box::new(AbiType::Uint(256)))),
-            ("[1, 2, 3]", AbiType::Array(Box::new(AbiType::Uint(256)))),
+            (
+                "[]",
+                AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            ),
+            (
+                "[1]",
+                AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            ),
+            (
+                "[1, 2, 3]",
+                AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            ),
             ("[true, false]", AbiType::Array(Box::new(AbiType::Bool))),
         ];
 
@@ -1051,8 +1086,11 @@ mod tests {
         data[64..96].copy_from_slice(&alloy::primitives::U256::from(42).to_be_bytes_vec());
 
         // Decoding should fail with a clear error
-        let result = decode_return_data(&data, &[AbiType::Array(Box::new(AbiType::Uint(256)))])
-            .map_err(|e| e.to_string());
+        let result = decode_return_data(
+            &data,
+            &[AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256)))],
+        )
+        .map_err(|e| e.to_string());
 
         assert!(
             result.is_err(),
@@ -1067,7 +1105,7 @@ mod tests {
     #[test]
     fn test_decode_return_data_empty_with_types_errors() {
         // When return types are expected but data is empty, this is an error
-        let result = decode_return_data(&[], &[AbiType::Uint(256)]);
+        let result = decode_return_data(&[], &[AbiType::Uint(BitWidth::BITS_256)]);
         assert!(
             result.is_err(),
             "Should return error when data is empty but types are expected"
@@ -1092,7 +1130,7 @@ mod tests {
 
     #[test]
     fn test_decode_return_data_typed() {
-        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
         let args = vec!["42".to_string(), "true".to_string()];
 
         let encoded = encode_arguments(&types, &args).expect("should encode");
@@ -1102,7 +1140,7 @@ mod tests {
         match &decoded[0] {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(*n, alloy::primitives::U256::from(42u64));
-                assert_eq!(*bits, 256);
+                assert_eq!(*bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -1118,7 +1156,7 @@ mod tests {
 
     #[test]
     fn test_encode_arguments_cached_matches_uncached() {
-        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
         let args = vec!["42".to_string(), "true".to_string()];
 
         let uncached = encode_arguments(&types, &args).expect("uncached should encode");
@@ -1135,7 +1173,7 @@ mod tests {
 
     #[test]
     fn test_decode_return_data_cached_matches_uncached() {
-        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
         let args = vec!["42".to_string(), "true".to_string()];
         let encoded = encode_arguments(&types, &args).expect("should encode");
 

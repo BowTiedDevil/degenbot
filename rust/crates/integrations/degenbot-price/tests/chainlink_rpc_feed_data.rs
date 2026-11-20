@@ -15,7 +15,7 @@
 )]
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_abi::abi_types::type_::AbiType;
+use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
 use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::encoder::encode_for_types;
 use degenbot_price::{ChainlinkPriceFeed, FeedDataReason, PriceError};
@@ -42,29 +42,31 @@ const BLOCK_NEGATIVE: u64 = 21_000_002;
 const BLOCK_DECIMALS_OVERFLOW: u64 = 21_000_003;
 
 const ROUND_TYPES: [AbiType; 5] = [
-    AbiType::Uint(80),
-    AbiType::Int(256),
-    AbiType::Uint(256),
-    AbiType::Uint(256),
-    AbiType::Uint(80),
+    AbiType::Uint(BitWidth::BITS_80),
+    AbiType::Int(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_80),
 ];
 
 /// The canonical ABI return bytes of `latestRoundData()` for `answer`.
 fn latest_round_data_return(answer: I256) -> String {
     let values = [
-        AbiValue::Uint(U256::from(1u64), 80),
-        AbiValue::Int(answer, 256),
-        AbiValue::Uint(U256::from(RECORDED_TIMESTAMP), 256),
-        AbiValue::Uint(U256::from(RECORDED_TIMESTAMP + 1), 256),
-        AbiValue::Uint(U256::from(1u64), 80),
+        AbiValue::Uint(U256::from(1u64), BitWidth::BITS_80),
+        AbiValue::Int(answer, BitWidth::BITS_256),
+        AbiValue::Uint(U256::from(RECORDED_TIMESTAMP), BitWidth::BITS_256),
+        AbiValue::Uint(U256::from(RECORDED_TIMESTAMP + 1), BitWidth::BITS_256),
+        AbiValue::Uint(U256::from(1u64), BitWidth::BITS_80),
     ];
     alloy::hex::encode(encode_for_types(&ROUND_TYPES, &values).expect("encode latestRoundData"))
 }
 
 /// The canonical ABI return word of `decimals()`.
 fn decimals_return(decimals: u8) -> String {
-    let values = [AbiValue::Uint(U256::from(decimals), 8)];
-    alloy::hex::encode(encode_for_types(&[AbiType::Uint(8)], &values).expect("encode decimals"))
+    let values = [AbiValue::Uint(U256::from(decimals), BitWidth::BITS_8)];
+    alloy::hex::encode(
+        encode_for_types(&[AbiType::Uint(BitWidth::BITS_8)], &values).expect("encode decimals"),
+    )
 }
 
 /// A recorded block answering the reader's two calls for `FEED`.

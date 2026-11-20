@@ -20,6 +20,8 @@
 //! for foreign types (`U256`/`I256` from `alloy`).
 
 #[cfg(feature = "abi")]
+use crate::abi_types::type_::BitWidth;
+#[cfg(feature = "abi")]
 use crate::abi_types::value::AbiValue;
 use crate::conversion::cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
@@ -192,12 +194,15 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
     if let Ok(int_val) = obj.extract::<i128>() {
         // Small integer fits in i128
         if int_val >= 0 {
-            return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned()), 256));
+            return Ok(AbiValue::Uint(
+                U256::from(int_val.cast_unsigned()),
+                BitWidth::BITS_256,
+            ));
         }
         return Ok(AbiValue::Int(
             I256::try_from(int_val)
                 .map_err(|_| PyValueError::new_err("Integer conversion failed"))?,
-            256,
+            BitWidth::BITS_256,
         ));
     }
 
@@ -220,7 +225,7 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
                     .map_err(|_| PyValueError::new_err("Integer value out of range for int256"))?,
             );
             // Directly interpret as I256 (two's complement encoding)
-            return Ok(AbiValue::Int(I256::from_raw(u256), 256));
+            return Ok(AbiValue::Int(I256::from_raw(u256), BitWidth::BITS_256));
         }
         // Positive integer - use unsigned to_bytes
         let kwargs = PyDict::new(py);
@@ -231,7 +236,7 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
             <[u8; 32]>::try_from(bytes)
                 .map_err(|_| PyValueError::new_err("Integer value out of range for uint256"))?,
         );
-        return Ok(AbiValue::Uint(u256, 256));
+        return Ok(AbiValue::Uint(u256, BitWidth::BITS_256));
     }
 
     // Try string (for addresses)

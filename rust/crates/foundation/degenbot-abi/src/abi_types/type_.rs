@@ -2,14 +2,41 @@ use degenbot_core::errors::AbiDecodeError;
 use std::borrow::Cow;
 use std::fmt;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BitWidth(usize);
+
+impl BitWidth {
+    pub const BITS_8: Self = Self(8);
+    pub const BITS_80: Self = Self(80);
+    pub const BITS_256: Self = Self(256);
+
+    #[must_use]
+    pub const fn new(bits: usize) -> Option<Self> {
+        if bits >= 8 && bits <= 256 && bits.is_multiple_of(8) {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for BitWidth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbiType {
     Address,
     Bool,
-    /// Bit width.
-    Uint(usize),
-    /// Bit width.
-    Int(usize),
+    Uint(BitWidth),
+    Int(BitWidth),
     FixedBytes(usize),
     Bytes,
     String,
@@ -41,7 +68,7 @@ impl AbiType {
     #[must_use]
     pub const fn size_bits(&self) -> Option<usize> {
         match self {
-            Self::Uint(bits) | Self::Int(bits) => Some(*bits),
+            Self::Uint(bits) | Self::Int(bits) => Some(bits.get()),
             Self::FixedBytes(n) => Some(*n * 8),
             _ => None,
         }
@@ -53,12 +80,12 @@ impl AbiType {
     /// # Example
     ///
     /// ```
-    /// use degenbot_abi::abi_types::type_::AbiType;
+    /// use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
     ///
     /// let ty = AbiType::Address;
     /// assert_eq!(ty.type_str(), "address");
     ///
-    /// let ty = AbiType::Uint(256);
+    /// let ty = AbiType::Uint(BitWidth::BITS_256);
     /// assert_eq!(ty.type_str(), "uint256");
     /// ```
     #[must_use]
@@ -97,8 +124,8 @@ impl AbiType {
         match self {
             Self::Address => Ok(DynSolType::Address),
             Self::Bool => Ok(DynSolType::Bool),
-            Self::Uint(bits) => Ok(DynSolType::Uint(*bits)),
-            Self::Int(bits) => Ok(DynSolType::Int(*bits)),
+            Self::Uint(bits) => Ok(DynSolType::Uint(bits.get())),
+            Self::Int(bits) => Ok(DynSolType::Int(bits.get())),
             Self::FixedBytes(size) => Ok(DynSolType::FixedBytes(*size)),
             Self::Bytes => Ok(DynSolType::Bytes),
             Self::String => Ok(DynSolType::String),
@@ -283,11 +310,14 @@ fn parse_byte_size(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError
 
 fn parse_uint_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError> {
     match n_str.parse::<usize>() {
-        Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Uint(bits)),
-        Ok(bits) => Err(AbiTypeError::InvalidBitWidth {
-            type_name: type_name.to_string(),
-            bits,
-        }),
+        Ok(bits) => {
+            BitWidth::new(bits)
+                .map(AbiType::Uint)
+                .ok_or_else(|| AbiTypeError::InvalidBitWidth {
+                    type_name: type_name.to_string(),
+                    bits,
+                })
+        }
         Err(_) => Err(AbiTypeError::InvalidBitWidth {
             type_name: type_name.to_string(),
             bits: 0,
@@ -297,11 +327,14 @@ fn parse_uint_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError
 
 fn parse_int_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError> {
     match n_str.parse::<usize>() {
-        Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Int(bits)),
-        Ok(bits) => Err(AbiTypeError::InvalidBitWidth {
-            type_name: type_name.to_string(),
-            bits,
-        }),
+        Ok(bits) => {
+            BitWidth::new(bits)
+                .map(AbiType::Int)
+                .ok_or_else(|| AbiTypeError::InvalidBitWidth {
+                    type_name: type_name.to_string(),
+                    bits,
+                })
+        }
         Err(_) => Err(AbiTypeError::InvalidBitWidth {
             type_name: type_name.to_string(),
             bits: 0,
@@ -316,13 +349,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bit_width_accepts_only_solidity_integer_widths() {
+        for bits in (8..=256).step_by(8) {
+            let width = BitWidth::new(bits).unwrap();
+            assert_eq!(width.get(), bits);
+            assert_eq!(width.to_string(), bits.to_string());
+        }
+
+        for bits in [0, 1, 7, 9, 255, 257, 264, usize::MAX] {
+            assert_eq!(BitWidth::new(bits), None);
+        }
+    }
+
+    #[test]
+    fn parsed_integer_types_carry_bit_width() {
+        assert_eq!(
+            AbiType::parse("uint80").unwrap(),
+            AbiType::Uint(BitWidth::BITS_80)
+        );
+        assert_eq!(
+            AbiType::parse("int256").unwrap(),
+            AbiType::Int(BitWidth::BITS_256)
+        );
+    }
+
+    #[test]
     fn test_parse_basic_types() {
         assert_eq!(AbiType::parse("address").unwrap(), AbiType::Address);
         assert_eq!(AbiType::parse("bool").unwrap(), AbiType::Bool);
-        assert_eq!(AbiType::parse("uint256").unwrap(), AbiType::Uint(256));
-        assert_eq!(AbiType::parse("uint8").unwrap(), AbiType::Uint(8));
-        assert_eq!(AbiType::parse("int256").unwrap(), AbiType::Int(256));
-        assert_eq!(AbiType::parse("int8").unwrap(), AbiType::Int(8));
+        assert_eq!(
+            AbiType::parse("uint256").unwrap(),
+            AbiType::Uint(BitWidth::BITS_256)
+        );
+        assert_eq!(
+            AbiType::parse("uint8").unwrap(),
+            AbiType::Uint(BitWidth::BITS_8)
+        );
+        assert_eq!(
+            AbiType::parse("int256").unwrap(),
+            AbiType::Int(BitWidth::BITS_256)
+        );
+        assert_eq!(
+            AbiType::parse("int8").unwrap(),
+            AbiType::Int(BitWidth::BITS_8)
+        );
         assert_eq!(AbiType::parse("bytes").unwrap(), AbiType::Bytes);
         assert_eq!(AbiType::parse("bytes32").unwrap(), AbiType::FixedBytes(32));
         assert_eq!(AbiType::parse("bytes1").unwrap(), AbiType::FixedBytes(1));
@@ -331,8 +401,14 @@ mod tests {
 
     #[test]
     fn test_parse_aliases() {
-        assert_eq!(AbiType::parse("uint").unwrap(), AbiType::Uint(256));
-        assert_eq!(AbiType::parse("int").unwrap(), AbiType::Int(256));
+        assert_eq!(
+            AbiType::parse("uint").unwrap(),
+            AbiType::Uint(BitWidth::BITS_256)
+        );
+        assert_eq!(
+            AbiType::parse("int").unwrap(),
+            AbiType::Int(BitWidth::BITS_256)
+        );
         assert_eq!(AbiType::parse("function").unwrap(), AbiType::FixedBytes(24));
     }
 
@@ -352,14 +428,17 @@ mod tests {
         assert_eq!(
             AbiType::parse("((uint256,address),bool)").unwrap(),
             AbiType::Tuple(vec![
-                AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Address]),
+                AbiType::Tuple(vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Address]),
                 AbiType::Bool,
             ])
         );
         assert_eq!(
             AbiType::parse("(uint256,bool)[2]").unwrap(),
             AbiType::FixedArray(
-                Box::new(AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Bool])),
+                Box::new(AbiType::Tuple(vec![
+                    AbiType::Uint(BitWidth::BITS_256),
+                    AbiType::Bool
+                ])),
                 2
             )
         );
@@ -405,7 +484,7 @@ mod tests {
         );
         assert_eq!(
             AbiType::parse("uint256[5]").unwrap(),
-            AbiType::FixedArray(Box::new(AbiType::Uint(256)), 5)
+            AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 5)
         );
         assert_eq!(
             AbiType::parse("bytes32[]").unwrap(),
@@ -489,14 +568,14 @@ mod tests {
     fn test_is_dynamic() {
         assert!(!AbiType::Address.is_dynamic());
         assert!(!AbiType::Bool.is_dynamic());
-        assert!(!AbiType::Uint(256).is_dynamic());
+        assert!(!AbiType::Uint(BitWidth::BITS_256).is_dynamic());
         assert!(!AbiType::FixedBytes(32).is_dynamic());
         assert!(AbiType::Bytes.is_dynamic());
         assert!(AbiType::String.is_dynamic());
         assert!(AbiType::Array(Box::new(AbiType::String)).is_dynamic());
-        assert!(AbiType::Array(Box::new(AbiType::Uint(256))).is_dynamic());
+        assert!(AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))).is_dynamic());
         assert!(AbiType::FixedArray(Box::new(AbiType::String), 3).is_dynamic());
-        assert!(!AbiType::FixedArray(Box::new(AbiType::Uint(256)), 3).is_dynamic());
+        assert!(!AbiType::FixedArray(Box::new(AbiType::Uint(BitWidth::BITS_256)), 3).is_dynamic());
     }
 
     #[test]
@@ -526,8 +605,11 @@ mod tests {
 
     #[test]
     fn test_size_bits() {
-        assert_eq!(AbiType::Uint(256).size_bits(), Some(256));
-        assert_eq!(AbiType::Int(128).size_bits(), Some(128));
+        assert_eq!(AbiType::Uint(BitWidth::BITS_256).size_bits(), Some(256));
+        assert_eq!(
+            AbiType::Int(BitWidth::new(128).unwrap()).size_bits(),
+            Some(128)
+        );
         assert_eq!(AbiType::FixedBytes(32).size_bits(), Some(256));
         assert_eq!(AbiType::FixedBytes(1).size_bits(), Some(8));
         assert!(AbiType::Address.size_bits().is_none());
@@ -540,19 +622,22 @@ mod tests {
         let types = parse_type_list("address,uint256").unwrap();
         assert_eq!(types.len(), 2);
         assert_eq!(types[0], AbiType::Address);
-        assert_eq!(types[1], AbiType::Uint(256));
+        assert_eq!(types[1], AbiType::Uint(BitWidth::BITS_256));
 
         let types = parse_type_list("").unwrap();
         assert!(types.is_empty());
 
         let types = parse_type_list("uint256").unwrap();
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0], AbiType::Uint(256));
+        assert_eq!(types[0], AbiType::Uint(BitWidth::BITS_256));
     }
 
     #[test]
     fn test_whitespace_handling() {
-        assert_eq!(AbiType::parse("  uint256  ").unwrap(), AbiType::Uint(256));
+        assert_eq!(
+            AbiType::parse("  uint256  ").unwrap(),
+            AbiType::Uint(BitWidth::BITS_256)
+        );
         assert_eq!(
             AbiType::parse("  address[]  ").unwrap(),
             AbiType::Array(Box::new(AbiType::Address))

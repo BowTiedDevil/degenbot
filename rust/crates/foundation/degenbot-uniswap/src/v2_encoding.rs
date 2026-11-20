@@ -11,6 +11,7 @@
 
 use alloy::primitives::{Address, U256};
 
+use degenbot_abi::abi_types::type_::BitWidth;
 use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::encoder::encode_rust;
 use degenbot_core::errors::AbiDecodeError;
@@ -56,8 +57,8 @@ pub fn encode_v2_swap(
     let recipient_bytes: [u8; 20] = recipient.into();
 
     let values = [
-        AbiValue::Uint(a0_out, 256),
-        AbiValue::Uint(a1_out, 256),
+        AbiValue::Uint(a0_out, BitWidth::BITS_256),
+        AbiValue::Uint(a1_out, BitWidth::BITS_256),
         AbiValue::Address(recipient_bytes),
         AbiValue::Bytes(Vec::new()),
     ];

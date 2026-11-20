@@ -90,12 +90,13 @@ pub fn get_cached_types(types: &[&str]) -> Result<Arc<CachedAbiTypes>, AbiDecode
 /// let cached = CachedAbiTypes::new(&["address", "address", "uint256"])?;
 ///
 /// // Encode values
+/// use degenbot_abi::abi_types::type_::BitWidth;
 /// use degenbot_abi::abi_types::value::AbiValue;
 /// use alloy::primitives::U256;
 /// let values = vec![
 ///     AbiValue::Address([0u8; 20]),
 ///     AbiValue::Address([0u8; 20]),
-///     AbiValue::Uint(U256::from(100u64), 256),
+///     AbiValue::Uint(U256::from(100u64), BitWidth::BITS_256),
 /// ];
 /// let encoded = cached.encode(&values)?;
 ///
@@ -219,13 +220,14 @@ impl CachedAbiTypes {
     ///
     /// ```
     /// use degenbot_abi::abi_types::cached::CachedAbiTypes;
+    /// use degenbot_abi::abi_types::type_::BitWidth;
     /// use degenbot_abi::abi_types::value::AbiValue;
     /// use alloy::primitives::U256;
     ///
     /// let cached = CachedAbiTypes::new(&["address", "uint256"])?;
     ///
     /// // Encode test data
-    /// let values = vec![AbiValue::Address([0u8; 20]), AbiValue::Uint(U256::from(1u64), 256)];
+    /// let values = vec![AbiValue::Address([0u8; 20]), AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256)];
     /// let encoded = cached.encode(&values)?;
     ///
     /// // Decode batch
@@ -370,13 +372,13 @@ pub fn value_to_alloy_for_type(
             // DynSolType constructed from a parsed AbiType should never have
             // bit width 0. If it does, that's a bug in the caller.
             debug_assert!(*bits > 0, "Uint bit width should never be 0");
-            let effective_bits = if *bits > 0 { *bits } else { *val_bits };
+            let effective_bits = if *bits > 0 { *bits } else { val_bits.get() };
             Ok(alloy::dyn_abi::DynSolValue::Uint(*n, effective_bits))
         }
 
         (DynSolType::Int(bits), AbiValue::Int(n, val_bits)) => {
             debug_assert!(*bits > 0, "Int bit width should never be 0");
-            let effective_bits = if *bits > 0 { *bits } else { *val_bits };
+            let effective_bits = if *bits > 0 { *bits } else { val_bits.get() };
             Ok(alloy::dyn_abi::DynSolValue::Int(*n, effective_bits))
         }
 
@@ -467,6 +469,7 @@ pub fn value_to_alloy_for_type(
 mod tests {
 
     use super::*;
+    use crate::abi_types::type_::BitWidth;
     use alloy::primitives::U256;
 
     #[test]
@@ -491,7 +494,11 @@ mod tests {
 
     #[test]
     fn test_cached_abi_types_from_abi_types() {
-        let types = vec![AbiType::Address, AbiType::Uint(256), AbiType::Bool];
+        let types = vec![
+            AbiType::Address,
+            AbiType::Uint(BitWidth::BITS_256),
+            AbiType::Bool,
+        ];
         let cached = CachedAbiTypes::from_abi_types(&types).unwrap();
         assert_eq!(cached.len(), 3);
     }
@@ -503,7 +510,7 @@ mod tests {
         let values = vec![
             AbiValue::Address([0x11; 20]),
             AbiValue::Address([0x22; 20]),
-            AbiValue::Uint(U256::from(1000u64), 256),
+            AbiValue::Uint(U256::from(1000u64), BitWidth::BITS_256),
         ];
 
         let encoded = cached.encode(&values).unwrap();
@@ -521,7 +528,7 @@ mod tests {
         match &decoded[2] {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(*n, U256::from(1000u64));
-                assert_eq!(*bits, 256);
+                assert_eq!(*bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -534,7 +541,7 @@ mod tests {
         let mut encoded_items: Vec<Vec<u8>> = Vec::new();
         for i in 0..3u64 {
             let values = vec![
-                AbiValue::Uint(U256::from(i * 10), 256),
+                AbiValue::Uint(U256::from(i * 10), BitWidth::BITS_256),
                 AbiValue::Bool(i % 2 == 0),
             ];
             encoded_items.push(cached.encode(&values).unwrap());
@@ -548,7 +555,7 @@ mod tests {
             match &decoded[0] {
                 AbiValue::Uint(n, bits) => {
                     assert_eq!(*n, U256::from(i as u64 * 10));
-                    assert_eq!(*bits, 256);
+                    assert_eq!(*bits, BitWidth::BITS_256);
                 }
                 _ => panic!("Expected Uint"),
             }
@@ -567,7 +574,7 @@ mod tests {
             .map(|i| {
                 vec![
                     AbiValue::Address([i; 20]),
-                    AbiValue::Uint(U256::from(u64::from(i) * 100), 256),
+                    AbiValue::Uint(U256::from(u64::from(i) * 100), BitWidth::BITS_256),
                 ]
             })
             .collect();
@@ -581,7 +588,7 @@ mod tests {
             match &decoded[1] {
                 AbiValue::Uint(n, bits) => {
                     assert_eq!(*n, U256::from(i as u64 * 100));
-                    assert_eq!(*bits, 256);
+                    assert_eq!(*bits, BitWidth::BITS_256);
                 }
                 _ => panic!("Expected Uint"),
             }
@@ -606,7 +613,7 @@ mod tests {
 
         let values = vec![
             AbiValue::Address([0xab; 20]),
-            AbiValue::Uint(U256::from(999_888_777u64), 256),
+            AbiValue::Uint(U256::from(999_888_777u64), BitWidth::BITS_256),
             AbiValue::Bool(true),
         ];
         let encoded = cached.encode(&values).unwrap();

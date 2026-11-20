@@ -13,6 +13,7 @@
 #![expect(clippy::unwrap_used, clippy::doc_markdown)]
 
 use alloy::primitives::{I256, U256};
+use degenbot_rs::abi_types::type_::BitWidth;
 use degenbot_rs::abi_types::value::AbiValue;
 use degenbot_rs::conversion::alloy::abi_value_from_python;
 use pyo3::prelude::*;
@@ -33,7 +34,10 @@ fn test_python_int_small_positive() {
         let py_int = 42i64.into_pyobject(py).unwrap();
         abi_value_from_python(py, &py_int).unwrap()
     });
-    assert_eq!(result, AbiValue::Uint(U256::from(42u64), 256));
+    assert_eq!(
+        result,
+        AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256)
+    );
 }
 
 /// Test Python integer → `AbiValue` conversion for small negative integers.
@@ -43,7 +47,10 @@ fn test_python_int_small_negative() {
         let py_int = (-42i64).into_pyobject(py).unwrap();
         abi_value_from_python(py, &py_int).unwrap()
     });
-    assert_eq!(result, AbiValue::Int(I256::try_from(-42i64).unwrap(), 256));
+    assert_eq!(
+        result,
+        AbiValue::Int(I256::try_from(-42i64).unwrap(), BitWidth::BITS_256)
+    );
 }
 
 /// Test Python integer → `AbiValue` conversion for `U256::MAX`.
@@ -57,7 +64,7 @@ fn test_python_int_u256_max() {
 
     if let AbiValue::Uint(n, bits) = result {
         assert_eq!(n, U256::MAX, "`U256::MAX` should convert correctly");
-        assert_eq!(bits, 256);
+        assert_eq!(bits, BitWidth::BITS_256);
     } else {
         panic!("Expected Uint variant, got {result:?}");
     }
@@ -78,7 +85,7 @@ fn test_python_int_i256_min() {
             I256::MIN,
             "`I256::MIN` should convert correctly, got {n:?}"
         );
-        assert_eq!(bits, 256);
+        assert_eq!(bits, BitWidth::BITS_256);
     } else {
         panic!("Expected Int variant, got {result:?}");
     }
@@ -142,9 +149,18 @@ fn test_python_list_array() {
     match result {
         AbiValue::Array(values) => {
             assert_eq!(values.len(), 3);
-            assert_eq!(values[0], AbiValue::Uint(U256::from(1u64), 256));
-            assert_eq!(values[1], AbiValue::Uint(U256::from(2u64), 256));
-            assert_eq!(values[2], AbiValue::Uint(U256::from(3u64), 256));
+            assert_eq!(
+                values[0],
+                AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256)
+            );
+            assert_eq!(
+                values[1],
+                AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256)
+            );
+            assert_eq!(
+                values[2],
+                AbiValue::Uint(U256::from(3u64), BitWidth::BITS_256)
+            );
         }
         _ => panic!("Expected Array variant, got {result:?}"),
     }
@@ -159,7 +175,7 @@ fn test_python_int_i128_boundary() {
     });
     assert_eq!(
         result_max,
-        AbiValue::Uint(U256::from(i128::MAX as u128), 256)
+        AbiValue::Uint(U256::from(i128::MAX as u128), BitWidth::BITS_256)
     );
 
     let result_min = with_python(|py| {
@@ -168,7 +184,7 @@ fn test_python_int_i128_boundary() {
     });
     assert_eq!(
         result_min,
-        AbiValue::Int(I256::try_from(i128::MIN).unwrap(), 256)
+        AbiValue::Int(I256::try_from(i128::MIN).unwrap(), BitWidth::BITS_256)
     );
 }
 
@@ -187,7 +203,7 @@ fn test_python_int_large_positive() {
             n, expected,
             "Large positive int should convert via to_bytes path"
         );
-        assert_eq!(bits, 256);
+        assert_eq!(bits, BitWidth::BITS_256);
     } else {
         panic!("Expected Uint variant, got {result:?}");
     }
@@ -204,7 +220,7 @@ fn test_python_int_large_negative() {
 
     if let AbiValue::Int(n, bits) = result {
         assert!(n < I256::ZERO, "Large negative int should be negative");
-        assert_eq!(bits, 256);
+        assert_eq!(bits, BitWidth::BITS_256);
     } else {
         panic!("Expected Int variant, got {result:?}");
     }

@@ -121,7 +121,7 @@ impl AavePriceOracle {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use degenbot_abi::abi_types::type_::AbiType;
+    use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
     use degenbot_abi::abi_types::value::AbiValue;
     use degenbot_abi::decoder::decode_for_types;
     use degenbot_abi::encoder::encode_for_types;
@@ -140,8 +140,8 @@ mod tests {
         // market-agreed 8-decimal USD base unit (oracle emits the USD price in
         // 8 decimals, like the Chainlink feed it sources from).
         let price = U256::from(184_500_000_000u64);
-        let types = [AbiType::Uint(256)];
-        let encoded = encode_for_types(&types, &[AbiValue::Uint(price, 256)])
+        let types = [AbiType::Uint(BitWidth::BITS_256)];
+        let encoded = encode_for_types(&types, &[AbiValue::Uint(price, BitWidth::BITS_256)])
             .expect("encode getAssetPrice return");
         let decoded = decode_for_types(&types, &encoded).expect("decode uint256");
         // The extract path AavePriceOracle::get_asset_price uses:
@@ -150,14 +150,17 @@ mod tests {
 
     #[test]
     fn get_asset_price_rejects_wrong_arity() {
-        let types = [AbiType::Uint(256)];
+        let types = [AbiType::Uint(BitWidth::BITS_256)];
         // Encode two uint256s on purpose — the decoder returns 2 slots, and
         // get_asset_price's arity guard must surface a Decode error.
         let encoded = encode_for_types(
-            &[AbiType::Uint(256), AbiType::Uint(256)],
             &[
-                AbiValue::Uint(U256::from(1u64), 256),
-                AbiValue::Uint(U256::from(2u64), 256),
+                AbiType::Uint(BitWidth::BITS_256),
+                AbiType::Uint(BitWidth::BITS_256),
+            ],
+            &[
+                AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256),
+                AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256),
             ],
         )
         .expect("encode two uint256s");

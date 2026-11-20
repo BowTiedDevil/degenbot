@@ -7,6 +7,8 @@
 //! `#[pyfunction]` entry points registered in [`crate`]'s `#[pymodule]`.
 
 use crate::prelude::*;
+#[cfg(test)]
+use degenbot_abi::abi_types::type_::BitWidth;
 use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_abi::decoder::{decode_rust, decode_single_rust};
 use errors::AbiDecodeError;
@@ -165,7 +167,7 @@ mod tests {
     #[test]
     fn test_abi_value_to_python_roundtrip() {
         pyo3::Python::attach(|py| {
-            let val = AbiValue::Uint(U256::from(123_456_789_u64), 256);
+            let val = AbiValue::Uint(U256::from(123_456_789_u64), BitWidth::BITS_256);
             let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
             let n: u64 = py_val.extract().expect("should extract as u64");
             assert_eq!(n, 123_456_789_u64);
@@ -181,8 +183,8 @@ mod tests {
             assert_eq!(s, "Hello");
 
             let val = AbiValue::Array(vec![
-                AbiValue::Uint(U256::from(1u64), 256),
-                AbiValue::Uint(U256::from(2u64), 256),
+                AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256),
+                AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256),
             ]);
             let py_val = abi_value_to_python(&val, py, true).expect("should convert to Python");
             let list: Vec<u64> = py_val.extract().expect("should extract as Vec<u64>");

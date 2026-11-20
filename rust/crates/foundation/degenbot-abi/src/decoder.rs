@@ -66,16 +66,16 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_types::type_::AbiType;
+/// use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
 /// use degenbot_abi::abi_types::value::AbiValue;
 /// use degenbot_abi::decoder::decode_for_types;
 /// use alloy::primitives::U256;
 ///
-/// let types = vec![AbiType::Uint(256), AbiType::Bool];
+/// let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
 ///
 /// // Encode first, then decode
 /// use degenbot_abi::encoder::encode_for_types;
-/// let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
+/// let values = vec![AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256), AbiValue::Bool(true)];
 /// let encoded = encode_for_types(&types, &values)?;
 ///
 /// let decoded = decode_for_types(&types, &encoded)?;
@@ -110,6 +110,7 @@ pub fn decode_for_types(
 mod tests {
 
     use super::*;
+    use crate::abi_types::type_::BitWidth;
     use alloy::hex;
     use alloy::primitives::{I256, U256};
     use std::sync::Arc;
@@ -140,7 +141,7 @@ mod tests {
             values,
             vec![AbiValue::Array(vec![
                 AbiValue::Array(vec![
-                    AbiValue::Uint(U256::from(42u64), 256),
+                    AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256),
                     AbiValue::Address([0x11; 20])
                 ]),
                 AbiValue::Bool(true),
@@ -158,7 +159,7 @@ mod tests {
         match result {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, U256::from(12345u64));
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -272,7 +273,7 @@ mod tests {
                     match val {
                         AbiValue::Uint(n, bits) => {
                             assert_eq!(*n, U256::from(i as u64 + 1));
-                            assert_eq!(*bits, 256);
+                            assert_eq!(*bits, BitWidth::BITS_256);
                         }
                         _ => panic!("Expected Uint in array"),
                     }
@@ -303,14 +304,14 @@ mod tests {
                 match &values[0] {
                     AbiValue::Uint(n, bits) => {
                         assert_eq!(*n, U256::from(10u64));
-                        assert_eq!(*bits, 256);
+                        assert_eq!(*bits, BitWidth::BITS_256);
                     }
                     _ => panic!("Expected Uint"),
                 }
                 match &values[1] {
                     AbiValue::Uint(n, bits) => {
                         assert_eq!(*n, U256::from(20u64));
-                        assert_eq!(*bits, 256);
+                        assert_eq!(*bits, BitWidth::BITS_256);
                     }
                     _ => panic!("Expected Uint"),
                 }
@@ -342,7 +343,7 @@ mod tests {
         match &result[0] {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(*n, U256::from(42u64));
-                assert_eq!(*bits, 256);
+                assert_eq!(*bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -366,7 +367,7 @@ mod tests {
         match result {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, I256::MINUS_ONE);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int variant"),
         }
@@ -385,14 +386,14 @@ mod tests {
         word2[31] = 1;
         data.extend(word2);
 
-        let types = vec![AbiType::Uint(256), AbiType::Bool];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
         let decoded = decode_for_types(&types, &data).expect("should decode");
 
         assert_eq!(decoded.len(), 2);
         match &decoded[0] {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(*n, U256::from(42u64));
-                assert_eq!(*bits, 256);
+                assert_eq!(*bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -420,7 +421,11 @@ mod tests {
         data.extend(word3);
 
         let types_str = vec!["uint256", "bool", "address"];
-        let types_abi = vec![AbiType::Uint(256), AbiType::Bool, AbiType::Address];
+        let types_abi = vec![
+            AbiType::Uint(BitWidth::BITS_256),
+            AbiType::Bool,
+            AbiType::Address,
+        ];
 
         let decoded_rust = decode_rust(&types_str, &data).expect("should decode");
         let decoded_for_types = decode_for_types(&types_abi, &data).expect("should decode");

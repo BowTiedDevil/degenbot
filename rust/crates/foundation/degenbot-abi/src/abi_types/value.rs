@@ -1,4 +1,4 @@
-use crate::abi_types::type_::AbiType;
+use crate::abi_types::type_::{AbiType, BitWidth};
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, I256, U256};
 use degenbot_core::errors::{AbiDecodeError, ContractError};
@@ -22,8 +22,8 @@ pub enum AbiValue {
     Bool(bool),
     FixedBytes(Vec<u8>),
     Bytes(Vec<u8>),
-    Uint(U256, usize),
-    Int(I256, usize),
+    Uint(U256, BitWidth),
+    Int(I256, BitWidth),
     String(String),
     Array(Vec<Self>),
 }
@@ -55,8 +55,8 @@ impl AbiValue {
             }
             Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
             Self::String(s) => Ok(DynSolValue::String(s.clone())),
-            Self::Uint(n, bits) => Ok(DynSolValue::Uint(*n, *bits)),
-            Self::Int(n, bits) => Ok(DynSolValue::Int(*n, *bits)),
+            Self::Uint(n, bits) => Ok(DynSolValue::Uint(*n, bits.get())),
+            Self::Int(n, bits) => Ok(DynSolValue::Int(*n, bits.get())),
             Self::Array(values) => {
                 let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
                 Ok(DynSolValue::Array(alloy_values?))
@@ -71,8 +71,20 @@ impl AbiValue {
         match value {
             DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
             DynSolValue::Bool(b) => Ok(Self::Bool(b)),
-            DynSolValue::Uint(u, bits) => Ok(Self::Uint(u, bits)),
-            DynSolValue::Int(i, bits) => Ok(Self::Int(i, bits)),
+            DynSolValue::Uint(u, bits) => BitWidth::new(bits)
+                .map(|width| Self::Uint(u, width))
+                .ok_or_else(|| {
+                    AbiDecodeError::UnsupportedType(format!(
+                        "invalid integer bit width {bits}; expected 8-256 in multiples of 8"
+                    ))
+                }),
+            DynSolValue::Int(i, bits) => BitWidth::new(bits)
+                .map(|width| Self::Int(i, width))
+                .ok_or_else(|| {
+                    AbiDecodeError::UnsupportedType(format!(
+                        "invalid integer bit width {bits}; expected 8-256 in multiples of 8"
+                    ))
+                }),
             DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
             DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
             DynSolValue::String(s) => Ok(Self::String(s)),
@@ -373,6 +385,15 @@ fn strip_quotes(s: &str) -> String {
 mod tests {
 
     use super::*;
+    use crate::abi_types::type_::BitWidth;
+
+    #[test]
+    fn from_alloy_rejects_invalid_integer_bit_widths() {
+        for bits in [0, 7, 264] {
+            assert!(AbiValue::from_alloy(DynSolValue::Uint(U256::ZERO, bits)).is_err());
+            assert!(AbiValue::from_alloy(DynSolValue::Int(I256::ZERO, bits)).is_err());
+        }
+    }
 
     #[test]
     fn test_parse_int256_large_positive_hex() {
@@ -464,11 +485,11 @@ mod tests {
     fn test_int256_min_from_str_arg() {
         let min_val =
             "-57896044618658097711785492504343953926634992332820282019728792003956564819968";
-        let result = AbiValue::from_str_arg(&AbiType::Int(256), min_val).unwrap();
+        let result = AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), min_val).unwrap();
         match result {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, I256::MIN);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int variant"),
         }
@@ -477,11 +498,11 @@ mod tests {
     #[test]
     fn test_int256_min_hex_from_str_arg() {
         let min_hex = "-0x8000000000000000000000000000000000000000000000000000000000000000";
-        let result = AbiValue::from_str_arg(&AbiType::Int(256), min_hex).unwrap();
+        let result = AbiValue::from_str_arg(&AbiType::Int(BitWidth::BITS_256), min_hex).unwrap();
         match result {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, I256::MIN);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int variant"),
         }
@@ -490,11 +511,11 @@ mod tests {
     #[test]
     fn test_uint256_max_from_str_arg() {
         let max_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
-        let result = AbiValue::from_str_arg(&AbiType::Uint(256), max_hex).unwrap();
+        let result = AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_256), max_hex).unwrap();
         match result {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, U256::MAX);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -502,20 +523,21 @@ mod tests {
 
     #[test]
     fn test_abi_value_stores_bit_width() {
-        let u8_val = AbiValue::from_str_arg(&AbiType::Uint(8), "255").unwrap();
+        let u8_val = AbiValue::from_str_arg(&AbiType::Uint(BitWidth::BITS_8), "255").unwrap();
         match u8_val {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, U256::from(255u64));
-                assert_eq!(bits, 8);
+                assert_eq!(bits, BitWidth::BITS_8);
             }
             _ => panic!("Expected Uint variant"),
         }
 
-        let u128_val = AbiValue::from_str_arg(&AbiType::Uint(128), "42").unwrap();
+        let u128_val =
+            AbiValue::from_str_arg(&AbiType::Uint(BitWidth::new(128).unwrap()), "42").unwrap();
         match u128_val {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, U256::from(42u64));
-                assert_eq!(bits, 128);
+                assert_eq!(bits, BitWidth::new(128).unwrap());
             }
             _ => panic!("Expected Uint variant"),
         }
@@ -571,9 +593,11 @@ mod tests {
 
     #[test]
     fn test_parse_json_array_unquoted_strings() {
-        let result =
-            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
-                .expect("should parse unquoted uint array");
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            "[1, 2, 3]",
+        )
+        .expect("should parse unquoted uint array");
         match result {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 3);
@@ -612,8 +636,10 @@ mod tests {
 
     #[test]
     fn test_parse_json_array_unmatched_bracket_errors() {
-        let result =
-            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[foo]bar]");
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256))),
+            "[foo]bar]",
+        );
         assert!(
             result.is_err(),
             "Should reject unmatched ']' in array value"

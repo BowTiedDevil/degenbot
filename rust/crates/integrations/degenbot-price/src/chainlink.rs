@@ -21,7 +21,7 @@ use crate::decode::{as_int, as_u128, as_uint};
 use crate::error::{FeedDataReason, PriceError, PriceResult};
 use alloy::primitives::{Address, I256, U256};
 #[cfg(test)]
-use degenbot_abi::abi_types::type_::AbiType;
+use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
 use degenbot_abi::abi_types::value::AbiValue;
 use degenbot_rpc::contract::Contract;
 use degenbot_rpc::provider::AlloyProvider;
@@ -273,11 +273,11 @@ pub(crate) fn decimal_corrected_price(
 /// Latest-round-data return types, for parity-test byte construction.
 #[cfg(test)]
 const LATEST_ROUND_TYPES: [AbiType; 5] = [
-    AbiType::Uint(80),
-    AbiType::Int(256),
-    AbiType::Uint(256),
-    AbiType::Uint(256),
-    AbiType::Uint(80),
+    AbiType::Uint(BitWidth::BITS_80),
+    AbiType::Int(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_256),
+    AbiType::Uint(BitWidth::BITS_80),
 ];
 
 #[cfg(test)]
@@ -301,15 +301,21 @@ mod tests {
     fn round_values(answer: i64) -> Vec<AbiValue> {
         vec![
             // roundId — a representative uint80 round id.
-            AbiValue::Uint(U256::from(1_105_516_854_423_834_546_834_523_887u128), 80),
+            AbiValue::Uint(
+                U256::from(1_105_516_854_423_834_546_834_523_887u128),
+                BitWidth::BITS_80,
+            ),
             // answer — int256, in the feed's 8-decimal units.
-            AbiValue::Int(I256::try_from(answer).unwrap(), 256),
+            AbiValue::Int(I256::try_from(answer).unwrap(), BitWidth::BITS_256),
             // startedAt — uint256 timestamp.
-            AbiValue::Uint(U256::from(17_000_000_000u64), 256),
+            AbiValue::Uint(U256::from(17_000_000_000u64), BitWidth::BITS_256),
             // updatedAt — uint256 timestamp.
-            AbiValue::Uint(U256::from(17_000_000_050u64), 256),
+            AbiValue::Uint(U256::from(17_000_000_050u64), BitWidth::BITS_256),
             // answeredInRound — uint80, equals roundId here.
-            AbiValue::Uint(U256::from(1_105_516_854_423_834_546_834_523_887u128), 80),
+            AbiValue::Uint(
+                U256::from(1_105_516_854_423_834_546_834_523_887u128),
+                BitWidth::BITS_80,
+            ),
         ]
     }
 
@@ -336,9 +342,12 @@ mod tests {
     #[test]
     fn decimals_decodes_byte_exact() {
         // decimals() returns a single uint8; pin the canonical Chainlink 8.
-        let types = [AbiType::Uint(8)];
-        let encoded = encode_for_types(&types, &[AbiValue::Uint(U256::from(8u64), 8)])
-            .expect("encode decimals");
+        let types = [AbiType::Uint(BitWidth::BITS_8)];
+        let encoded = encode_for_types(
+            &types,
+            &[AbiValue::Uint(U256::from(8u64), BitWidth::BITS_8)],
+        )
+        .expect("encode decimals");
         let decoded = decode_for_types(&types, &encoded).expect("decode decimals");
         // The extract path ChainlinkPriceFeed::decimals uses:
         let n = as_uint(&decoded[0]).unwrap();

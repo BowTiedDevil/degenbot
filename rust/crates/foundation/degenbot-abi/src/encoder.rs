@@ -63,14 +63,14 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 /// # Example
 ///
 /// ```
-/// use degenbot_abi::abi_types::type_::AbiType;
+/// use degenbot_abi::abi_types::type_::{AbiType, BitWidth};
 /// use degenbot_abi::abi_types::value::AbiValue;
 /// use degenbot_abi::encoder::encode_for_types;
 /// use alloy::primitives::U256;
 ///
-/// let types = vec![AbiType::Uint(256), AbiType::Bool];
+/// let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
 /// let values = vec![
-///     AbiValue::Uint(U256::from(42u64), 256),
+///     AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256),
 ///     AbiValue::Bool(true),
 /// ];
 ///
@@ -158,6 +158,7 @@ pub fn encode_packed_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>
 mod tests {
 
     use super::*;
+    use crate::abi_types::type_::BitWidth;
     use crate::decoder::decode_single_rust;
     use alloy::hex;
     use alloy::primitives::{Address, I256, U256};
@@ -191,10 +192,13 @@ mod tests {
         // Pinned from eth_abi 5.x parity probe.
         let pined: &[u8] = &hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000007b0000000000000000000000000000000000000000000000000000000000000001");
         let inner = AbiValue::Array(vec![
-            AbiValue::Uint(U256::from(123u64), 256),
+            AbiValue::Uint(U256::from(123u64), BitWidth::BITS_256),
             AbiValue::Bool(true),
         ]);
-        let el = AbiValue::Array(vec![AbiValue::Uint(U256::from(7u64), 256), inner]);
+        let el = AbiValue::Array(vec![
+            AbiValue::Uint(U256::from(7u64), BitWidth::BITS_256),
+            inner,
+        ]);
         let out = encode_rust(&["(uint8,(uint256,bool))[]"], &[AbiValue::Array(vec![el])]).unwrap();
         assert_eq!(out, pined);
     }
@@ -204,11 +208,11 @@ mod tests {
         // Pinned from eth_abi 5.x parity probe.
         let pined: &[u8] = &hex!("0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000");
         let v1 = AbiValue::Array(vec![
-            AbiValue::Uint(U256::from(1u64), 256),
+            AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256),
             AbiValue::Bool(true),
         ]);
         let v2 = AbiValue::Array(vec![
-            AbiValue::Uint(U256::from(2u64), 256),
+            AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256),
             AbiValue::Bool(false),
         ]);
         let out = encode_rust(&["(uint256,bool)[2]"], &[AbiValue::Array(vec![v1, v2])]).unwrap();
@@ -217,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_encode_uint256() {
-        let value = AbiValue::Uint(U256::from(12345u64), 256);
+        let value = AbiValue::Uint(U256::from(12345u64), BitWidth::BITS_256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
         assert_eq!(encoded[30], 0x30);
@@ -228,14 +232,14 @@ mod tests {
     fn test_encode_rejects_fixed_point_single() {
         // Fixed-point types are not representable in AbiValue / alloy DynSolType;
         // the guard lets the binding layer fall back to eth_abi (mirror decode).
-        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let value = AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256);
         let err = encode_single_rust("fixed168x10", &value).unwrap_err();
         assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
     }
 
     #[test]
     fn test_encode_rejects_fixed_point_multi() {
-        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let value = AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256);
         let err = encode_rust(&["uint256", "ufixed128x18"], &[value.clone(), value]).unwrap_err();
         assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
     }
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_encode_int_negative() {
-        let value = AbiValue::Int(I256::MINUS_ONE, 256);
+        let value = AbiValue::Int(I256::MINUS_ONE, BitWidth::BITS_256);
         let encoded = encode_single_rust("int256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
         assert!(encoded.iter().all(|&b| b == 0xFF));
@@ -312,9 +316,9 @@ mod tests {
     #[test]
     fn test_encode_array() {
         let values = vec![
-            AbiValue::Uint(U256::from(1u64), 256),
-            AbiValue::Uint(U256::from(2u64), 256),
-            AbiValue::Uint(U256::from(3u64), 256),
+            AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256),
+            AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256),
+            AbiValue::Uint(U256::from(3u64), BitWidth::BITS_256),
         ];
         let value = AbiValue::Array(values);
         let encoded = encode_single_rust("uint256[]", &value).unwrap();
@@ -323,7 +327,10 @@ mod tests {
 
     #[test]
     fn test_encode_multiple() {
-        let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
+        let values = vec![
+            AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256),
+            AbiValue::Bool(true),
+        ];
         let encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
         assert_eq!(encoded.len(), 64);
         assert_eq!(encoded[31], 42);
@@ -359,7 +366,10 @@ mod tests {
     #[test]
     fn test_encode_packed_uint_widths() {
         // uint24 packs to 3 bytes big-endian (Solidity `abi.encodePacked`).
-        let values = vec![AbiValue::Uint(U256::from(0x0001_0203_u64), 24)];
+        let values = vec![AbiValue::Uint(
+            U256::from(0x0001_0203_u64),
+            BitWidth::new(24).unwrap(),
+        )];
         let encoded = encode_packed_rust(&["uint24"], &values).unwrap();
         assert_eq!(encoded, vec![0x01, 0x02, 0x03]);
     }
@@ -372,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_encode_packed_rejects_fixed_point() {
-        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let value = AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256);
         let err = encode_packed_rust(&["fixed128x18"], &[value]).unwrap_err();
         assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
     }
@@ -380,7 +390,7 @@ mod tests {
     #[test]
     fn test_encode_packed_int_negative() {
         // int8 negative packs to 1 byte two's complement.
-        let values = vec![AbiValue::Int(I256::MINUS_ONE, 8)];
+        let values = vec![AbiValue::Int(I256::MINUS_ONE, BitWidth::BITS_8)];
         let encoded = encode_packed_rust(&["int8"], &values).unwrap();
         assert_eq!(encoded, vec![0xff]);
     }
@@ -389,8 +399,11 @@ mod tests {
     fn test_encode_for_types() {
         use crate::abi_types::type_::AbiType;
 
-        let types = vec![AbiType::Uint(256), AbiType::Bool];
-        let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
+        let types = vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Bool];
+        let values = vec![
+            AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256),
+            AbiValue::Bool(true),
+        ];
 
         let encoded = encode_for_types(&types, &values).unwrap();
         assert_eq!(encoded.len(), 64);
@@ -405,10 +418,10 @@ mod tests {
     fn test_encode_for_types_arrays() {
         use crate::abi_types::type_::AbiType;
 
-        let types = vec![AbiType::Array(Box::new(AbiType::Uint(256)))];
+        let types = vec![AbiType::Array(Box::new(AbiType::Uint(BitWidth::BITS_256)))];
         let values = vec![AbiValue::Array(vec![
-            AbiValue::Uint(U256::from(1u64), 256),
-            AbiValue::Uint(U256::from(2u64), 256),
+            AbiValue::Uint(U256::from(1u64), BitWidth::BITS_256),
+            AbiValue::Uint(U256::from(2u64), BitWidth::BITS_256),
         ])];
 
         let encoded = encode_for_types(&types, &values).unwrap();
@@ -421,14 +434,14 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         let original = U256::from(12_345_678_901_234_567_890_u128);
-        let value = AbiValue::Uint(original, 256);
+        let value = AbiValue::Uint(original, BitWidth::BITS_256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
         let decoded = crate::decoder::decode_single_rust("uint256", &encoded).unwrap();
         match decoded {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, original);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -439,13 +452,13 @@ mod tests {
         use crate::decoder::decode_single_rust;
 
         let original = U256::from(12_345_678_901_234_567_890_u128);
-        let value = AbiValue::Uint(original, 256);
+        let value = AbiValue::Uint(original, BitWidth::BITS_256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
         let decoded = decode_single_rust("uint256", &encoded).unwrap();
         match decoded {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, original);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -473,13 +486,13 @@ mod tests {
     #[test]
     fn test_u256_max_roundtrip() {
         let max = U256::MAX;
-        let value = AbiValue::Uint(max, 256);
+        let value = AbiValue::Uint(max, BitWidth::BITS_256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
         let decoded = decode_single_rust("uint256", &encoded).unwrap();
         match decoded {
             AbiValue::Uint(n, bits) => {
                 assert_eq!(n, max);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Uint"),
         }
@@ -488,13 +501,13 @@ mod tests {
     #[test]
     fn test_i256_max_roundtrip() {
         let max = I256::MAX;
-        let value = AbiValue::Int(max, 256);
+        let value = AbiValue::Int(max, BitWidth::BITS_256);
         let encoded = encode_single_rust("int256", &value).unwrap();
         let decoded = decode_single_rust("int256", &encoded).unwrap();
         match decoded {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, max);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int"),
         }
@@ -503,13 +516,13 @@ mod tests {
     #[test]
     fn test_i256_min_roundtrip() {
         let min = I256::MIN;
-        let value = AbiValue::Int(min, 256);
+        let value = AbiValue::Int(min, BitWidth::BITS_256);
         let encoded = encode_single_rust("int256", &value).unwrap();
         let decoded = decode_single_rust("int256", &encoded).unwrap();
         match decoded {
             AbiValue::Int(n, bits) => {
                 assert_eq!(n, min);
-                assert_eq!(bits, 256);
+                assert_eq!(bits, BitWidth::BITS_256);
             }
             _ => panic!("Expected Int"),
         }
@@ -520,7 +533,7 @@ mod tests {
         use crate::abi_types::cached::get_cached_types;
 
         let cached_direct = get_cached_types(&["uint256"]).unwrap();
-        let value = AbiValue::Uint(U256::from(42u64), 256);
+        let value = AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256);
         let _encoded = encode_single_rust("uint256", &value).unwrap();
 
         assert!(Arc::strong_count(&cached_direct) >= 2);
@@ -532,7 +545,10 @@ mod tests {
 
         let cached_direct = get_cached_types(&["uint256", "bool"]).unwrap();
 
-        let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
+        let values = vec![
+            AbiValue::Uint(U256::from(42u64), BitWidth::BITS_256),
+            AbiValue::Bool(true),
+        ];
         let _encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
 
         assert!(Arc::strong_count(&cached_direct) >= 2);
@@ -544,6 +560,7 @@ mod proptests {
     #![expect(clippy::unwrap_used)]
 
     use super::*;
+    use crate::abi_types::type_::BitWidth;
     use crate::decoder::decode_single_rust;
     use alloy::primitives::{Address, I256, U256};
     use proptest::prelude::*;
@@ -551,10 +568,10 @@ mod proptests {
     proptest! {
         #[test]
         fn uint256_roundtrip(n in prop::array::uniform32(0u8..)) {
-            let value = AbiValue::Uint(U256::from_be_bytes(n), 256);
+            let value = AbiValue::Uint(U256::from_be_bytes(n), BitWidth::BITS_256);
             let encoded = encode_single_rust("uint256", &value).unwrap();
             let decoded = decode_single_rust("uint256", &encoded).unwrap();
-            prop_assert!(matches!(decoded, AbiValue::Uint(val, 256) if val == U256::from_be_bytes(n)));
+            prop_assert!(matches!(decoded, AbiValue::Uint(val, BitWidth::BITS_256) if val == U256::from_be_bytes(n)));
         }
 
         #[test]
@@ -589,7 +606,7 @@ mod proptests {
             seed in 0u64..
         ) {
             let values: Vec<AbiValue> = (0..count)
-                .map(|i| AbiValue::Uint(U256::from(seed.wrapping_add(i as u64)), 256))
+                .map(|i| AbiValue::Uint(U256::from(seed.wrapping_add(i as u64)), BitWidth::BITS_256))
                 .collect();
             let value = AbiValue::Array(values.clone());
             let encoded = encode_single_rust("uint256[]", &value).unwrap();
@@ -598,7 +615,7 @@ mod proptests {
             if let AbiValue::Array(decoded_values) = decoded {
                 prop_assert_eq!(decoded_values.len(), values.len());
                 for (expected, actual) in values.iter().zip(decoded_values.iter()) {
-                    prop_assert!(matches!((expected, actual), (AbiValue::Uint(e, 256), AbiValue::Uint(a, 256)) if e == a));
+                    prop_assert!(matches!((expected, actual), (AbiValue::Uint(e, BitWidth::BITS_256), AbiValue::Uint(a, BitWidth::BITS_256)) if e == a));
                 }
             } else {
                 prop_assert!(false, "Expected Array variant");
@@ -610,10 +627,10 @@ mod proptests {
             // Use raw bytes to create potentially negative I256 values
             let u256 = U256::from_be_bytes(n);
             let i256 = I256::from_raw(u256);
-            let value = AbiValue::Int(i256, 256);
+            let value = AbiValue::Int(i256, BitWidth::BITS_256);
             let encoded = encode_single_rust("int256", &value).unwrap();
             let decoded = decode_single_rust("int256", &encoded).unwrap();
-            prop_assert!(matches!(decoded, AbiValue::Int(val, 256) if val == i256));
+            prop_assert!(matches!(decoded, AbiValue::Int(val, BitWidth::BITS_256) if val == i256));
         }
     }
 }

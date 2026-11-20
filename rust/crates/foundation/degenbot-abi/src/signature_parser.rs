@@ -352,6 +352,7 @@ impl ParsedSignature {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::abi_types::type_::BitWidth;
 
     #[test]
     fn test_simple_signature() {
@@ -423,7 +424,7 @@ mod tests {
             vec![
                 AbiType::Tuple(vec![AbiType::Address, AbiType::Address]),
                 AbiType::Bool,
-                AbiType::Uint(128),
+                AbiType::Uint(BitWidth::new(128).unwrap()),
                 AbiType::Bytes,
             ]
         );
@@ -439,7 +440,7 @@ mod tests {
         assert_eq!(
             sig.inputs,
             vec![AbiType::Tuple(vec![
-                AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Address]),
+                AbiType::Tuple(vec![AbiType::Uint(BitWidth::BITS_256), AbiType::Address]),
                 AbiType::Bool,
             ])]
         );
@@ -458,7 +459,10 @@ mod tests {
         assert_eq!(
             sig.inputs[1],
             AbiType::FixedArray(
-                Box::new(AbiType::Tuple(vec![AbiType::Uint(256), AbiType::Bool])),
+                Box::new(AbiType::Tuple(vec![
+                    AbiType::Uint(BitWidth::BITS_256),
+                    AbiType::Bool
+                ])),
                 2
             )
         );
