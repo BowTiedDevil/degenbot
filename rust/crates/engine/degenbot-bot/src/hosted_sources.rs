@@ -37,10 +37,10 @@
 //! payload-free [`HostedPhase`] is the public projection.
 //!
 //! The head edge carries its own mode machine ([`HeadEdgeMode`]) instead of
-//! inferring a mode from which resource happens to exist, and publishes it
-//! through [`HeadEdgeStatus`]: the once-only `Stopped` fact
-//! [`HostedSources::head_edge`] hands out is a projection with one writer, not
-//! independent lifecycle truth.
+//! inferring a mode from which resource happens to exist, and owns it — with the
+//! once-only `Stopped` exit fact — in one transition value ([`HeadEdge`]): every
+//! transition publishes the mode it entered, so [`HostedSources::head_edge`]
+//! hands out a projection with one writer, not independent lifecycle truth.
 //!
 //! The head edge drives the once-per-head reconciliation through an injected
 //! trigger: this crate cannot depend on `degenbot-submission` (the
@@ -384,11 +384,11 @@ impl HostedLifecycle {
 
 /// The head edge's mode: what it is observing heads through right now.
 ///
-/// The edge owns this machine and publishes it through [`HeadEdgeStatus`]. It
-/// replaces the `watch_live`/`poll_only` booleans that inferred the mode from
-/// which resource happened to exist. The externally hosted modes are data:
-/// [`PollCause::PrimaryPoll`] is a boot that hosts no watch, and
-/// [`Self::PumpHosted`] is the pump-owned hub head source.
+/// Pure data, owned by [`HeadEdge`] — the ONE value that advances it and
+/// publishes it, so nothing infers a mode from which resource happens to exist.
+/// The externally hosted modes are data too: [`PollCause::PrimaryPoll`] is a boot
+/// that hosts no watch, and [`Self::PumpHosted`] is the pump-owned hub head
+/// source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeadEdgeMode {
     /// No edge task has been spawned (a mint, or a boot hosting no clock).
@@ -418,119 +418,212 @@ pub enum PollCause {
     WatchConnectFailed,
 }
 
-/// One head-edge iteration's decision, derived from the mode alone.
+/// What the hub head subscription did inside one iteration — the fact a fallback
+/// poll is chosen from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourceSignal {
+    /// No head arrived inside [`HEAD_WAIT`]; `stale` records whether the source
+    /// is past its staleness bound.
+    Quiet { stale: bool },
+    /// The subscription closed: no transport will deliver another head.
+    Closed,
+}
+
+/// Why the edge read a head for itself, because the hub delivered none.
+///
+/// Distinct from [`PollCause`], which says why the poll IS the clock for the whole
+/// run: a polled read also happens inside a watch edge, and then this reason
+/// records the actual I/O — which is not what the published mode says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PollReason {
+    /// The poll is this edge's clock, with the mode's own cause.
+    Clock(PollCause),
+    /// A live watch was silent past [`HEAD_STALE`]: one iteration's read while
+    /// the watch's watchdog reconnects. The mode STAYS
+    /// [`HeadEdgeMode::WatchLive`], so a reconnecting watch resumes watching.
+    StaleWatch,
+    /// The hub head subscription closed: the feed can deliver no more heads, so
+    /// the edge reads one from its own provider instead.
+    SourceClosed,
+}
+
+/// What one head-edge iteration observed, with the provenance of the read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeadObservation {
+    /// A head arrived on the hub head subscription (the hosted watch, or the
+    /// pump-owned source). Its owner published it, so the edge only fires the
+    /// trigger.
+    Watched(u64),
+    /// A head this edge read from its own provider, which the edge must publish
+    /// into the hub so every driver sees it.
+    Polled { number: u64, reason: PollReason },
+}
+
+impl HeadObservation {
+    /// The observed block number.
+    fn number(self) -> u64 {
+        match self {
+            Self::Watched(number) | Self::Polled { number, .. } => number,
+        }
+    }
+}
+
+/// One head-edge iteration's decision, derived from the owned mode alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HeadIteration {
     /// Await the hub head subscription (a live watch or an externally hosted
     /// source).
     AwaitHead,
-    /// Sleep one poll tick, then read the fallback provider's block number.
-    Poll,
+    /// Sleep one poll tick, then read the poll provider's block number: the poll
+    /// IS this edge's clock, with the cause as data.
+    Poll(PollCause),
     /// Leave the edge loop.
     Exit,
 }
 
-impl HeadEdgeMode {
-    /// The named transition `head_edge_spawned`: the mode an edge boots into for
-    /// this clock.
-    #[must_use]
-    fn spawned(clock: &HostedHeadClock) -> Self {
-        match clock {
-            HostedHeadClock::Watch { .. } => Self::WatchConnecting,
-            HostedHeadClock::Poll { .. } => Self::PollFallback(PollCause::PrimaryPoll),
-            HostedHeadClock::PumpOwned => Self::PumpHosted,
-        }
-    }
-
-    /// The named transition `watch_connected`.
-    #[must_use]
-    fn watch_connected(self) -> Self {
-        match self {
-            Self::WatchConnecting => Self::WatchLive,
-            other => other,
-        }
-    }
-
-    /// The named transition `watch_connect_failed`: the poll becomes the clock
-    /// for the whole run, with the cause recorded.
-    #[must_use]
-    fn watch_connect_failed(self) -> Self {
-        match self {
-            Self::WatchConnecting => Self::PollFallback(PollCause::WatchConnectFailed),
-            other => other,
-        }
-    }
-
-    /// This iteration's decision. A stale `WatchLive` watch falls back to ONE
-    /// polled read inside the iteration ([`Self::stale_poll`]) and stays live,
-    /// so a reconnecting watch never turns into a permanently stopped edge.
-    #[must_use]
-    fn iteration(self) -> HeadIteration {
-        match self {
-            Self::PollFallback(_) => HeadIteration::Poll,
-            Self::WatchLive | Self::PumpHosted | Self::WatchConnecting => HeadIteration::AwaitHead,
-            Self::NotSpawned | Self::Stopped => HeadIteration::Exit,
-        }
-    }
-
-    /// Whether a quiet iteration may fall back to one polled read: only a live
-    /// watch, whose watchdog reconnects in the background. An externally hosted
-    /// hub source leaves no provider of ours to poll.
-    #[must_use]
-    fn stale_poll(self) -> bool {
-        matches!(self, Self::WatchLive)
-    }
+/// A head-edge transition's outcome: the mode the edge is in afterwards, or the
+/// refusal a stopped edge answers every later transition with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeTransition {
+    /// The edge reports the mode it is in after the transition.
+    Applied(HeadEdgeMode),
+    /// The edge had exited, so the transition was refused.
+    RefusedStopped,
 }
 
-/// The head edge's published mode.
+/// The head edge's ONE transition owner: the mode it observes heads through, the
+/// once-only `Stopped` exit fact, and the publication of both.
 ///
-/// ONE writer (the edge's launch/exit path) and one once-only `Stopped` publication, so
-/// [`HostedSources::head_edge`] hands out a projection rather than independent
-/// lifecycle truth. A clone lets a caller observe the clean shutdown across the
-/// owner's drop.
-pub struct HeadEdgeStatus {
-    published: parking_lot::Mutex<PublishedMode>,
+/// One value, shared by the edge task that advances it and by readers
+/// ([`HostedSources::head_edge`]). Every transition method moves the mode AND
+/// publishes it under the same lock, so there is no task-local copy of the mode
+/// and no second publication path to disagree with the projection. A clone of the
+/// `Arc` lets a caller observe the clean shutdown across the owner's drop.
+pub struct HeadEdge {
+    /// Leaf-scoped: no lock on this value is ever held across an `.await`.
+    owned: parking_lot::Mutex<EdgeState>,
 }
 
-struct PublishedMode {
+/// The state the head edge's transitions move.
+struct EdgeState {
     mode: HeadEdgeMode,
     stop_publications: u32,
 }
 
-impl HeadEdgeStatus {
-    fn new() -> Self {
+impl HeadEdge {
+    /// The mint's projection: no edge has been spawned and nothing has exited.
+    fn minted() -> Self {
         Self {
-            published: parking_lot::Mutex::new(PublishedMode {
+            owned: parking_lot::Mutex::new(EdgeState {
                 mode: HeadEdgeMode::NotSpawned,
                 stop_publications: 0,
             }),
         }
     }
 
-    /// Publish a mode the edge entered. Monotone: nothing revives a stopped
-    /// edge, so a late transition cannot overwrite the exit.
-    fn publish(&self, mode: HeadEdgeMode) {
-        let mut published = self.published.lock();
-        if published.mode == HeadEdgeMode::Stopped {
-            return;
-        }
-        published.mode = mode;
+    /// The named transition `head_edge_spawned`: the edge boots into the mode its
+    /// clock names, published BEFORE the connect so
+    /// [`HeadEdgeMode::WatchConnecting`] is observable.
+    fn boot(&self, clock: &HostedHeadClock) -> EdgeTransition {
+        let boot_mode = match clock {
+            HostedHeadClock::Watch { .. } => HeadEdgeMode::WatchConnecting,
+            HostedHeadClock::Poll { .. } => HeadEdgeMode::PollFallback(PollCause::PrimaryPoll),
+            HostedHeadClock::PumpOwned => HeadEdgeMode::PumpHosted,
+        };
+        self.transition_from(HeadEdgeMode::NotSpawned, boot_mode)
     }
 
-    /// The named transition `head_edge_exited`: publish `Stopped` exactly once.
-    fn publish_stopped(&self) {
-        let mut published = self.published.lock();
-        if published.mode == HeadEdgeMode::Stopped {
-            return;
+    /// The named transition `watch_connected`: the hosted watch went live.
+    fn watch_connected(&self) -> EdgeTransition {
+        self.transition_from(HeadEdgeMode::WatchConnecting, HeadEdgeMode::WatchLive)
+    }
+
+    /// The named transition `watch_connect_failed`: the poll becomes the clock for
+    /// the whole run, with the cause recorded.
+    fn watch_connect_failed(&self) -> EdgeTransition {
+        self.transition_from(
+            HeadEdgeMode::WatchConnecting,
+            HeadEdgeMode::PollFallback(PollCause::WatchConnectFailed),
+        )
+    }
+
+    /// The named transition `head_edge_exited`: publish `Stopped` exactly once. A
+    /// second exit is refused, which is what makes the fact once-only.
+    fn exited(&self) -> EdgeTransition {
+        let mut owned = self.owned.lock();
+        if owned.mode == HeadEdgeMode::Stopped {
+            return EdgeTransition::RefusedStopped;
         }
-        published.mode = HeadEdgeMode::Stopped;
-        published.stop_publications += 1;
+        owned.mode = HeadEdgeMode::Stopped;
+        owned.stop_publications += 1;
+        EdgeTransition::Applied(HeadEdgeMode::Stopped)
+    }
+
+    /// Move AND publish the mode `from` -> `to`. A stopped edge refuses (its exit
+    /// is final, so no late event revives the projection), and a mode other than
+    /// `from` has no such successor, so the transition leaves it where it is.
+    fn transition_from(&self, from: HeadEdgeMode, to: HeadEdgeMode) -> EdgeTransition {
+        let mut owned = self.owned.lock();
+        if owned.mode == HeadEdgeMode::Stopped {
+            return EdgeTransition::RefusedStopped;
+        }
+        if owned.mode == from {
+            owned.mode = to;
+        }
+        EdgeTransition::Applied(owned.mode)
+    }
+
+    /// This iteration's decision, from the ONE owned mode.
+    #[must_use]
+    fn iteration(&self) -> HeadIteration {
+        match self.mode() {
+            HeadEdgeMode::PollFallback(cause) => HeadIteration::Poll(cause),
+            HeadEdgeMode::WatchLive | HeadEdgeMode::PumpHosted | HeadEdgeMode::WatchConnecting => {
+                HeadIteration::AwaitHead
+            }
+            HeadEdgeMode::NotSpawned | HeadEdgeMode::Stopped => HeadIteration::Exit,
+        }
+    }
+
+    /// The fallback poll this edge may run for a source that delivered no head, or
+    /// `None` when it may not poll at all.
+    ///
+    /// This is where the mode bounds the actual I/O: the pump-hosted edge consumes
+    /// the pump's own source and owns no provider, so it NEVER polls; a LIVE watch
+    /// polls a quiet source only through its staleness policy; a connecting edge
+    /// polls only for a source that actually closed; and either one polls a closed
+    /// source with its own cause.
+    #[must_use]
+    fn fallback_poll(&self, signal: SourceSignal) -> Option<PollReason> {
+        match self.mode() {
+            // The pump-hosted edge has no provider of its own, a never-spawned or
+            // stopped edge has no run left, and the poll clock reads the provider
+            // directly instead of through a fallback.
+            HeadEdgeMode::PumpHosted
+            | HeadEdgeMode::NotSpawned
+            | HeadEdgeMode::Stopped
+            | HeadEdgeMode::PollFallback(_) => None,
+            // A connecting edge has not gone live: it polls only for a source
+            // that actually closed, never for mere quiet.
+            HeadEdgeMode::WatchConnecting => match signal {
+                SourceSignal::Closed => Some(PollReason::SourceClosed),
+                SourceSignal::Quiet { .. } => None,
+            },
+            // A live watch polls only through its staleness policy: one
+            // iteration's read while its watchdog reconnects, and the mode STAYS
+            // `WatchLive`.
+            HeadEdgeMode::WatchLive => match signal {
+                SourceSignal::Closed => Some(PollReason::SourceClosed),
+                SourceSignal::Quiet { stale: true } => Some(PollReason::StaleWatch),
+                SourceSignal::Quiet { stale: false } => None,
+            },
+        }
     }
 
     /// The edge's current mode.
     #[must_use]
     pub fn mode(&self) -> HeadEdgeMode {
-        self.published.lock().mode
+        self.owned.lock().mode
     }
 
     /// Whether the edge has exited — the positive half of the clean-shutdown
@@ -541,10 +634,10 @@ impl HeadEdgeStatus {
     }
 
     /// How many times the exit published `Stopped`: exactly one after an edge
-    /// exit, which is what makes the projection single-writer.
+    /// exit, which is what makes the exit once-only.
     #[must_use]
     pub fn stop_publications(&self) -> u32 {
-        self.published.lock().stop_publications
+        self.owned.lock().stop_publications
     }
 }
 
@@ -575,9 +668,10 @@ pub struct HostedSources {
     /// [`Self::start`] subscribes the receivers; a never-started owner has
     /// none, so its drop send is a plain no-op.
     shutdown: watch::Sender<bool>,
-    /// The head edge's published mode. The edge task is the sole writer; a
-    /// caller reads the projection ([`Self::head_edge`]) and never drives it.
-    head_edge: Arc<HeadEdgeStatus>,
+    /// The head edge's ONE transition owner. The edge task advances it and the
+    /// transition itself publishes the mode; a caller reads the projection
+    /// ([`Self::head_edge`]) and never drives it.
+    head_edge: Arc<HeadEdge>,
     /// The ONE lifecycle. Leaf-scoped: no lock on this value is ever held
     /// across an `.await`, and the pumps lock is never held under it.
     lifecycle: parking_lot::Mutex<HostedLifecycle>,
@@ -634,7 +728,7 @@ impl HostedSources {
         // exists until `start`, so a never-started owner's drop send is a plain
         // no-op.
         let (shutdown, _shutdown_rx) = watch::channel(false);
-        let head_edge = Arc::new(HeadEdgeStatus::new());
+        let head_edge = Arc::new(HeadEdge::minted());
         // A WS watch is hosted on a DEDICATED single-worker runtime, so the
         // alloy pubsub service it spawns (and the head watch's driving task) are
         // cancellable by tearing that runtime down — the deterministic teardown
@@ -825,12 +919,12 @@ impl HostedSources {
         self.hub.subscribe_head()
     }
 
-    /// The head edge's published mode — the projection a caller reads, never an
-    /// independent lifecycle fact. A clone lets a caller observe the edge's
-    /// clean shutdown across the owner's drop (the positive half of the
-    /// teardown guard); the owner itself never drives it.
+    /// The head edge's transition owner — the projection a caller reads, never
+    /// an independent lifecycle fact. A clone lets a caller observe the edge's
+    /// clean shutdown across the owner's drop (the positive half of the teardown
+    /// guard); the owner itself never drives it.
     #[must_use]
-    pub fn head_edge(&self) -> Arc<HeadEdgeStatus> {
+    pub fn head_edge(&self) -> Arc<HeadEdge> {
         Arc::clone(&self.head_edge)
     }
 }
@@ -988,24 +1082,23 @@ fn resolve_head_source(
 /// owner's teardown then drops them in order instead of leaving them to a local
 /// drop.
 ///
-/// The edge's mode machine advances here: `head_edge_spawned` publishes
+/// The edge's ONE transition owner advances here: `boot` publishes
 /// `WatchConnecting`/`PollFallback(PrimaryPoll)`/`PumpHosted`, the connect
-/// outcome publishes `WatchLive` or `PollFallback(WatchConnectFailed)`, and
-/// the exit publishes `Stopped` exactly once — by this launch on a pre-spawn
-/// failure (no task exists to publish it), and by the edge task on exit.
+/// outcome publishes `WatchLive` or `PollFallback(WatchConnectFailed)`, and the
+/// exit publishes `Stopped` exactly once — by this launch on a pre-spawn failure
+/// (no task exists to publish it), and by the edge task on exit.
 ///
 async fn spawn_head_task(
     hub: Arc<Hub>,
     clock: HostedHeadClock,
     trigger: Option<HeadTrigger>,
     mut shutdown: watch::Receiver<bool>,
-    head_edge: Arc<HeadEdgeStatus>,
+    head_edge: Arc<HeadEdge>,
     pubsub_runtime: Option<&OwnedPubsubRuntime>,
 ) -> HeadEdgeLaunch {
     // `head_edge_spawned`: the mode the edge boots into, published before the
     // connect so `WatchConnecting` is observable.
-    let mut mode = HeadEdgeMode::spawned(&clock);
-    head_edge.publish(mode);
+    head_edge.boot(&clock);
     // The WS transport the edge owns for its lifetime; the owner keeps its own
     // clone and this one is dropped on exit (see this function's doc). `None`
     // when the boot hosts no WS watch (a poll or pump-owned clock, or a WS connect
@@ -1021,14 +1114,12 @@ async fn spawn_head_task(
             Some(runtime) => connect_head_watch(&hub, ws_url, runtime).await,
             None => None,
         };
-        mode = match connected {
-            Some(transport) => {
-                head_transport = Some(transport);
-                mode.watch_connected()
-            }
-            None => mode.watch_connect_failed(),
-        };
-        head_edge.publish(mode);
+        if let Some(transport) = connected {
+            head_transport = Some(transport);
+            head_edge.watch_connected();
+        } else {
+            head_edge.watch_connect_failed();
+        }
     }
     // The fallback poller's publish handle beside the transport's own: the
     // hub's head source is registered by the watch when it subscribed, and by
@@ -1042,7 +1133,7 @@ async fn spawn_head_task(
     let (sender, mut head) = match resolve_head_source(&hub, &clock) {
         Ok(parts) => parts,
         Err(error) => {
-            head_edge.publish_stopped();
+            head_edge.exited();
             return HeadEdgeLaunch {
                 transport: head_transport,
                 failure: Some(error),
@@ -1061,7 +1152,7 @@ async fn spawn_head_task(
     let owned_transport = head_transport.clone();
     degenbot_core::runtime::get_runtime().spawn(async move {
         loop {
-            if mode.iteration() == HeadIteration::Exit {
+            if head_edge.iteration() == HeadIteration::Exit {
                 break;
             }
             // Select the stop signal against ONE head iteration so the edge
@@ -1072,19 +1163,17 @@ async fn spawn_head_task(
                 _ = shutdown.changed() => break,
                 observed = head_iteration(
                     &mut head,
-                    mode,
+                    &head_edge,
                     poll_provider.as_ref(),
                     last_published,
                 ) => observed,
             };
-            if let Some((number, from_poll)) = observed {
-                if from_poll && number > last_published {
-                    publish_polled(&sender, number);
-                    last_published = number;
-                }
-                if let Some(trigger) = trigger.as_ref() {
-                    trigger(number).await;
-                }
+            let Some(observation) = observed else {
+                continue;
+            };
+            last_published = publish_observed(&sender, observation, last_published);
+            if let Some(trigger) = trigger.as_ref() {
+                trigger(observation.number()).await;
             }
         }
         // Teardown discipline: drop the WS transport WHILE the endpoint may
@@ -1092,7 +1181,7 @@ async fn spawn_head_task(
         // channel and exits cleanly (never the reconnect loop). Then publish
         // the once-only `Stopped` fact the teardown guard asserts.
         drop(head_transport);
-        head_edge.publish_stopped();
+        head_edge.exited();
         degenbot_core::op_info!(
             domain = pump,
             "hosted head edge stopped; WS transport dropped"
@@ -1104,51 +1193,77 @@ async fn spawn_head_task(
     }
 }
 
-/// One head-edge iteration: resolve the next observed head, or `None` when the
-/// watch was quiet inside its staleness bound. Split out so the spawned loop
-/// can `select!` the stop signal against it.
+/// One head-edge iteration: resolve the next observed head, or `None` when this
+/// iteration observed none. Split out so the spawned loop can `select!` the stop
+/// signal against it.
 ///
-/// In poll mode the poll is the primary clock and only a NEW head is returned
-/// (`from_poll = true`); in watch/hub mode a header resolution is returned
-/// directly, and a closed or stale watch falls back to one polled read.
+/// Every observation carries its provenance ([`HeadObservation`]): a head the hub
+/// delivered was published by its owner, while a head the edge polled for — the
+/// poll clock, a stale watch, or a closed subscription — is the edge's own read
+/// and carries the reason it read.
 async fn head_iteration(
     head: &mut HeadSubscription,
-    mode: HeadEdgeMode,
+    edge: &HeadEdge,
     poll_provider: Option<&Arc<AlloyProvider>>,
     last_published: u64,
-) -> Option<(u64, bool)> {
-    if mode.iteration() == HeadIteration::Poll {
-        // The poll is the clock: publish + trigger each NEW head at the poll
-        // cadence.
-        tokio::time::sleep(HEAD_POLL_TICK).await;
-        return match poll(poll_provider).await {
-            Some(number) if number > last_published => Some((number, true)),
-            _ => None,
-        };
-    }
-    // Watch (or external-hub) mode: the head edge resolves on a header's
-    // arrival; the 2s bound keeps the edge live while the head is quiet.
-    match tokio::time::timeout(HEAD_WAIT, head.changed()).await {
-        Ok(Ok(())) => head.borrow_and_update().map(|number| (number, false)),
-        Ok(Err(_)) => {
-            tracing::warn!("head source closed - polling");
-            tokio::time::sleep(HEAD_POLL_TICK).await;
-            poll(poll_provider).await.map(|number| (number, true))
+) -> Option<HeadObservation> {
+    match edge.iteration() {
+        // The poll is this edge's clock: one polled read per tick, and only a NEW
+        // head is an observation — the tick would otherwise re-fire the trigger
+        // for a head it already reported.
+        HeadIteration::Poll(cause) => {
+            let observed = poll_head(poll_provider, PollReason::Clock(cause)).await?;
+            (observed.number() > last_published).then_some(observed)
         }
-        Err(_) => {
-            // Only a live watch may fall back to a polled read, and only
-            // through its own staleness policy: the mode stays `WatchLive`, so
-            // a reconnecting watch resumes watching instead of being reported
-            // as a permanently polled edge.
-            if mode.stale_poll() && head.stale(HEAD_STALE) {
-                tracing::warn!("head source stale - polling");
-                tokio::time::sleep(HEAD_POLL_TICK).await;
-                poll(poll_provider).await.map(|number| (number, true))
-            } else {
-                None
+        // Watch (or external-hub) mode: the head edge resolves on a header's
+        // arrival; the 2s bound keeps the edge live while the head is quiet.
+        HeadIteration::AwaitHead => {
+            match tokio::time::timeout(HEAD_WAIT, head.changed()).await {
+                Ok(Ok(())) => head.borrow_and_update().map(HeadObservation::Watched),
+                Ok(Err(_)) => {
+                    // The feed can deliver no more heads, so an edge with a provider
+                    // of its own reads one instead.
+                    if let Some(reason) = edge.fallback_poll(SourceSignal::Closed) {
+                        tracing::warn!("head source closed - polling");
+                        poll_head(poll_provider, reason).await
+                    } else {
+                        // No provider of its own: nothing can be read, but the
+                        // iteration still paces so a closed feed cannot spin the loop.
+                        tracing::warn!("head source closed - no poll fallback for this edge");
+                        tokio::time::sleep(HEAD_POLL_TICK).await;
+                        None
+                    }
+                }
+                Err(_) => {
+                    let stale = head.stale(HEAD_STALE);
+                    match edge.fallback_poll(SourceSignal::Quiet { stale }) {
+                        // Only a live watch falls back to a polled read, and only
+                        // through its staleness policy: the mode STAYS
+                        // `WatchLive`, so a reconnecting watch resumes watching
+                        // instead of being reported as a permanently polled edge.
+                        Some(reason) => {
+                            tracing::warn!("head source stale - polling");
+                            poll_head(poll_provider, reason).await
+                        }
+                        None => None,
+                    }
+                }
             }
         }
+        HeadIteration::Exit => None,
     }
+}
+
+/// One polled read of this edge's own provider, `reason` recording why the edge
+/// read a head instead of being told about one.
+async fn poll_head(
+    provider: Option<&Arc<AlloyProvider>>,
+    reason: PollReason,
+) -> Option<HeadObservation> {
+    tokio::time::sleep(HEAD_POLL_TICK).await;
+    poll(provider)
+        .await
+        .map(|number| HeadObservation::Polled { number, reason })
 }
 
 async fn poll(provider: Option<&Arc<AlloyProvider>>) -> Option<u64> {
@@ -1166,6 +1281,30 @@ fn publish_polled(sender: &degenbot_eventhub::HeadSender, number: u64) {
         gas_used: 0,
         gas_limit: 0,
     });
+}
+
+/// Publish an observation into the hub head source when it is the edge's OWN
+/// read, returning the new high-water mark.
+///
+/// A watched head was published by the source's owner, so re-publishing it would
+/// be a second write of the same fact; a polled head exists nowhere else, so the
+/// edge writes it for every driver to read.
+fn publish_observed(
+    sender: &degenbot_eventhub::HeadSender,
+    observation: HeadObservation,
+    last_published: u64,
+) -> u64 {
+    match observation {
+        HeadObservation::Watched(_) => last_published,
+        HeadObservation::Polled { number, .. } => {
+            if number > last_published {
+                publish_polled(sender, number);
+                number
+            } else {
+                last_published
+            }
+        }
+    }
 }
 
 /// Spawn the one feed-telemetry sampler: scrape every hosted pump's status
@@ -1565,26 +1704,26 @@ mod tests {
     /// A bounded poll over the head edge's published mode: the edge publishes
     /// `Stopped` on a detached task on the shared runtime, so the test waits a
     /// window instead of assuming one scheduler turn.
-    async fn await_head_edge_stopped(status: &HeadEdgeStatus) -> bool {
+    async fn await_head_edge_stopped(edge: &HeadEdge) -> bool {
         for _ in 0..1_000 {
-            if status.stopped() {
+            if edge.stopped() {
                 return true;
             }
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
-        status.stopped()
+        edge.stopped()
     }
 
     /// A bounded poll for a published head-edge mode (the connect outcome is
     /// published from the shared runtime, not synchronously with `start`).
-    async fn await_head_edge_mode(status: &HeadEdgeStatus, want: HeadEdgeMode) -> HeadEdgeMode {
+    async fn await_head_edge_mode(edge: &HeadEdge, want: HeadEdgeMode) -> HeadEdgeMode {
         for _ in 0..1_000 {
-            if status.mode() == want {
+            if edge.mode() == want {
                 return want;
             }
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
-        status.mode()
+        edge.mode()
     }
 
     /// The WS-transport slot's type, as a lazy HTTP provider handle (built
@@ -1605,6 +1744,22 @@ mod tests {
                 .await
                 .expect("a lazy HTTP provider builds without connecting"),
         )
+    }
+
+    /// A `Watch` clock over the suite's dead loopback endpoints. It builds
+    /// without connecting, so a mode test needs no node.
+    async fn watch_clock() -> HostedHeadClock {
+        HostedHeadClock::Watch {
+            ws_url: "ws://127.0.0.1:9".to_string(),
+            provider: dead_loopback_poll_provider().await,
+        }
+    }
+
+    /// A `Poll` clock over the same dead loopback: the mode tests only name it.
+    async fn poll_clock() -> HostedHeadClock {
+        HostedHeadClock::Poll {
+            provider: dead_loopback_poll_provider().await,
+        }
     }
 
     /// A connection-recording listener: a blocking `std::net::TcpListener` on
@@ -1909,8 +2064,13 @@ mod tests {
             1,
             "the exit publishes Stopped exactly once"
         );
-        // Monotone: a late transition cannot revive a stopped edge.
-        head_edge.publish(HeadEdgeMode::WatchLive);
+        // Monotone: every later transition is refused, so a late connect outcome
+        // cannot revive a stopped edge.
+        assert_eq!(
+            head_edge.watch_connected(),
+            EdgeTransition::RefusedStopped,
+            "a stopped edge refuses a late connect outcome"
+        );
         assert_eq!(
             head_edge.mode(),
             HeadEdgeMode::Stopped,
@@ -2348,10 +2508,19 @@ mod tests {
             "the exit publishes Stopped exactly once, even with no edge task to publish it"
         );
 
-        // Non-revivable and once-only: neither a late publication nor a second
-        // exit moves a stopped projection.
-        head_edge.publish(HeadEdgeMode::WatchLive);
-        head_edge.publish_stopped();
+        // Non-revivable and once-only: a stopped edge refuses every later
+        // transition, so neither a late connect outcome nor a second exit moves
+        // the projection.
+        assert_eq!(
+            head_edge.watch_connected(),
+            EdgeTransition::RefusedStopped,
+            "a stopped edge refuses a late connect outcome"
+        );
+        assert_eq!(
+            head_edge.exited(),
+            EdgeTransition::RefusedStopped,
+            "a second exit is refused"
+        );
         assert_eq!(
             head_edge.mode(),
             HeadEdgeMode::Stopped,
@@ -2509,62 +2678,242 @@ mod tests {
         );
     }
 
-    /// The head edge's mode machine: the connect outcomes are named transitions,
-    /// a stale watch polls one iteration WITHOUT leaving `WatchLive`, and the
-    /// externally hosted clocks are data rather than inferred booleans.
+    /// The head edge's ONE transition owner: every boot, connect, and exit
+    /// outcome is a named transition of the value that publishes the mode, so no
+    /// task-local copy can disagree with the projection.
     #[tokio::test]
-    async fn the_head_edge_mode_machine_separates_policy_from_iteration() {
-        let watch = HeadEdgeMode::spawned(&HostedHeadClock::Watch {
-            ws_url: "ws://127.0.0.1:9".to_string(),
-            provider: dead_loopback_poll_provider().await,
-        });
+    async fn the_head_edge_owns_every_transition_it_publishes() {
+        let edge = HeadEdge::minted();
         assert_eq!(
-            watch,
-            HeadEdgeMode::WatchConnecting,
+            edge.mode(),
+            HeadEdgeMode::NotSpawned,
+            "a mint spawns no edge"
+        );
+        assert_eq!(
+            edge.iteration(),
+            HeadIteration::Exit,
+            "an unspawned edge has no loop"
+        );
+        assert_eq!(
+            edge.boot(&watch_clock().await),
+            EdgeTransition::Applied(HeadEdgeMode::WatchConnecting),
             "a watch clock boots connecting"
         );
         assert_eq!(
-            watch.watch_connected(),
-            HeadEdgeMode::WatchLive,
+            edge.mode(),
+            HeadEdgeMode::WatchConnecting,
+            "the boot publishes the mode it entered"
+        );
+        assert_eq!(edge.iteration(), HeadIteration::AwaitHead);
+        assert_eq!(
+            edge.watch_connected(),
+            EdgeTransition::Applied(HeadEdgeMode::WatchLive),
             "watch_connected is a named transition"
         );
+        assert_eq!(edge.mode(), HeadEdgeMode::WatchLive);
+
+        let failed = HeadEdge::minted();
+        failed.boot(&watch_clock().await);
         assert_eq!(
-            watch.watch_connect_failed(),
-            HeadEdgeMode::PollFallback(PollCause::WatchConnectFailed),
+            failed.watch_connect_failed(),
+            EdgeTransition::Applied(HeadEdgeMode::PollFallback(PollCause::WatchConnectFailed)),
             "watch_connect_failed records the cause as data"
         );
         assert_eq!(
-            HeadEdgeMode::spawned(&HostedHeadClock::Poll {
-                provider: dead_loopback_poll_provider().await,
-            }),
+            failed.iteration(),
+            HeadIteration::Poll(PollCause::WatchConnectFailed)
+        );
+
+        let primary = HeadEdge::minted();
+        primary.boot(&poll_clock().await);
+        assert_eq!(
+            primary.mode(),
             HeadEdgeMode::PollFallback(PollCause::PrimaryPoll),
             "a boot hosting no watch polls as its primary clock"
         );
         assert_eq!(
-            HeadEdgeMode::spawned(&HostedHeadClock::PumpOwned),
+            primary.iteration(),
+            HeadIteration::Poll(PollCause::PrimaryPoll)
+        );
+
+        let pump = HeadEdge::minted();
+        pump.boot(&HostedHeadClock::PumpOwned);
+        assert_eq!(
+            pump.mode(),
             HeadEdgeMode::PumpHosted,
             "the pump-owned hub source is its own mode"
         );
+        assert_eq!(
+            pump.watch_connected(),
+            EdgeTransition::Applied(HeadEdgeMode::PumpHosted),
+            "a transition with no successor leaves the mode where it found it"
+        );
+        assert_eq!(pump.mode(), HeadEdgeMode::PumpHosted);
+    }
 
-        // A stale live watch: polls for THIS iteration, stays live, and cannot
-        // be permanently mistaken for a polled edge.
-        let live = HeadEdgeMode::WatchLive;
-        assert_eq!(live.iteration(), HeadIteration::AwaitHead);
-        assert!(
-            live.stale_poll(),
-            "a live watch may fall back to one polled read while its watchdog reconnects"
-        );
-        assert!(!HeadEdgeMode::PumpHosted.stale_poll());
+    /// The exit is the end of the line: `Stopped` is published exactly once and
+    /// every later transition is refused, so no late connect outcome revives the
+    /// projection.
+    #[tokio::test]
+    async fn a_stopped_edge_refuses_every_later_transition() {
+        let edge = HeadEdge::minted();
+        edge.boot(&watch_clock().await);
+        edge.watch_connected();
         assert_eq!(
-            HeadEdgeMode::PollFallback(PollCause::PrimaryPoll).iteration(),
-            HeadIteration::Poll
+            edge.exited(),
+            EdgeTransition::Applied(HeadEdgeMode::Stopped)
         );
         assert_eq!(
-            HeadEdgeMode::PumpHosted.iteration(),
-            HeadIteration::AwaitHead
+            edge.stop_publications(),
+            1,
+            "the exit publishes Stopped once"
         );
-        assert_eq!(HeadEdgeMode::NotSpawned.iteration(), HeadIteration::Exit);
-        assert_eq!(HeadEdgeMode::Stopped.iteration(), HeadIteration::Exit);
+
+        let refusals = [
+            edge.watch_connected(),
+            edge.watch_connect_failed(),
+            edge.boot(&poll_clock().await),
+            edge.exited(),
+        ];
+        for refused in refusals {
+            assert_eq!(
+                refused,
+                EdgeTransition::RefusedStopped,
+                "a stopped edge refuses every later transition"
+            );
+        }
+        assert_eq!(
+            edge.mode(),
+            HeadEdgeMode::Stopped,
+            "no refused transition revives the exit"
+        );
+        assert_eq!(
+            edge.stop_publications(),
+            1,
+            "the once-only exit cannot double-publish"
+        );
+        assert_eq!(
+            edge.iteration(),
+            HeadIteration::Exit,
+            "a stopped edge has no iteration left"
+        );
+    }
+
+    /// The fallback poll is the edge's OWN decision: a quiet watch polls one
+    /// iteration through its staleness policy and STAYS `WatchLive`, a closed
+    /// subscription polls with that cause recorded, and a live watch inside its
+    /// bound observes nothing.
+    #[tokio::test]
+    async fn a_watch_edge_polls_only_through_its_own_policy() {
+        let edge = HeadEdge::minted();
+        edge.boot(&watch_clock().await);
+
+        // Still connecting: the edge has not gone live, so it polls only for a
+        // source that actually closed — never for mere quiet.
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Quiet { stale: false }),
+            None,
+            "a connecting edge does not poll a quiet source"
+        );
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Quiet { stale: true }),
+            None,
+            "a connecting edge does not poll a stale-but-quiet source either"
+        );
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Closed),
+            Some(PollReason::SourceClosed),
+            "a connecting edge polls only for a source that actually closed"
+        );
+
+        edge.watch_connected();
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Quiet { stale: false }),
+            None,
+            "a live watch inside its staleness bound observes nothing"
+        );
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Quiet { stale: true }),
+            Some(PollReason::StaleWatch),
+            "a stale watch polls for this iteration while its watchdog reconnects"
+        );
+        assert_eq!(
+            edge.mode(),
+            HeadEdgeMode::WatchLive,
+            "the stale poll is one iteration's read, not a mode: the reconnecting watch resumes watching"
+        );
+        assert_eq!(
+            edge.fallback_poll(SourceSignal::Closed),
+            Some(PollReason::SourceClosed),
+            "a closed source polls with its own cause, not the staleness policy's"
+        );
+    }
+
+    /// The pump-hosted edge consumes the pump's source and owns no provider, so
+    /// it NEVER polls: not when the source is quiet, and not when it closes.
+    #[tokio::test]
+    async fn the_pump_hosted_edge_never_polls() {
+        let edge = HeadEdge::minted();
+        edge.boot(&HostedHeadClock::PumpOwned);
+        assert_eq!(edge.mode(), HeadEdgeMode::PumpHosted);
+        assert_eq!(edge.iteration(), HeadIteration::AwaitHead);
+        for signal in [SourceSignal::Quiet { stale: true }, SourceSignal::Closed] {
+            assert_eq!(
+                edge.fallback_poll(signal),
+                None,
+                "the pump owns the clock, so this edge has no provider to poll ({signal:?})"
+            );
+        }
+        assert_eq!(
+            edge.mode(),
+            HeadEdgeMode::PumpHosted,
+            "no poll fallback moves the pump-hosted mode"
+        );
+    }
+
+    /// Provenance publication: a head the edge polled for exists nowhere else, so
+    /// the edge writes it into the hub for every driver; a head the hub delivered
+    /// was already published by its owner, so the edge must not write it twice.
+    #[tokio::test]
+    async fn the_edge_publishes_only_its_own_polled_reads() {
+        let hub = Arc::new(Hub::new());
+        let sender = hub
+            .register_head_source()
+            .expect("the test hosts the head source");
+        let mut head = hub.subscribe_head().expect("the test subscribes");
+
+        let published = publish_observed(
+            &sender,
+            HeadObservation::Polled {
+                number: 9,
+                reason: PollReason::SourceClosed,
+            },
+            0,
+        );
+        assert_eq!(published, 9, "a polled head advances the high-water mark");
+        assert_eq!(
+            head.borrow_and_update(),
+            Some(9),
+            "the polled head reaches the hub's readers"
+        );
+
+        let published = publish_observed(&sender, HeadObservation::Watched(12), published);
+        assert_eq!(published, 9, "a watched head is not the edge's own read");
+        assert_eq!(
+            head.borrow_and_update(),
+            Some(9),
+            "the edge did not write the watched head"
+        );
+
+        let published = publish_observed(
+            &sender,
+            HeadObservation::Polled {
+                number: 9,
+                reason: PollReason::StaleWatch,
+            },
+            published,
+        );
+        assert_eq!(published, 9, "a re-read head is deduped, not re-published");
     }
 
     /// The teardown is ONE ordered plan from EVERY phase: the deferred runtime
