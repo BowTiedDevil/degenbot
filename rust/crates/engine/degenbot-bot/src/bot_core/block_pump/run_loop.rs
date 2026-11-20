@@ -1084,7 +1084,7 @@ impl BlockPump {
                     // stalled WS that recovers flushes buffered forward logs for
                     // blocks ≤ the anchor — those are duplicates of state the
                     // backfill already applied and are DROPPED (they never reach
-                    // `observe_log`'s `LateForward` class). This mirrors the
+                    // `on_log`'s `LateForward` class). This mirrors the
                     // resume-boundary rule, generalized to mid-run recovery.
                     // Reorg logs (`removed: true`) are NEVER dropped — they must
                     // reach the reorg classifier to unwind the backfilled range.

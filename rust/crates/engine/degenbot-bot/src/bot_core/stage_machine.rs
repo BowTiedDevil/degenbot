@@ -6,8 +6,8 @@
 //!
 //! - `BlockClock` (ADR-008) — the per-block state map, the tombstone/cursor
 //!   authority, and the reorg window. Folded: the `blocks`/`cursor`/
-//!   `latest_header`/`open_block`/`in_reorg` fields below ARE that machine
-//!   (the standalone `BlockClock` type is gone — hard cutover, Q6).
+//!   `latest_header` fields and the [`TrackingMode`] field below ARE that
+//!   machine (the standalone `BlockClock` type is gone — hard cutover, Q6).
 //! - `PumpFSM` (ADR-028) — the per-event decision producer. Folded: the
 //!   remaining decision state below (recovery anchor, rewind generation,
 //!   watchdog anchors, WS-completeness tracker, metadata map); the publish
@@ -73,6 +73,46 @@ pub enum BlockState {
     Tainted,
 }
 
+/// How the machine is tracking the chain head — the ONE authority for the two
+/// chain-tracking phases (ADR-008 D3's reorg window and ordinary forward log
+/// arrival).
+///
+/// The phases are exclusive by construction, so no read can observe "in a reorg
+/// and still tracking forward": the entry moves the machine into
+/// [`TrackingMode::Reorg`], the close moves it back to
+/// [`TrackingMode::Forward`] at the new head, and a continued chunk stays put.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrackingMode {
+    /// Forward tracking. `open` is the LOG-driven block whose forward logs are
+    /// currently arriving — the next tombstone target — and stays `None` until
+    /// the first log of the session. A forward log above the open block
+    /// tombstones it (D1); headers never touch this.
+    Forward { open: Option<u64> },
+    /// An open removed-log window (a contiguous unwound chunk). `entry` is the
+    /// first removed log's block: the episode's rewind boundary (its one
+    /// generation bump and the per-block bookkeeping prune) and the driver's
+    /// rollback-depth coordinate.
+    ///
+    /// `suspended_open` is the forward open block the window interrupted. It is
+    /// retained, not discarded: the reads that NAME a block keep the pre-fork
+    /// coordinate through the episode (the drain anchor, the header liveness
+    /// probe's `sealed`), while PUBLICATION is voided by the mode itself —
+    /// [`StageMachine::publish_phase`] answers `Idle` for every block while a
+    /// window is open, because state on both sides of the fork is being unwound.
+    Reorg {
+        entry: u64,
+        suspended_open: Option<u64>,
+    },
+}
+
+impl TrackingMode {
+    /// Whether the removed-log window is open.
+    #[must_use]
+    pub const fn is_reorg(self) -> bool {
+        matches!(self, Self::Reorg { .. })
+    }
+}
+
 /// What a quiesce point did with the open block's publish cycle. Reported to
 /// the caller because the two quiesce points diverge on the inactivity
 /// fallback and on the stage row, not on the publication decision itself.
@@ -125,7 +165,7 @@ pub enum HeaderDecision {
     PendingSuccessor { sealed: u64, pending: u64 },
 }
 
-/// Decision returned by [`StageMachine::observe_log`] telling the pump how to
+/// Decision returned by [`StageMachine::on_log`] telling the pump how to
 /// route a WS log event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogDecision {
@@ -276,12 +316,9 @@ pub struct StageMachine {
     /// does NOT drive the tombstone (ADR-008 D1), so this is NOT the open
     /// block; it only suppresses duplicate/stale headers.
     latest_header: Option<u64>,
-    /// The LOG-driven "open block" — the block whose forward logs are
-    /// currently arriving. A forward log for a block > `open_block`
-    /// tombstones `open_block` (D1). Headers do not touch this.
-    open_block: Option<u64>,
-    /// Whether the machine is in the reorg path (a contiguous removed chunk).
-    in_reorg: bool,
+    /// How the head is being tracked: forward log arrival or an open reorg
+    /// window ([`TrackingMode`]). The machine's only chain-phase state.
+    mode: TrackingMode,
     /// The open epoch's stage-table row (module header's stage table):
     /// `None` = Streaming; advances as the row's decisions fire; resets on a
     /// rewind (the fresh epoch restarts the cycle).
@@ -310,8 +347,7 @@ impl StageMachine {
             blocks: HashMap::new(),
             cursor: None,
             latest_header: None,
-            open_block: None,
-            in_reorg: false,
+            mode: TrackingMode::Forward { open: None },
             stage_in_cycle: None,
             quiesce: QuiesceEstimator::new(QuiesceParams::default()),
         }
@@ -342,12 +378,13 @@ impl StageMachine {
     /// The publish phase of `block`. `Idle` for any block that is not in its
     /// log window — absent, tombstoned, or reorg-tainted — because none of them
     /// owns a cycle to publish.
+    ///
+    /// An open reorg window answers `Idle` for EVERY block: the suspended open
+    /// coordinate still names the pre-fork block, but nothing armed before the
+    /// window may publish while its segment is unwound. The fresh epoch arms its
+    /// own cycle on the first log applied after the window closes.
     fn publish_phase(&self, block: u64) -> PublishPhase {
-        if self.in_reorg {
-            // An open reorg window invalidates every arm at once: state on both
-            // sides of the fork is being unwound, so nothing armed before the
-            // window may publish. The fresh epoch arms its own cycle on the
-            // first log applied after the window closes.
+        if matches!(self.mode, TrackingMode::Reorg { .. }) {
             return PublishPhase::Idle;
         }
         match self.blocks.get(&block) {
@@ -379,7 +416,7 @@ impl StageMachine {
     /// bumps, so every context minted before this point is stale and must
     /// fail `ensure_current` rather than silently applying to the rewound
     /// chain view. No separate driver call — the bump lives
-    /// inside `on_log`'s reorg classification.
+    /// inside the window's entry transition.
     fn rewind(&mut self, reorg_block: u64) {
         self.rewind_seq += 1;
         // tighten the retained per-block
@@ -459,54 +496,101 @@ impl StageMachine {
             .insert(log_index);
     }
 
-    /// The per-event decision + state transition for a relevant WS log whose
-    /// `removed` flag has NOT passed the single-writer / boundary drops. Owns
-    /// the ADC-008 clock transition, the reorg-entry/close cursor moves, and
-    /// the tombstone advance — returning the `LogDecision` so the driver knows
-    /// which I/O effects to run (apply the log, reach for the reorg
-    /// coordinator, finalize a tombstoned block, or drop a late forward).
+    /// The per-event transition for a relevant WS log whose `removed` flag has
+    /// NOT passed the single-writer / boundary drops. THE single authority for
+    /// the tracking mode: it classifies the event against the current mode and
+    /// applies every consequence in the same call — the tombstone, cursor, and
+    /// stage moves while tracking forward, and the window's enter / continue /
+    /// close (with the episode's one generation bump, the taint, the reopen, and
+    /// the header watermark) while unwinding — returning the `LogDecision` so
+    /// the driver knows which I/O effects to run (apply the log, reach for the
+    /// reorg coordinator, finalize a tombstoned block, or drop a late forward).
     /// Reorg paths deliberately do NOT arm a publish.
     ///
     /// Publish-cycle invalidation needs no write here: the arm lives on the
-    /// block's own `LogsArriving` phase, so a tombstone (`LogsApplied`), a
-    /// rewind taint (`Tainted`), or an open reorg window leaves the only state
-    /// that can publish — there is no second flag left to disarm and drift.
+    /// block's own `LogsArriving` phase, so a tombstone (`LogsApplied`) or a
+    /// rewind taint (`Tainted`) leaves the only state that can publish, and an
+    /// open window voids every arm through the mode
+    /// ([`Self::publish_phase`]) — there is no second flag left to disarm and
+    /// drift.
     pub fn on_log(&mut self, block: u64, removed: bool) -> LogDecision {
-        let decision = self.observe_log(block, removed);
-        match decision {
-            LogDecision::EnterReorg(reorg_block) => {
-                // The rewind generation bumps so every context minted
-                // pre-reorg is stale (the open window also voids every arm);
-                // the stage row resets — the fresh epoch restarts the cycle at
-                // Streaming.
-                self.rewind(reorg_block);
-                self.stage_in_cycle = None;
-            }
-            // No transition, and none is wanted. A continued reorg keeps the
-            // open window (entry voided every arm; the close taints the
-            // unwound segment), and a late forward is a benign late admission:
-            // its block is tombstoned and stays so, leaving publication state,
-            // the arm, and the cutoff untouched (I4/I5/I7). The pump owns the
-            // late drop + count.
-            LogDecision::ContinueReorg | LogDecision::LateForward(_) => {}
-            LogDecision::CloseReorg { new_head } => {
-                self.current_block = new_head;
-                self.stage_in_cycle = None;
-            }
-            LogDecision::TombstonePrevious(prev) => {
-                self.advance_to_drained(prev);
-                self.stage_in_cycle = Some(Stage::Finalize); // tombstone finalize window (Finalized row)
-                if block > self.current_block {
-                    self.current_block = block;
-                }
-            }
-            LogDecision::DispatchForward => {
-                if block > self.current_block {
-                    self.current_block = block;
-                }
-            }
+        match self.mode {
+            TrackingMode::Reorg { .. } => self.transition_reorg(block, removed),
+            TrackingMode::Forward { open } if removed => self.enter_reorg(block, open),
+            TrackingMode::Forward { open } => self.transition_forward(open, block),
         }
-        decision
+    }
+
+    /// Enter the removed-log window at its fork block: the episode's ONE
+    /// generation bump (every context minted before it is stale), the replaced
+    /// segment's bookkeeping prune, the fresh epoch's stage cycle at Streaming,
+    /// and the mode move. `entry` is kept for the episode's duration — a
+    /// continued chunk is the same episode, whatever block its logs name — and
+    /// the interrupted open block travels with it as the episode's suspended
+    /// coordinate.
+    fn enter_reorg(&mut self, entry: u64, suspended_open: Option<u64>) -> LogDecision {
+        self.rewind(entry);
+        self.stage_in_cycle = None;
+        self.mode = TrackingMode::Reorg {
+            entry,
+            suspended_open,
+        };
+        LogDecision::EnterReorg(entry)
+    }
+
+    /// A log inside the open window: a further removed log is the same episode
+    /// (no bump, no taint, no header move), and the first forward log closes the
+    /// window at its own block. The close is ONE transition — taint, reopen,
+    /// header watermark, cursor block, and the mode move together — so no read
+    /// can catch a half-closed window.
+    fn transition_reorg(&mut self, block: u64, removed: bool) -> LogDecision {
+        if removed {
+            return LogDecision::ContinueReorg;
+        }
+        self.taint_range_before(block);
+        self.enter_logs_arriving(block);
+        self.latest_header = Some(block);
+        self.current_block = block;
+        self.stage_in_cycle = None;
+        self.mode = TrackingMode::Forward { open: Some(block) };
+        LogDecision::CloseReorg { new_head: block }
+    }
+
+    /// A forward log while tracking forward: a block below the open one is
+    /// counted lateness that moves nothing (I4/I5/I7), a straggler keeps the
+    /// open window, and a block above it tombstones its predecessor (D1).
+    fn transition_forward(&mut self, open: Option<u64>, block: u64) -> LogDecision {
+        // The open block has moved past this one: a late forward on a
+        // tombstoned block. BENIGN under the no-landmine ruling — the pump drops
+        // and counts it (the `LateForward` late-admit class).
+        if open.is_some_and(|open| block < open) {
+            return LogDecision::LateForward(block);
+        }
+
+        // A straggler for the open block keeps its window; the first log of any
+        // other block tombstones its predecessor — the latest non-tombstoned
+        // tracked block strictly below it (the open block, or — before the first
+        // log — the latest header-observed block, i.e. an empty block: ADR-008
+        // covers that case).
+        let predecessor = if open == Some(block) {
+            None
+        } else {
+            self.predecessor_block(open, block)
+        };
+        if let Some(prev) = predecessor {
+            self.tombstone(prev);
+            self.advance_to_drained(prev);
+            self.stage_in_cycle = Some(Stage::Finalize); // tombstone finalize window (Finalized row)
+        }
+        self.enter_logs_arriving(block);
+        self.mode = TrackingMode::Forward { open: Some(block) };
+        if block > self.current_block {
+            self.current_block = block;
+        }
+        match predecessor {
+            Some(prev) => LogDecision::TombstonePrevious(prev),
+            None => LogDecision::DispatchForward,
+        }
     }
 
     /// Mark a forward/tombstone log as applied to engine state (call AFTER the
@@ -588,9 +672,9 @@ impl StageMachine {
     /// Single-writer recovery discard. A stalled WS that
     /// recovers flushes buffered forward logs for blocks ≤ `recovery_anchor` —
     /// duplicates of state the authoritative catch-up already applied. These
-    /// are DROPPED (never reaching `observe_log`'s `LateForward` class).
+    /// are DROPPED (never reaching `on_log`'s `LateForward` class).
     /// Reorg logs (`removed: true`) are NEVER dropped — they must reach the
-    /// reorg classifier to unwind the backfilled range. A forward ABOVE
+    /// log transition to unwind the backfilled range. A forward ABOVE
     /// `recovery_anchor` that is still stale takes the same benign
     /// `LateForward` drop as any other post-tombstone survivor:
     /// lateness is never a fatal signal — only the pump's own single-writer
@@ -911,24 +995,19 @@ mod block_clock_contract {
     }
 
     #[test]
-    fn reorg_routing_owned_by_clock_classification() {
-        // Reorg routing is FSM state: the clock (part of the FSM) classifies
-        // removed logs into an unwind window (enter → continue → close). The
-        // driver only executes the classified routing against the coordinator.
+    fn reorg_routing_is_the_single_log_transition() {
+        // Reorg routing is FSM state: the machine classifies removed logs into
+        // an unwind window (enter → continue → close) in the same call that
+        // applies it. The driver only executes the returned routing against the
+        // coordinator.
         let mut fsm = StageMachine::new(200, 0);
         // Enter: a removed:true log opens the reorg window at its block.
-        assert!(matches!(
-            fsm.observe_log(201, true),
-            LogDecision::EnterReorg(_)
-        ));
+        assert!(matches!(fsm.on_log(201, true), LogDecision::EnterReorg(_)));
         // Continue: a further removed log in the same window.
-        assert!(matches!(
-            fsm.observe_log(201, true),
-            LogDecision::ContinueReorg
-        ));
+        assert!(matches!(fsm.on_log(201, true), LogDecision::ContinueReorg));
         // Close: the window ends and forward tracking resumes from a new head.
         assert!(matches!(
-            fsm.observe_log(202, false),
+            fsm.on_log(202, false),
             LogDecision::CloseReorg { .. }
         ));
     }
@@ -1080,7 +1159,7 @@ fn drain_decision_anchor_follows_log_driven_block_not_racing_header() {
     // Header races ahead to 102 while only block 101's logs are open:
     // anchor at 101 (open), NOT 102 (current_block).
     let mut fsm = StageMachine::new(102, 0);
-    fsm.observe_log(101, false);
+    fsm.on_log(101, false);
     fsm.log_received(101);
     fsm.log_applied(101);
     let StageDecision::Drain { block, .. } = fsm.drain_decision(100) else {
@@ -1341,6 +1420,397 @@ mod publish_cycle_contract {
     }
 }
 
+// ======================================================================
+// The tracking-mode contract: forward tracking vs. an open reorg window
+// ======================================================================
+
+/// The machine's tracking mode is the ONE authority for the two chain-tracking
+/// phases: [`TrackingMode::Forward`] while a block's forward logs are arriving,
+/// [`TrackingMode::Reorg`] while a contiguous removed chunk unwinds the chain.
+/// The pins below read the machine's own projection
+/// ([`StageMachine::tracking_mode`], [`StageMachine::latest_observed`], the
+/// per-block map, the rewind generation), so a copy of the phase kept anywhere
+/// else drifts from the machine and fails here.
+#[cfg(test)]
+mod tracking_mode_contract {
+    use super::*;
+
+    fn meta(ts: u64) -> BlockMetadata {
+        BlockMetadata {
+            timestamp: ts,
+            base_fee_per_gas: Some(ts),
+            gas_used: 1,
+            gas_limit: 2,
+        }
+    }
+
+    /// One forward log for `block`, delivered and applied in the driver's
+    /// order within a loop iteration.
+    fn apply_forward(fsm: &mut StageMachine, block: u64) {
+        fsm.on_log(block, false);
+        fsm.on_log_applied(block);
+    }
+
+    /// One generation bump per episode: the entry bumps it, the rest of the
+    /// chunk and the close are the same episode, and a later episode gets its
+    /// own single bump.
+    #[test]
+    fn one_generation_bump_per_reorg_episode() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward(&mut fsm, 201);
+        assert_eq!(fsm.rewind_seq(), 0);
+
+        assert!(matches!(
+            fsm.on_log(201, true),
+            LogDecision::EnterReorg(201)
+        ));
+        assert_eq!(fsm.rewind_seq(), 1, "entry is the episode's one bump");
+
+        assert_eq!(fsm.on_log(200, true), LogDecision::ContinueReorg);
+        assert_eq!(fsm.on_log(199, true), LogDecision::ContinueReorg);
+        assert_eq!(fsm.rewind_seq(), 1, "a continued chunk is the same episode");
+
+        assert!(matches!(
+            fsm.on_log(202, false),
+            LogDecision::CloseReorg { new_head: 202 }
+        ));
+        assert_eq!(
+            fsm.rewind_seq(),
+            1,
+            "the close ends the episode without a bump"
+        );
+
+        assert!(matches!(
+            fsm.on_log(202, true),
+            LogDecision::EnterReorg(202)
+        ));
+        assert_eq!(
+            fsm.rewind_seq(),
+            2,
+            "a later episode gets its own single bump"
+        );
+    }
+
+    /// An open window owns every forward log: it is the close, never a
+    /// `DispatchForward` and never a benign late admit — whichever block it
+    /// names.
+    #[test]
+    fn an_open_window_routes_every_forward_log_to_the_close() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward(&mut fsm, 210);
+        assert!(matches!(
+            fsm.on_log(210, true),
+            LogDecision::EnterReorg(210)
+        ));
+
+        // A forward log BELOW the open block is a late admit while tracking
+        // forward; inside the window it closes the window at its own block.
+        assert!(matches!(
+            fsm.on_log(200, false),
+            LogDecision::CloseReorg { new_head: 200 }
+        ));
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Forward { open: Some(200) }
+        );
+    }
+
+    /// A window closing BELOW its entry block still reopens exactly the closing
+    /// block as the forward head, with the header watermark moved with it.
+    #[test]
+    fn a_window_closing_below_its_entry_reopens_the_new_head() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward(&mut fsm, 205);
+        apply_forward(&mut fsm, 206);
+        let cursor_before = fsm.cursor();
+        assert_eq!(cursor_before, Some(205), "206's first log drained 205");
+
+        assert!(matches!(
+            fsm.on_log(206, true),
+            LogDecision::EnterReorg(206)
+        ));
+        assert!(matches!(
+            fsm.on_log(204, false),
+            LogDecision::CloseReorg { new_head: 204 }
+        ));
+
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Forward { open: Some(204) }
+        );
+        assert_eq!(fsm.latest_observed(), Some(204));
+        assert_eq!(
+            fsm.current_block(),
+            204,
+            "forward tracking resumes at the closed head, below the entry"
+        );
+        assert_eq!(
+            fsm.state_of(204),
+            Some(BlockState::LogsArriving {
+                in_flight: 0,
+                publish: PublishPhase::Idle
+            }),
+            "the closed head is a live log window"
+        );
+
+        // The header watermark moved with the reopen: the closed head's own
+        // header is stale, and the next header probes a successor of it.
+        assert_eq!(fsm.observe_header(204), HeaderDecision::Stale);
+        assert_eq!(
+            fsm.observe_header(205),
+            HeaderDecision::PendingSuccessor {
+                sealed: 204,
+                pending: 205
+            }
+        );
+
+        // The cursor is orthogonal to the window: a close below the drained
+        // block never rolls the verify-sealed coordinate back.
+        assert_eq!(fsm.cursor(), cursor_before);
+    }
+
+    /// The close is ONE transition: the surviving segment below the new head is
+    /// tainted, the head is the live forward window, and the header watermark
+    /// already names it — no second call can observe a half-applied close.
+    #[test]
+    fn the_close_is_one_transition_for_taint_reopen_and_header() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward(&mut fsm, 204);
+        apply_forward(&mut fsm, 205);
+        assert_eq!(fsm.state_of(204), Some(BlockState::Drained));
+
+        assert!(matches!(
+            fsm.on_log(205, true),
+            LogDecision::EnterReorg(205)
+        ));
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Reorg {
+                entry: 205,
+                suspended_open: Some(205)
+            },
+            "the window keeps the interrupted open block as its suspended coordinate"
+        );
+
+        assert!(matches!(
+            fsm.on_log(205, false),
+            LogDecision::CloseReorg { new_head: 205 }
+        ));
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Forward { open: Some(205) }
+        );
+        assert_eq!(fsm.state_of(204), Some(BlockState::Tainted));
+        assert_eq!(fsm.latest_observed(), Some(205));
+        assert_eq!(fsm.observe_header(205), HeaderDecision::Stale);
+        assert_eq!(
+            fsm.observe_header(206),
+            HeaderDecision::PendingSuccessor {
+                sealed: 205,
+                pending: 206
+            }
+        );
+    }
+
+    /// Entry prunes the replaced segment's per-block bookkeeping at the fork
+    /// boundary: metadata for the deferred finalize and the WS-completeness
+    /// tracker both keep only what the rewind did not void.
+    #[test]
+    fn entering_the_window_prunes_the_replaced_segments_bookkeeping() {
+        let mut fsm = StageMachine::new(200, 0);
+        for block in [201, 202, 203] {
+            fsm.on_header(block, meta(block), block);
+            fsm.record_ws_delivered(block, 7);
+        }
+        assert!(fsm.block_metadata_for(203).is_some());
+
+        assert!(matches!(
+            fsm.on_log(202, true),
+            LogDecision::EnterReorg(202)
+        ));
+
+        assert!(
+            fsm.block_metadata_for(201).is_some(),
+            "below the fork: retained"
+        );
+        assert!(
+            fsm.block_metadata_for(202).is_none(),
+            "the fork block: voided"
+        );
+        assert!(
+            fsm.block_metadata_for(203).is_none(),
+            "above the fork: voided"
+        );
+
+        let CompletenessDecision::Verify {
+            delivered_log_indices,
+            ..
+        } = fsm.completeness_decision(201)
+        else {
+            unreachable!("block 201 is not backfill-owned: it verifies")
+        };
+        assert_eq!(delivered_log_indices, HashSet::from([7]));
+        let CompletenessDecision::Verify {
+            delivered_log_indices,
+            ..
+        } = fsm.completeness_decision(203)
+        else {
+            unreachable!("block 203 is not backfill-owned: it verifies")
+        };
+        assert!(
+            delivered_log_indices.is_empty(),
+            "the voided segment keeps no delivered-log set"
+        );
+    }
+
+    /// The window voids the open block's quiesce cycle through the mode while
+    /// the suspended coordinate stays readable; the fresh epoch arms its own
+    /// cycle from the close.
+    #[test]
+    fn the_window_voids_the_open_blocks_publish_cycle() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward(&mut fsm, 201);
+        assert!(fsm.publish_armed());
+
+        assert!(matches!(
+            fsm.on_log(201, true),
+            LogDecision::EnterReorg(201)
+        ));
+        assert_eq!(
+            fsm.latest_observed(),
+            Some(201),
+            "the window keeps the interrupted open block on the projection"
+        );
+        assert!(
+            !fsm.publish_armed(),
+            "the mode voids the arm while the segment unwinds"
+        );
+
+        // A settle point inside the window is the inactivity path, never a
+        // publish of pre-rewind state.
+        let decisions = fsm.on_settle();
+        assert!(
+            decisions
+                .iter()
+                .all(|d| !matches!(d, StageDecision::Publish { .. })),
+            "pre-rewind state must not publish: {decisions:?}"
+        );
+        assert!(decisions.iter().any(|d| matches!(
+            d,
+            StageDecision::Backfill {
+                from: 202,
+                to: None
+            }
+        )));
+
+        // The close's forward log opens the fresh epoch's cycle.
+        assert!(matches!(
+            fsm.on_log(202, false),
+            LogDecision::CloseReorg { new_head: 202 }
+        ));
+        fsm.on_log_applied(202);
+        assert!(fsm.publish_armed());
+        assert_eq!(fsm.stage(), Some(Stage::StreamingComplete));
+    }
+
+    /// The pre-fork log-driven coordinate survives the window: while a removed
+    /// chunk unwinds, the drain anchor still names the suspended open block
+    /// rather than the cursor block a racing header already reached.
+    #[test]
+    fn the_drain_anchor_keeps_the_suspended_open_block_through_the_window() {
+        let mut fsm = StageMachine::new(200, 0);
+        // A header races ahead to 205 while only block 203's logs are open.
+        fsm.on_header(205, meta(205), 1);
+        apply_forward(&mut fsm, 203);
+        let StageDecision::Drain { block, .. } = fsm.drain_decision(200) else {
+            unreachable!("drain_decision must emit a Drain");
+        };
+        assert_eq!(
+            block, 203,
+            "anchor at the open block, not the racing header"
+        );
+
+        assert!(matches!(
+            fsm.on_log(203, true),
+            LogDecision::EnterReorg(203)
+        ));
+        let StageDecision::Drain { block, .. } = fsm.drain_decision(200) else {
+            unreachable!("drain_decision must emit a Drain");
+        };
+        assert_eq!(
+            block, 203,
+            "the window keeps the pre-fork open coordinate, not current_block"
+        );
+    }
+
+    /// The liveness-probe signal keeps its open-block-or-latest-header selection
+    /// through the window: a successor header arriving mid-episode still reports
+    /// the suspended open block as sealed.
+    #[test]
+    fn the_header_liveness_probe_keeps_the_suspended_open_block_through_the_window() {
+        let mut fsm = StageMachine::new(200, 0);
+        fsm.on_header(202, meta(202), 1);
+        apply_forward(&mut fsm, 201);
+        assert!(matches!(
+            fsm.on_log(201, true),
+            LogDecision::EnterReorg(201)
+        ));
+
+        assert_eq!(
+            fsm.observe_header(203),
+            HeaderDecision::PendingSuccessor {
+                sealed: 201,
+                pending: 203
+            },
+            "sealed is the suspended open block, not the header watermark"
+        );
+    }
+
+    /// The projection is exhaustive over the two phases, and a state-changing
+    /// log is the only way to move between them (a late forward moves nothing).
+    #[test]
+    fn the_tracking_mode_projection_covers_the_phase_space() {
+        let mut fsm = StageMachine::new(200, 0);
+        assert_eq!(fsm.tracking_mode(), TrackingMode::Forward { open: None });
+
+        apply_forward(&mut fsm, 201);
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Forward { open: Some(201) }
+        );
+        assert!(!fsm.tracking_mode().is_reorg());
+
+        assert_eq!(fsm.on_log(200, false), LogDecision::LateForward(200));
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Forward { open: Some(201) },
+            "a benign late admit moves no phase"
+        );
+
+        assert!(matches!(
+            fsm.on_log(201, true),
+            LogDecision::EnterReorg(201)
+        ));
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Reorg {
+                entry: 201,
+                suspended_open: Some(201)
+            }
+        );
+        assert!(fsm.tracking_mode().is_reorg());
+        assert_eq!(fsm.on_log(200, true), LogDecision::ContinueReorg);
+        assert_eq!(
+            fsm.tracking_mode(),
+            TrackingMode::Reorg {
+                entry: 201,
+                suspended_open: Some(201)
+            },
+            "the chunk keeps the episode's entry block and suspended coordinate"
+        );
+    }
+}
+
 impl StageMachine {
     /// The deepest `Drained` block, or `None` if no block has reached
     /// `Drained` yet. A header alone can never advance this (ADR-008 D1).
@@ -1363,10 +1833,10 @@ impl StageMachine {
             Some(latest) if block <= latest => HeaderDecision::Stale,
             Some(_) => {
                 // A header for a new block. The still-open block (logs in
-                // flight, not yet tombstoned) is `open_block`, or — if no log
-                // has arrived yet — the latest header block. Signal the
-                // liveness probe; do NOT advance the cursor / open_block.
-                let sealed = self.open_block.or(self.latest_header).unwrap_or(0);
+                // flight, not yet tombstoned) is the log-driven open block, or
+                // — if no log has arrived yet — the latest header block. Signal
+                // the liveness probe; do NOT advance the cursor or open block.
+                let sealed = self.latest_observed().or(self.latest_header).unwrap_or(0);
                 self.blocks.entry(block).or_insert(BlockState::Observed);
                 self.latest_header = Some(block);
                 HeaderDecision::PendingSuccessor {
@@ -1377,62 +1847,13 @@ impl StageMachine {
         }
     }
 
-    /// Observe a log event for `block` with the given `removed` flag.
-    pub fn observe_log(&mut self, block: u64, removed: bool) -> LogDecision {
-        if self.in_reorg {
-            return self.handle_reorg_log(block, removed);
-        }
-        if removed {
-            return self.handle_removed_outside_reorg(block);
-        }
-        self.handle_forward_log(block)
-    }
-
-    fn handle_forward_log(&mut self, block: u64) -> LogDecision {
-        // The "open block" is the one whose forward logs are currently in
-        // flight. Only LOGS open it — headers do not (ADR-008 D1).
-        match self.open_block {
-            Some(open) if block < open => {
-                // A forward log for a block older than the open block → the
-                // open block has moved past it: a late forward on a
-                // tombstoned block. BENIGN under the no-landmine
-                // ruling — the pump drops + counts it (the `LateForward`
-                // late-admit class); it must never mutate state or rewind
-                // the cursor here.
-                LogDecision::LateForward(block)
-            }
-            Some(open) if block == open => {
-                // Another log for the open block — keep arriving.
-                self.enter_logs_arriving(block);
-                LogDecision::DispatchForward
-            }
-            _ => {
-                // A NEW block (block > open, or open is None). The FIRST log
-                // for it tombstones its predecessor — the latest non-
-                // tombstoned tracked block strictly below it (the open block,
-                // or — if no log has arrived yet — the latest header-observed
-                // block, i.e. an empty block: ADR-008 covers this case).
-                let pred = self.predecessor_block(block);
-                if let Some(p) = pred {
-                    self.tombstone(p);
-                }
-                self.enter_logs_arriving(block);
-                self.open_block = Some(block);
-                match pred {
-                    Some(p) => LogDecision::TombstonePrevious(p),
-                    None => LogDecision::DispatchForward,
-                }
-            }
-        }
-    }
-
     /// The latest non-tombstoned tracked block strictly below `block` — i.e. the
     /// block a forward log for `block` tombstones. Either the open log block
     /// (O(1)), or — if no log has arrived yet — the latest header-observed
     /// non-tombstoned block below `block` (a scan, run only on the very first
-    /// log before `open_block` is set). `None` if `block` is the first block.
-    fn predecessor_block(&self, block: u64) -> Option<u64> {
-        if let Some(open) = self.open_block {
+    /// log). `None` if `block` is the first block.
+    fn predecessor_block(&self, open: Option<u64>, block: u64) -> Option<u64> {
+        if let Some(open) = open {
             return (open < block).then_some(open);
         }
         // No log has arrived yet: scan for the latest non-tombstoned tracked
@@ -1444,31 +1865,6 @@ impl StageMachine {
             })
             .map(|(b, _)| *b)
             .max()
-    }
-
-    fn handle_removed_outside_reorg(&mut self, block: u64) -> LogDecision {
-        // A removed:true log while not in the reorg path. Whether the block is
-        // already tombstoned (LogsApplied/Drained) or still in flight, the WS
-        // is unwinding a chain segment — enter the reorg path. The window
-        // closes on the first removed:false after entry (ADR-008 D3).
-        self.in_reorg = true;
-        LogDecision::EnterReorg(block)
-    }
-
-    fn handle_reorg_log(&mut self, block: u64, removed: bool) -> LogDecision {
-        if removed {
-            LogDecision::ContinueReorg
-        } else {
-            // First removed:false after entering reorg → window closed.
-            // This block is the new head; reopen it as the log-driven open
-            // block (forward tracking resumes monotonically from it).
-            self.in_reorg = false;
-            self.taint_range_before(block);
-            self.enter_logs_arriving(block);
-            self.open_block = Some(block);
-            self.latest_header = Some(block);
-            LogDecision::CloseReorg { new_head: block }
-        }
     }
 
     /// Mark a block's log as received (enter `LogsArriving` if needed + bump
@@ -1601,17 +1997,25 @@ impl StageMachine {
         }
     }
 
-    /// Whether the clock is currently in the reorg path.
+    /// The machine's tracking-mode projection — the chain-phase read for
+    /// diagnostics and tests ([`TrackingMode`]).
     #[must_use]
-    pub fn in_reorg(&self) -> bool {
-        self.in_reorg
+    pub const fn tracking_mode(&self) -> TrackingMode {
+        self.mode
     }
 
     /// The LOG-driven open block — the block whose forward logs are currently
-    /// arriving (the next tombstone target). Headers do not change this.
+    /// arriving (the next tombstone target). Headers do not change this. An open
+    /// reorg window keeps the block the window interrupted: the drain anchor and
+    /// the header liveness probe keep naming the pre-fork coordinate while the
+    /// segment unwinds, and only publication is void for the window's duration
+    /// ([`Self::publish_phase`]).
     #[must_use]
     pub fn latest_observed(&self) -> Option<u64> {
-        self.open_block
+        match self.mode {
+            TrackingMode::Forward { open } => open,
+            TrackingMode::Reorg { suspended_open, .. } => suspended_open,
+        }
     }
 
     /// Read a block's state (for tests + diagnostics).
@@ -1956,7 +2360,7 @@ mod tests {
 
         // The first removed:false log for 101 tombstones 100.
         assert_eq!(
-            machine.observe_log(101, false),
+            machine.on_log(101, false),
             LogDecision::TombstonePrevious(100)
         );
         assert_eq!(
@@ -1967,15 +2371,16 @@ mod tests {
 
         // A further tombstone (a log for 102 closes 101) advances monotonically.
         assert_eq!(
-            machine.observe_log(102, false),
+            machine.on_log(102, false),
             LogDecision::TombstonePrevious(101)
         );
         assert_eq!(machine.highest_applied(), 101);
     }
 
-    /// The full happy path: `Observed → LogsArriving → LogsApplied → Drained`,
-    /// where the tombstone is the first `removed: false` log for N+1 (D1) and
-    /// `cursor()` returns N only after `advance_to_drained`.
+    /// The full happy path: `Observed → LogsArriving → Drained`, where the
+    /// tombstone is the first `removed: false` log for N+1 (D1) and the
+    /// successor log — never a header, never the block's own logs — is what
+    /// seals the cursor.
     #[test]
     fn full_lifecycle_tombstone_via_successor_log_then_drained() {
         let mut machine = StageMachine::new(0, 0);
@@ -1983,10 +2388,7 @@ mod tests {
         assert_eq!(machine.state_of(100), Some(BlockState::Observed));
 
         // First log for 100 → LogsArriving.
-        assert_eq!(
-            machine.observe_log(100, false),
-            LogDecision::DispatchForward
-        );
+        assert_eq!(machine.on_log(100, false), LogDecision::DispatchForward);
         machine.log_received(100); // in_flight = 1
         assert_eq!(
             machine.state_of(100),
@@ -1999,22 +2401,23 @@ mod tests {
 
         machine.log_applied(100); // in_flight = 0 → quiesced
         assert!(machine.logs_quiesced(100), "all applied → quiesced");
-
-        // First forward log for 101 → tombstone 100. Cursor STILL None.
         assert_eq!(
-            machine.observe_log(101, false),
+            machine.cursor(),
+            None,
+            "a fully delivered block is still unsealed"
+        );
+
+        // First forward log for 101 → tombstone 100, which seals it.
+        assert_eq!(
+            machine.on_log(101, false),
             LogDecision::TombstonePrevious(100),
         );
-        assert_eq!(machine.state_of(100), Some(BlockState::LogsApplied));
-        assert_eq!(machine.cursor(), None, "LogsApplied is not Drained yet");
-
-        machine.advance_to_drained(100);
+        assert_eq!(machine.state_of(100), Some(BlockState::Drained));
         assert_eq!(
             machine.cursor(),
             Some(100),
-            "Drained is the only cursor source"
+            "the successor log is the only cursor source"
         );
-        assert_eq!(machine.state_of(100), Some(BlockState::Drained));
     }
 
     /// `advance_to_drained` on a block that is only `Observed` (no logs, no
@@ -2039,17 +2442,16 @@ mod tests {
     #[test]
     fn late_forward_log_on_drained_block_is_benign_late_admit() {
         let mut machine = StageMachine::new(0, 0);
-        // Drive 100 to Drained the honest way.
+        // Drive 100 + 101 to Drained the honest way: each block is sealed by
+        // the next block's first log.
         machine.observe_header(100);
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100);
         machine.log_applied(100);
-        machine.observe_log(101, false); // tombstone 100
+        machine.on_log(101, false); // tombstone 100
         machine.log_received(101);
         machine.log_applied(101);
-        machine.observe_log(102, false); // tombstone 101
-        machine.advance_to_drained(100);
-        machine.advance_to_drained(101);
+        machine.on_log(102, false); // tombstone 101
         assert_eq!(machine.cursor(), Some(101));
 
         // Arm a cycle on the open block so we can pin that the late log leaves
@@ -2059,10 +2461,7 @@ mod tests {
 
         // A forward log for 100 now arrives — late forward on a Drained
         // block: benign late admission, NOT a fatal signal.
-        assert_eq!(
-            machine.observe_log(100, false),
-            LogDecision::LateForward(100),
-        );
+        assert_eq!(machine.on_log(100, false), LogDecision::LateForward(100),);
         assert_eq!(machine.cursor(), Some(101), "cursor holds — no regression");
         assert_eq!(
             machine.state_of(100),
@@ -2084,30 +2483,28 @@ mod tests {
         let mut machine = StageMachine::new(0, 0);
         // Drive 100 + 101 to Drained the honest way. 102 tombstones 101.
         machine.observe_header(100);
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100);
         machine.log_applied(100);
-        machine.observe_log(101, false); // tombstone 100
+        machine.on_log(101, false); // tombstone 100
         machine.log_received(101);
         machine.log_applied(101);
-        machine.observe_log(102, false); // tombstone 101
-        machine.advance_to_drained(100);
-        machine.advance_to_drained(101);
+        machine.on_log(102, false); // tombstone 101
         assert_eq!(machine.state_of(101), Some(BlockState::Drained));
         assert_eq!(machine.cursor(), Some(101));
 
         // Reorg: removed:true logs arrive (any order) — enter + continue.
-        assert_eq!(machine.observe_log(101, true), LogDecision::EnterReorg(101),);
-        assert!(machine.in_reorg());
-        assert_eq!(machine.observe_log(100, true), LogDecision::ContinueReorg);
-        assert_eq!(machine.observe_log(99, true), LogDecision::ContinueReorg);
+        assert_eq!(machine.on_log(101, true), LogDecision::EnterReorg(101),);
+        assert!(machine.tracking_mode().is_reorg());
+        assert_eq!(machine.on_log(100, true), LogDecision::ContinueReorg);
+        assert_eq!(machine.on_log(99, true), LogDecision::ContinueReorg);
 
         // First removed:false → window closes, block 103 is the new head.
         assert_eq!(
-            machine.observe_log(103, false),
+            machine.on_log(103, false),
             LogDecision::CloseReorg { new_head: 103 },
         );
-        assert!(!machine.in_reorg());
+        assert!(!machine.tracking_mode().is_reorg());
         // Earlier tracked blocks tainted for replay; 103 now LogsArriving.
         assert_eq!(machine.state_of(101), Some(BlockState::Tainted));
         assert_eq!(machine.state_of(100), Some(BlockState::Tainted));
@@ -2126,14 +2523,14 @@ mod tests {
     fn logs_quiesced_re_opens_on_straggler() {
         let mut machine = StageMachine::new(0, 0);
         machine.observe_header(100);
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100);
         machine.log_applied(100);
         assert!(machine.logs_quiesced(100), "first quiesce");
 
         // Straggler log for 100 lands (still LogsArriving — same block, same
         // latest_observed).
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100); // in_flight=1
         assert!(!machine.logs_quiesced(100), "straggler re-opens");
 
@@ -2149,7 +2546,7 @@ mod tests {
     fn take_publish_consumes_the_cycle_once_and_re_arms_on_a_straggler() {
         let mut machine = StageMachine::new(0, 0);
         machine.observe_header(100);
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100);
         machine.log_applied(100);
 
@@ -2158,7 +2555,7 @@ mod tests {
         assert!(!machine.take_publish(100), "no new log → no re-publish");
 
         // Straggler log re-arms the cycle.
-        machine.observe_log(100, false);
+        machine.on_log(100, false);
         machine.log_received(100);
         assert!(!machine.take_publish(100), "in-flight log → not quiesced");
         machine.log_applied(100);

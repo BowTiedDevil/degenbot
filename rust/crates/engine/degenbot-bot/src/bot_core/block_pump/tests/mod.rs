@@ -984,7 +984,7 @@ fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<
 }
 
 /// Build a V3 `Swap` log (tombstone trigger — its block number N+1
-/// tombstones N via `observe_log`). Minimal data: the decoder reads
+/// tombstones N via `on_log`). Minimal data: the decoder reads
 /// `sqrtPriceX96`, `tick`, `liquidity`, `amount0`, `amount1` from 5 words.
 fn make_v3_swap_log_with_block(pool_address: Address, block_number: u64) -> Log {
     let mut data = Vec::with_capacity(160);
