@@ -1980,10 +1980,13 @@ const UPDATER_STAGE_BUCKETS_SECONDS: &[f64] = &[
 
 static UPDATER_PIPELINE: OnceLock<Option<UpdaterInstruments>> = OnceLock::new();
 
-/// The process-wide updater instrument set, or `None` while metrics are
-/// disabled (gate off / not yet initialized). Idempotent — cheap to call per
-/// observation; same lazy discipline as [`pipeline`].
+/// The process-wide updater instrument set, or `None` while no metrics
+/// pipeline is running (gate off, not yet initialized, or stopped). Idempotent
+/// — cheap to call per observation; same lazy discipline as [`pipeline`].
 fn updater_pipeline() -> Option<&'static UpdaterInstruments> {
+    if !crate::metrics::is_running() {
+        return None;
+    }
     UPDATER_PIPELINE
         .get_or_init(|| {
             crate::metrics::try_global_meter().map(|meter| UpdaterInstruments::new(&meter))
@@ -2024,11 +2027,19 @@ pub fn install_updater_telemetry_port() {
 
 static PIPELINE: OnceLock<Option<PipelineInstruments>> = OnceLock::new();
 
-/// The process-wide instrument set, or `None` while metrics are disabled
-/// (otel feature off is compiled out entirely; gate off / not yet initialized
-/// lands here). Idempotent — cheap to call per observation.
+/// The process-wide instrument set, or `None` while no metrics pipeline is
+/// running (otel feature off is compiled out entirely; gate off, not yet
+/// initialized, and stopped all land here). Idempotent — cheap to call per
+/// observation.
+///
+/// The running check is what keeps a stop terminal: the instrument set is
+/// memoized for the pipeline's lifetime, so without it a shut-down provider's
+/// instruments would keep collecting into a registry no reader drains.
 #[must_use]
 fn pipeline() -> Option<&'static PipelineInstruments> {
+    if !crate::metrics::is_running() {
+        return None;
+    }
     PIPELINE
         .get_or_init(|| {
             // NOTE: do NOT "touch" an instrument with a marker attribute here.

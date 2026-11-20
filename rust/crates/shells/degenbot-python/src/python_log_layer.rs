@@ -502,6 +502,36 @@ pub fn shutdown_log_drainer() {
     }
 }
 
+/// Report what the metrics boot did. A started pipeline names its scrape
+/// endpoint; an unspawnable scrape thread is a WARN (the meter still records),
+/// and a repeated init names the address already bound rather than pretending
+/// to have started a second endpoint.
+#[cfg(feature = "otel")]
+fn report_metrics_endpoint(outcome: &degenbot_bot::metrics::MetricsInit) {
+    use degenbot_bot::metrics::{Endpoint, MetricsInit};
+
+    match outcome {
+        MetricsInit::Started { endpoint } => match endpoint {
+            Endpoint::Serving(bound) => {
+                tracing::info!(addr = %bound, "Prometheus metrics endpoint active");
+            }
+            Endpoint::Unserved { requested, fault } => {
+                tracing::warn!(
+                    addr = %requested,
+                    fault = %fault,
+                    "metrics endpoint inactive: scrape thread spawn failed (meter still recording)"
+                );
+            }
+        },
+        MetricsInit::AlreadyRunning { endpoint } => {
+            tracing::info!(
+                addr = %endpoint.addr(),
+                "Prometheus metrics endpoint already running"
+            );
+        }
+    }
+}
+
 /// `PyO3` function: flush every telemetry provider (spans + metrics) so the
 /// tail of a run is not lost to teardown ordering (ADR-043 §6).
 ///
@@ -761,9 +791,9 @@ pub fn init_logging_subscriber() {
                     ::degenbot_config::holder::config().telemetry.metrics_addr.clone();
                 match metrics_raw.parse::<std::net::SocketAddr>() {
                     Ok(addr) => match degenbot_bot::metrics::init_global_metrics_with_addr(addr) {
-                        Ok(()) => tracing::info!(addr = %addr, "Prometheus metrics endpoint active"),
+                        Ok(outcome) => report_metrics_endpoint(&outcome),
                         Err(e) => {
-                            tracing::warn!(error = %e, "metrics endpoint disabled: exporter build failed");
+                            tracing::warn!(error = %e, "metrics endpoint disabled");
                         }
                     },
                     Err(e) => tracing::warn!(

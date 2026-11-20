@@ -155,7 +155,18 @@ pub(crate) fn init(loaded: &degenbot::config::LoadedConfig) -> TelemetryBoot {
     // `telemetry.otel` switch the Python driver uses.
     let scrape_addr: Option<SocketAddr> = if otel_enabled {
         match metrics::init_global_metrics() {
-            Ok(()) => metrics::metrics_addr_from_env().ok(),
+            Ok(outcome) => match outcome.endpoint() {
+                metrics::Endpoint::Serving(bound) => Some(*bound),
+                metrics::Endpoint::Unserved { requested, fault } => {
+                    op_warn!(
+                        domain = pump,
+                        addr = %requested,
+                        fault = %fault,
+                        "scrape thread spawn failed (meter still recording, endpoint inactive)"
+                    );
+                    None
+                }
+            },
             Err(error) => {
                 op_warn!(domain = pump, error = %error, "metrics endpoint disabled (continuing without a scrape endpoint)");
                 None
