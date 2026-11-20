@@ -1,32 +1,49 @@
 //! THE one detached solve-arm machine.
 //!
 //! The detached solve arm of [`crate::arb_engine::ArbitrageEngine`] is ONE
-//! conceptual per-cycle machine. This module is its single owner: the
-//! per-cycle states (`Unopened → Open`), the merge pipe open/take, the
-//! outstanding-gauge pair, the seq counters, the outcome-ledger door, the
-//! disposition counters, and the ONE sidecar spawn. Hard cutover:
-//! the in-cycle fallback arm (and its stance input) is GONE — every solve
-//! cycle issues the detached arm.
+//! conceptual per-cycle machine. This module is its single owner: the merge
+//! pipe's lifecycle ([`MergePipe`]), the outstanding-gauge pair, the seq
+//! counters, the outcome-ledger door, the disposition counters, and the ONE
+//! sidecar spawn. Every solve cycle issues the detached arm.
 //!
 //! # States
 //!
-//! - [`CycleArm::Unopened`] — no detached cycle ever issued; the pipe is
-//!   closed (the never-yet-detached engine).
-//! - [`CycleArm::Open`] — a detached cycle has issued; the merge pipe is
-//!   open and exactly one `Receiver` parks until the sidecar takes it.
+//! [`MergePipe`] is the merge pipe's ONE lifecycle, and its payload IS the two
+//! channel halves: no caller infers the pipe's progress from an `Option`
+//! combination, and no state is representable without the half it names.
+//!
+//! - [`MergePipe::Unopened`] — no detached cycle ever issued; no channel (the
+//!   never-yet-detached engine).
+//! - [`MergePipe::Parked`] — the first begin opened the channel; exactly one
+//!   `Receiver` parks until the sidecar spawner takes it.
+//! - [`MergePipe::Live`] — the sidecar owns that `Receiver` and drains the pipe.
+//! - [`MergePipe::Dead`] — the sidecar exited; no delivery can ever land again.
+//!
+//! The machine's counters ([`DetachedCycle::duplicate_outcomes`] and the
+//! disposition counters), the seq, and the outcome ledger stay orthogonal to
+//! the pipe's state: those are per-ITEM bookkeeping, the pipe is per-PIPE, and
+//! neither gates the other.
 //!
 //! # Transition discipline
 //!
-//! One legal-transition table ([`transition`]) + the sized
-//! [`ALL_CYCLE_ARMS`] const + the conformance walk in the test module
-//! (house pattern: `degenbot-workers` `slot.rs` T1–T9 +
-//! `bot_core::stage_handlers::ALL_STAGES`). Every row is total (a
-//! begin always opens; gauge/disposition events are state-transparent), so
-//! the table can no longer reject — the typed-rejection machinery retired
-//! with the in-cycle arm. The panics and aborts that exist today stay
-//! verbatim (the worker-fleet deadlock ledger,
-//! `docs/architecture/worker-fleet.md` §10 — loud-stop discipline: stranded
-//! merge pipe, vanished pipe — same log wording, same `std::process::abort`).
+//! One legal-transition table ([`transition`]) over the payload-free
+//! [`MergePipeState`] view + the sized [`ALL_MERGE_PIPE_STATES`] const + the
+//! conformance walk in the test module (house pattern: `degenbot-workers`
+//! `slot.rs` T1–T9 + `bot_core::stage_handlers::ALL_STAGES`). Every row is
+//! total, so the table cannot reject a cycle: a begin always opens the pipe and
+//! issues the detached arm (the admission draw owns backpressure), and a take
+//! that finds no parked receiver hands out nothing rather than forking the
+//! drain.
+//!
+//! A DEAD pipe refuses nothing and aborts nothing: a later begin still hands
+//! out the dead channel's `Sender`, each enqueue's send then fails, and the
+//! lane's send-failure hook lands every stranded outcome on the existing
+//! drain-death accounting (one counted loss per outcome, the sticky
+//! `PostureCause::LaneDeath` cordon, the loud throttled log). The one abort that
+//! remains names a pipe that could never be drained at all — the sidecar spawn
+//! failure — and it stays verbatim (the worker-fleet deadlock ledger,
+//! `docs/architecture/worker-fleet.md` §10 — loud-stop discipline, same log
+//! wording, same `std::process::abort`).
 //!
 //! # Lock order (preserved verbatim)
 //!
@@ -36,7 +53,7 @@
 //! `executor::outcome_ledger::OutcomeLedger::claim`.
 //!
 //! _Avoid_: "detached arm plumbing", "sidecar state" (GLOSSARY.md).
-use degenbot_core::op_error;
+use degenbot_core::{op_debug, op_error};
 // ---------------------------------------------------------------------------
 // The machine surface — states, verbs, the total transition table
 // ---------------------------------------------------------------------------
@@ -55,21 +72,24 @@ use std::sync::Arc;
 /// (the cap consult moved into the machine; the consult
 /// retired with the arm.)
 pub(crate) const DETACHED_INFLIGHT_CAP: u64 = 8;
-/// THE persistent machine state. The in-flight-cap
-/// `Saturated` state retired with the in-cycle arm — a begin ALWAYS opens,
-/// so the machine is `Unopened → Open`; no row ever returns to
-/// [`CycleArm::Unopened`] (a pipe, once open, stays open until teardown).
+/// The merge pipe's lifecycle state — the payload-free view the diagnostics and
+/// the conformance walk read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CycleArm {
-    /// No detached cycle ever issued; the merge pipe is closed.
+pub(crate) enum MergePipeState {
+    /// No detached cycle ever issued; no channel exists.
     Unopened,
-    /// A detached cycle has issued; the pipe is open (one parked `Receiver`).
-    Open,
+    /// The channel is open and its one `Receiver` parks for the sidecar
+    /// spawner.
+    Parked,
+    /// The sidecar owns the `Receiver` and drains the pipe.
+    Live,
+    /// The sidecar exited; no delivery can ever land again.
+    Dead,
 }
-/// Every machine state, in cycle order — the sized ALL-states const the
+/// Every pipe state, in lifecycle order — the sized ALL-states const the
 /// conformance walk drives (house pattern: `stage_handlers::ALL_STAGES` /
-/// `slot.rs` `ALL_ROLES`). Adding a [`CycleArm`] variant without extending
-/// the table + the walk fails the test module's exhaustive match.
+/// `slot.rs` `ALL_ROLES`). Adding a state without extending the table + the
+/// walk fails the test module's exhaustive match.
 #[cfg_attr(
     not(test),
     expect(
@@ -77,7 +97,100 @@ pub(crate) enum CycleArm {
         reason = "the ALL-states const is the conformance walk's driver — the walk is test-declared only (house discipline)"
     )
 )]
-pub(crate) const ALL_CYCLE_ARMS: [CycleArm; 2] = [CycleArm::Unopened, CycleArm::Open];
+pub(crate) const ALL_MERGE_PIPE_STATES: [MergePipeState; 4] = [
+    MergePipeState::Unopened,
+    MergePipeState::Parked,
+    MergePipeState::Live,
+    MergePipeState::Dead,
+];
+/// THE merge pipe: the two channel halves ARE the state, so the pipe's progress
+/// is never inferred from an `Option` combination.
+///
+/// Opened once (the first begin), taken once (the sidecar spawner), dead once
+/// (the sidecar's terminal exit).
+#[derive(Default)]
+pub(crate) enum MergePipe {
+    /// No detached cycle ever issued: the channel does not exist.
+    #[default]
+    Unopened,
+    /// The first begin opened the UNBOUNDED mpsc channel; the one `Receiver`
+    /// parks here until the sidecar spawner takes it. Each enqueue clones the
+    /// `Sender` into its bin jobs (it carries the unified
+    /// [`executor::LaneOutcome`]).
+    Parked {
+        tx: std::sync::mpsc::Sender<LaneOutcome>,
+        rx: std::sync::mpsc::Receiver<LaneOutcome>,
+    },
+    /// The sidecar owns the `Receiver` and drains the pipe for the engine's
+    /// lifetime.
+    Live {
+        tx: std::sync::mpsc::Sender<LaneOutcome>,
+    },
+    /// The sidecar exited: its `Receiver` is gone, so no later delivery can
+    /// land. The `Sender` stays so a later cycle still hands its outcomes to
+    /// this channel and each failed send surfaces the lane-death accounting.
+    Dead {
+        tx: std::sync::mpsc::Sender<LaneOutcome>,
+    },
+}
+impl MergePipe {
+    /// The payload-free view of the pipe's current state.
+    #[must_use]
+    pub(crate) fn state(&self) -> MergePipeState {
+        match self {
+            Self::Unopened => MergePipeState::Unopened,
+            Self::Parked { .. } => MergePipeState::Parked,
+            Self::Live { .. } => MergePipeState::Live,
+            Self::Dead { .. } => MergePipeState::Dead,
+        }
+    }
+    /// The begin transition: open the channel ONCE (the first begin) and hand
+    /// back the `Sender` clone the 'static bin threads carry. Every later begin
+    /// reuses the same channel, so ONE drain serves every cycle.
+    #[must_use]
+    fn begin(self) -> (Self, std::sync::mpsc::Sender<LaneOutcome>) {
+        match self {
+            Self::Unopened => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let merge_tx = tx.clone();
+                (Self::Parked { tx, rx }, merge_tx)
+            }
+            Self::Parked { tx, rx } => {
+                let merge_tx = tx.clone();
+                (Self::Parked { tx, rx }, merge_tx)
+            }
+            Self::Live { tx } => {
+                let merge_tx = tx.clone();
+                (Self::Live { tx }, merge_tx)
+            }
+            Self::Dead { tx } => {
+                let merge_tx = tx.clone();
+                (Self::Dead { tx }, merge_tx)
+            }
+        }
+    }
+    /// The take transition: hand the parked `Receiver` to the sidecar spawner.
+    /// Parked-only — every other state has no parked receiver, so it hands out
+    /// nothing and stands unchanged (the spawn check runs after every cycle, and
+    /// a second take must never fork the drain).
+    #[must_use]
+    fn take(self) -> (Self, Option<std::sync::mpsc::Receiver<LaneOutcome>>) {
+        match self {
+            Self::Parked { tx, rx } => (Self::Live { tx }, Some(rx)),
+            other => (other, None),
+        }
+    }
+    /// The sidecar's terminal exit: Live → Dead. Every other state stands
+    /// unchanged — a pipe whose receiver was never taken has no sidecar to
+    /// report, and a dead pipe has no second death.
+    #[must_use]
+    fn sidecar_exited(self) -> Self {
+        match self {
+            Self::Live { tx } => Self::Dead { tx },
+            other => other,
+        }
+    }
+}
 /// One terminal disposition of ONE detached outcome (the machine's
 /// disposition counters + the pipeline meters they feed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,58 +206,58 @@ pub(crate) enum Disposition {
     /// was refused): `duplicate_outcomes`.
     Duplicate,
 }
-/// A machine verb — the drivers' complete surface, one row family each in
-/// [`transition`]. The in-cycle `TickInCycle` verb retired with the
-/// arm; a begin carries no verdict (the admission draw owns backpressure).
+/// A merge-pipe event — the complete set of events that move the pipe, one per
+/// machine verb. The machine's verbs match every variant of this event set, and
+/// the walk below is its driver (house discipline: the table const + the walk
+/// are test-declared, the behavior they pin is production's).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the event set drives the conformance walk — the walk is test-declared only (house discipline)"
+    )
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Transition {
-    /// [`DetachedCycle::begin_cycle`] — the arm decision. the
-    /// detached arm is the ONLY arm; a begin always opens the pipe (no
-    /// stance input, no cap verdict — the admission draw owns backpressure).
-    BeginCycle,
-    /// [`DetachedCycle::gauge_hook`] fired — one Solved outcome's
-    /// send-success bump (the ISSUE half of the gauge pair).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "a state-transparent G-row: the bump is a cross-thread atomic event, constructed only by the conformance walk"
-        )
-    )]
-    OutcomeSent,
-    /// [`DetachedCycle::disposition`] — one terminal disposition.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "a state-transparent D-row: the counters are process-cumulative, constructed only by the conformance walk"
-        )
-    )]
-    Disposition(Disposition),
+pub(crate) enum MergePipeEvent {
+    /// [`DetachedCycle::begin_cycle`]: the FIRST begin opens the channel; every
+    /// later begin reuses it (same pipe, fresh `Sender` clone).
+    Begin,
+    /// [`DetachedCycle::take_merge_rx`]: the sidecar spawner takes the parked
+    /// `Receiver` — Parked-only, so the drain can never fork.
+    Take,
+    /// [`DetachedCycle::note_sidecar_exited`]: the sidecar's terminal exit.
+    SidecarExited,
 }
 /// THE legal-transition table (house pattern:
-/// `degenbot-workers` `slot.rs::transition`). With the in-cycle arm
-/// retired every row is TOTAL, so the table is infallible (no typed
-/// rejections remain):
+/// `degenbot-workers` `slot.rs::transition`). Every row is TOTAL, so the table
+/// is infallible:
 ///
 /// ```text
-///              BeginCycle   OutcomeSent / Disposition(k)
-/// Unopened  →  Open         unchanged
-/// Open      →  Open         unchanged
+///                Begin      Take          SidecarExited
+/// Unopened  →  Parked     unchanged     unchanged
+/// Parked    →  unchanged  Live          unchanged
+/// Live      →  unchanged  unchanged     Dead
+/// Dead      →  unchanged  unchanged     unchanged
 /// ```
 ///
-/// The G/D-rows are state-transparent ON PURPOSE: the gauge pair
-/// (send-success bump ⟺ merge receipt decrement) and the process-cumulative
-/// disposition counters are cross-thread events the persistent state does
-/// not gate (the sidecar lands items in whatever state the engine is in;
-/// the direct-merge test harness drives dispositions on dormant machines).
+/// The no-op rows are load-bearing, not gaps: a take that finds no parked
+/// receiver (already spawned, never opened, or dead) hands out nothing rather
+/// than forking the drain, an exit reported against a pipe no sidecar ever took
+/// changes nothing, and a dead pipe refuses nothing — it only stops delivering.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the transition table is the conformance walk's driver — the walk is test-declared only (house discipline)"
+    )
+)]
 #[must_use]
-pub(crate) fn transition(from: CycleArm, t: Transition) -> CycleArm {
-    match t {
-        // B-row — the arm decision. A begin always issues the detached arm.
-        Transition::BeginCycle => CycleArm::Open,
-        // G/D-rows — cross-thread gauge + disposition events.
-        Transition::OutcomeSent | Transition::Disposition(_) => from,
+pub(crate) fn transition(from: MergePipeState, event: MergePipeEvent) -> MergePipeState {
+    match (from, event) {
+        (MergePipeState::Unopened, MergePipeEvent::Begin) => MergePipeState::Parked,
+        (MergePipeState::Parked, MergePipeEvent::Take) => MergePipeState::Live,
+        (MergePipeState::Live, MergePipeEvent::SidecarExited) => MergePipeState::Dead,
+        (state, _) => state,
     }
 }
 /// The per-cycle begin decision: the machine-issued seq (THE ledger key half
@@ -181,23 +294,16 @@ pub(crate) struct LaneDrainCounts {
 /// OUTER lock; [`Self::outcome_ledger`]'s mutex is always an inner lock —
 /// never the reverse (no ABBA ordering). The gauge atomics are lock-free.
 pub(crate) struct DetachedCycle {
-    /// The persistent state (see [`CycleArm`]).
-    state: CycleArm,
+    /// THE merge pipe (see [`MergePipe`]): its two channel halves ARE the
+    /// state, so the pipe's progress is never inferred from an `Option`
+    /// combination.
+    pipe: MergePipe,
     /// Monotonic counter bumped per issued detached SOLVE cycle (it is THE
     /// ledger's seq half). The sidecar's straggler-age telemetry reads
     /// `detached_issued_seq` against it.
     solve_seq_ctr: u64,
     /// The seq of the most recently issued detached cycle.
     detached_issued_seq: u64,
-    /// Sender half of the UNBOUNDED mpsc merge pipe; `Some` from the first
-    /// detached enqueue until teardown. Each enqueue clones it into the
-    /// per-bin bin jobs. Carries the unified [`executor::LaneOutcome`]
-    merge_tx: Option<std::sync::mpsc::Sender<LaneOutcome>>,
-    /// Receiver parked until `EngineStages::run_solve_cycle` spawns the merge
-    /// sidecar (taken once via [`Self::take_merge_rx`]). `Mutex`-wrapped so
-    /// the engine stays `Sync` (the parked Receiver behind the worker-only
-    /// guard is touched exactly once, by the spawner thread).
-    merge_rx: parking_lot::Mutex<Option<std::sync::mpsc::Receiver<LaneOutcome>>>,
     /// Note-(a) carry: the duplicate-outcome fuse counter (the
     /// exactness assert). The sidecar's ledger claims feed it — one
     /// process-cumulative count.
@@ -242,11 +348,9 @@ impl DetachedCycle {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            state: CycleArm::Unopened,
+            pipe: MergePipe::Unopened,
             solve_seq_ctr: 0,
             detached_issued_seq: 0,
-            merge_tx: None,
-            merge_rx: parking_lot::Mutex::new(None),
             duplicate_outcomes: std::sync::atomic::AtomicU64::new(0),
             outcome_ledger: parking_lot::Mutex::new(OutcomeLedger::default()),
             outstanding: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -257,17 +361,11 @@ impl DetachedCycle {
             leads_expired: std::sync::atomic::AtomicU64::new(0),
         }
     }
-    /// The persistent machine state (diagnostics + the conformance walk).
+    /// The merge pipe's current state — the production verb reads it to keep a
+    /// dead pipe's continued loss visible, and the conformance walk drives it.
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the state probe is the conformance walk's + diagnostics' view; production reads the arm decision, not the state"
-        )
-    )]
-    pub(crate) fn state(&self) -> CycleArm {
-        self.state
+    pub(crate) fn pipe_state(&self) -> MergePipeState {
+        self.pipe.state()
     }
     /// The most recently issued detached cycle's seq — the sidecar's
     /// straggler-age telemetry anchor (`detached_issued_seq`).
@@ -275,43 +373,36 @@ impl DetachedCycle {
     pub(crate) fn issued_seq(&self) -> u64 {
         self.detached_issued_seq
     }
-    /// THE arm decision (one machine verb): tick the ONE seq counter, open
-    /// the merge pipe once (if not already open), and hand back the `Sender`
-    /// clone for the 'static bin threads. This ALWAYS issues the
-    /// detached arm — the stance input, the live-gauge cap verdict, and the
-    /// in-cycle fallback retired; the admission draw owns backpressure.
+    /// THE arm decision (one machine verb): tick the ONE seq counter, open the
+    /// merge pipe once, and hand back the `Sender` clone for the 'static bin
+    /// threads. This ALWAYS issues the detached arm — the admission draw owns
+    /// backpressure — and the row is total: the machine cannot reject a cycle.
     ///
-    /// The row is total — the table cannot reject this.
+    /// A DEAD pipe still yields the sender it holds: the cycle submits as usual,
+    /// every enqueue's send fails, and the lane's send-failure hook lands each
+    /// stranded outcome on the drain-death accounting. The process lives.
     pub(crate) fn begin_cycle(&mut self) -> DetachedArm {
-        self.state = transition(self.state, Transition::BeginCycle);
         // THE DETACHED ISSUE: tick the ONE counter and stamp the
-        // detached-only telemetry anchor.
+        // detached-only telemetry anchor. The seq is per-ITEM bookkeeping and
+        // stays orthogonal to the pipe's state.
         self.solve_seq_ctr += 1;
         self.detached_issued_seq = self.solve_seq_ctr;
-        // The merge pipe: open ONCE (the first detached cycle). The sidecar
+        // The pipe: the FIRST begin opens the channel (one parked `Receiver`
+        // for the sidecar spawner) and every later begin reuses it. The sidecar
         // thread is spawned by EngineStages::run_solve_cycle right after this
-        // enqueue half returns; the Receiver parks in the machine until
-        // then.
-        if self.merge_tx.is_none() {
-            let (merge_tx, merge_rx) = std::sync::mpsc::channel();
-            self.merge_tx = Some(merge_tx);
-            *self.merge_rx.lock() = Some(merge_rx);
-        }
-        // Clone the Sender out so the 'static bin threads never borrow the
-        // engine (they outlive the call). A vanished pipe would strand
-        // every result, so die loudly (the worker-fleet deadlock ledger,
-        // `docs/architecture/worker-fleet.md` §10 — verbatim).
-        let merge_tx = if let Some(existing) = &self.merge_tx {
-            existing.clone()
-        } else {
-            // unreachable-by-construction (opened above); a vanished
-            // pipe would strand every result, so die loudly.
-            op_error!(
+        // enqueue half returns.
+        let (pipe, merge_tx) = std::mem::take(&mut self.pipe).begin();
+        self.pipe = pipe;
+        // Continued loss keeps the terminal state continuously visible: a
+        // once-only line an operator can miss is not acceptable (the same
+        // discipline as the throttled drain-death log).
+        if self.pipe_state() == MergePipeState::Dead {
+            op_debug!(
                 domain = solver,
-                "merge pipe vanished between open and clone — aborting"
+                cycle_seq = self.detached_issued_seq,
+                "detached begin on a DEAD merge pipe — every outcome this cycle is a counted loss"
             );
-            std::process::abort();
-        };
+        }
         DetachedArm {
             cycle_seq: self.detached_issued_seq,
             merge_tx,
@@ -411,11 +502,23 @@ impl DetachedCycle {
         self.outcome_ledger.lock().claim(k)
     }
     /// Hand the parked merge-pipe Receiver to the spawner:
-    /// `EngineStages::run_solve_cycle` takes it ONCE, at the FIRST
-    /// detached enqueue, and owns it inside the sidecar thread. `None` = the
-    /// sidecar is already running (or no detached cycle ever enqueued).
+    /// `EngineStages::run_solve_cycle` takes it ONCE, at the FIRST detached
+    /// enqueue, and owns it inside the sidecar thread. Parked-only: `None` = the
+    /// sidecar already took it, the pipe is dead, or no detached cycle ever
+    /// enqueued.
     pub(crate) fn take_merge_rx(&mut self) -> Option<std::sync::mpsc::Receiver<LaneOutcome>> {
-        self.merge_rx.lock().take()
+        let (pipe, taken) = std::mem::take(&mut self.pipe).take();
+        self.pipe = pipe;
+        taken
+    }
+    /// Record the sidecar's TERMINAL exit — the pipe's ONE Dead fact. The only
+    /// consumer is gone, so no later delivery can land. Reports whether THIS
+    /// report was the transition: a second report on the dead pipe changes
+    /// nothing, and a pipe whose receiver was never taken has no sidecar.
+    pub(crate) fn note_sidecar_exited(&mut self) -> bool {
+        let was = self.pipe_state();
+        self.pipe = std::mem::take(&mut self.pipe).sidecar_exited();
+        self.pipe_state() != was
     }
 }
 // ---------------------------------------------------------------------------
@@ -479,7 +582,10 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 /// in-cycle drain (`merge_one_result`, which carries the streaming
 /// delivery emission). Spawned by `EngineStages::run_solve_cycle` at the FIRST
 /// detached enqueue; runs until every `Sender` drops (engine teardown),
-/// so the pipe never strands items across the engine's lifetime.
+/// so the pipe never strands items across the engine's lifetime. Whatever ends
+/// it — a caught merge panic, or the channel closing — its terminal exit records
+/// the pipe's ONE [`MergePipe::Dead`] fact on the machine before the thread
+/// returns.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "the sidecar OWNS the merge Receiver for the engine's whole lifetime (the pipe must never be dropped early or borrowed from a shared slot); owning it is the contract, not an accident"
@@ -531,8 +637,19 @@ pub(crate) fn detached_merge_sidecar(
                         owner,
                     );
                 }
-                return;
+                break;
             }
+        }
+        // Terminal exit: the pipe's only consumer is gone for good, so no later
+        // send can land. Record the ONE Dead fact here — the outcomes themselves
+        // are counted per item by the lane's send-failure hook, never guessed
+        // from this transition.
+        let mut guard = engine.lock();
+        if guard.cycle.detached_cycle.note_sidecar_exited() {
+            op_debug!(
+                domain = solver,
+                "detached merge sidecar exited — the merge pipe is DEAD (every later outcome is a counted loss)"
+            );
         }
     });
 }
@@ -571,91 +688,210 @@ pub(crate) fn spawn_merge_sidecar(
 mod tests {
     use super::*;
     use crate::arb_engine::executor;
-    /// The sized ALL-states const is exhaustive and duplicate-free; adding
-    /// a `CycleArm` variant without extending the table + this walk fails
-    /// the exhaustive match below at compile time (house pattern:
-    /// `stage_handlers::ALL_STAGES` / `slot.rs` `ALL_ROLES`).
+    /// The sized ALL-states const is exhaustive and duplicate-free; adding a
+    /// state without extending the table + this walk fails the exhaustive match
+    /// below at compile time (house pattern: `stage_handlers::ALL_STAGES` /
+    /// `slot.rs` `ALL_ROLES`).
     #[test]
-    fn all_cycle_arms_covers_every_state_exactly_once() {
-        assert_eq!(ALL_CYCLE_ARMS.len(), 2, "the machine declares 2 states");
-        for (i, s) in ALL_CYCLE_ARMS.iter().enumerate() {
+    fn all_merge_pipe_states_covers_every_state_exactly_once() {
+        assert_eq!(ALL_MERGE_PIPE_STATES.len(), 4, "the pipe declares 4 states");
+        for (i, s) in ALL_MERGE_PIPE_STATES.iter().enumerate() {
             assert!(
-                !ALL_CYCLE_ARMS[i + 1..].contains(s),
-                "duplicate state {s:?} in ALL_CYCLE_ARMS"
+                !ALL_MERGE_PIPE_STATES[i + 1..].contains(s),
+                "duplicate state {s:?} in ALL_MERGE_PIPE_STATES"
             );
         }
-        for s in ALL_CYCLE_ARMS {
+        for s in ALL_MERGE_PIPE_STATES {
             // Exhaustive: a new variant breaks this match at compile time.
             match s {
-                CycleArm::Unopened | CycleArm::Open => {}
+                MergePipeState::Unopened
+                | MergePipeState::Parked
+                | MergePipeState::Live
+                | MergePipeState::Dead => {}
             }
         }
-        assert_eq!(ALL_CYCLE_ARMS, [CycleArm::Unopened, CycleArm::Open]);
+        assert_eq!(
+            ALL_MERGE_PIPE_STATES,
+            [
+                MergePipeState::Unopened,
+                MergePipeState::Parked,
+                MergePipeState::Live,
+                MergePipeState::Dead,
+            ]
+        );
     }
-    /// THE CONFORMANCE WALK: every legal (state × transition) cell
-    /// lands on its table successor. With the in-cycle arm retired
-    /// every row is total — there is no illegal cell and therefore no typed
-    /// rejection left to pin.
+    /// A real machine driven into `state` — the walk's setup, through the
+    /// machine's own verbs rather than a fabricated field.
+    fn machine_in(state: MergePipeState) -> DetachedCycle {
+        let mut m = DetachedCycle::new();
+        if state == MergePipeState::Unopened {
+            return m;
+        }
+        let _arm = m.begin_cycle();
+        assert_eq!(m.pipe_state(), MergePipeState::Parked);
+        if state == MergePipeState::Parked {
+            return m;
+        }
+        let _rx = m.take_merge_rx().expect("the parked receiver is take-once");
+        assert_eq!(m.pipe_state(), MergePipeState::Live);
+        if state == MergePipeState::Live {
+            return m;
+        }
+        m.note_sidecar_exited();
+        assert_eq!(m.pipe_state(), MergePipeState::Dead);
+        m
+    }
+    /// THE CONFORMANCE WALK: every (state × event) cell lands on its table
+    /// successor, and the MACHINE's verbs answer exactly the table's successor —
+    /// the table cannot drift from the code it documents.
     #[test]
     fn conformance_walks_every_legal_transition() {
-        for from in ALL_CYCLE_ARMS {
-            // BeginCycle — the arm decision. Total: every solve cycle
-            // begins, from any state, and opens the pipe.
-            assert_eq!(
-                transition(from, Transition::BeginCycle),
-                CycleArm::Open,
-                "B-row from {from:?}: the detached issue opens"
-            );
-            // Cross-thread gauge + disposition events: state-transparent
-            // (the pair — bump ⟺ receipt — and the process-cumulative
-            // counters are NOT gated by the persistent state; the sidecar
-            // lands items in whatever state the engine is in).
-            assert_eq!(
-                transition(from, Transition::OutcomeSent),
-                from,
-                "G-row from {from:?}: the send-success bump is state-transparent"
-            );
-            for kind in [
-                Disposition::Applied,
-                Disposition::DroppedStale,
-                Disposition::DroppedDeregistered,
-                Disposition::Duplicate,
+        for state in ALL_MERGE_PIPE_STATES {
+            for event in [
+                MergePipeEvent::Begin,
+                MergePipeEvent::Take,
+                MergePipeEvent::SidecarExited,
             ] {
+                let expected = transition(state, event);
+                let mut machine = machine_in(state);
+                match event {
+                    MergePipeEvent::Begin => {
+                        let arm = machine.begin_cycle();
+                        assert_eq!(
+                            arm.cycle_seq,
+                            machine.issued_seq(),
+                            "a begin stamps its own seq tick ({state:?})"
+                        );
+                    }
+                    MergePipeEvent::Take => {
+                        assert_eq!(
+                            machine.take_merge_rx().is_some(),
+                            state == MergePipeState::Parked,
+                            "a take hands the receiver out on the Parked row only ({state:?})"
+                        );
+                    }
+                    MergePipeEvent::SidecarExited => {
+                        assert_eq!(
+                            machine.note_sidecar_exited(),
+                            state == MergePipeState::Live,
+                            "the Dead fact is recorded on the Live → Dead row only ({state:?})"
+                        );
+                    }
+                }
                 assert_eq!(
-                    transition(from, Transition::Disposition(kind)),
-                    from,
-                    "D-row {kind:?} from {from:?}: dispositions are state-transparent"
+                    machine.pipe_state(),
+                    expected,
+                    "{state:?} + {event:?} must land on the table's successor"
                 );
             }
         }
     }
-    // ---- machine-level conformance (a real machine drives the script) ----
+    // ---- transition tests: the drivers, not the table ----
+    /// Repeated begin: the pipe opens once. Both cycles' senders deliver into
+    /// the ONE parked receiver, so a single drain serves every cycle while the
+    /// seq keeps ticking per cycle (per-item bookkeeping, orthogonal to the
+    /// pipe).
     #[test]
-    fn machine_opens_the_pipe_once_and_takes_it_once() {
+    fn repeated_begin_opens_the_pipe_once() {
         let mut m = DetachedCycle::new();
-        assert_eq!(m.state(), CycleArm::Unopened);
-        let DetachedArm {
-            cycle_seq,
-            merge_tx,
-        } = m.begin_cycle();
-        assert_eq!(cycle_seq, 1, "the ONE counter ticks on the detached issue");
-        assert_eq!(m.state(), CycleArm::Open, "Unopened → Open");
-        assert!(
-            m.take_merge_rx().is_some(),
-            "the first detached begin parks the receiver"
-        );
-        assert!(m.take_merge_rx().is_none(), "the receiver is take-ONCE");
-        // Consecutive detached cycles: same pipe (no re-open), seq advances.
-        let DetachedArm {
-            cycle_seq: seq2, ..
-        } = m.begin_cycle();
-        assert_eq!(seq2, 2);
+        let first = m.begin_cycle();
+        assert_eq!(m.pipe_state(), MergePipeState::Parked);
+        let second = m.begin_cycle();
         assert_eq!(
-            m.state(),
-            CycleArm::Open,
-            "Open → Open (consecutive cycles)"
+            m.pipe_state(),
+            MergePipeState::Parked,
+            "a second begin reuses the parked pipe (no re-open)"
         );
-        drop(merge_tx);
+        assert_eq!(
+            (first.cycle_seq, second.cycle_seq),
+            (1, 2),
+            "the ONE seq counter ticks per issued cycle"
+        );
+        let rx = m
+            .take_merge_rx()
+            .expect("the receiver parks for the spawner");
+        first
+            .merge_tx
+            .send(LaneOutcome::Suppressed { pid: 1 })
+            .expect("the first cycle's sender reaches the one pipe");
+        second
+            .merge_tx
+            .send(LaneOutcome::Suppressed { pid: 2 })
+            .expect("the second cycle's sender reaches the SAME pipe");
+        assert_eq!(rx.recv().expect("one drain serves both cycles").pid(), 1);
+        assert_eq!(rx.recv().expect("one drain serves both cycles").pid(), 2);
+        assert_eq!(m.pipe_state(), MergePipeState::Live);
+    }
+    /// Double take: the receiver is handed out exactly once. The spawn check
+    /// runs after every cycle, so a second take finds nothing to spawn and the
+    /// drain can never fork.
+    #[test]
+    fn receiver_take_is_parked_only() {
+        let mut m = DetachedCycle::new();
+        assert!(
+            m.take_merge_rx().is_none(),
+            "an unopened pipe has no receiver to take"
+        );
+        let _arm = m.begin_cycle();
+        let parked = m.take_merge_rx().expect("the parked receiver is take-once");
+        assert_eq!(m.pipe_state(), MergePipeState::Live);
+        assert!(
+            m.take_merge_rx().is_none(),
+            "a second take must not fork the drain"
+        );
+        drop(parked);
+    }
+    /// Sidecar death: the terminal exit records one Dead fact, and the pipe
+    /// stays dead through every later report and take.
+    #[test]
+    fn sidecar_exit_records_one_dead_fact() {
+        let mut m = DetachedCycle::new();
+        let _arm = m.begin_cycle();
+        let rx = m
+            .take_merge_rx()
+            .expect("the sidecar takes the parked receiver");
+        assert_eq!(m.pipe_state(), MergePipeState::Live);
+        assert!(m.note_sidecar_exited(), "Live → Dead is the one transition");
+        assert_eq!(m.pipe_state(), MergePipeState::Dead);
+        assert!(
+            !m.note_sidecar_exited(),
+            "a second exit report changes nothing: the Dead fact is one"
+        );
+        assert!(
+            m.take_merge_rx().is_none(),
+            "a dead pipe has no receiver left to take"
+        );
+        assert_eq!(m.pipe_state(), MergePipeState::Dead, "…and stays dead");
+        drop(rx);
+    }
+    /// Later cycles on a dead pipe: the begin still issues (the lane witness
+    /// still owes one outcome per submitted path) and hands out the dead
+    /// channel's sender, so each enqueue's send fails and the lane's
+    /// send-failure hook counts the loss — no refusal, no abort.
+    #[test]
+    fn a_later_cycle_on_a_dead_pipe_sends_into_the_dead_channel() {
+        let mut m = DetachedCycle::new();
+        let _first = m.begin_cycle();
+        let rx = m
+            .take_merge_rx()
+            .expect("the sidecar takes the parked receiver");
+        drop(rx);
+        assert!(m.note_sidecar_exited(), "the sidecar exited for good");
+        assert_eq!(m.pipe_state(), MergePipeState::Dead);
+        let later = m.begin_cycle();
+        assert_eq!(later.cycle_seq, 2, "a dead pipe still ticks the seq");
+        assert_eq!(
+            m.pipe_state(),
+            MergePipeState::Dead,
+            "a later begin leaves the dead pipe dead"
+        );
+        assert!(
+            later
+                .merge_tx
+                .send(LaneOutcome::Suppressed { pid: 9 })
+                .is_err(),
+            "the dead channel refuses delivery — the lane's send-failure hook owns the accounting"
+        );
     }
     /// the begin ALWAYS issues the detached arm — a cycle whose
     /// in-flight gauge sits at/over the design depth safety valve still
@@ -666,7 +902,7 @@ mod tests {
         for outstanding in [0, DETACHED_INFLIGHT_CAP, DETACHED_INFLIGHT_CAP + 5] {
             m.outstanding.store(outstanding, Ordering::Relaxed);
             let DetachedArm { .. } = m.begin_cycle();
-            assert_eq!(m.state(), CycleArm::Open);
+            assert_eq!(m.pipe_state(), MergePipeState::Parked);
         }
     }
     #[test]
@@ -681,6 +917,10 @@ mod tests {
         // The RECEIPT half: ONE Solved item arrived at the merge.
         assert_eq!(m.solved_received(), 1);
         assert_eq!(m.outstanding.load(Ordering::Relaxed), 1);
+        // EXACT: two bumps and two receipts leave NOTHING pending — the gauge
+        // the admission draw reads never drifts from the real in-flight set.
+        assert_eq!(m.solved_received(), 0);
+        assert_eq!(m.outstanding.load(Ordering::Relaxed), 0);
         // The terminal dispositions land on their counters.
         m.disposition(Disposition::Applied);
         m.disposition(Disposition::DroppedStale);

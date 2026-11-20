@@ -190,6 +190,9 @@ impl LaneOutcome {
 }
 /// One typed terminal record for a DEAD MERGE DRAIN: the merge
 /// pipe's only consumer is gone, so no later outcome can ever be delivered.
+/// The pipe's state is [`crate::arb_engine::detached_cycle::MergePipe::Dead`] —
+/// one fact recorded once by the machine; these records are the per-outcome
+/// losses it causes.
 /// Deliberately NOT a [`LaneFailure`]: a `LaneFailure` rides the (live)
 /// pipe as a typed `Failed` record; this names the death of the pipe
 /// ITSELF, so it can only be surfaced out-of-band — counter + sticky pose
@@ -322,7 +325,10 @@ pub(crate) struct SolveLane {
     /// send FAILURE (the merge pipe's Receiver is gone). Strictly additive: the
     /// failed send is NOT re-delivered and the in-flight gauge is NOT bumped —
     /// the ledger is owed deliveries for SUBMITTED paths only, so this surfaces
-    /// the DRAIN DEATH instead of fabricating a pipe delivery.
+    /// the DRAIN DEATH instead of fabricating a pipe delivery. The pipe's own
+    /// terminal state is the machine's ONE
+    /// [`crate::arb_engine::detached_cycle::MergePipe::Dead`] fact; a fired hook
+    /// names the per-outcome LOSS that exit causes, never a second death.
     on_send_failed: Option<DrainDeathHook>,
 }
 

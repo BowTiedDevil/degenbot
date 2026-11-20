@@ -413,11 +413,13 @@ fn detached_merge_event_parents_under_the_carried_solve_span() {
 /// A panic inside `merge_detached_item` must be
 /// CAUGHT — it becomes a typed drain-death record that trips the SAME
 /// sticky cordon as a failed send, and the sidecar must return (not
-/// vanish silently, stranding every later send with no signal). The
-/// dropped Receiver then makes every later send a COUNTED loss.
+/// vanish silently, stranding every later send with no signal). Its terminal
+/// exit is the pipe's ONE `MergePipe::Dead` fact, and every LATER cycle follows
+/// the lane-death policy: the begin still issues, and the dead channel makes its
+/// enqueue's send a COUNTED loss.
 #[test]
 fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
-    use crate::arb_engine::detached_cycle::detached_merge_sidecar;
+    use crate::arb_engine::detached_cycle::{detached_merge_sidecar, MergePipeState};
     use crate::arb_engine::executor::LaneOutcome;
     let owner: &'static degenbot_workers::posture::PostureOwner = std::boxed::Box::leak(
         std::boxed::Box::new(degenbot_workers::posture::PostureOwner::new(
@@ -431,7 +433,23 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         .set_merge_panic_hook(std::sync::Arc::new(|pid| {
             assert_ne!(pid, 0x5151_5151, "merge boom");
         }));
-    let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
+    // The machine's OWN pipe, wired exactly as production wires it: one begin
+    // opens it (Parked), one take hands the receiver to the sidecar (Live).
+    let (tx, rx, seq) = {
+        let mut guard = engine.lock();
+        let arm = guard.cycle.detached_cycle.begin_cycle();
+        let rx = guard
+            .cycle
+            .detached_cycle
+            .take_merge_rx()
+            .expect("the parked receiver is take-once");
+        (arm.merge_tx, rx, arm.cycle_seq)
+    };
+    assert_eq!(
+        engine.lock().cycle.detached_cycle.pipe_state(),
+        MergePipeState::Live,
+        "the sidecar owns the taken receiver"
+    );
     tx.send(LaneOutcome::Suppressed { pid: 0x5151_5151 })
         .expect("rx alive");
     let tx_after = tx.clone();
@@ -446,6 +464,41 @@ fn a_panicking_merge_becomes_a_typed_record_and_a_sticky_cordon() {
         tx_after.send(LaneOutcome::Suppressed { pid: 0x1 }).is_err(),
         "the panicked sidecar has exited: later sends hit the dead pipe (the send-failure signal)"
     );
+    // The sidecar's terminal exit recorded ONE Dead fact on the machine's pipe…
+    {
+        let mut guard = engine.lock();
+        let machine = &mut guard.cycle.detached_cycle;
+        assert_eq!(
+            machine.pipe_state(),
+            MergePipeState::Dead,
+            "the sidecar's exit must leave the pipe DEAD, not merely quiet"
+        );
+        assert!(
+            !machine.note_sidecar_exited(),
+            "the Dead fact is one: a second report changes nothing"
+        );
+        // …and a LATER cycle follows the lane-death policy: it still issues (the
+        // lane witness owes one outcome per submitted path) onto the dead
+        // channel, whose send is the counted loss.
+        let later = machine.begin_cycle();
+        assert_eq!(
+            later.cycle_seq,
+            seq + 1,
+            "a dead pipe still issues and ticks the seq"
+        );
+        assert_eq!(
+            machine.pipe_state(),
+            MergePipeState::Dead,
+            "a later begin leaves the dead pipe dead"
+        );
+        assert!(
+            later
+                .merge_tx
+                .send(LaneOutcome::Suppressed { pid: 0x2 })
+                .is_err(),
+            "the later cycle's delivery fails into the dead channel"
+        );
+    }
 }
 /// With detached
 /// cycles ON through the PRODUCTION stage surface (`EngineStages` — the
