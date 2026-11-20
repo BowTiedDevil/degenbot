@@ -22,6 +22,7 @@ import pytest
 
 from degenbot import bot_lifecycle
 from degenbot.bot import Bot
+from degenbot.provider import OfflineProvider
 from tests.fakes.pools import FakeSessionPool
 from tests.helpers.bot_factory import bot_session
 
@@ -33,23 +34,23 @@ if TYPE_CHECKING:
 _SEEDED_POOL = "0x0000000000000000000000000000000000000021"
 
 
-class _BoundaryProvider:
-    """The external RPC boundary, as a real object with an observable state.
+class _BoundaryProvider(OfflineProvider):
+    """The external RPC boundary: a real alloy-backed provider, observable teardown.
 
-    Bot only touches the network through the injected provider. The real
-    ``AlloyProvider.close()`` releases its Rust connection pool on Arc drop
-    with no queryable "closed" flag, so the *boundary* is represented by a
-    real object whose ``closed`` flag is the observable postcondition. It
-    raises if closed twice, which makes provider-close idempotency a
-    behavioural assertion rather than a call count.
+    Bot only touches the network through the injected provider, and a boot
+    accepts only an alloy-backed one, so the boundary is a real
+    ``OfflineProvider`` over an in-memory transport. Its own ``close()`` is the
+    real provider's — an unobservable no-op — so the boundary records the
+    postcondition in a ``closed`` flag and raises if closed twice, which makes
+    provider-close idempotency a behavioural assertion rather than a call count.
     """
 
     def __init__(self, chain_id: int = 1) -> None:
-        self._chain_id = chain_id
+        super().__init__(
+            chain_id=chain_id,
+            blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
+        )
         self.closed = False
-
-    def get_chain_id(self) -> int:
-        return self._chain_id
 
     def close(self) -> None:
         if self.closed:

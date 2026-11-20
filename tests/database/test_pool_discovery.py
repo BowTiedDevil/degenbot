@@ -29,6 +29,7 @@ from degenbot.discovery import V4_POOL_ID_OFFSET, PoolRef, pools_for_tokens
 from degenbot.pathfinding import PoolKind
 from degenbot.updater import V2PoolRowInput
 from tests.fakes.pools import FakeSessionPool
+from tests.helpers.bot_factory import offline_provider
 from tests.helpers.database import (
     seed_liquidity_positions,
     seed_v2_topology,
@@ -53,23 +54,6 @@ POOL_V2 = get_checksum_address("0x" + "11" * 20)
 POOL_V3 = get_checksum_address("0x" + "22" * 20)
 POOL_MANAGER = get_checksum_address("0x" + "99" * 20)
 V4_POOL_HASH = "0x" + "cc" * 32
-
-
-class _BoundaryProvider:
-    """The external RPC boundary as a real object with an observable state."""
-
-    def __init__(self, chain_id: int = CHAIN_ID) -> None:
-        self.chain_id = chain_id
-        self.closed = False
-
-    def get_chain_id(self) -> int:
-        return self.chain_id
-
-    def close(self) -> None:
-        if self.closed:
-            msg = "provider closed twice"
-            raise RuntimeError(msg)
-        self.closed = True
 
 
 @pytest.fixture
@@ -120,7 +104,7 @@ def seeded_db(tmp_path: pathlib.Path) -> pathlib.Path:
 @pytest.fixture
 def bot(seeded_db: pathlib.Path) -> Bot:
     """An offline Bot bound to the seeded database (injected RPC boundary)."""
-    return Bot(chain_id=CHAIN_ID, database=str(seeded_db), provider=_BoundaryProvider())
+    return Bot(chain_id=CHAIN_ID, database=str(seeded_db), provider=offline_provider())
 
 
 class _NonConstructingBot(Bot):
@@ -288,7 +272,7 @@ def test_bot_pools_for_tokens_constructs_nothing(seeded_db: pathlib.Path) -> Non
     bot = _NonConstructingBot(
         chain_id=CHAIN_ID,
         database=str(seeded_db),
-        provider=_BoundaryProvider(),
+        provider=offline_provider(),
     )
 
     refs = bot.pools_for_tokens(TOKEN_A, TOKEN_B)

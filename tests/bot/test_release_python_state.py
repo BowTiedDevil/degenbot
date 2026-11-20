@@ -20,7 +20,7 @@ from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from tests.fakes.pools import FakeSessionPool
-from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
+from tests.helpers.bot_factory import bot_session, offline_provider
 
 # V3 Mint topic — keccak256("Mint(address,address,int24,int24,uint128,uint256,uint256)").
 _V3_MINT_TOPIC = "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"
@@ -52,7 +52,7 @@ class TestReleasePythonState:
 
     def test_release_resets_pool_and_token_registries(self, tmp_path: pathlib.Path) -> None:
         session = bot_session(tmp_path)
-        bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
+        bot = Bot(**session, provider=offline_provider(1))
 
         # seed the registries with sentinel storage via their _storage()
         bot.pools.add(
@@ -70,7 +70,7 @@ class TestReleasePythonState:
 
     def test_release_is_idempotent(self, tmp_path: pathlib.Path) -> None:
         session = bot_session(tmp_path)
-        bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
+        bot = Bot(**session, provider=offline_provider(1))
 
         bot.release_python_state()
         # second call must not raise
@@ -90,7 +90,7 @@ class TestReleasePythonState:
         (the V3 desync in the permutation run — e.g. 0x88e6A0c2 tick 201020).
         """
         session = bot_session(tmp_path)
-        bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
+        bot = Bot(**session, provider=offline_provider(1))
         py_bot = bot._py_bot
 
         address = get_checksum_address("0x88e6A0c2dDD26FEEb64F039a2c41296Fcb3F5640")
@@ -137,7 +137,7 @@ class TestReleasePythonState:
         delivery path — the seeded tick's gross reflects the Mint after release.
         """
         session = bot_session(tmp_path)
-        bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
+        bot = Bot(**session, provider=offline_provider(1))
         py_bot = bot._py_bot
         engine = ArbitrageEngine(py_bot=py_bot)
 

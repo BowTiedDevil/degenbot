@@ -996,11 +996,13 @@ class Bot:
         """
         Attach a construction-I/O handle built from a Python provider + an
         optional `database_path`.
+
         The Python `Bot.__init__` calls this after constructing `PyBot` so the
-        7 generic RPC + 12 DB atomic methods on `PyBotIo` can delegate through
-        the core trait objects. Alloy-only — a non-alloy provider raises
-        `RuntimeError` (the choreography wrappers keep their Python-delegation
-        fallback).
+        7 generic RPC + 12 DB atomic methods on `PyBotIo` delegate through the
+        core trait objects. Those trait objects are alloy-backed, so a provider
+        with no native alloy handle has nothing to delegate to and is refused
+        here: one construction path, never a silent second one whose reads
+        answer empty.
 
         `database_path = None` → the DB half is `NoDb` (every read returns
         `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
@@ -1011,6 +1013,12 @@ class Bot:
         session reads an EMPTY database rather than skipping a missing one. A
         path the database refuses raises `ValueError` naming the path — the boot
         refuses rather than degrading to the no-DB shape.
+
+        # Errors
+
+        `RuntimeError` for a provider the seam cannot back, naming what a
+        production driver must supply; `ValueError` naming the path for a
+        database the open refuses.
         """
     def build_curve_pool(
         self, /, address: str, registry_addresses: list, block: SupportsIndex | None = None
@@ -1901,24 +1909,32 @@ class BotIo:
 
         `provider` is the `ProviderAdapter` the `Bot` was constructed with; the
         held `Arc<AlloyProvider>` is extracted from it (live alloy or the
-        offline shell) and powers a transient `(NoDb, AlloyRpcConstruction)`
-        handle for the RPC methods. Non-alloy providers (the retired web3 /
-        legacy-double fallback) yield `alloy = None` and every RPC + choreography
-        method errors loudly (ADR-023 D1).
+        offline shell) and backs the handle's RPC half. A provider with no
+        native alloy handle is refused here ([`non_alloy_provider_err`]): there
+        is no second `RpcConstruction` to delegate it to, so a facade over one
+        would answer every construction read as empty.
 
-        `database_path` is the on-disk `SQLite` path; when set, the
-        DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
-        open a `degenbot_db::DegenbotDb` handle from it + route the
-        construction-time DB reads/writes through Rust (the `SQLAlchemy`
-        `session.scalar(select(...))` / `session.commit()` bodies retire).
+        `database_path` is the on-disk `SQLite` path; when set, the DB half is a
+        held `DegenbotDbConstruction` opened from it (write-capable — the
+        construction executor does reads AND the `update_erc20_token_metadata`
+        write-back) and the DB-query methods route through it.
+
+        # Errors
+
+        `RuntimeError` for a provider the seam cannot back; `ValueError` naming
+        the path for a database the open refuses.
         """
     def attach_construction_io(self, /, py_bot: Bot) -> None:
         """
-        Attach the core `ConstructionIo` handle sourced from `PyBot` (architecture
-        review 2025-07-18 / candidate 1). After this call the 12 DB + 7 generic
-        RPC methods delegate through the trait objects; the 27 choreography
-        wrappers stay unchanged. The Python `Bot.__init__` calls this right after
-        `PyBot.attach_construction_io` so the two stay in lockstep.
+        Take the core `ConstructionIo` handle the engine attached.
+
+        After this call the 12 DB + 7 generic RPC methods delegate through the
+        engine's trait objects — the same provider and database path, with the
+        engine's own wiring (e.g. the position reader a boot binds). The Python
+        `Bot.__init__` calls this right after `PyBot.attach_construction_io` so
+        the two stay in lockstep. An engine with no handle attached (a bare
+        `PyBot` a fixture never booted) leaves this facade's own handle in
+        place: it was built from the same provider and path.
         """
     @property
     def database_path(self, /) -> str | None:
@@ -2159,21 +2175,16 @@ class BotIo:
         """
     def get_balance(self, /, address: Any, block: Any | None = None) -> Any:
         """
-        Return the ETH balance at the given address. Native path: direct
-        `AlloyProvider.get_balance(addr, block)`. Fallback: delegates to
-        `provider.get_balance(address, block=block)` (mirrors `SyncPoolIO`).
+        Return the ETH balance at the given address through the core trait.
         """
     def get_block_number(self, /) -> Any:
         """
-        Return the current block number. Native path: direct `AlloyProvider`
-        call (no GIL round-trip). Fallback: delegates to the held Python
-        provider's `get_block_number()` for non-alloy providers.
+        Return the current block number through the core trait — the one
+        construction path, with no GIL round-trip for the read itself.
         """
     def get_code(self, /, address: Any, block: Any | None = None) -> Any:
         """
-        Return the code at the given address. Native path: direct
-        `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
-        `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
+        Return the code at the given address through the core trait.
         """
     def resolve_pool_identity(self, /, chain_id: SupportsIndex, address: str) -> PoolIdentity:
         """

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot.bot import Bot
-from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
+from tests.helpers.bot_factory import bot_session, offline_provider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot as _Engine
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -104,7 +104,7 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     """
 
     session = bot_session(tmp_path)
-    bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
+    bot = Bot(**session, provider=offline_provider(1))
     py_bot = bot._py_bot
     weth, usdc = _make_tokens(py_bot)
 

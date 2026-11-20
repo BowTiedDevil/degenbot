@@ -13,18 +13,17 @@
 //!
 //! ## Single construction-I/O path (ADR-023 D1/D3)
 //!
-//! Every RPC method resolves a [`ConstructionIo`] via `required_construction_io`:
-//! the attached handle when a `Bot` attached one, else a transient
-//! `(NoDb, AlloyRpcConstruction)` built over the held alloy provider (bare test
-//! fixtures that construct `PyBotIo(provider=…)`). Non-alloy Python providers
-//! (the retired web3/legacy-double fallback) **error loudly** — D1 removed the
-//! Python `provider` delegation tier and D3 removed the inlined `self.alloy`
-//! RPC duplication, leaving one code path per method. A block argument is a
-//! typed selector: an int, or one canonical tag string
-//! (`"earliest"` / `"latest"` / `"pending"`). A tag resolves to a block number
-//! here — at the seam that owns the RPC clock (`ConstructionIo::
-//! resolve_block_selector`) — so the numeric core faces stay numeric; any
-//! other string is refused loudly rather than coalesced to the head.
+//! Every RPC and DB method on this facade routes through the ONE
+//! [`ConstructionIo`] the instance holds: built at construction from the
+//! provider + optional database path, then replaced by the handle the engine
+//! attached. There is no second shape to fall back to — the trait objects are
+//! alloy-backed, so a provider with no native alloy handle is refused at
+//! construction ([`non_alloy_provider_err`]) rather than producing a facade
+//! whose reads answer empty. A block argument is a typed selector: an int, or
+//! one canonical tag string (`"earliest"` / `"latest"` / `"pending"`). A tag
+//! resolves to a block number here — at the seam that owns the RPC clock
+//! (`ConstructionIo::resolve_block_selector`) — so the numeric core faces stay
+//! numeric; any other string is refused loudly rather than coalesced to the head.
 //!
 //! ## Async bridging
 //!
@@ -189,26 +188,26 @@ impl PyErc20TokenRow {
 #[pyclass(name = "BotIo", module = "degenbot._ffi")]
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
-    /// when it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
-    /// shell). The `fetch_*` choreography methods run entirely in Rust via a
-    /// core [`ConstructionIo`](crate::bot::py_bot_io::PyBotIo) handle (no GIL
+    /// (live alloy, or the O2 `OfflineProvider` shell). Construction refuses a
+    /// provider that yields none, so every `PyBotIo` carries one; the `Option`
+    /// is the shape the Chain-arm tick-source seam reads
+    /// (`bot::pool::make_tick_bootstrap_rpc`). The `fetch_*` choreography
+    /// methods run entirely in Rust via the core
+    /// [`ConstructionIo`](crate::bot::py_bot_io::PyBotIo) handle (no GIL
     /// round-trip); `get_block_timestamp` derives from `get_block(n).header.timestamp`.
-    /// `None` only for non-alloy Python providers (retired by O3).
     alloy: Option<Arc<AlloyProvider>>,
-    /// The on-disk `SQLite` database path. Retained for the `getter`
-    /// (Python introspection) + the `database_path` is now opened ONCE at
-    /// `attach_construction_io` time into a held `DegenbotDbConstruction`; the
-    /// 12 DB methods no longer per-call `DegenbotDb::open` from here.
+    /// The on-disk `SQLite` database path. Retained for the `getter` (Python
+    /// introspection); the file is opened ONCE, at construction, into the
+    /// construction handle's `DegenbotDbConstruction` half — the 12 DB methods
+    /// never per-call `DegenbotDb::open`.
     database_path: Option<String>,
-    /// The core construction-I/O handle (architecture review 2025-07-18).
-    /// `Some` after `PyBot.attach_construction_io` runs (the Python `Bot.__init__`
-    /// path); the 12 DB + 7 generic RPC methods delegate through this. `None`
-    /// for the bare test fixtures that construct `PyBotIo(provider=…)` without
-    /// a `Bot` — those methods return the no-DB / error-degrade shape.
-    /// Interior-mutable (`Mutex`) because `PyBotIo` is constructed before the
-    /// `ConstructionIo` is attached (the `Bot.__init__` sequence: construct
-    /// `PyBot` → attach I/O → construct `PyBotIo` → attach I/O to `PyBotIo`).
-    construction_io: parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::ConstructionIo>>>,
+    /// The core construction-I/O handle: the ONE shape every construction read
+    /// and write on this facade routes through. Built at construction from the
+    /// provider + optional database path, then replaced by the handle the engine
+    /// attached (the `Bot.__init__` sequence: construct `PyBot` → attach I/O →
+    /// construct `PyBotIo` → take the engine's I/O). Interior-mutable because
+    /// the engine's handle is only in hand after this facade exists.
+    construction_io: parking_lot::Mutex<Arc<degenbot_bot::bot_core::ConstructionIo>>,
 }
 
 #[pymethods]
@@ -218,76 +217,66 @@ impl PyBotIo {
     ///
     /// `provider` is the `ProviderAdapter` the `Bot` was constructed with; the
     /// held `Arc<AlloyProvider>` is extracted from it (live alloy or the
-    /// offline shell) and powers a transient `(NoDb, AlloyRpcConstruction)`
-    /// handle for the RPC methods. Non-alloy providers (the retired web3 /
-    /// legacy-double fallback) yield `alloy = None` and every RPC + choreography
-    /// method errors loudly (ADR-023 D1).
+    /// offline shell) and backs the handle's RPC half. A provider with no
+    /// native alloy handle is refused here ([`non_alloy_provider_err`]): there
+    /// is no second `RpcConstruction` to delegate it to, so a facade over one
+    /// would answer every construction read as empty.
     ///
-    /// `database_path` is the on-disk `SQLite` path; when set, the
-    /// DB-query methods (`fetch_erc20_token`, `update_erc20_token_metadata`, …)
-    /// open a `degenbot_db::DegenbotDb` handle from it + route the
-    /// construction-time DB reads/writes through Rust (the `SQLAlchemy`
-    /// `session.scalar(select(...))` / `session.commit()` bodies retire).
+    /// `database_path` is the on-disk `SQLite` path; when set, the DB half is a
+    /// held `DegenbotDbConstruction` opened from it (write-capable — the
+    /// construction executor does reads AND the `update_erc20_token_metadata`
+    /// write-back) and the DB-query methods route through it.
+    ///
+    /// # Errors
+    ///
+    /// `RuntimeError` for a provider the seam cannot back; `ValueError` naming
+    /// the path for a database the open refuses.
     #[new]
     #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (provider, database_path=None))]
-    pub(crate) fn new(py: Python<'_>, provider: Py<PyAny>, database_path: Option<String>) -> Self {
-        // Extract a native Rust `AlloyProvider` when the held Python provider
-        // is `PyAlloyProvider`-backed (live alloy or the offline shell); non-
-        // alloy providers yield `None` and error loudly on use (ADR-023 D1).
-        let alloy = extract_native_alloy(provider.bind(py));
-        // Architecture review 2025-07-18: when `database_path` is set + the
-        // provider is alloy-backed, eagerly construct a `ConstructionIo` from
-        // them so the 12 DB methods delegate through the held connection (no
-        // per-call `DegenbotDb::open`). A `PyBot`-attached I/O via
-        // [`attach_construction_io`] replaces this at `Bot.__init__` time. The
-        // bare `PyBotIo(provider=…, database_path=…)` test fixtures still work
-        // standalone: `database_path` constructs a `DegenbotDbConstruction`,
-        // the alloy provider constructs an `AlloyRpcConstruction`. Non-alloy +
-        // no DB → `construction_io` stays `None` (the RPC methods then build
-        // the transient alloy handle via `required_construction_io`, or error).
-        let construction_io = match (&alloy, &database_path) {
-            (Some(provider), Some(path)) => {
-                let path_buf = std::path::PathBuf::from(path);
-                // `open_for_writes` — the construction executor does reads AND
-                // the `update_erc20_token_metadata` write-back, so the held
-                // `DegenbotDbConstruction` connection must be write-capable
-                // (the read-only `open` would reject the write-back).
-                match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
-                    Ok((db, _state)) => {
-                        use degenbot_bot::bot_core::{
-                            AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction,
-                        };
-                        Some(std::sync::Arc::new(ConstructionIo::new(
-                            std::sync::Arc::new(DegenbotDbConstruction::new(std::sync::Arc::new(
-                                db,
-                            ))),
-                            std::sync::Arc::new(AlloyRpcConstruction::new((**provider).clone())),
-                        )))
-                    }
-                    // DB open failure (e.g. missing Alembic stamp on a
-                    // write-cold fixture) — leave `None`; the methods return
-                    // the no-DB shape (`attach_construction_io` can replace).
-                    Err(_) => None,
-                }
-            }
-            _ => None,
+    pub(crate) fn new(
+        py: Python<'_>,
+        provider: Py<PyAny>,
+        database_path: Option<String>,
+    ) -> PyResult<Self> {
+        use degenbot_bot::bot_core::{AlloyRpcConstruction, ConstructionIo};
+
+        let bound = provider.bind(py);
+        let Some(alloy) = extract_native_alloy(bound) else {
+            return Err(non_alloy_provider_err("BotIo", bound));
         };
-        Self {
-            alloy,
+
+        // The session's construction handle: one DB half (the declared no-DB
+        // shape, or the file this path names) + one alloy RPC half. The file is
+        // opened by the same factory the engine's boot uses, so a path the
+        // database refuses refuses here too, with the path attached.
+        let db = py.detach(|| crate::bot::open_construction_db(database_path.as_deref()))?;
+        let construction_io = Arc::new(ConstructionIo::new(
+            crate::bot::construction_db_half(db),
+            Arc::new(AlloyRpcConstruction::new((*alloy).clone())),
+        ));
+
+        Ok(Self {
+            alloy: Some(alloy),
             database_path,
             construction_io: parking_lot::Mutex::new(construction_io),
-        }
+        })
     }
 
-    /// Attach the core `ConstructionIo` handle sourced from `PyBot` (architecture
-    /// review 2025-07-18 / candidate 1). After this call the 12 DB + 7 generic
-    /// RPC methods delegate through the trait objects; the 27 choreography
-    /// wrappers stay unchanged. The Python `Bot.__init__` calls this right after
-    /// `PyBot.attach_construction_io` so the two stay in lockstep.
+    /// Take the core `ConstructionIo` handle the engine attached.
+    ///
+    /// After this call the 12 DB + 7 generic RPC methods delegate through the
+    /// engine's trait objects — the same provider and database path, with the
+    /// engine's own wiring (e.g. the position reader a boot binds). The Python
+    /// `Bot.__init__` calls this right after `PyBot.attach_construction_io` so
+    /// the two stay in lockstep. An engine with no handle attached (a bare
+    /// `PyBot` a fixture never booted) leaves this facade's own handle in
+    /// place: it was built from the same provider and path.
     #[expect(clippy::unnecessary_wraps)]
     fn attach_construction_io(&self, py_bot: &Bound<'_, crate::bot::PyBot>) -> PyResult<()> {
-        *self.construction_io.lock() = py_bot.borrow().bot.construction_io_arc();
+        if let Some(io) = py_bot.borrow().bot.construction_io_arc() {
+            *self.construction_io.lock() = io;
+        }
         Ok(())
     }
 
@@ -317,9 +306,7 @@ impl PyBotIo {
         chain_id: i64,
         address: &str,
     ) -> PyResult<Option<Py<PyErc20TokenRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
+        let io = self.construction_io();
         let addr = parse_address_for_call(address)?;
         let row = py
             .detach(|| {
@@ -357,9 +344,7 @@ impl PyBotIo {
         symbol: Option<&str>,
         decimals: Option<i64>,
     ) -> PyResult<()> {
-        let Some(io) = self.construction_io() else {
-            return Ok(());
-        };
+        let io = self.construction_io();
         py.detach(|| {
             get_runtime().block_on(async {
                 io.update_erc20_token_metadata(chain_id, address, name, symbol, decimals)
@@ -387,9 +372,7 @@ impl PyBotIo {
         chain_id: i64,
         address: &str,
     ) -> PyResult<Option<Py<crate::db::PyLiquidityPoolRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
+        let io = self.construction_io();
         let addr = parse_address_for_call(address)?;
         let row = py
             .detach(|| {
@@ -416,9 +399,7 @@ impl PyBotIo {
         py: Python<'_>,
         exchange_id: i64,
     ) -> PyResult<Option<Py<crate::db::PyExchangeRow>>> {
-        let Some(io) = self.construction_io() else {
-            return Ok(None);
-        };
+        let io = self.construction_io();
         let row = py
             .detach(|| get_runtime().block_on(async { io.fetch_exchange(exchange_id).await }))
             .map_err(|e| crate::db::db_err_to_py(&e))?
@@ -448,7 +429,7 @@ impl PyBotIo {
         address: &str,
     ) -> PyResult<PyPoolIdentity> {
         use degenbot_bot::bot_core::{resolve_pool_identity, PoolIdentityError};
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let chain = u64::try_from(chain_id).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("chain_id must be non-negative")
@@ -472,16 +453,10 @@ impl PyBotIo {
         Ok(PyPoolIdentity::from(identity))
     }
 
-    /// Return the current block number. Native path: direct `AlloyProvider`
-    /// call (no GIL round-trip). Fallback: delegates to the held Python
-    /// provider's `get_block_number()` for non-alloy providers.
+    /// Return the current block number through the core trait — the one
+    /// construction path, with no GIL round-trip for the read itself.
     fn get_block_number(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        // Single construction-I/O path (ADR-023 D1/D3): route through the core
-        // trait. `required_construction_io` returns the attached handle, else a
-        // transient `(NoDb, AlloyRpcConstruction)` over the held alloy provider,
-        // else errors loudly for non-alloy providers (the retired Python
-        // fallback).
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let n = py
             .detach(|| get_runtime().block_on(async { io.get_block_number().await }))
             .map_err(Into::<PyErr>::into)?;
@@ -490,9 +465,7 @@ impl PyBotIo {
             .map(pyo3::Bound::unbind)
     }
 
-    /// Return the code at the given address. Native path: direct
-    /// `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
-    /// `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
+    /// Return the code at the given address through the core trait.
     #[pyo3(signature = (address, block=None))]
     fn get_code(
         &self,
@@ -500,14 +473,13 @@ impl PyBotIo {
         address: &Bound<'_, PyAny>,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Single construction-I/O path (ADR-023 D1/D3): extract address + block,
-        // route through the core trait via `required_construction_io`. No
-        // Python fallback — non-native shapes error loudly.
+        // A block argument resolves HERE — at the seam that owns the RPC
+        // clock — so the numeric core face stays numeric.
         let addr = alloy::primitives::Address::from(parse_address_for_call(
             &address.extract::<String>()?,
         )?);
         let block_num = self.resolve_block(py, block)?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let code = py
             .detach(|| get_runtime().block_on(async { io.get_code(addr, block_num).await }))
             .map_err(Into::<PyErr>::into)?;
@@ -516,9 +488,7 @@ impl PyBotIo {
             .map(pyo3::Bound::unbind)
     }
 
-    /// Return the ETH balance at the given address. Native path: direct
-    /// `AlloyProvider.get_balance(addr, block)`. Fallback: delegates to
-    /// `provider.get_balance(address, block=block)` (mirrors `SyncPoolIO`).
+    /// Return the ETH balance at the given address through the core trait.
     #[pyo3(signature = (address, block=None))]
     fn get_balance(
         &self,
@@ -531,7 +501,7 @@ impl PyBotIo {
             &address.extract::<String>()?,
         )?);
         let block_num = self.resolve_block(py, block)?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let balance = py
             .detach(|| get_runtime().block_on(async { io.get_balance(addr, block_num).await }))
             .map_err(Into::<PyErr>::into)?;
@@ -556,7 +526,7 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -599,7 +569,7 @@ impl PyBotIo {
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -648,7 +618,7 @@ impl PyBotIo {
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Slot0LiquidityState> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let state_view =
             alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
         let pool_id_arr: [u8; 32] = pool_id
@@ -708,7 +678,7 @@ impl PyBotIo {
         count: usize,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let pool = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -752,7 +722,7 @@ impl PyBotIo {
         let word_i16 = i16::try_from(word_position).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("word_position out of int16 range")
         })?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -797,7 +767,7 @@ impl PyBotIo {
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
         let tick_i32 = i32::try_from(tick)
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick out of int24 range"))?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(pool_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -843,7 +813,7 @@ impl PyBotIo {
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let state_view =
             alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
         let block_num = self.resolve_block(py, block)?;
@@ -893,7 +863,7 @@ impl PyBotIo {
         let pool_id_arr: [u8; 32] = pool_id
             .try_into()
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("pool_id must be 32 bytes"))?;
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let state_view =
             alloy::primitives::Address::from(parse_address_for_call(state_view_address)?);
         let block_num = self.resolve_block(py, block)?;
@@ -936,7 +906,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -969,7 +939,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -1008,7 +978,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -1046,7 +1016,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -1092,7 +1062,7 @@ impl PyBotIo {
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let vault = alloy::primitives::Address::from(parse_address_for_call(vault_address)?);
         let pool_id: [u8; 32] = pool_id
             .try_into()
@@ -1147,7 +1117,7 @@ impl PyBotIo {
         provider_address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         let provider = alloy::primitives::Address::from(parse_address_for_call(provider_address)?);
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
@@ -1167,14 +1137,12 @@ impl PyBotIo {
     }
 
     fn __repr__(&self) -> String {
-        format!("BotIo(alloy={})", self.alloy.is_some())
+        format!("BotIo(database_path={:?})", self.database_path)
     }
 }
 
 impl PyBotIo {
-    /// The native Rust `AlloyProvider`, if the held Python provider is
-    /// `PyAlloyProvider`-backed (live alloy or the offline shell). `None` for
-    /// non-alloy providers (legacy test doubles).
+    /// The native Rust `AlloyProvider` behind this facade's RPC half.
     ///
     /// Used by the Chain-arm wiring ) to construct an
     /// [`AlloyTickWordSource`] without a GIL round-trip per RPC call — the
@@ -1184,36 +1152,16 @@ impl PyBotIo {
         self.alloy.clone()
     }
 
-    /// Borrow the attached `ConstructionIo` (or `None`). The 12 DB + 7 RPC
-    /// methods use this to delegate through the core trait objects; returns
-    /// `None` for bare test fixtures that construct `PyBotIo(provider=…)` without
-    /// a `Bot` (the methods then degrade to the no-DB / error shape).
+    /// The construction-I/O handle every read and write on this facade routes
+    /// through.
+    ///
+    /// There is no second shape to fall back to: construction refuses a
+    /// provider it cannot build the handle over, and a session that declared no
+    /// database carries the handle's `NoDb` half — which answers empty, the
+    /// declared no-database shape, never a retried failed open.
     #[must_use]
-    fn construction_io(&self) -> Option<std::sync::Arc<degenbot_bot::bot_core::ConstructionIo>> {
-        self.construction_io.lock().clone()
-    }
-
-    /// Resolve a [`ConstructionIo`] for the choreography adapters: the attached
-    /// handle when present, else a transient `(NoDb, AlloyRpcConstruction)`
-    /// built over the held alloy provider (bare test fixtures that construct
-    /// `PyBotIo(provider=…)` directly). Non-alloy Python providers (the legacy
-    /// fallback the builder-choreography port retires) error here.
-    pub(crate) fn required_construction_io(
-        &self,
-    ) -> PyResult<std::sync::Arc<degenbot_bot::bot_core::ConstructionIo>> {
-        use degenbot_bot::bot_core::{AlloyRpcConstruction, ConstructionIo, NoDb};
-        if let Some(io) = self.construction_io() {
-            return Ok(io);
-        }
-        match &self.alloy {
-            Some(alloy) => Ok(std::sync::Arc::new(ConstructionIo::new(
-                std::sync::Arc::new(NoDb),
-                std::sync::Arc::new(AlloyRpcConstruction::new((**alloy).clone())),
-            ))),
-            None => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "choreography requires a core ConstructionIo (alloy provider)",
-            )),
-        }
+    pub(crate) fn construction_io(&self) -> std::sync::Arc<degenbot_bot::bot_core::ConstructionIo> {
+        std::sync::Arc::clone(&self.construction_io.lock())
     }
 
     /// Resolve the `block` kw-sentinel to a concrete block number at the seam
@@ -1233,7 +1181,7 @@ impl PyBotIo {
         if let Some(number) = selector.as_number() {
             return Ok(Some(number));
         }
-        let io = self.required_construction_io()?;
+        let io = self.construction_io();
         resolve_block_tag(py, &io, selector).map(Some)
     }
 }
@@ -1258,10 +1206,30 @@ pub(crate) fn account_read_error(
     }
 }
 
+/// The refusal for a provider the construction seam cannot back.
+///
+/// The construction-I/O trait objects are alloy-backed — there is no second
+/// `RpcConstruction` to delegate a Python-native provider to — so the one
+/// construction path a driver gets is refused here, naming what to supply
+/// rather than leaving every later read and write on an empty answer.
+pub(crate) fn non_alloy_provider_err(context: &str, provider: &Bound<'_, PyAny>) -> PyErr {
+    let kind = provider
+        .get_type()
+        .name()
+        .map_or_else(|_| String::from("<unknown>"), |name| name.to_string());
+    pyo3::exceptions::PyRuntimeError::new_err(format!(
+        "{context}: provider is a {kind} with no native alloy provider — a production driver \
+         must supply an alloy provider (a PyAlloyProvider, or an object exposing \
+         to_alloy_provider())"
+    ))
+}
+
 /// Extract a native Rust `AlloyProvider` from the held Python provider when
 /// it is `PyAlloyProvider`-backed (live alloy or the O2 `OfflineProvider`
-/// shell). Returns `None` for non-alloy providers (legacy test doubles), which
-/// fall back to the Python delegation path.
+/// shell).
+///
+/// `None` is the answer for a provider with no native alloy handle; every
+/// constructor that needs one refuses it with [`non_alloy_provider_err`].
 ///
 /// Tries, in order: (1) the provider *is* a `PyAlloyProvider`; (2) the provider
 /// exposes `to_alloy_provider()` returning a `PyAlloyProvider` (the Python

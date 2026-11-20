@@ -5,8 +5,9 @@ lived in the per-class ``*_io_free*.py`` files:
 
 * ``test_construction_touches_no_provider`` - invariant #2, parametrized over
   the companion registry: constructing any companion with injected data never
-  touches the central provider (probed with a single recording ``MagicMock``
-  provider handed to the high-level ``Bot``; no per-call patching).
+  touches the central provider (a ``Bot`` bound to an ``OfflineProvider`` over
+  an EMPTY recording, whose transport faults every call it does not hold; no
+  per-call patching).
 * the per-kind I/O-free constructor / ``Bot.build_*`` coverage (V2/V3/V4,
   token, native token, Curve data-provider example).
 
@@ -21,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -41,6 +41,7 @@ from degenbot.uniswap.v4_types import UniswapV4PoolKey
 from degenbot.utils.bytes import to_bytes
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
+from tests.helpers.bot_factory import offline_provider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20, make_native_token
 from tests.helpers.pool_bot import new_pool_bot
@@ -298,20 +299,21 @@ NO_IO_REGISTRY: tuple[NoIOCase, ...] = (
 def test_construction_touches_no_provider(case: NoIOCase, tmp_path: pathlib.Path) -> None:
     """Constructing a companion never touches the Bot's central provider/DB.
 
-    The provider is a single recording ``MagicMock`` handed to the high-level
-    ``Bot`` (the central I/O boundary, whose ``ConstructionIo`` is attached to
-    the engine). Injected-data construction must not issue any RPC.
+    The high-level ``Bot`` (the central I/O boundary, whose ``ConstructionIo``
+    is attached to the engine) is bound to an ``OfflineProvider`` over an EMPTY
+    recording: the offline transport faults a call its cassette does not hold,
+    so injected-data construction that issued an RPC would raise here instead of
+    passing.
     """
-    provider = MagicMock()
-    provider.get_chain_id.return_value = 1
-    provider.is_connected.return_value = True
-    bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
+    bot = Bot(
+        database=make_test_database(tmp_path),
+        chain_id=1,
+        provider=offline_provider(1),
+    )
 
     companion = case.build(bot)
 
     assert companion is not None
-    provider.call.assert_not_called()
-    provider.get_block_number.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

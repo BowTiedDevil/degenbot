@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from fractions import Fraction
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,6 +28,7 @@ from degenbot.exceptions.pool import (
 from degenbot.provider import OfflineProvider
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
+from tests.helpers.bot_factory import offline_provider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import calc_exact_in_v2, calc_exact_out_v2
@@ -264,14 +264,19 @@ class TestBotTokenIOMethods:
     at all, a miss runs the stateless read and fills the stream, and the typed
     block selector resolves at the seam that owns the RPC clock (a canonical
     tag is never coerced to the head).
+
+    The provider is an ``OfflineProvider`` over an EMPTY recording: the offline
+    transport faults a call its cassette does not hold, so a cache hit that
+    escaped into an RPC read would raise rather than pass.
     """
 
     def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path) -> None:
         """Balance answered from the session stream without any RPC call."""
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
+        bot = Bot(
+            database=make_test_database(tmp_path),
+            chain_id=1,
+            provider=offline_provider(1),
+        )
         token = make_erc20(
             bot._py_bot,
             "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
@@ -285,7 +290,6 @@ class TestBotTokenIOMethods:
 
         balance = bot.get_token_balance(token, holder, block_identifier=100)
         assert balance == 10**18
-        provider.call.assert_not_called()
 
     def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path) -> None:
         """Fetched through the stateless read on a miss, then cached at the resolved block."""
@@ -320,10 +324,11 @@ class TestBotTokenIOMethods:
 
     def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path) -> None:
         """Allowance answered from the bounded per-pair stream without any RPC call."""
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
+        bot = Bot(
+            database=make_test_database(tmp_path),
+            chain_id=1,
+            provider=offline_provider(1),
+        )
         token = make_erc20(
             bot._py_bot,
             "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
@@ -338,14 +343,14 @@ class TestBotTokenIOMethods:
 
         approval = bot.get_token_approval(token, owner, spender, block_identifier=100)
         assert approval == 500
-        provider.call.assert_not_called()
 
     def test_get_token_total_supply_cache_hit(self, tmp_path: pathlib.Path) -> None:
         """Total supply answered from the session stream without any RPC call."""
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
+        bot = Bot(
+            database=make_test_database(tmp_path),
+            chain_id=1,
+            provider=offline_provider(1),
+        )
         token = make_erc20(
             bot._py_bot,
             "0x514910771AF9Ca656af840dff83E8264EcF986CA",
@@ -358,7 +363,6 @@ class TestBotTokenIOMethods:
 
         supply = bot.get_token_total_supply(token, block_identifier=100)
         assert supply == 10**27
-        provider.call.assert_not_called()
 
     def test_block_tags_resolve_at_the_seam_not_to_the_head(self, tmp_path: pathlib.Path) -> None:
         """A canonical tag keys the stream at its resolved block (earliest -> 0).
@@ -367,10 +371,11 @@ class TestBotTokenIOMethods:
         typed selector resolves `earliest` to 0, so a stream entry at 0
         answers the query with no RPC.
         """
-        provider = MagicMock()
-        provider.get_chain_id.return_value = 1
-        bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
-        provider.is_connected.return_value = True
+        bot = Bot(
+            database=make_test_database(tmp_path),
+            chain_id=1,
+            provider=offline_provider(1),
+        )
         token = make_erc20(
             bot._py_bot,
             "0x" + "aa" * 20,
@@ -383,7 +388,6 @@ class TestBotTokenIOMethods:
         token.set_cached_balance(holder, block_number=0, balance=42)
 
         assert bot.get_token_balance(token, holder, block_identifier="earliest") == 42
-        provider.call.assert_not_called()
 
     def test_approval_cache_eviction_is_visible(self, py_bot: _Engine) -> None:
         """The per-(owner, spender) approval stream is bounded and independent.

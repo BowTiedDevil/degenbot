@@ -15,7 +15,7 @@ import pytest
 from degenbot.bot import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import AlloyProvider, OfflineProvider
-from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
+from tests.helpers.bot_factory import bot_session, offline_provider
 
 
 class TestSingleChainBot:
@@ -40,17 +40,17 @@ class TestSingleChainBot:
         governed_holder({"DEGENBOT_CONFIG": str(operator_file)})
 
         with pytest.raises(ValueError, match="no session chain id resolved"):
-            Bot(database=str(tmp_path / "t.db"), provider=fake_provider(ProviderKind.OFFLINE, 1))
+            Bot(database=str(tmp_path / "t.db"), provider=offline_provider(1))
 
     def test_rejects_chain_id_mismatch(self, tmp_path: pathlib.Path) -> None:
         # the session says chain 1, the provider reports 137 — fail fast.
         session = bot_session(tmp_path, chain_id=1)
         with pytest.raises(DegenbotValueError, match="chain"):
-            Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 137))
+            Bot(**session, provider=offline_provider(137))
 
     def test_accepts_matching_provider(self, tmp_path: pathlib.Path) -> None:
         session = bot_session(tmp_path, chain_id=1)
-        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
+        bot = Bot(**session, provider=offline_provider(1))
         assert bot.chain_id == 1
         assert isinstance(bot.provider, (AlloyProvider, OfflineProvider))
 
@@ -61,11 +61,11 @@ class TestTwoBotsAreIndependent:
     def test_separate_providers_and_py_bots(self, tmp_path: pathlib.Path) -> None:
         bot1 = Bot(
             **bot_session(tmp_path / "a", chain_id=1),
-            provider=fake_provider(ProviderKind.OFFLINE, 1),
+            provider=offline_provider(1),
         )
         bot2 = Bot(
             **bot_session(tmp_path / "b", chain_id=137),
-            provider=fake_provider(ProviderKind.OFFLINE, 137),
+            provider=offline_provider(137),
         )
         assert bot1.chain_id == 1
         assert bot2.chain_id == 137

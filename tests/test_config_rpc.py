@@ -32,6 +32,7 @@ from degenbot.config import (
     resolve_rpc_uris,
     resolve_ws_rpc_uri,
 )
+from tests.helpers.bot_factory import offline_provider
 from tests.helpers.seam import (
     resolve_hypothetical_chain_id,
     resolve_hypothetical_database_path,
@@ -138,23 +139,6 @@ def _nodes_file(
         lines.append(f"[nodes.{table}]")
         lines.extend(f"{chain_id} = {json.dumps(uri)}" for chain_id, uri in entries.items())
     return "\n".join(lines) + "\n"
-
-
-class _BoundaryProvider:
-    """A stand-in for the external RPC boundary (no network, observable chain).
-
-    ``Bot`` reaches the network only through the injected provider, so the
-    chain identity the session adopts is observable from this object alone.
-    """
-
-    def __init__(self, chain_id: int) -> None:
-        self.chain_id = chain_id
-
-    def get_chain_id(self) -> int:
-        return self.chain_id
-
-    def close(self) -> None:
-        """No-op: the real provider's close releases an Arc with no flag."""
 
 
 class TestFileLayer:
@@ -360,7 +344,7 @@ class TestBotKeywordOverrides:
 
     def test_chain_and_database_overrides_beat_every_configured_layer(self, tmp_path: Path) -> None:
         database = tmp_path / "session.db"
-        provider = _BoundaryProvider(4242)
+        provider = offline_provider(4242)
 
         with Bot(chain_id=4242, database=str(database), provider=provider) as bot:
             assert bot.chain_id == 4242
@@ -373,7 +357,7 @@ class TestBotKeywordOverrides:
         def fake_factory(*, chain_id: int | str | None = None, node: str | None = None) -> Any:
             recorded["chain_id"] = chain_id
             recorded["node"] = node
-            return _BoundaryProvider(1)
+            return offline_provider(1)
 
         with Bot(
             node="https://override-http:8545",
@@ -392,7 +376,7 @@ class TestBotKeywordOverrides:
             Bot(
                 chain_id=4242,
                 database=":memory:",
-                provider=_BoundaryProvider(1),
+                provider=offline_provider(1),
             ),
         ):
             pass

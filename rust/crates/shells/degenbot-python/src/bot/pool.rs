@@ -1859,7 +1859,7 @@ impl PyLiquidityPool {
         io: &Bound<'_, crate::bot::py_bot_io::PyBotIo>,
         block_number: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let construction_io = io.borrow().required_construction_io()?;
+        let construction_io = io.borrow().construction_io();
         let block_number =
             crate::bot::py_bot_io::resolve_block_against(py, &construction_io, block_number)?;
         let core = self.core.clone();

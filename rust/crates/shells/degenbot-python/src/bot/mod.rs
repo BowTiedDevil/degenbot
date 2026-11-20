@@ -99,7 +99,7 @@ use pyo3::Bound;
 /// shell's DB error mapper with the path attached. Degrading a refused open to
 /// `NoDb` would present a mistyped or unreadable database as a healthy session
 /// holding no state, which is indistinguishable from a genuinely empty one.
-fn open_construction_db(
+pub(crate) fn open_construction_db(
     database_path: Option<&str>,
 ) -> PyResult<Option<std::sync::Arc<degenbot_db::DegenbotDb>>> {
     let Some(path) = database_path else {
@@ -117,6 +117,22 @@ fn open_construction_db(
             );
             Err(crate::db::db_open_err_to_py(path, &e))
         }
+    }
+}
+
+/// Wrap the opened (or declared-absent) database into a construction handle's
+/// DB half.
+///
+/// `None` is the session's declared no-database shape — `NoDb`, which answers
+/// every read empty. It is never the result of a refused open: a path the
+/// database will not open refuses at the boot, so a mistyped or unreadable
+/// database cannot present as a healthy session holding no state.
+pub(crate) fn construction_db_half(
+    db: Option<std::sync::Arc<degenbot_db::DegenbotDb>>,
+) -> std::sync::Arc<dyn degenbot_bot::bot_core::DbConstruction + Send + Sync> {
+    match db {
+        Some(db) => std::sync::Arc::new(degenbot_bot::bot_core::DegenbotDbConstruction::new(db)),
+        None => std::sync::Arc::new(degenbot_bot::bot_core::NoDb),
     }
 }
 
@@ -715,11 +731,13 @@ impl PyBot {
 
     /// Attach a construction-I/O handle built from a Python provider + an
     /// optional `database_path`.
+    ///
     /// The Python `Bot.__init__` calls this after constructing `PyBot` so the
-    /// 7 generic RPC + 12 DB atomic methods on `PyBotIo` can delegate through
-    /// the core trait objects. Alloy-only — a non-alloy provider raises
-    /// `RuntimeError` (the choreography wrappers keep their Python-delegation
-    /// fallback).
+    /// 7 generic RPC + 12 DB atomic methods on `PyBotIo` delegate through the
+    /// core trait objects. Those trait objects are alloy-backed, so a provider
+    /// with no native alloy handle has nothing to delegate to and is refused
+    /// here: one construction path, never a silent second one whose reads
+    /// answer empty.
     ///
     /// `database_path = None` → the DB half is `NoDb` (every read returns
     /// `None`/empty, the no-DB path). `Some(path)` → a held `DegenbotDb` is
@@ -730,6 +748,12 @@ impl PyBot {
     /// session reads an EMPTY database rather than skipping a missing one. A
     /// path the database refuses raises `ValueError` naming the path — the boot
     /// refuses rather than degrading to the no-DB shape.
+    ///
+    /// # Errors
+    ///
+    /// `RuntimeError` for a provider the seam cannot back, naming what a
+    /// production driver must supply; `ValueError` naming the path for a
+    /// database the open refuses.
     #[pyo3(signature = (provider, database_path=None))]
     #[expect(clippy::needless_pass_by_value)]
     fn attach_construction_io(
@@ -738,21 +762,11 @@ impl PyBot {
         provider: Bound<'_, PyAny>,
         database_path: Option<&str>,
     ) -> PyResult<()> {
-        use crate::bot::py_bot_io::extract_native_alloy;
-        use degenbot_bot::bot_core::{
-            AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction, NoDb,
-        };
+        use crate::bot::py_bot_io::{extract_native_alloy, non_alloy_provider_err};
+        use degenbot_bot::bot_core::{AlloyRpcConstruction, ConstructionIo};
 
-        // The trait is alloy-only. A non-alloy provider (legacy
-        // test doubles that exercise the choreography fallback) yields `None`
-        // here — we skip attaching, leaving `construction_io = None`. The 7
-        // RPC + 12 DB methods on `PyBotIo` then fall back to the `self.alloy` /
-        // Python path (the `None` branch in each). This preserves the
-        // choreography-test path; a production driver MUST supply an alloy
-        // provider to get the trait delegation (the migration note documents
-        // this; the fallback is deleted with the builder-choreography port).
         let Some(alloy) = extract_native_alloy(&provider) else {
-            return Ok(());
+            return Err(non_alloy_provider_err("attach_construction_io", &provider));
         };
         let rpc = std::sync::Arc::new(AlloyRpcConstruction::new((*alloy).clone()));
 
@@ -761,41 +775,33 @@ impl PyBot {
         // shell-owned ([`open_construction_db`], run under this py.detach). A
         // refused open aborts the boot HERE: `NoDb` is what a session that
         // declared no database gets, never what a failed open is retried as.
-        let db: std::sync::Arc<dyn degenbot_bot::bot_core::DbConstruction + Send + Sync> =
-            match py.detach(|| open_construction_db(database_path))? {
-                Some(db) => {
-                    // Bind the session's position reader HERE, and only
-                    // here: this is the one point in a bot boot where the
-                    // session and the database handle its reads are sourced
-                    // from are both in hand. The reader is a lending
-                    // integration's, the session registry is the engine's,
-                    // and neither may take the other's edge, so the boot
-                    // that already owns both composes them. Nothing about
-                    // the reading is decided at this site — which rows
-                    // answer, how fresh they are, and which faults refuse
-                    // are the observer's own (`degenbot_aave::positions`).
-                    #[cfg(feature = "aave-updater")]
-                    {
-                        let observer: std::sync::Arc<
-                            dyn degenbot_substrate::session_registry::PositionObserver,
-                        > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
-                            std::sync::Arc::clone(&db),
-                        ));
-                        // A refused second install is the registry's to
-                        // report: it already logs at ERROR and hands the
-                        // observer back, precisely because it cannot be the
-                        // site that installs one.
-                        let _ = self
-                            .bot
-                            .session_registry()
-                            .install_position_observer(observer);
-                    }
-                    std::sync::Arc::new(DegenbotDbConstruction::new(db))
-                }
-                None => std::sync::Arc::new(NoDb),
-            };
+        let db = py.detach(|| open_construction_db(database_path))?;
 
-        let io = ConstructionIo::new(db, rpc);
+        // Bind the session's position reader HERE, and only here: this is the
+        // one point in a bot boot where the session and the database handle its
+        // reads are sourced from are both in hand. The reader is a lending
+        // integration's, the session registry is the engine's, and neither may
+        // take the other's edge, so the boot that already owns both composes
+        // them. Nothing about the reading is decided at this site — which rows
+        // answer, how fresh they are, and which faults refuse are the
+        // observer's own (`degenbot_aave::positions`).
+        #[cfg(feature = "aave-updater")]
+        if let Some(db) = &db {
+            let observer: std::sync::Arc<
+                dyn degenbot_substrate::session_registry::PositionObserver,
+            > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
+                std::sync::Arc::clone(db),
+            ));
+            // A refused second install is the registry's to report: it already
+            // logs at ERROR and hands the observer back, precisely because it
+            // cannot be the site that installs one.
+            let _ = self
+                .bot
+                .session_registry()
+                .install_position_observer(observer);
+        }
+
+        let io = ConstructionIo::new(construction_db_half(db), rpc);
         // Attach to the shared `Bot` (interior-mutable `construction_io` field);
         // `Bot` is held as `Arc` by `PyBot`, so we mutate through the `RwLock`
         // rather than adopting the `Arc` out.
@@ -3892,7 +3898,8 @@ mod tests {
         )
         .expect("PyAlloyProvider construction");
         let provider_any: pyo3::Py<pyo3::PyAny> = pyalloy.into_any().unbind();
-        let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None);
+        let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None)
+            .expect("an offline provider backs the construction seam");
         pyo3::Bound::new(py, io_struct).expect("wrap PyBotIo as Bound")
     }
 
@@ -4039,7 +4046,8 @@ mod tests {
             )
             .expect("PyAlloyProvider construction");
             let provider_any: pyo3::Py<pyo3::PyAny> = pyalloy.into_any().unbind();
-            let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None);
+            let io_struct = crate::bot::py_bot_io::PyBotIo::new(py, provider_any, None)
+                .expect("an offline provider backs the construction seam");
             let io_bound = pyo3::Bound::new(py, io_struct).expect("wrap PyBotIo as Bound");
 
             // 3. Cold-start PyBot + assemble_v3_tick_map with `io=Some`.
@@ -4835,5 +4843,83 @@ mod tests {
         assert_eq!(refused, expected_refusal(&foreign));
 
         let _ = std::fs::remove_file(&foreign);
+    }
+
+    // ── the boot's provider contract ─────────────────────────────────────
+    //
+    // The construction-I/O handle is one DB half plus an `AlloyRpcConstruction`
+    // RPC half, and there is no second `RpcConstruction` implementation to
+    // delegate a Python-native provider to. A boot whose provider yields no
+    // native alloy handle therefore refuses HERE, naming what a production
+    // driver must supply, instead of attaching nothing and leaving every later
+    // construction read and write on an empty answer.
+
+    /// The provider shape `extract_native_alloy` refuses: not a
+    /// `PyAlloyProvider`, and no `to_alloy_provider()` to unwrap.
+    fn python_native_provider(py: pyo3::Python<'_>) -> pyo3::Bound<'_, pyo3::PyAny> {
+        pyo3::types::PyModule::import(py, "builtins")
+            .expect("builtins")
+            .getattr("object")
+            .expect("builtins.object")
+            .call0()
+            .expect("object()")
+    }
+
+    /// A refusal's message alone (the exception's `str`), so assertions pin the
+    /// text an operator reads rather than `PyErr`'s rendering.
+    fn refusal_message(py: pyo3::Python<'_>, err: &pyo3::PyErr) -> String {
+        err.value(py)
+            .str()
+            .map_or_else(|_| err.to_string(), |message| message.to_string())
+    }
+
+    #[test]
+    fn a_boot_with_a_non_alloy_provider_refuses_naming_the_requirement() {
+        pyo3::Python::attach(|py| {
+            let bot = PyBot::new(1);
+
+            let err = bot
+                .attach_construction_io(py, python_native_provider(py), None)
+                .expect_err("a provider with no native alloy handle cannot back the seam");
+
+            assert!(
+                err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py),
+                "the refusal surfaces as the RuntimeError the driver documents: {err}"
+            );
+            let message = refusal_message(py, &err);
+            assert!(
+                message.contains("alloy provider"),
+                "the refusal names what the driver must supply: {message}"
+            );
+            assert!(
+                message.contains("object"),
+                "the refusal names the provider it refused: {message}"
+            );
+            assert!(
+                bot.bot.construction_io_arc().is_none(),
+                "a refused boot attaches no construction I/O"
+            );
+        });
+    }
+
+    #[test]
+    fn a_bot_io_over_a_non_alloy_provider_refuses_at_construction() {
+        pyo3::Python::attach(|py| {
+            let provider: pyo3::Py<pyo3::PyAny> = python_native_provider(py).unbind();
+
+            let err = crate::bot::py_bot_io::PyBotIo::new(py, provider, None)
+                .err()
+                .expect("the I/O facade carries the same provider contract");
+
+            assert!(
+                err.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py),
+                "the refusal surfaces as a RuntimeError: {err}"
+            );
+            let message = refusal_message(py, &err);
+            assert!(
+                message.contains("alloy provider"),
+                "the refusal names what the driver must supply: {message}"
+            );
+        });
     }
 }
