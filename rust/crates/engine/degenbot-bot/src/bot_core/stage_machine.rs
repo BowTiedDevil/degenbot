@@ -22,7 +22,10 @@
 //!   [`watchdog_phase`](Self::watchdog_phase) — `Healthy` / `HeaderStale` /
 //!   `LogsSilent` — the phase space the dissolved accounting's watchdogs
 //!   map onto, and every stage row stays reachable via the stage cycle
-//!   below.
+//!   below. The tick's decisions and that pure phase are ONE classification
+//!   of the injected clocks against the injected windows; the silence
+//!   alarm's latch is the only watchdog state, so the two readers cannot
+//!   drift apart.
 //!
 //! ## The stage cycle (ADR-041 stage table)
 //!
@@ -238,7 +241,8 @@ pub enum StageDecision {
     Recover,
     /// A watchdog tick concluded the logs subscription is silent (headers
     /// fresh but no log arrived in the window). The driver emits one diagnostic
-    /// warning per silence episode, then re-arms on the next log.
+    /// warning per silence episode; the next log — or a header stall's recover
+    /// path — starts the next episode.
     LogSilence,
 }
 
@@ -304,8 +308,11 @@ pub struct StageMachine {
     /// [DIAG] + watchdog time anchors, injected as wall-clock ms by the driver.
     last_header_at_ms: u64,
     last_log_at_ms: u64,
-    /// Logs-silence watchdog re-arm.
-    log_silence_alarm_armed: bool,
+    /// The logs-silence alarm's latch: set when the episode's single warning
+    /// fired, cleared when a log resumes the subscription or a header stall
+    /// hands the tick to the recover path (either one starts a fresh episode).
+    /// The watchdog's ONLY state — the phase is derived, never stored.
+    log_silence_alarm_latched: bool,
     // --- folded BlockClock sub-state (ADR-008; the six-machine fold) ---
     /// Per-block state. Append-only: a block's entry is never removed (so
     /// reorgs can rewind to `Tainted`/`Observed` without losing history).
@@ -343,7 +350,7 @@ impl StageMachine {
             ws_delivered: HashMap::new(),
             last_header_at_ms: now_ms,
             last_log_at_ms: now_ms,
-            log_silence_alarm_armed: false,
+            log_silence_alarm_latched: false,
             blocks: HashMap::new(),
             cursor: None,
             latest_header: None,
@@ -686,11 +693,12 @@ impl StageMachine {
     }
 
     /// Feed a log-activity event (a `WsEvent::Log` that passed the topic
-    /// pre-filter). Refreshes the logs-silence watchdog clock and re-arms the
-    /// alarm so one diagnostic warning fires per silence episode.
+    /// pre-filter). Refreshes the logs-silence watchdog clock and clears the
+    /// alarm's latch: the log resumed the subscription, so the next silence is
+    /// a fresh episode and warns once.
     pub fn record_log(&mut self, now_ms: u64) {
         self.last_log_at_ms = now_ms;
-        self.log_silence_alarm_armed = false;
+        self.log_silence_alarm_latched = false;
     }
 
     /// Feed a header-activity event. Refreshes the header-staleness watchdog
@@ -700,29 +708,60 @@ impl StageMachine {
         self.last_header_at_ms = now_ms;
     }
 
-    /// The watchdog `tick::` the driver's interval fires
-    /// and feeds a synthetic `now_ms`; the windows enter as data
-    /// (`header_staleness_ms`, `log_silence_ms`). Decides, from elapsed-time
-    /// only: `Recover` when headers have been stale >= the staleness window
-    /// (an authoritative `eth_getLogs` catch-up), else `LogSilence` (once per
-    /// silenced episode) when headers are fresh but no log has arrived in
-    /// `log_silence_ms`. The FSM owns no timer.
+    /// The ONE watchdog classification: the two injected clocks against their
+    /// windows. Total over the windows (a zero window is already elapsed at the
+    /// instant of its clock), inclusive at each boundary, and ordered — header
+    /// staleness first, because a dead `newHeads` subscription outranks a quiet
+    /// logs arm. Both readers of the watchdog share this answer; they differ
+    /// only in what they do with it ([`Self::watchdog_phase`] reports it,
+    /// [`Self::on_tick`] applies the silence latch).
+    #[must_use]
+    fn classify_watchdog(
+        &self,
+        now_ms: u64,
+        header_staleness_ms: u64,
+        log_silence_ms: u64,
+    ) -> WatchdogPhase {
+        if now_ms.saturating_sub(self.last_header_at_ms) >= header_staleness_ms {
+            WatchdogPhase::HeaderStale
+        } else if now_ms.saturating_sub(self.last_log_at_ms) >= log_silence_ms {
+            WatchdogPhase::LogsSilent
+        } else {
+            WatchdogPhase::Healthy
+        }
+    }
+
+    /// The watchdog tick the driver's interval fires, fed a synthetic `now_ms`;
+    /// the windows enter as data (`header_staleness_ms`, `log_silence_ms`). The
+    /// decisions are [`Self::classify_watchdog`]'s phase, applied:
+    ///
+    /// - `HeaderStale` → `Recover` (an authoritative `eth_getLogs` catch-up) on
+    ///   EVERY stale tick, because the catch-up cadence is the driver's, not an
+    ///   episode's. The stall also ends the silence episode, so the latch
+    ///   clears: silence found after headers resume warns once more.
+    /// - `LogsSilent` → `LogSilence` once per episode. The latch records the
+    ///   warning, and only a log or the stall above starts the next episode.
+    /// - `Healthy` → nothing.
+    ///
+    /// The FSM owns no timer.
     pub fn on_tick(
         &mut self,
         now_ms: u64,
         header_staleness_ms: u64,
         log_silence_ms: u64,
     ) -> Vec<StageDecision> {
-        let mut decisions = Vec::new();
-        if now_ms.saturating_sub(self.last_header_at_ms) >= header_staleness_ms {
-            decisions.push(StageDecision::Recover);
-        } else if now_ms.saturating_sub(self.last_log_at_ms) >= log_silence_ms
-            && !self.log_silence_alarm_armed
-        {
-            self.log_silence_alarm_armed = true;
-            decisions.push(StageDecision::LogSilence);
+        match self.classify_watchdog(now_ms, header_staleness_ms, log_silence_ms) {
+            WatchdogPhase::Healthy => Vec::new(),
+            WatchdogPhase::HeaderStale => {
+                self.log_silence_alarm_latched = false;
+                vec![StageDecision::Recover]
+            }
+            WatchdogPhase::LogsSilent if self.log_silence_alarm_latched => Vec::new(),
+            WatchdogPhase::LogsSilent => {
+                self.log_silence_alarm_latched = true;
+                vec![StageDecision::LogSilence]
+            }
         }
-        decisions
     }
 
     /// The WS-completeness verdict at a block's tombstone.
@@ -2835,8 +2874,9 @@ impl StageMachine {
 
     /// The watchdog phase (see [`WatchdogPhase`]): the no-progress phase
     /// space the dissolved `DrainerHealth` maps its
-    /// strike detector onto. Pure: same inputs as [`on_tick`](Self::on_tick);
-    /// advances no state.
+    /// strike detector onto. Pure: it IS [`on_tick`](Self::on_tick)'s
+    /// classification, reported instead of applied — the silence latch is the
+    /// only state between the two readers, so neither can drift from the other.
     #[must_use]
     pub fn watchdog_phase(
         &self,
@@ -2844,12 +2884,182 @@ impl StageMachine {
         header_staleness_ms: u64,
         log_silence_ms: u64,
     ) -> WatchdogPhase {
-        if now_ms.saturating_sub(self.last_header_at_ms) >= header_staleness_ms {
-            WatchdogPhase::HeaderStale
-        } else if now_ms.saturating_sub(self.last_log_at_ms) >= log_silence_ms {
+        self.classify_watchdog(now_ms, header_staleness_ms, log_silence_ms)
+    }
+}
+
+// ======================================================================
+// Watchdog contract: ONE classification behind both readers
+// ======================================================================
+
+#[cfg(test)]
+mod watchdog_contract {
+    use super::*;
+
+    /// The windows these scenarios drive; staleness outranks silence.
+    const HEADER_STALENESS_MS: u64 = 500;
+    const LOG_SILENCE_MS: u64 = 300;
+
+    fn both_fresh(now_ms: u64) -> StageMachine {
+        let mut fsm = StageMachine::new(200, now_ms);
+        fsm.record_header(now_ms);
+        fsm.record_log(now_ms);
+        fsm
+    }
+
+    fn recovers(decisions: &[StageDecision]) -> bool {
+        decisions
+            .iter()
+            .any(|d| matches!(d, StageDecision::Recover))
+    }
+
+    fn warns_silence(decisions: &[StageDecision]) -> bool {
+        decisions
+            .iter()
+            .any(|d| matches!(d, StageDecision::LogSilence))
+    }
+
+    /// A silence episode ends at a log OR at a header stall: the log resumes the
+    /// subscription, and the stall hands the tick to the recover path instead.
+    /// Either way the next silent stretch is a fresh episode and warns once.
+    #[test]
+    fn header_stall_re_arms_the_silence_alarm() {
+        let mut fsm = both_fresh(1_000);
+
+        // Headers pace, logs are silent: this episode's one warning.
+        let d = fsm.on_tick(1_400, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+        assert!(warns_silence(&d), "first silent window warns: {d:?}");
+        assert!(
+            fsm.on_tick(1_450, HEADER_STALENESS_MS, LOG_SILENCE_MS)
+                .is_empty(),
+            "the episode's warning is spent"
+        );
+
+        // The header stream stalls past its window: the recover path owns the
+        // tick, and the silence episode is over.
+        let d = fsm.on_tick(6_100, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+        assert!(recovers(&d), "stale headers recover: {d:?}");
+        assert!(!warns_silence(&d), "recover outranks silence: {d:?}");
+
+        // Headers resume while logs stay silent: the fresh episode warns once.
+        fsm.record_header(6_200);
+        let d = fsm.on_tick(6_300, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+        assert!(
+            warns_silence(&d),
+            "the header stall ended the silence episode, so this one warns: {d:?}"
+        );
+        assert!(
+            fsm.on_tick(6_400, HEADER_STALENESS_MS, LOG_SILENCE_MS)
+                .is_empty(),
+            "and only once"
+        );
+    }
+
+    /// Many ticks inside one silence episode warn exactly once; a log ends the
+    /// episode, so the silence that follows warns exactly once more.
+    #[test]
+    fn logs_silence_warns_once_per_episode() {
+        let mut fsm = both_fresh(1_000);
+        let mut warned = 0;
+        for now in [1_400, 1_450, 1_490] {
+            fsm.record_header(now);
+            if warns_silence(&fsm.on_tick(now, HEADER_STALENESS_MS, LOG_SILENCE_MS)) {
+                warned += 1;
+            }
+        }
+        assert_eq!(warned, 1, "one warning for the first silent episode");
+
+        fsm.record_log(1_500);
+        fsm.record_header(1_500);
+        warned = 0;
+        for now in [1_800, 1_850, 1_890] {
+            fsm.record_header(now);
+            if warns_silence(&fsm.on_tick(now, HEADER_STALENESS_MS, LOG_SILENCE_MS)) {
+                warned += 1;
+            }
+        }
+        assert_eq!(warned, 1, "the log ended the episode; the next warns once");
+    }
+
+    /// The pure phase and the tick's decisions are two readers of one
+    /// classification, so they agree at every bracketing of both windows. The
+    /// order is total and both windows are inclusive: the window itself is
+    /// already stale/silent, and header staleness is the first key.
+    #[test]
+    fn watchdog_phase_and_tick_agree_at_every_window_boundary() {
+        const NOW: u64 = 10_000;
+        for header_age in [0, 1, 299, 300, 499, 500, 501, 900] {
+            for log_age in [0, 1, 299, 300, 499, 500, 501, 900] {
+                let mut fsm = StageMachine::new(200, NOW);
+                fsm.record_header(NOW - header_age);
+                fsm.record_log(NOW - log_age);
+                let ctx = format!("header_age {header_age}, log_age {log_age}");
+
+                let phase = fsm.watchdog_phase(NOW, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+                let expected = if header_age >= HEADER_STALENESS_MS {
+                    WatchdogPhase::HeaderStale
+                } else if log_age >= LOG_SILENCE_MS {
+                    WatchdogPhase::LogsSilent
+                } else {
+                    WatchdogPhase::Healthy
+                };
+                assert_eq!(phase, expected, "{ctx}");
+
+                let first = fsm.on_tick(NOW, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+                assert_eq!(
+                    recovers(&first),
+                    phase == WatchdogPhase::HeaderStale,
+                    "recover is the HeaderStale phase's decision: {ctx}: {first:?}"
+                );
+                assert_eq!(
+                    warns_silence(&first),
+                    phase == WatchdogPhase::LogsSilent,
+                    "a fresh silence episode warns at its phase: {ctx}: {first:?}"
+                );
+
+                // No clock moved, so no episode did: only the recover cadence
+                // may repeat.
+                let second = fsm.on_tick(NOW, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+                assert_eq!(
+                    recovers(&second),
+                    phase == WatchdogPhase::HeaderStale,
+                    "recover keeps its per-tick cadence: {ctx}: {second:?}"
+                );
+                assert!(
+                    !warns_silence(&second),
+                    "no second warning without a new episode: {ctx}: {second:?}"
+                );
+            }
+        }
+    }
+
+    /// The windows are data, including zero: at the instant of the newest clock
+    /// a zero window is already elapsed, and staleness still wins.
+    #[test]
+    fn zero_windows_classify_at_the_instant_of_the_clocks() {
+        let mut fsm = both_fresh(1_000);
+        assert_eq!(fsm.watchdog_phase(1_000, 0, 0), WatchdogPhase::HeaderStale);
+        let d = fsm.on_tick(1_000, 0, 0);
+        assert!(recovers(&d) && !warns_silence(&d), "{d:?}");
+
+        let mut fsm = both_fresh(1_000);
+        assert_eq!(
+            fsm.watchdog_phase(1_000, 60_000, 0),
             WatchdogPhase::LogsSilent
-        } else {
-            WatchdogPhase::Healthy
+        );
+        assert!(warns_silence(&fsm.on_tick(1_000, 60_000, 0)));
+        assert!(fsm.on_tick(1_000, 60_000, 0).is_empty(), "once per episode");
+    }
+
+    /// `Recover` keeps its per-tick cadence while headers stay stale: the
+    /// authoritative catch-up is not a per-episode alarm.
+    #[test]
+    fn recover_cadence_is_unchanged_while_headers_stay_stale() {
+        let mut fsm = both_fresh(1_000);
+        for now in [1_500, 1_600, 1_700, 1_800] {
+            let d = fsm.on_tick(now, HEADER_STALENESS_MS, LOG_SILENCE_MS);
+            assert_eq!(d.len(), 1, "the recover path owns the tick at {now}: {d:?}");
+            assert!(recovers(&d), "every stale tick recovers at {now}: {d:?}");
         }
     }
 }
