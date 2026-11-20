@@ -1,7 +1,7 @@
 //! Full-sweep path enumeration latency on synthetic production-shaped graphs.
 //!
 //! Times the exact consumption shape used by the Rust strategies
-//! (`bot_core::route_registry` / `backrun_resolver`): a prebuilt graph +
+//! (`degenbot_substrate::route_registry`): a prebuilt graph +
 //! precomputed prune tables, then one full `find_paths_iter` sweep whose
 //! yielded paths are materialized as `Vec<EdgeKey>` for registration.
 //!

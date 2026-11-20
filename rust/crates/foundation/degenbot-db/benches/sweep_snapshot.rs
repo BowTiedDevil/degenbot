@@ -4,7 +4,7 @@
 //! load the flat edge list with `fetch_path_graph_edges`, build a
 //! `PathGraph`, precompute dead-end pruning + valid-depth tables, then time
 //! full `find_paths_iter` sweeps with per-path `Vec<EdgeKey>` materialization
-//! — the shape `bot_core::route_registry` / `backrun_resolver` consume.
+//! — the shape the Rust strategies consume (`degenbot_substrate::route_registry`).
 //!
 //! Requires the fixture generated from the populated database:
 //!   `uv run python tests/pathfinding/fixtures/generate_mainnet_snapshot.py`

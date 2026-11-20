@@ -5,7 +5,6 @@
 //! connector index, executor hop views, the session object registry — live in
 //! `degenbot-substrate` (ADR-067); consumers resolve it directly.
 
-pub(crate) mod backrun_resolver;
 pub(crate) mod balancer_stable_state;
 pub(crate) mod balancer_weighted_state;
 pub(crate) mod block_pump;
@@ -73,9 +72,6 @@ pub(crate) mod verify_lifecycle;
 pub(crate) mod snapshot_verify;
 pub(crate) mod solve_anchor;
 
-#[expect(clippy::unwrap_used)]
-#[cfg(test)]
-mod backrun_resolver_tests;
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 #[cfg(test)]
 mod snapshot_load_tests;
