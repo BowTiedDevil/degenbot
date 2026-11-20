@@ -459,8 +459,8 @@ pub unsafe fn __revmc_builtin_sstore<T: EvmTypesHost>(
 
     ecx.gas.spend(ecx.gas_params().get(GasId::SstoreStatic))?;
 
-    let additional_cold_cost = ecx.gas_params().get(GasId::ColdStorageAdditionalCost);
-    let skip_cold = ecx.enables(EvmFeatures::EIP2929) && ecx.gas.remaining() < additional_cold_cost;
+    let cold_cost = ecx.gas_params().get(GasId::ColdStorageCost);
+    let skip_cold = ecx.enables(EvmFeatures::EIP2929) && ecx.gas.remaining() < cold_cost;
     let index = index.to_u256();
     let value = value.to_u256();
     let state_load = ecx

@@ -1,7 +1,7 @@
 # rust/vendor — the vendored evm2 family (temporary)
 
 This tree is a **source copy** of [`alloy-rs/evm2`](https://github.com/alloy-rs/evm2)
-at rev `e681662b6d9ec59edafd112f7c8d64f49f1e6dd1`, package-renamed into the
+at rev `0a8a935c4ffe274a23cf8480f7a3a07015f3030e`, package-renamed into the
 `degenbot-evm2*` family so the engine can be **published to crates.io**. The
 source is upstream's, except the two `evm2` files the [Downstream
 patches](#downstream-patches) section enumerates; every `Cargo.toml` here is
@@ -88,6 +88,76 @@ re-apply the two patch files, then update the rev in the manifest headers, this
 file, and the family comment in `rust/Cargo.toml` — `diff -r` against the
 checkout is the check that nothing else moved. The read-through is every
 consumer-visible API change the new rev makes, recorded in the section below.
+
+## Upstream API changes between `e681662b` and `0a8a935c`
+
+Nine upstream commits are in this range. The vendored crates' manifests did
+not change upstream, so the package rewrites and dependency versions stayed as
+they were and `rust/Cargo.lock` did not need a dependency update. The
+consumer-visible changes and their dispositions here are:
+
+- **`Host::execute_call` is a new provided method** (upstream #1081). It runs a
+  `CALL`/`CALLCODE`/`DELEGATECALL`/`STATICCALL` message from outside an
+  interpreter frame with the same charges as the opcode, sharing the account
+  access and gas path (`load_acc_and_calc_gas`) with the call opcodes.
+  Implementations should not override it. No consumer here implements `Host`,
+  so no call site changed, and opcode behavior is unchanged.
+
+- **`BlockExecutionContext.system_calls` is required** (upstream #1091,
+  breaking). The field is `BlockSystemCalls` instead of
+  `Option<BlockSystemCalls>`, `BlockExecutionContext` no longer derives
+  `Default`, and `post_execution_system_call_state_changes` drops its `context`
+  parameter. No consumer here names `evm2::block`, so no call site changed.
+
+- **Inspectors can read the transaction-wide refund counter** (upstream #878).
+  `Evm::tx_refunded(frame_refunded)` is new, and the EVM tracks the refunds of
+  the frames below the running one plus the pre-execution EIP-7702
+  authorization refund while an inspector is installed. A transaction
+  dispatched from inside a running one — such as from an inspector hook — now
+  starts with its own refund counter and no enclosing frame, and gives both
+  back on exit. Additive and unused here: `Evm2SimInspector` reads the
+  per-frame gas counters of `MessageResult` and `InterpreterState`, which are
+  unchanged, and no consumer dispatches a transaction from an inspector hook.
+  Upstream's struct-log and JavaScript tracers live in its `evm2-inspectors`
+  crate, outside this tree.
+
+- **Boxed components passed to the EVM stay downcastable** (upstream #1093,
+  #1098). `boxed_dyn_database`, `boxed_inspector`, and
+  `boxed_precompile_provider` reuse a `Box<dyn …>` argument instead of boxing
+  it a second time, so database downcasts through `State`, `Evm::clear_inspector_as`,
+  and `Evm::precompiles_as` see the inner concrete type instead of `None`. Our
+  downcast call sites (`engine-lab`'s `capture_seam_probe` over
+  `Evm2SimInspector`) pass the concrete type and are unchanged; every inspector
+  hook and precompile call saves an allocation and a pointer chase.
+
+- **Gas and accounting fixes require no consumer edits:** the EIP-2929
+  `SSTORE` cold-access guard compares the remaining gas against
+  `GasId::ColdStorageCost` (was `ColdStorageAdditionalCost`) before skipping
+  the cold surcharge, in both the interpreter and the JIT builtin (upstream
+  #1093); a nested create checks its creator's balance and bumps its nonce
+  through one account handle, and reads the creator's info only when a value
+  moves (upstream #1093); the EIP-7702 handler records its pre-execution refund
+  for inspectors and clears it when it exits (upstream #878). The
+  gas-decomposition and parity suites remain the behavioral gate.
+
+- **Pooled interpreter frames are bounded** (upstream #1094). Idle frames drop
+  memory beyond 64 KiB and their return-data buffer between top-level messages
+  (`InterpreterPool::trim`, run when no frame is current). Internal: frame and
+  memory APIs are unchanged.
+
+- **Test-only changes are outside the compiled surface:** the BN254 entry
+  points delegate to `*_with::<O>` generics and the substrate backend module
+  compiles alongside `mcl`, so upstream's `#[cfg(test)]` differential suite can
+  pick a backend (upstream #1092), and KZG point evaluation gains mutated test
+  vectors. The differential module is `#[cfg(test)]` and reads the `rand`
+  dev-dependency, which this tree does not declare, so nothing here compiles
+  it; precompile behavior is unchanged.
+
+Upstream's `evm2-inspectors` changes (`CallTraceStep`/`CallTrace` reshaping,
+tracer refund reads) and bench-only changes are outside this vendored tree. The
+two downstream patch files still apply: upstream's `evm/mod.rs` changes do not
+touch `read_account_info_async`'s region, and `evm/async.rs` is unchanged in
+this range.
 
 ## Upstream API changes between `53fe0ef` and `e681662b`
 

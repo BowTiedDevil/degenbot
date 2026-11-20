@@ -9,6 +9,7 @@ use crate::{
 use alloc::{boxed::Box, vec::Vec};
 use alloy_primitives::{Address, Bytes};
 use auto_impl::auto_impl;
+use core::{mem::ManuallyDrop, ptr};
 
 /// Result returned by a precompile.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -83,10 +84,22 @@ pub trait PrecompileProvider<T: EvmTypesHost>: NonStaticAny {
     ) -> Option<Result<PrecompileOutput, PrecompileError>>;
 }
 
+/// Erases `precompiles` into a box, reusing the box when it already is a
+/// `Box<dyn PrecompileProvider<T>>`, so a provider passed in as one stays downcastable to its
+/// concrete type.
 #[inline]
-pub(crate) fn boxed_precompile_provider<'a, T: EvmTypesHost>(
-    precompiles: impl PrecompileProvider<T> + 'a,
+pub(crate) fn boxed_precompile_provider<'a, T: EvmTypesHost, P: PrecompileProvider<T> + 'a>(
+    precompiles: P,
 ) -> Box<dyn PrecompileProvider<T> + 'a> {
+    if typeid::of::<P>() == typeid::of::<Box<dyn PrecompileProvider<T> + 'a>>() {
+        let precompiles = ManuallyDrop::new(precompiles);
+        // SAFETY: The type IDs match up to lifetimes, so `P` is a `Box<dyn PrecompileProvider<U> +
+        // 'b>` with `U` equal to `T` up to lifetimes. `EvmTypesHost: 'static` holds for both, so
+        // `U` is `T`, and `P: 'a` gives `'b: 'a`. `precompiles` is not dropped after this move.
+        return unsafe {
+            ptr::read((&raw const *precompiles).cast::<Box<dyn PrecompileProvider<T> + 'a>>())
+        };
+    }
     Box::new(precompiles)
 }
 

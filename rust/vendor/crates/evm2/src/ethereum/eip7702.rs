@@ -101,7 +101,31 @@ pub fn prepare_with_hooks<T: EvmTypes, H: TxHandlerHooks<T>>(
 }
 
 /// Executes and settles a prepared EIP-7702 transaction.
+///
+/// The pre-execution refund the handler records for inspectors ends with this call, whether it
+/// succeeds or fails.
 pub fn execute_prepared<T: EvmTypes, H: TxHandlerHooks<T>>(
+    req: TxRequest<'_, '_, T, super::LazyTxEip7702>,
+    prepared: PreparedTx,
+) -> HandlerResult<TxResult<T>> {
+    let TxRequest { envelope, tx, host, _non_exhaustive } = req;
+    let scope = PreExecutionRefundScope(host);
+    execute_prepared_inner::<T, H>(
+        TxRequest { envelope, tx, host: &mut *scope.0, _non_exhaustive },
+        prepared,
+    )
+}
+
+/// Ends the pre-execution refund of the host when it goes out of scope, also by unwinding.
+struct PreExecutionRefundScope<'a, 'host, T: EvmTypes>(&'a mut Evm<'host, T>);
+
+impl<T: EvmTypes> Drop for PreExecutionRefundScope<'_, '_, T> {
+    fn drop(&mut self) {
+        self.0.set_pre_execution_refund(0);
+    }
+}
+
+fn execute_prepared_inner<T: EvmTypes, H: TxHandlerHooks<T>>(
     req: TxRequest<'_, '_, T, super::LazyTxEip7702>,
     prepared: PreparedTx,
 ) -> HandlerResult<TxResult<T>> {
@@ -142,6 +166,8 @@ pub fn execute_prepared<T: EvmTypes, H: TxHandlerHooks<T>>(
         apply_auth_list(req.host, chain_id, tx.authorizations(), &mut auth_refunds)?;
         (false, auth_refunds.execution_refund)
     };
+
+    req.host.set_pre_execution_refund(i64::try_from(execution_refund).unwrap_or(i64::MAX));
 
     // Applies the pre-Amsterdam authorization execution refund (zero under EIP-2780) and settles
     // the transaction with the hook-provided intrinsic state gas (charged upfront, before

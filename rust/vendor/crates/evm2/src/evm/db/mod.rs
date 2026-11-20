@@ -5,7 +5,7 @@ use crate::{DatabaseError, bytecode::Bytecode, interpreter::Word};
 use alloc::{boxed::Box, string::ToString};
 use alloy_primitives::{Address, B256, keccak256};
 use auto_impl::auto_impl;
-use core::error::Error;
+use core::{error::Error, mem::ManuallyDrop, ptr};
 
 mod cache;
 pub use cache::{AccountStorageCache, Cache, CacheDB, InMemoryDB};
@@ -463,8 +463,18 @@ impl<'a> core::ops::DerefMut for dyn DynDatabaseRef + 'a {
     }
 }
 
+/// Erases `database` into a box, reusing the box when it already is a `Box<dyn DynDatabase>`, so a
+/// database passed in as one stays downcastable to its concrete type.
 #[inline]
-pub(crate) fn boxed_dyn_database<'a>(database: impl DynDatabase + 'a) -> Box<dyn DynDatabase + 'a> {
+pub(crate) fn boxed_dyn_database<'a, D: DynDatabase + 'a>(
+    database: D,
+) -> Box<dyn DynDatabase + 'a> {
+    if typeid::of::<D>() == typeid::of::<Box<dyn DynDatabase + 'a>>() {
+        let database = ManuallyDrop::new(database);
+        // SAFETY: The type IDs match, so `D` is a `Box<dyn DynDatabase + 'b>` with `'b: 'a`, and
+        // `database` is not dropped after this move.
+        return unsafe { ptr::read((&raw const *database).cast::<Box<dyn DynDatabase + 'a>>()) };
+    }
     Box::new(database)
 }
 
@@ -557,6 +567,14 @@ mod tests {
         let mut erased = boxed_dyn_database(BorrowingDb { value: &value });
 
         assert_eq!(erased.get_block_hash(&Word::ZERO).unwrap(), B256::repeat_byte(value));
+    }
+
+    #[test]
+    fn state_over_boxed_database_downcasts_to_the_inner_database() {
+        let erased: Box<dyn DynDatabase + 'static> = Box::new(EmptyDB::default());
+        let state = crate::evm::State::new(erased);
+
+        assert!(state.initial().downcast_ref::<EmptyDB>().is_some());
     }
 
     #[test]

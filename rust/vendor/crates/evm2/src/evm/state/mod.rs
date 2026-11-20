@@ -790,25 +790,24 @@ impl<'a> State<'a> {
     ) -> DbResult<Result<(), InstrStop>> {
         // TODO check order of operations, we could potentially simplify it and do a lot more with
         // only one hashmap lookup.
-        if self
-            .account(address)?
-            .get()
-            .is_some_and(|account| account.nonce != 0 || !account.is_empty_code_hash())
-        {
+        let mut target = self.account(address)?;
+        if target.get().is_some_and(|account| account.nonce != 0 || !account.is_empty_code_hash()) {
             return Ok(Err(InstrStop::CreateCollision));
         }
 
         // Deduct the endowment from the caller. A zero endowment moves nothing and leaves the
         // caller untouched, matching the prior `transfer` behaviour.
         if !value.is_zero() {
+            drop(target);
             let mut caller_account = self.account(caller)?;
             let Some(new_caller_balance) = caller_account.balance().checked_sub(*value) else {
                 return Ok(Err(InstrStop::OutOfFunds));
             };
             caller_account.set_balance(new_caller_balance);
+            drop(caller_account);
+            target = self.account(address)?;
         }
 
-        let mut target = self.account(address)?;
         // Preserve any balance the address already held (e.g. funds sent before creation) and add
         // the endowment.
         let balance = target.balance().wrapping_add(*value);

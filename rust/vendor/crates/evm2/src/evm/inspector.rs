@@ -8,6 +8,7 @@ use crate::{
 use alloc::boxed::Box;
 use alloy_primitives::{Address, Log, U256};
 use auto_impl::auto_impl;
+use core::{mem::ManuallyDrop, ptr};
 
 /// Set of opcodes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -225,10 +226,19 @@ pub trait Inspector<T: EvmTypesHost>: NonStaticAny {
     }
 }
 
+/// Erases `inspector` into a box, reusing the box when it already is a `Box<dyn Inspector<T>>`, so
+/// an inspector passed in as one stays downcastable to its concrete type.
 #[inline]
-pub(crate) fn boxed_inspector<'a, T: EvmTypesHost>(
-    inspector: impl Inspector<T> + 'a,
+pub(crate) fn boxed_inspector<'a, T: EvmTypesHost, I: Inspector<T> + 'a>(
+    inspector: I,
 ) -> Box<dyn Inspector<T> + 'a> {
+    if typeid::of::<I>() == typeid::of::<Box<dyn Inspector<T> + 'a>>() {
+        let inspector = ManuallyDrop::new(inspector);
+        // SAFETY: The type IDs match up to lifetimes, so `I` is a `Box<dyn Inspector<U> + 'b>` with
+        // `U` equal to `T` up to lifetimes. `EvmTypesHost: 'static` holds for both, so `U` is `T`,
+        // and `I: 'a` gives `'b: 'a`. `inspector` is not dropped after this move.
+        return unsafe { ptr::read((&raw const *inspector).cast::<Box<dyn Inspector<T> + 'a>>()) };
+    }
     Box::new(inspector)
 }
 

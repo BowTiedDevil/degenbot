@@ -72,7 +72,7 @@ pub fn sstore_with<T: EvmTypesHost>(
     // additional cold-load charge. The host performs the write and returns
     // original/present/new values for net metering.
     let skip_cold_load = state.feature(EvmFeatures::EIP2929)
-        && gas.remaining() < state.gas_params().get(GasId::ColdStorageAdditionalCost);
+        && gas.remaining() < state.gas_params().get(GasId::ColdStorageCost);
     let destination = &state.message().destination;
     let state_load = state
         .host()

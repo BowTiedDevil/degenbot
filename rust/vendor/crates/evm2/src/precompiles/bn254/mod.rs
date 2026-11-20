@@ -7,16 +7,21 @@ use crate::{
 };
 use alloc::vec::Vec;
 
-#[cfg_attr(any(feature = "bn", feature = "bn254-mcl"), expect(dead_code))]
+#[cfg_attr(all(not(test), any(feature = "bn", feature = "bn254-mcl")), expect(dead_code))]
 pub(crate) mod arkworks;
+
+#[cfg(feature = "bn254-mcl")]
+pub(crate) mod mcl;
+
+#[cfg(feature = "bn")]
+#[cfg_attr(all(not(test), feature = "bn254-mcl"), expect(dead_code))]
+pub(crate) mod substrate;
 
 core::cfg_select! {
     feature = "bn254-mcl" => {
-        pub(crate) mod mcl;
         type Ops = mcl::MclOps;
     }
     feature = "bn" => {
-        pub(crate) mod substrate;
         type Ops = substrate::SubstrateOps;
     }
     _ => {
@@ -46,10 +51,7 @@ pub(crate) trait Bn254Ops {
 /// Performs point addition on two G1 points using the selected backend.
 #[inline]
 pub(crate) fn g1_point_add(p1_bytes: &[u8], p2_bytes: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
-    Ops::init();
-    let p1 = Ops::read_g1(p1_bytes)?;
-    let p2 = Ops::read_g1(p2_bytes)?;
-    Ok(Ops::encode_g1(Ops::g1_add(p1, p2)))
+    g1_point_add_with::<Ops>(p1_bytes, p2_bytes)
 }
 
 /// Performs a G1 scalar multiplication using the selected backend.
@@ -58,25 +60,49 @@ pub(crate) fn g1_point_mul(
     point_bytes: &[u8],
     fr_bytes: &[u8],
 ) -> Result<[u8; 64], PrecompileHalt> {
-    Ops::init();
-    let p = Ops::read_g1(point_bytes)?;
-    let fr = Ops::read_scalar(fr_bytes);
-    Ok(Ops::encode_g1(Ops::g1_mul(p, fr)))
+    g1_point_mul_with::<Ops>(point_bytes, fr_bytes)
 }
 
 /// Performs a pairing check on a list of G1 and G2 point pairs using the selected backend.
 #[inline]
 pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileHalt> {
-    Ops::init();
+    pairing_check_with::<Ops>(pairs)
+}
+
+#[inline]
+fn g1_point_add_with<O: Bn254Ops>(
+    p1_bytes: &[u8],
+    p2_bytes: &[u8],
+) -> Result<[u8; 64], PrecompileHalt> {
+    O::init();
+    let p1 = O::read_g1(p1_bytes)?;
+    let p2 = O::read_g1(p2_bytes)?;
+    Ok(O::encode_g1(O::g1_add(p1, p2)))
+}
+
+#[inline]
+fn g1_point_mul_with<O: Bn254Ops>(
+    point_bytes: &[u8],
+    fr_bytes: &[u8],
+) -> Result<[u8; 64], PrecompileHalt> {
+    O::init();
+    let p = O::read_g1(point_bytes)?;
+    let fr = O::read_scalar(fr_bytes);
+    Ok(O::encode_g1(O::g1_mul(p, fr)))
+}
+
+#[inline]
+fn pairing_check_with<O: Bn254Ops>(pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileHalt> {
+    O::init();
     let mut g1_points = Vec::with_capacity(pairs.len());
     let mut g2_points = Vec::with_capacity(pairs.len());
 
     for (g1_bytes, g2_bytes) in pairs {
-        let g1 = Ops::read_g1(g1_bytes)?;
-        let g2 = Ops::read_g2(g2_bytes)?;
+        let g1 = O::read_g1(g1_bytes)?;
+        let g2 = O::read_g2(g2_bytes)?;
 
         // Skip pairs where either point is at infinity
-        if !Ops::g1_is_zero(&g1) && !Ops::g2_is_zero(&g2) {
+        if !O::g1_is_zero(&g1) && !O::g2_is_zero(&g2) {
             g1_points.push(g1);
             g2_points.push(g2);
         }
@@ -86,7 +112,7 @@ pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, Precompile
         return Ok(true);
     }
 
-    Ok(Ops::pairing_check(&g1_points, &g2_points))
+    Ok(O::pairing_check(&g1_points, &g2_points))
 }
 
 /// BN254 point addition precompile entrypoints.
@@ -251,6 +277,9 @@ pub fn run_pair(
     let pairing_result = crate::precompiles::crypto().bn254_pairing_check(&points)?;
     Ok(PrecompileOutput::new(bool_to_bytes32(pairing_result)))
 }
+
+#[cfg(test)]
+mod differential;
 
 #[cfg(test)]
 mod tests {

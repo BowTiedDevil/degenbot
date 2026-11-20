@@ -955,6 +955,9 @@ impl<'frame, 'host, T: EvmTypesHost> InterpreterState<'frame, 'host, T> {
     }
 }
 
+/// The most memory capacity in bytes that each frame of a pool keeps when trimmed.
+const MAX_IDLE_MEMORY: usize = 64 * 1024;
+
 #[derive(Default)]
 pub(crate) struct InterpreterPool<T: EvmTypesHost> {
     frames: Vec<Box<Interpreter<'static, 'static, T>>>,
@@ -994,6 +997,25 @@ impl<T: EvmTypesHost> InterpreterPool<T> {
         // SAFETY: The returned borrow is tied to `&mut self`; the erased frame references are
         // empty.
         unsafe { trustme::decouple_interpreter_lt_mut(frame) }
+    }
+
+    /// Bounds what idle frames keep, so deep or memory-heavy transactions do not add up in a
+    /// long-lived pool. Frames stay pooled, as in revm's frame stack, so deep transactions do not
+    /// allocate them again.
+    ///
+    /// Call it when no frame is running, such as before the first frame of a top-level message. A
+    /// frame's caller reads its output after it returns to the pool, so trimming then is too
+    /// early. The next top-level message takes the last frame, so it keeps its buffers, as revm
+    /// keeps its shared memory.
+    #[inline(never)]
+    pub(crate) fn trim(&mut self) {
+        let Some((_, rest)) = self.frames.split_last_mut() else { return };
+        for frame in rest {
+            frame.memory.clear();
+            frame.memory.shrink_to(MAX_IDLE_MEMORY);
+            // Replaced rather than cleared, which would keep the buffer.
+            frame.return_data = Bytes::new();
+        }
     }
 
     pub(crate) fn last_mut<'frame, 'host>(&mut self) -> Option<&mut Interpreter<'frame, 'host, T>> {

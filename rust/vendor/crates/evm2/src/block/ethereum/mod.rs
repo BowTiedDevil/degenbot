@@ -230,7 +230,7 @@ where
         withdrawals: Option<&'ctx [Withdrawal]>,
     ) -> BlockExecutionContext<'ctx> {
         BlockExecutionContext {
-            system_calls: Some(BlockSystemCalls { parent_hash, parent_beacon_block_root }),
+            system_calls: BlockSystemCalls { parent_hash, parent_beacon_block_root },
             ommers: Some(ommers),
             withdrawals,
             deposit_contract_address: rules.deposit_contract_address,
@@ -353,7 +353,6 @@ where
             stream_state,
             &mut |state| emit_state(&mut self.state_update_hook, state),
             self.spec_id,
-            context,
             &mut requests,
         )?;
 

@@ -109,7 +109,9 @@ pub(crate) fn verify_kzg_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::B256;
+    use alloc::{vec, vec::Vec};
+    use alloy_primitives::{B256, U256};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     #[test]
     fn basic_test() {
@@ -207,18 +209,20 @@ mod tests {
         assert!(!t);
     }
 
-    /// Runs each vector through every compiled backend. Reaches
-    /// [`arkworks::verify_kzg_proof`], which the dispatching tests never do in workspace builds.
-    #[test]
-    fn test_backends_agree() {
-        type Verify = fn(&[u8; 48], &[u8; 32], &[u8; 32], &[u8; 48]) -> bool;
+    type Verify = fn(&[u8; 48], &[u8; 32], &[u8; 32], &[u8; 48]) -> bool;
+    type Input = ([u8; 48], [u8; 32], [u8; 32], [u8; 48]);
+    type Vector = (&'static str, [u8; 48], [u8; 32], [u8; 32], [u8; 48], bool);
 
-        let backends: &[(&str, Verify)] = &[
-            ("arkworks", arkworks::verify_kzg_proof),
-            #[cfg(feature = "blst")]
-            ("blst", blst::verify_kzg_proof),
-        ];
+    /// Every compiled backend. With `c-kzg`, the dispatching function is the c-kzg backend.
+    const BACKENDS: &[(&str, Verify)] = &[
+        ("arkworks", arkworks::verify_kzg_proof),
+        #[cfg(feature = "blst")]
+        ("blst", blst::verify_kzg_proof),
+        #[cfg(feature = "c-kzg")]
+        ("c-kzg", verify_kzg_proof),
+    ];
 
+    fn vectors() -> [Vector; 7] {
         let infinity = hex!(
             "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
@@ -242,7 +246,7 @@ mod tests {
         let wrong_y = hex!("1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49ea");
         let scalar = |n: u8| B256::with_last_byte(n).0;
 
-        let cases = [
+        [
             ("c-kzg valid", valid_commitment, r_minus_one, valid_y, valid_proof, true),
             ("c-kzg wrong y", valid_commitment, r_minus_one, wrong_y, valid_proof, false),
             ("constant polynomial", five_g1, scalar(3), scalar(5), infinity, true),
@@ -261,16 +265,142 @@ mod tests {
                 ),
                 true,
             ),
-        ];
+        ]
+    }
 
-        for (backend, verify) in backends {
-            for (case, commitment, z, y, proof, expected) in &cases {
+    /// Runs each vector through every compiled backend. Reaches
+    /// [`arkworks::verify_kzg_proof`], which the dispatching tests never do in workspace builds.
+    #[test]
+    fn test_backends_agree() {
+        for (backend, verify) in BACKENDS {
+            for (case, commitment, z, y, proof, expected) in &vectors() {
                 assert_eq!(
                     verify(commitment, z, y, proof),
                     *expected,
                     "{backend} backend, case: {case}"
                 );
             }
+        }
+    }
+
+    /// Mutated vectors stress parsing and the pairing check. Every backend must give the same
+    /// verdict, and the same as `c-kzg` when it is compiled in.
+    #[test]
+    fn test_backends_agree_on_mutations() {
+        let modulus = U256::from_be_bytes(hex!(
+            "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+        ));
+        let non_canonical =
+            |x: &[u8; 32]| U256::from_be_bytes(*x).wrapping_add(modulus).to_be_bytes();
+        let infinity = [&[0xc0][..], &[0; 47]].concat().try_into().unwrap();
+
+        let mut rng = StdRng::seed_from_u64(4844);
+        let valid = vectors()
+            .into_iter()
+            .filter(|vector| vector.5)
+            .map(|(_, commitment, z, y, proof, _)| (commitment, z, y, proof))
+            .chain(c_kzg_vectors());
+
+        for (commitment, z, y, proof) in valid {
+            let mut inputs = vec![
+                (commitment, z, y, proof),
+                (
+                    commitment,
+                    z,
+                    [y[..31].to_vec(), vec![y[31] ^ 1]].concat().try_into().unwrap(),
+                    proof,
+                ),
+                (commitment, non_canonical(&z), y, proof),
+                (commitment, z, non_canonical(&y), proof),
+                (commitment, [0xff; 32], y, proof),
+                (infinity, z, y, proof),
+                (commitment, z, y, infinity),
+                (proof, z, y, commitment),
+                (commitment, z, y, commitment),
+                (
+                    [&[commitment[0] & 0x7f][..], &commitment[1..]].concat().try_into().unwrap(),
+                    z,
+                    y,
+                    proof,
+                ),
+                (
+                    commitment,
+                    z,
+                    y,
+                    [&[proof[0] & 0x7f][..], &proof[1..]].concat().try_into().unwrap(),
+                ),
+            ];
+            // The point at infinity with leftover bits set.
+            for flag in [0xc0, 0xe0, 0xd0] {
+                let mut malformed = [0; 48];
+                malformed[0] = flag;
+                malformed[47] = 1;
+                inputs.push((malformed, z, y, proof));
+                inputs.push((commitment, z, y, malformed));
+            }
+            // Single bit flips, and random compressed points, which are off the curve or outside
+            // the subgroup.
+            for _ in 0..16 {
+                let in_commitment = rng.random();
+                let mut flipped = if in_commitment { commitment } else { proof };
+                flipped[rng.random_range(0..48)] ^= 1 << rng.random_range(0..8);
+                inputs.push(if in_commitment {
+                    (flipped, z, y, proof)
+                } else {
+                    (commitment, z, y, flipped)
+                });
+            }
+            for _ in 0..8 {
+                let mut random = rng.random::<[u8; 48]>();
+                random[0] |= 0x80;
+                random[0] &= 0xbf;
+                inputs.push((random, z, y, proof));
+                inputs.push((commitment, z, y, random));
+            }
+
+            for (i, (commitment, z, y, proof)) in inputs.iter().enumerate() {
+                let verdicts = BACKENDS
+                    .iter()
+                    .map(|(backend, verify)| (backend, verify(commitment, z, y, proof)))
+                    .collect::<Vec<_>>();
+                assert!(
+                    verdicts.iter().all(|(_, verdict)| *verdict == verdicts[0].1),
+                    "input {i} ({}, {}, {}, {}): {verdicts:?}",
+                    hex::encode(commitment),
+                    hex::encode(z),
+                    hex::encode(y),
+                    hex::encode(proof),
+                );
+                assert!(i != 0 || verdicts[0].1, "valid vector rejected");
+            }
+        }
+    }
+
+    /// Valid proofs of random blobs from `c-kzg`, if compiled in.
+    fn c_kzg_vectors() -> Vec<Input> {
+        core::cfg_select! {
+            feature = "c-kzg" => {
+                let mut rng = StdRng::seed_from_u64(7594);
+                let settings = c_kzg::ethereum_kzg_settings(8);
+                let mut vectors = Vec::new();
+                for _ in 0..2 {
+                    let mut blob = [0u8; c_kzg::BYTES_PER_BLOB];
+                    rng.fill(&mut blob[..]);
+                    // Clear the top byte of each field element, so it is below the modulus.
+                    blob.as_chunks_mut::<32>().0.iter_mut().for_each(|element| element[0] = 0);
+                    let blob = c_kzg::Blob::new(blob);
+                    let commitment = settings.blob_to_kzg_commitment(&blob).unwrap().to_bytes();
+                    for _ in 0..2 {
+                        let mut z = rng.random::<[u8; 32]>();
+                        z[0] = 0;
+                        let (proof, y) =
+                            settings.compute_kzg_proof(&blob, &c_kzg::Bytes32::new(z)).unwrap();
+                        vectors.push((*commitment, z, *y, *proof.to_bytes()));
+                    }
+                }
+                vectors
+            }
+            _ => Vec::new(),
         }
     }
 }

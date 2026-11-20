@@ -77,6 +77,12 @@ impl Memory {
         self.data.clear();
     }
 
+    /// Frees the allocation beyond `capacity` bytes, keeping the contents if they fit.
+    #[inline]
+    pub(crate) fn shrink_to(&mut self, capacity: usize) {
+        self.data.shrink_to(capacity);
+    }
+
     #[inline]
     fn resize_to(&mut self, new_size: usize) {
         self.data.resize(new_size, 0);

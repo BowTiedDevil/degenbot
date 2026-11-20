@@ -128,10 +128,10 @@ impl TryFrom<HandlerError> for EthInvalidTxError {
 }
 
 /// Additional block-level execution context.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct BlockExecutionContext<'a> {
-    /// Pre-block system calls to run before transaction execution.
-    pub system_calls: Option<BlockSystemCalls>,
+    /// Inputs of the pre-block system calls to run before transaction execution.
+    pub system_calls: BlockSystemCalls,
     /// Pre-merge ommer headers included in the block.
     pub ommers: Option<&'a [Header]>,
     /// Post-block withdrawals to apply after transaction execution.
@@ -267,9 +267,7 @@ pub fn pre_execution_system_call_state_changes<T: EvmTypes>(
     block_number: u64,
     context: BlockExecutionContext<'_>,
 ) -> Result<(), BlockExecutionError> {
-    let Some(system_calls) = context.system_calls else {
-        return Ok(());
-    };
+    let system_calls = context.system_calls;
 
     if spec_id.enables(SpecId::CANCUN) {
         let parent_beacon_block_root = system_calls
@@ -319,7 +317,7 @@ where
     R: TxReceipt<Log = Log>,
 {
     let mut requests = Requests::default();
-    if context.system_calls.is_none() || !spec_id.enables(SpecId::PRAGUE) {
+    if !spec_id.enables(SpecId::PRAGUE) {
         return Ok(requests);
     }
 
@@ -386,10 +384,9 @@ pub fn post_execution_system_call_state_changes<T: EvmTypes>(
     stream_state: bool,
     on_state_update: &mut impl FnMut(StateUpdate),
     spec_id: SpecId,
-    context: BlockExecutionContext<'_>,
     requests: &mut Requests,
 ) -> Result<(), BlockExecutionError> {
-    if context.system_calls.is_none() || !spec_id.enables(SpecId::PRAGUE) {
+    if !spec_id.enables(SpecId::PRAGUE) {
         return Ok(());
     }
 
