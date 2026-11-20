@@ -22,7 +22,7 @@ use tracing::Instrument;
 
 use crate::arb_engine::driver::EngineDriver;
 use crate::arb_engine::pump_session::PumpPhase;
-use crate::arb_engine::session_end::SessionEndCause;
+use crate::arb_engine::session_end::{SessionEnd, SessionEndCause};
 
 /// The settlement arm's spawn factory: the pump session's lifetime in the
 /// host's driver vocabulary.
@@ -60,25 +60,25 @@ async fn drive(driver: Arc<EngineDriver>) -> DriverExit {
             phase.as_str()
         ));
     }
-    driver.wait_session_end().await;
-    fold_end(driver.is_stopped(), driver.session_end_cause())
+    // The session's ONE end fact, read once the pump-completion edge resolves.
+    fold_end(driver.wait_session_end().await)
 }
 
-/// The arm's terminal exit, from the session facts at the moment its block
-/// clock ended.
+/// The arm's terminal exit, from the session's ONE end fact.
 ///
-/// A pump that ended after teardown began is the session's intended stop: the
-/// consumer's close takes the session's teardown entry before it joins the
-/// pump, and nothing else disarms a live block clock. A pump that ended any
-/// other way — a dropped subscription, a panic, or the pump's own stall clock —
-/// is the dead block clock a settlement session must not survive, and the
-/// session's end cause becomes the tombstone's detail.
+/// The owner's intended stop is the only clean exit: its teardown entry writes
+/// that fact before it joins the pump, so a stall or a losing loop landing that
+/// unfolds while the session unwinds cannot re-author it. Every other fact is the
+/// tombstone a settlement session must not survive, and it carries its own
+/// spelling — a pump that finished on its own, stalled, or was aborted is never
+/// reported as a clean stop.
 #[must_use]
-fn fold_end(teardown_begun: bool, cause: SessionEndCause) -> DriverExit {
-    if teardown_begun {
-        DriverExit::Stopped
-    } else {
-        DriverExit::Halted(cause.name().to_string())
+fn fold_end(end: SessionEnd) -> DriverExit {
+    match end {
+        SessionEnd::Ended(SessionEndCause::IntendedStop) => DriverExit::Stopped,
+        // `Running` is unreachable behind the completion edge; a tombstone is the
+        // safe reading if it ever is.
+        other => DriverExit::Halted(other.name().to_string()),
     }
 }
 
@@ -86,29 +86,53 @@ fn fold_end(teardown_begun: bool, cause: SessionEndCause) -> DriverExit {
 mod tests {
     use super::*;
 
-    /// The intended stop: teardown began, so the arm stops cleanly whatever
-    /// end fact the pump published while unwinding.
+    /// The intended stop is the ONE clean exit, whatever detection fact the pump
+    /// published while unwinding: the fact is already written when the teardown
+    /// entry took it, so a later stall cannot re-author it.
     #[test]
     fn an_intended_stop_folds_to_a_clean_exit() {
+        assert_eq!(
+            fold_end(SessionEnd::Ended(SessionEndCause::IntendedStop)),
+            DriverExit::Stopped
+        );
+    }
+
+    /// A block clock that ended with no intended stop behind it is a tombstone
+    /// carrying the session's own end cause — never a clean stop.
+    #[test]
+    fn a_dead_block_clock_folds_to_a_tombstone_carrying_its_cause() {
         for cause in [
             SessionEndCause::PumpFinished,
             SessionEndCause::StallWatchdogTripped,
         ] {
-            assert_eq!(fold_end(true, cause), DriverExit::Stopped);
+            assert_eq!(
+                fold_end(SessionEnd::Ended(cause)),
+                DriverExit::Halted(cause.name().to_string())
+            );
         }
     }
 
-    /// A block clock that ended with no teardown behind it is a tombstone
-    /// carrying the session's own end cause — never a clean stop.
+    /// A loop that never landed — a panic or an abort — is never the clean pump
+    /// finish, and never the clean stop.
     #[test]
-    fn a_dead_block_clock_folds_to_a_tombstone_carrying_its_cause() {
+    fn a_lost_loop_folds_to_a_tombstone_never_a_clean_finish() {
         assert_eq!(
-            fold_end(false, SessionEndCause::PumpFinished),
-            DriverExit::Halted(String::from("PumpFinished"))
+            fold_end(SessionEnd::pump_lost()),
+            DriverExit::Halted(String::from("Aborted"))
         );
         assert_eq!(
-            fold_end(false, SessionEndCause::StallWatchdogTripped),
-            DriverExit::Halted(String::from("StallWatchdogTripped"))
+            fold_end(SessionEnd::Ended(SessionEndCause::Aborted)),
+            DriverExit::Halted(String::from("Aborted"))
+        );
+    }
+
+    /// The total remainder: a fact that is still `Running` behind the completion
+    /// edge is a tombstone too, and it names itself.
+    #[test]
+    fn the_running_fact_still_totals_to_a_tombstone() {
+        assert_eq!(
+            fold_end(SessionEnd::Running),
+            DriverExit::Halted(String::from("Running"))
         );
     }
 }

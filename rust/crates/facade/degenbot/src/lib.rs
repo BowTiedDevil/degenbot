@@ -44,14 +44,19 @@ pub use degenbot_simulation::investigation;
 pub use degenbot_bot as bot;
 
 pub mod session_end {
-    //! Engine-session end DETECTION facts and the pure Session-end ranking: the
-    //! typed cause vocabulary, the heartbeat stall watchdog, the once-only
-    //! delivery channel both drivers share, and the one `rank` fold over the
-    //! closed end observation.
+    //! The session's ONE end fact and the pure Session-end ranking: the total
+    //! [`SessionEnd`] (`Running` carries no cause), its closed cause vocabulary
+    //! ([`SessionEndCause`], with [`ALL_SESSION_END_CAUSES`] the sized walk), the
+    //! write-once [`SessionEndSlot`] whose duplicate policy is the typed
+    //! [`SessionEndWrite`], the heartbeat stall watchdog with the once-only
+    //! detection channel both drivers share ([`SessionEndDetection`],
+    //! [`SessionEndFacts`]), and the one `rank` fold over the closed end
+    //! observation.
     pub use degenbot_bot::arb_engine::{
-        rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEndCause,
-        SessionEndDetection, SessionEndFacts, SessionEndObservation, SessionEndPublisher,
-        SessionEndRanking, SessionEndVerdict,
+        rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEnd,
+        SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndObservation,
+        SessionEndPublisher, SessionEndRanking, SessionEndSlot, SessionEndVerdict, SessionEndWrite,
+        ALL_SESSION_END_CAUSES,
     };
 }
 

@@ -1,11 +1,21 @@
-//! Engine-session end detection and the pure Session-end ranking.
+//! The session's ONE end fact, its detection channel, and the pure Session-end
+//! ranking.
 //!
-//! The core owns *why* a pump session ended AND how the gathered end facts
-//! rank: [`SessionEndCause`] is the detection vocabulary, fed by the
-//! pump-completion surface ([`EngineDriver::wait_session_end`]) or the heartbeat
-//! stall watchdog, and [`SessionEndFacts`] is its once-only delivery channel:
-//! the first fact published is retained for every current or future waiter and
-//! later publications are dropped.
+//! [`SessionEnd`] is the ONE answer to "has this pump session ended, and why":
+//! [`SessionEnd::Running`] carries no terminal cause, and an ended session
+//! carries exactly one [`SessionEndCause`] — the owner's intended stop, the
+//! pump's own landing, its independent liveness clock, or a lost loop. The driver
+//! writes that fact through one slot ([`SessionEndSlot`]) whose duplicate policy
+//! is typed ([`SessionEndWrite`]): the first terminal observation IS the fact, and
+//! a later offer is told the fact it retained instead of being silently dropped.
+//! Nobody folds a pose with a cause at a call site — the fold happens once, where
+//! the observation lands.
+//!
+//! [`SessionEndFacts`] is the *detection* channel: the one cause a watchdog
+//! publishes, retained for every current or future waiter, with later
+//! publications dropped. Adapters arm it ([`SessionEndDetection`]) around the
+//! pump-completion surface ([`EngineDriver::wait_session_end`]) and the heartbeat
+//! stall window.
 //!
 //! # Session-end ranking
 //!
@@ -34,24 +44,45 @@ use tokio::task::JoinHandle;
 
 use super::driver::EngineDriver;
 
-/// Why a pump session ended — the core's one detection fact.
+/// Why a pump session ended — the core's ONE typed terminal cause.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SessionEndCause {
-    /// The pump-completion surface resolved: the pump ended on its own (stream
-    /// end, normal return, abort, or panic) outside `stop()`.
+    /// The session's owner stopped it: the driver's teardown entry was taken.
+    /// The fact is write-once, so this cause names the end exactly when the
+    /// stop is the FIRST terminal observation.
+    IntendedStop,
+    /// The pump's loop landed on its own — a stream end or a cooperative
+    /// return — with no stop requested and no stall reported.
     PumpFinished,
-    /// No heartbeat beat arrived within the stall window — the consume loop's
-    /// or the pump loop's (see [`SessionEndDetection::stall_with`]).
+    /// No heartbeat beat arrived within the stall window, so the pump's
+    /// independent liveness clock closed the loop (see
+    /// [`SessionEndDetection::stall_with`]). The clock publishes before it
+    /// raises the cooperative close, so a stall outranks the clean-looking
+    /// landing it caused.
     StallWatchdogTripped,
+    /// The loop never landed: a panic unwind, an aborted task, or a completion
+    /// whose landing was never recorded. Never a clean finish.
+    Aborted,
 }
+
+/// Every terminal cause, in declaration order — the sized ALL-causes const the
+/// ranking walk drives (house pattern: `stage_handlers::ALL_STAGES`).
+pub const ALL_SESSION_END_CAUSES: [SessionEndCause; 4] = [
+    SessionEndCause::IntendedStop,
+    SessionEndCause::PumpFinished,
+    SessionEndCause::StallWatchdogTripped,
+    SessionEndCause::Aborted,
+];
 
 impl SessionEndCause {
     /// The stable spelling both driver shells exchange.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::IntendedStop => "IntendedStop",
             Self::PumpFinished => "PumpFinished",
             Self::StallWatchdogTripped => "StallWatchdogTripped",
+            Self::Aborted => "Aborted",
         }
     }
 
@@ -60,9 +91,140 @@ impl SessionEndCause {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
+            "IntendedStop" => Some(Self::IntendedStop),
             "PumpFinished" => Some(Self::PumpFinished),
             "StallWatchdogTripped" => Some(Self::StallWatchdogTripped),
+            "Aborted" => Some(Self::Aborted),
             _ => None,
+        }
+    }
+}
+
+/// The session's ONE end fact: total, so "still running" is a value rather than
+/// an absent cause.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SessionEnd {
+    /// The session has not ended: it has no terminal cause.
+    #[default]
+    Running,
+    /// The session ended, for this one cause.
+    Ended(SessionEndCause),
+}
+
+impl SessionEnd {
+    /// The terminal cause, or `None` while the session runs.
+    #[must_use]
+    pub const fn cause(self) -> Option<SessionEndCause> {
+        match self {
+            Self::Running => None,
+            Self::Ended(cause) => Some(cause),
+        }
+    }
+
+    /// The stable spelling of the fact: the cause's name, or `Running` before
+    /// the end.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Running => "Running",
+            Self::Ended(cause) => cause.name(),
+        }
+    }
+
+    /// The detection spelling the driver shells exchange: a session that
+    /// resolved without its own detection fact reads as the plain
+    /// pump-finished end.
+    #[must_use]
+    pub const fn detection(self) -> SessionEndCause {
+        match self {
+            Self::Ended(cause) => cause,
+            Self::Running => SessionEndCause::PumpFinished,
+        }
+    }
+
+    /// The live loop's landing, from the evidence its own task holds: a stall the
+    /// pump's independent clock reported is the end this landing follows, and no
+    /// detection fact means the loop ended on its own.
+    #[must_use]
+    pub const fn pump_returned(stall: Option<SessionEndCause>) -> Self {
+        match stall {
+            Some(SessionEndCause::StallWatchdogTripped) => {
+                Self::Ended(SessionEndCause::StallWatchdogTripped)
+            }
+            // The pump's liveness channel publishes exactly one cause
+            // (`BlockPump::stall_facts`), so a clean landing is the honest
+            // reading of any other observation.
+            _ => Self::Ended(SessionEndCause::PumpFinished),
+        }
+    }
+
+    /// The loop never landed — a panic unwind or an aborted task. Never a clean
+    /// finish.
+    #[must_use]
+    pub const fn pump_lost() -> Self {
+        Self::Ended(SessionEndCause::Aborted)
+    }
+}
+
+/// What one offer to the session-end slot did — the duplicate policy, typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionEndWrite {
+    /// The slot held [`SessionEnd::Running`]: the offer IS the session's end.
+    Recorded,
+    /// The session already ended: nothing changed, and this is the fact that
+    /// stands.
+    Retained(SessionEnd),
+}
+
+impl SessionEndWrite {
+    /// `true` when the offer became the session's end.
+    #[must_use]
+    pub const fn recorded(self) -> bool {
+        matches!(self, Self::Recorded)
+    }
+}
+
+/// The session's ONE end slot: write-once, and the only writer of [`SessionEnd`].
+///
+/// Write-once keeps the fact honest under the session's real races — the pump's
+/// loop landing, its liveness clock, and the owner's teardown entry all arrive
+/// around the same edge, and the FIRST terminal observation is the one that ended
+/// the session. A later offer is not silently dropped: [`Self::record`] answers
+/// [`SessionEndWrite::Retained`] with the fact it kept, so the writer that lost
+/// the race can log or render it.
+#[derive(Debug, Default)]
+pub struct SessionEndSlot {
+    fact: parking_lot::Mutex<SessionEnd>,
+}
+
+impl SessionEndSlot {
+    /// An empty slot: the session is running.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The fact as it stands.
+    #[must_use]
+    pub fn current(&self) -> SessionEnd {
+        *self.fact.lock()
+    }
+
+    /// Offer one terminal observation: the first offer wins, and every later
+    /// offer is told the fact that stands.
+    pub fn record(&self, end: SessionEnd) -> SessionEndWrite {
+        let mut fact = self.fact.lock();
+        let held = *fact;
+        // A non-terminal offer records nothing: `Running` is the absence of a
+        // cause, not a cause. The slot's first terminal offer is its only write.
+        let SessionEnd::Ended(_) = end else {
+            return SessionEndWrite::Retained(held);
+        };
+        if held == SessionEnd::Running {
+            *fact = end;
+            SessionEndWrite::Recorded
+        } else {
+            SessionEndWrite::Retained(held)
         }
     }
 }
@@ -77,8 +239,8 @@ impl SessionEndCause {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConsumerOutcome {
     /// The consumer ended where the session intended (the `QuietEnd`
-    /// translation). The expected close publishes `PumpFinished` too, so this
-    /// outcome disarms a simultaneous detection fact.
+    /// translation). The expected close publishes a detection fact too, so this
+    /// outcome disarms a simultaneous one.
     QuietEnd,
     /// The consumer's stream ended where the session did NOT intend it (the
     /// `PumpStopped` translation): the unexpected session end.
@@ -237,7 +399,7 @@ impl RaiseSlot {
 /// consumer's output — so the ranking reads contents, never arrival order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionEndObservation<T> {
-    /// The detection cause, when detection fired.
+    /// The session's end cause, when one was detected ([`SessionEndCause`]).
     pub cause: Option<SessionEndCause>,
     /// The consumer's outcome (the adapter's translation of its own surface).
     pub consumer: Option<ConsumerOutcome>,
@@ -270,21 +432,22 @@ pub struct SessionEndRanking<T> {
 /// | Priority | Observation | Verdict | [`RaiseSlot`] |
 /// |---|---|---|---|
 /// | 1 | registration outcome [`RegistrationOutcome::Failed`] (incl. a panic) | [`SessionEndVerdict::RegistrationFailed`] | [`RaiseSlot::Registration`] |
-/// | 2 | consumer outcome [`ConsumerOutcome::QuietEnd`] | [`SessionEndVerdict::PumpEnded`] | [`RaiseSlot::Nothing`] |
+/// | 2 | consumer outcome [`ConsumerOutcome::QuietEnd`], or the cause [`SessionEndCause::IntendedStop`] | [`SessionEndVerdict::PumpEnded`] | [`RaiseSlot::Nothing`] |
 /// | 3 | consumer outcome [`ConsumerOutcome::PumpStopped`] | [`SessionEndVerdict::WatchdogTripped`] | [`RaiseSlot::SessionEnd`] |
-/// | 4 | a detection cause, without an intended consumer end | [`SessionEndVerdict::WatchdogTripped`] | [`RaiseSlot::SessionEnd`] |
+/// | 4 | any other end cause, without an intended end | [`SessionEndVerdict::WatchdogTripped`] | [`RaiseSlot::SessionEnd`] |
 /// | 5 | consumer outcome [`ConsumerOutcome::Failed`], no higher fact | [`SessionEndVerdict::PumpEnded`] | [`RaiseSlot::Consumer`] |
-/// | 6 | the empty remainder (no consumer outcome, no detection cause) | [`SessionEndVerdict::PumpEnded`] | [`RaiseSlot::Nothing`] |
+/// | 6 | the empty remainder (no consumer outcome, no end cause) | [`SessionEndVerdict::PumpEnded`] | [`RaiseSlot::Nothing`] |
 ///
-/// Registration failure is maximal (1). The intended consumer end (2)
-/// disarms a simultaneous detection fact, because the expected close also
-/// publishes `PumpFinished`. `PumpStopped` (3) and detection without an
-/// intended consumer end (4) are the unexpected SESSION end: both trip the
-/// watchdog verdict and raise their own loud failure at the session-end
-/// slot. A consumer failure without a higher-priority fact (5) is the
-/// consumer failure; the empty remainder (6) is the no-failure end and
-/// raises nothing. The consumer output is retained and never raised again
-/// over a registration or session-end failure.
+/// Registration failure is maximal (1). The intended end (2) — the consumer's
+/// own close, or the session owner's stop — disarms a simultaneous detection
+/// fact, because the expected close publishes one too. `PumpStopped` (3) and any
+/// other end cause (4) are the unexpected SESSION end: both trip the watchdog
+/// verdict and raise their own loud failure at the session-end slot, so a pump
+/// that finished on its own, stalled, or was aborted can never rank as a clean
+/// end. A consumer failure without a higher-priority fact (5) is the consumer
+/// failure; the empty remainder (6) is the no-failure end and raises nothing.
+/// The consumer output is retained and never raised again over a registration or
+/// session-end failure.
 #[must_use]
 pub fn rank<T>(observation: SessionEndObservation<T>) -> SessionEndRanking<T> {
     let SessionEndObservation {
@@ -298,13 +461,18 @@ pub fn rank<T>(observation: SessionEndObservation<T>) -> SessionEndRanking<T> {
             SessionEndVerdict::RegistrationFailed,
             RaiseSlot::Registration,
         )
-    } else if consumer == Some(ConsumerOutcome::QuietEnd) {
+    } else if consumer == Some(ConsumerOutcome::QuietEnd)
+        || cause == Some(SessionEndCause::IntendedStop)
+    {
+        // Row 2: the intended end — the consumer's own close, or the owner
+        // stopping the session — disarms a simultaneous detection fact.
         (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing)
     } else if consumer == Some(ConsumerOutcome::PumpStopped) || cause.is_some() {
         // Rows 3 and 4 share one product: the stream stopped where the
-        // session did not intend it, or detection fired without an intended
-        // consumer end — the unexpected session end, one loud failure at the
-        // session-end slot.
+        // session did not intend it, or an end cause landed without an intended
+        // end — the unexpected session end, one loud failure at the session-end
+        // slot. A pump that finished on its own, stalled, or was aborted is
+        // NEVER this verdict's clean counterpart.
         (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd)
     } else if consumer == Some(ConsumerOutcome::Failed) {
         (SessionEndVerdict::PumpEnded, RaiseSlot::Consumer)
@@ -513,7 +681,7 @@ impl SessionEndDetection {
     /// Arm pump-finished detection over the driver's completion surface.
     #[must_use]
     pub fn pump_finished(driver: Arc<EngineDriver>) -> Self {
-        Self::from_future(async move { driver.wait_session_end().await })
+        Self::from_future(async move { driver.wait_session_end().await.detection() })
     }
 
     /// The facts channel this detection feeds.
@@ -530,25 +698,21 @@ impl Drop for SessionEndDetection {
 }
 
 impl EngineDriver {
-    /// Await the session's end as the core detection fact — the public typed
-    /// wrapper over the driver's internal pump-completion wait.
+    /// Await the session's end as the core's ONE end fact.
     ///
-    /// A pump whose independent liveness clock reported a stall ended for that
-    /// reason, not because its stream or loop finished: the cause reads
-    /// [`SessionEndCause::StallWatchdogTripped`], so the ranking names the
-    /// unexpected session end instead of a clean pump end.
-    pub async fn wait_session_end(&self) -> SessionEndCause {
+    /// The pump-completion edge is the session's end, so the fact is already
+    /// written when this resolves: the owner's intended stop (its teardown entry
+    /// precedes the join), the loop's own landing, or its liveness clock.
+    ///
+    /// A completion whose landing was never recorded is a loop torn out from
+    /// under the session — the loud, non-clean [`SessionEnd::pump_lost`], never a
+    /// clean finish.
+    pub async fn wait_session_end(&self) -> SessionEnd {
         self.wait_pump_finished().await;
-        self.session_end_cause()
-    }
-
-    /// The ended session's detection cause, read without waiting: the pump's own
-    /// stall fact when its liveness clock published one, else the plain
-    /// pump-finished end.
-    #[must_use]
-    pub fn session_end_cause(&self) -> SessionEndCause {
-        self.pump_stall_fact()
-            .unwrap_or(SessionEndCause::PumpFinished)
+        if self.session_end() == SessionEnd::Running {
+            self.record_session_end(SessionEnd::pump_lost());
+        }
+        self.session_end()
     }
 }
 
@@ -559,10 +723,101 @@ mod tests {
 
     #[test]
     fn cause_names_are_stable() {
+        assert_eq!(SessionEndCause::IntendedStop.name(), "IntendedStop");
         assert_eq!(SessionEndCause::PumpFinished.name(), "PumpFinished");
         assert_eq!(
             SessionEndCause::StallWatchdogTripped.name(),
             "StallWatchdogTripped"
+        );
+        assert_eq!(SessionEndCause::Aborted.name(), "Aborted");
+    }
+
+    /// The one fact is total: `Running` is a value with no cause, and an ended
+    /// session always names exactly one.
+    #[test]
+    fn the_end_fact_is_total_and_running_has_no_cause() {
+        assert_eq!(SessionEnd::default(), SessionEnd::Running);
+        assert_eq!(SessionEnd::Running.cause(), None);
+        assert_eq!(SessionEnd::Running.name(), "Running");
+        assert_eq!(
+            SessionEnd::Running.detection(),
+            SessionEndCause::PumpFinished
+        );
+
+        for cause in ALL_SESSION_END_CAUSES {
+            let ended = SessionEnd::Ended(cause);
+            assert_eq!(ended.cause(), Some(cause));
+            assert_eq!(ended.name(), cause.name());
+            assert_eq!(ended.detection(), cause);
+        }
+    }
+
+    /// The slot is write-once and answers with a typed policy: the first
+    /// terminal observation is the fact, every later offer is told what stands.
+    #[test]
+    fn the_end_slot_keeps_the_first_terminal_observation() {
+        let slot = SessionEndSlot::new();
+        assert_eq!(slot.current(), SessionEnd::Running);
+
+        let first = SessionEnd::Ended(SessionEndCause::StallWatchdogTripped);
+        assert_eq!(slot.record(first), SessionEndWrite::Recorded);
+        assert_eq!(slot.current(), first);
+
+        let second = SessionEnd::Ended(SessionEndCause::IntendedStop);
+        assert_eq!(
+            slot.record(second),
+            SessionEndWrite::Retained(first),
+            "a second terminal write changes nothing and names the fact it kept"
+        );
+        assert_eq!(slot.current(), first, "the first fact stands");
+        assert!(SessionEndWrite::Recorded.recorded());
+        assert!(!SessionEndWrite::Retained(first).recorded());
+    }
+
+    /// A non-terminal offer records nothing: `Running` is the absence of a
+    /// cause, not a cause.
+    #[test]
+    fn the_end_slot_refuses_a_non_terminal_offer() {
+        let slot = SessionEndSlot::new();
+        assert_eq!(
+            slot.record(SessionEnd::Running),
+            SessionEndWrite::Retained(SessionEnd::Running)
+        );
+        assert_eq!(slot.current(), SessionEnd::Running);
+    }
+
+    /// The intended stop is the fact the teardown writes when it takes the
+    /// session, so a stall that unfolds while the pump unwinds is a losing
+    /// offer, not a second end.
+    #[test]
+    fn an_intended_stop_outranks_a_stall_that_trips_while_unwinding() {
+        let slot = SessionEndSlot::new();
+        let stopped = SessionEnd::Ended(SessionEndCause::IntendedStop);
+        assert_eq!(slot.record(stopped), SessionEndWrite::Recorded);
+        assert_eq!(
+            slot.record(SessionEnd::Ended(SessionEndCause::StallWatchdogTripped)),
+            SessionEndWrite::Retained(stopped)
+        );
+        assert_eq!(slot.current(), stopped);
+    }
+
+    /// The loop's landing fold: a stall outranks the clean-looking return it
+    /// caused, and a loop that never landed is never a clean finish.
+    #[test]
+    fn the_landing_fold_names_what_the_loop_left_behind() {
+        assert_eq!(
+            SessionEnd::pump_returned(None),
+            SessionEnd::Ended(SessionEndCause::PumpFinished)
+        );
+        assert_eq!(
+            SessionEnd::pump_returned(Some(SessionEndCause::StallWatchdogTripped)),
+            SessionEnd::Ended(SessionEndCause::StallWatchdogTripped),
+            "the stall published before the cooperative close, so it owns the landing"
+        );
+        assert_eq!(
+            SessionEnd::pump_lost(),
+            SessionEnd::Ended(SessionEndCause::Aborted),
+            "a panic or an abort is never the clean pump finish"
         );
     }
 
@@ -677,10 +932,11 @@ mod tests {
     }
 
     /// The pinned ranking table: `expected[cause][consumer][registration]` —
-    /// a literal (verdict, slot) pair for every one of the 3 x 4 x 3 input
-    /// combinations, so the fold cannot grow a hidden cell.
-    const EXPECTED_TABLE: [[[(SessionEndVerdict, RaiseSlot); 3]; 4]; 3] = [
-        // no detection fact
+    /// a literal (verdict, slot) pair for every one of the 5 x 4 x 3 input
+    /// combinations (`None`, then [`ALL_SESSION_END_CAUSES`] in declaration
+    /// order), so the fold cannot grow a hidden cell.
+    const EXPECTED_TABLE: [[[(SessionEndVerdict, RaiseSlot); 3]; 4]; 5] = [
+        // no end cause
         [
             // no consumer outcome: the empty remainder is the no-failure
             // end (the detection-only shape lives in the cause blocks below)
@@ -714,6 +970,42 @@ mod tests {
             [
                 (SessionEndVerdict::PumpEnded, RaiseSlot::Consumer),
                 (SessionEndVerdict::PumpEnded, RaiseSlot::Consumer),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+        ],
+        // IntendedStop — the intended end, which disarms every other arm: the
+        // owner's stop is the ONE clean end, whatever else landed beside it
+        [
+            [
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
                 (
                     SessionEndVerdict::RegistrationFailed,
                     RaiseSlot::Registration,
@@ -795,17 +1087,50 @@ mod tests {
                 ),
             ],
         ],
+        // Aborted — a lost loop is the unexpected session end, exactly like a
+        // pump that finished on its own or stalled: never a clean end
+        [
+            [
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (SessionEndVerdict::PumpEnded, RaiseSlot::Nothing),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+            [
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (SessionEndVerdict::WatchdogTripped, RaiseSlot::SessionEnd),
+                (
+                    SessionEndVerdict::RegistrationFailed,
+                    RaiseSlot::Registration,
+                ),
+            ],
+        ],
     ];
 
     /// The total ranking table, checked cell by cell against the pinned
     /// literal pairs above.
     #[test]
     fn the_ranking_table_is_total_over_every_input_combination() {
-        let causes = [
-            None,
-            Some(SessionEndCause::PumpFinished),
-            Some(SessionEndCause::StallWatchdogTripped),
-        ];
+        let mut causes = vec![None];
+        causes.extend(ALL_SESSION_END_CAUSES.map(Some));
         let consumers = [
             None,
             Some(ConsumerOutcome::QuietEnd),
@@ -892,6 +1217,35 @@ mod tests {
         assert_eq!(ranking.slot, RaiseSlot::Nothing);
     }
 
+    /// The owner's stop is the intended end, so it disarms a simultaneous
+    /// detection fact exactly as the consumer's own close does.
+    #[test]
+    fn the_owner_stop_disarms_a_simultaneous_detection_fact() {
+        let ranking = rank::<()>(SessionEndObservation {
+            cause: Some(SessionEndCause::IntendedStop),
+            consumer: None,
+            registration: None,
+            output: None,
+        });
+        assert_eq!(ranking.verdict, SessionEndVerdict::PumpEnded);
+        assert_eq!(ranking.slot, RaiseSlot::Nothing);
+    }
+
+    /// A lost loop ranks as the unexpected session end, and it outranks the
+    /// consumer's own failure: a panic or an abort can never read as the clean
+    /// pump end.
+    #[test]
+    fn an_aborted_loop_ranks_as_the_unexpected_session_end() {
+        let ranking = rank::<()>(SessionEndObservation {
+            cause: Some(SessionEndCause::Aborted),
+            consumer: Some(ConsumerOutcome::Failed),
+            registration: None,
+            output: None,
+        });
+        assert_eq!(ranking.verdict, SessionEndVerdict::WatchdogTripped);
+        assert_eq!(ranking.slot, RaiseSlot::SessionEnd);
+    }
+
     /// An unexpected pump end (detection without an intended consumer end) and
     /// a `PumpStopped` consumer outcome both trip the watchdog verdict AND
     /// raise their own loud failure at the one session-end slot — both are the
@@ -971,10 +1325,7 @@ mod tests {
     /// names the core emits.
     #[test]
     fn the_fact_vocabularies_parse_their_own_names() {
-        for cause in [
-            SessionEndCause::PumpFinished,
-            SessionEndCause::StallWatchdogTripped,
-        ] {
+        for cause in ALL_SESSION_END_CAUSES {
             assert_eq!(SessionEndCause::from_name(cause.name()), Some(cause));
         }
         assert_eq!(SessionEndCause::from_name("nope"), None);

@@ -47,7 +47,7 @@
 //! | `block_cursor` | The engine block cursor — one owner of the engine-side block-coordinate residue |
 //! | `detached_cycle` | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn |
 //! | `lifecycle` | Path registration, buffer management, engine accessors |
-//! | `session_end` | The session-end detection facts and the pure Session-end ranking (`rank`) the drivers render |
+//! | `session_end` | The session's ONE end fact (its write-once slot, the total `SessionEnd` and its typed cause), the detection channel, and the pure Session-end ranking (`rank`) the drivers render |
 //! | `tests` | Unit tests |
 //!
 //! The `PyO3` wrapper (`PyArbitrageEngine`) lives in the `degenbot_rs` shell.
@@ -241,9 +241,9 @@ pub use probe_quote::{
 pub use pump_session::{transition, CrawlExit, PumpDecline, PumpEvent, PumpExit, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{
-    rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEndCause,
+    rank, ConsumerOutcome, Heartbeat, RaiseSlot, RegistrationOutcome, SessionEnd, SessionEndCause,
     SessionEndDetection, SessionEndFacts, SessionEndObservation, SessionEndPublisher,
-    SessionEndRanking, SessionEndVerdict,
+    SessionEndRanking, SessionEndSlot, SessionEndVerdict, SessionEndWrite, ALL_SESSION_END_CAUSES,
 };
 pub use session_events::{
     ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionEventSource, SessionStream,

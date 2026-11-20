@@ -20,7 +20,7 @@
 //! connect(ws)      -> Result<Connected, ConnectRefusal>    // Detached -> Subscribed
 //! run(claim)       -> Result<(), DriverError>              // Subscribed -> Running
 //! close()          -> TeardownReport                       // total from every pose
-//! current_phase() / is_stopped() / wait_session_end()
+//! current_phase() / is_stopped() / session_end() / wait_session_end()
 //! ```
 //!
 //! Every engine operation is reached at [`EngineStages`] (path registry, retune,
@@ -74,7 +74,9 @@ use crate::arb_engine::pump_session::{
     ConnectedSession, CrawlExit, CrawlTeardown, LiveLoop, MovePayload, PumpDecline, PumpEvent,
     PumpExit, PumpPhase, PumpSession,
 };
-use crate::arb_engine::session_end::{SessionEndCause, SessionEndFacts};
+use crate::arb_engine::session_end::{
+    SessionEnd, SessionEndCause, SessionEndFacts, SessionEndSlot, SessionEndWrite,
+};
 use crate::arb_engine::session_events::{
     ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionStream,
 };
@@ -440,6 +442,64 @@ impl Drop for SeededExitGuard {
     }
 }
 
+/// The live loop's landing guard: the ONE writer of a pump-returned end fact, on
+/// the loop's own task.
+///
+/// A return lands the fact the loop's own evidence supports
+/// ([`SessionEnd::pump_returned`], which the pump's stall observation outranks).
+/// A panic unwind or an aborted task drops the guard instead, and that drop is
+/// the loud [`SessionEnd::pump_lost`] landing: a loop that never returned is
+/// never a clean finish.
+struct LoopLanding {
+    session_end: Arc<SessionEndSlot>,
+    stall: Arc<Mutex<Option<SessionEndFacts>>>,
+    landed: bool,
+}
+
+impl LoopLanding {
+    fn armed(
+        session_end: &Arc<SessionEndSlot>,
+        stall: &Arc<Mutex<Option<SessionEndFacts>>>,
+    ) -> Self {
+        Self {
+            session_end: Arc::clone(session_end),
+            stall: Arc::clone(stall),
+            landed: false,
+        }
+    }
+
+    /// The loop returned: record the end its own evidence supports, consuming the
+    /// liveness observation it carried.
+    fn land(mut self) {
+        self.landed = true;
+        let stall = self.stall.lock().take().and_then(|facts| facts.current());
+        record_end(&self.session_end, SessionEnd::pump_returned(stall));
+    }
+}
+
+impl Drop for LoopLanding {
+    fn drop(&mut self) {
+        if !self.landed {
+            record_end(&self.session_end, SessionEnd::pump_lost());
+        }
+    }
+}
+
+/// Record one terminal observation into the session's ONE end slot, reporting a
+/// losing offer so a duplicate terminal write is visible.
+fn record_end(slot: &SessionEndSlot, end: SessionEnd) -> SessionEndWrite {
+    let write = slot.record(end);
+    if let SessionEndWrite::Retained(held) = write {
+        diag!(
+            domain = pump,
+            offered = end.name(),
+            retained = held.name(),
+            "EngineDriver: a session-end observation arrived after the session ended; the retained fact stands"
+        );
+    }
+    write
+}
+
 /// A construction-time session seed: a session value built in a pose a test
 /// cannot reach without a live WS endpoint.
 ///
@@ -498,11 +558,14 @@ pub struct EngineDriver {
     head_source: Option<HeadSender>,
     /// The one teardown's completion, shared by every `close` caller.
     close: tokio::sync::Mutex<Option<TeardownReport>>,
-    /// The live pump's independent stall facts, retained when `run` hands the
-    /// pump to its loop task. The fact IS the session's end cause when the
-    /// pump's liveness clock reported a stall, so
-    /// [`Self::wait_session_end`] prefers it over the plain pump-finished end.
-    stall_facts: Mutex<Option<SessionEndFacts>>,
+    /// The session's ONE end fact: `Running` until one terminal observation
+    /// lands, then write-once. Every end reader asks this instead of folding the
+    /// pose with the pump's own facts ([`Self::session_end`]).
+    session_end: Arc<SessionEndSlot>,
+    /// The pump's independent liveness observation — the ONE input the loop's
+    /// landing fold consumes. `run` installs the live pump's channel and the
+    /// landing takes it, so no stall fact is read after the session ends.
+    stall_observation: Arc<Mutex<Option<SessionEndFacts>>>,
     /// Test-only injected failure for the next `connect`.
     #[cfg(test)]
     connect_fault: Mutex<Option<ConnectFault>>,
@@ -654,7 +717,8 @@ impl EngineDriver {
             hub,
             head_source,
             close: tokio::sync::Mutex::new(None),
-            stall_facts: Mutex::new(None),
+            session_end: Arc::new(SessionEndSlot::new()),
+            stall_observation: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             connect_fault: Mutex::new(None),
             #[cfg(test)]
@@ -699,9 +763,30 @@ impl EngineDriver {
 
     /// `true` once the session machine is teardown-bound: `Stopping` from the
     /// close's first statement, `Stopped` when the teardown completes.
+    ///
+    /// This is the POSE projection — "has teardown begun?" — never the end
+    /// cause; a reader asking why the session ended asks
+    /// [`Self::session_end`], which is total and already carries the intended
+    /// stop.
     #[must_use]
     pub fn is_stopped(&self) -> bool {
         self.current_phase().is_terminal()
+    }
+
+    /// The session's ONE end fact: [`SessionEnd::Running`] until a terminal
+    /// observation lands, then the cause that ended it.
+    #[must_use]
+    pub fn session_end(&self) -> SessionEnd {
+        self.session_end.current()
+    }
+
+    /// Record one terminal observation into the session's ONE end slot.
+    ///
+    /// The slot's write-once policy is the fact's; this is the funnel that makes
+    /// a losing offer visible, so a duplicate terminal write is observable
+    /// rather than silently dropped.
+    pub(crate) fn record_session_end(&self, end: SessionEnd) -> SessionEndWrite {
+        record_end(&self.session_end, end)
     }
 
     /// The engine host's process-lifetime hub.
@@ -1026,10 +1111,11 @@ impl EngineDriver {
             }
         };
 
-        // Retain the pump's own liveness facts before the loop task takes
-        // ownership: a stall its independent clock reports is this session's
-        // end cause, not an anonymous pump end.
-        *self.stall_facts.lock() = Some(pump.stall_facts());
+        // Hand the pump's independent liveness channel to the session's end
+        // before the loop task takes ownership: the loop's landing consumes it,
+        // so a stall its clock reports is the end that landing follows rather
+        // than an anonymous pump finish.
+        *self.stall_observation.lock() = Some(pump.stall_facts());
 
         // Arm the completion broadcast: the sender is owned by the spawned task,
         // so wherever the pump ends — cooperative return, stream end, abort, or
@@ -1037,6 +1123,8 @@ impl EngineDriver {
         // resolves. No explicit send is needed; channel close IS the terminal
         // event (which is also what makes the panic path work).
         let completion = self.session.take_completion();
+        let session_end = Arc::clone(&self.session_end);
+        let stall_observation = Arc::clone(&self.stall_observation);
         let (launch, parked) = tokio::sync::oneshot::channel();
         let handle = degenbot_core::runtime::get_runtime().spawn(async move {
             let _completion = completion;
@@ -1046,7 +1134,12 @@ impl EngineDriver {
             if parked.await.is_err() {
                 return;
             }
+            // The loop's ONE landing: this task is the only place that sees
+            // whether the loop returned or was torn out, so it is the only
+            // writer of a pump-returned end fact.
+            let landing = LoopLanding::armed(&session_end, &stall_observation);
             pump.run_with_stream(combined, first_block).await;
+            landing.land();
         });
 
         // The landing is the ONLY way the live loop enters the session: a
@@ -1057,15 +1150,6 @@ impl EngineDriver {
                 DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
             })?;
         Ok(())
-    }
-
-    /// The pump's retained liveness fact, if its independent clock published
-    /// one — the end cause the session reports instead of a clean pump end.
-    pub(crate) fn pump_stall_fact(&self) -> Option<SessionEndCause> {
-        self.stall_facts
-            .lock()
-            .as_ref()
-            .and_then(SessionEndFacts::current)
     }
 
     /// The `S+1..W` range a resume must close, when the snapshot seed is behind
@@ -1107,6 +1191,11 @@ impl EngineDriver {
 
     /// The one teardown body, run under the shared completion latch.
     async fn teardown(&self) -> TeardownReport {
+        // The session's end is the owner's stop from this statement on: the fact
+        // is written BEFORE the join, so a stall or a losing loop landing that
+        // unfolds while the session unwinds cannot re-author it.
+        self.record_session_end(SessionEnd::Ended(SessionEndCause::IntendedStop));
+
         // The table's teardown entry first: it is the machine's own answer to
         // "has teardown begun?", which every guard (and `is_stopped`) reads.
         let mut mv = match self.session.take(PumpEvent::Stop) {
@@ -1377,11 +1466,11 @@ impl EngineDriver {
         self.local_pump_for_fixture()
     }
 
-    /// Hand the driver the pump liveness facts a running `run` would retain, so
-    /// a test can read [`EngineDriver::wait_session_end`]'s cause without a live
-    /// pump loop.
+    /// Hand the driver the pump liveness observation a running `run` installs, so
+    /// a test can drive the loop's landing fold without a live pump loop. A
+    /// seeded body's landing consumes it exactly as the production landing does.
     pub(crate) fn seed_stall_facts_for_test(&self, facts: SessionEndFacts) {
-        *self.stall_facts.lock() = Some(facts);
+        *self.stall_observation.lock() = Some(facts);
     }
 
     /// Build the session in a pose a test cannot reach without a live WS
@@ -1406,6 +1495,8 @@ impl EngineDriver {
                 // exactly as production hands it over: the channel's close is the
                 // completion signal, so a panic completes too.
                 let completion = self.session.take_completion();
+                let session_end = Arc::clone(&self.session_end);
+                let stall_observation = Arc::clone(&self.stall_observation);
                 let (launch, parked) = tokio::sync::oneshot::channel();
                 let handle = degenbot_core::runtime::get_runtime().spawn(async move {
                     let _completion = completion;
@@ -1418,7 +1509,11 @@ impl EngineDriver {
                     // live loop — normal, early, or a panic unwind — publishes
                     // the pump-exit fact.
                     let _guard = SeededExitGuard(control);
+                    // The same ONE landing fact production records, over the
+                    // seeded liveness observation.
+                    let landing = LoopLanding::armed(&session_end, &stall_observation);
                     body.await;
+                    landing.land();
                 });
                 self.session
                     .seed_running_for_test(Box::new(LiveLoop::armed(handle, launch)));
@@ -2219,26 +2314,79 @@ mod tests {
 
     // ── the completion broadcast ─────────────────────────────────────────
 
-    /// The pump's own liveness fact is the session's end cause: a stall close
-    /// reads as the unexpected session end, a clean end as the pump finishing.
+    /// The pump's own liveness observation is an input to the loop's landing: a
+    /// stall that published before the loop's cooperative close IS the session's
+    /// end, and a clean landing without one is the pump finishing.
     #[test]
-    fn wait_session_end_prefers_the_pumps_stall_fact() {
+    fn a_stall_landing_beats_the_clean_finish_it_caused() {
         let stalled = driver_for_test();
-        stalled.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
         let (publisher, facts) = SessionEndFacts::channel();
         publisher.publish(SessionEndCause::StallWatchdogTripped);
         stalled.seed_stall_facts_for_test(facts);
+        stalled.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
         assert_eq!(
             runtime().block_on(stalled.wait_session_end()),
-            SessionEndCause::StallWatchdogTripped
+            SessionEnd::Ended(SessionEndCause::StallWatchdogTripped)
         );
 
         let clean = driver_for_test();
         clean.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
         assert_eq!(
             runtime().block_on(clean.wait_session_end()),
-            SessionEndCause::PumpFinished,
+            SessionEnd::Ended(SessionEndCause::PumpFinished),
             "a loop that ends on its own reports the plain pump-finished end"
+        );
+    }
+
+    /// The owner's stop writes the end fact BEFORE the pump join, so the loop's
+    /// own landing — even a stall it published while unwinding — is a losing
+    /// observation, not a second end.
+    #[test]
+    fn an_intended_stop_outranks_the_landing_that_follows_it() {
+        let driver = Arc::new(driver_for_test());
+        let (publisher, facts) = SessionEndFacts::channel();
+        driver.seed_stall_facts_for_test(facts);
+        let (release, parked) = tokio::sync::oneshot::channel::<()>();
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async move {
+            let _ = parked.await;
+        })));
+
+        runtime().block_on(async {
+            let closing = tokio::spawn({
+                let driver = Arc::clone(&driver);
+                async move { driver.close().await }
+            });
+            // The teardown entry lands as `Stopping`, and its end fact is written
+            // before it joins the pump.
+            while driver.current_phase() != PumpPhase::Stopping {
+                tokio::task::yield_now().await;
+            }
+            publisher.publish(SessionEndCause::StallWatchdogTripped);
+            release.send(()).expect("release the parked loop");
+            assert_eq!(
+                closing.await.expect("the teardown task").pump,
+                PumpExit::Cooperative
+            );
+        });
+
+        assert_eq!(
+            driver.session_end(),
+            SessionEnd::Ended(SessionEndCause::IntendedStop),
+            "the owner's stop is the end; the loop's stall landing lost the race"
+        );
+    }
+
+    /// A loop that panics never lands a return, so its end fact is the loud
+    /// abort — never the clean pump finish.
+    #[test]
+    fn a_panicking_loop_lands_the_aborted_end_fact() {
+        let driver = driver_for_test();
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {
+            panic!("simulated pump panic");
+        })));
+        assert_eq!(
+            runtime().block_on(driver.wait_session_end()),
+            SessionEnd::Ended(SessionEndCause::Aborted)
         );
     }
 
@@ -2302,7 +2450,7 @@ mod tests {
         driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
         assert_eq!(
             runtime().block_on(driver.wait_session_end()),
-            crate::arb_engine::session_end::SessionEndCause::PumpFinished
+            SessionEnd::Ended(SessionEndCause::PumpFinished)
         );
     }
 }

@@ -20,7 +20,7 @@ use crate::arb_engine::pump_session::PumpDecline;
 use crate::arb_engine::session_events::{ClaimRefusal, SessionEvent};
 use crate::arb_engine::{
     BlockMetadata, ConnectRefusal, CrawlRefusal, DriverError, EngineDriver, EngineStages,
-    PumpEvent, PumpExit, PumpPhase, TeardownReport,
+    PumpEvent, PumpExit, PumpPhase, SessionEnd, SessionEndCause, TeardownReport,
 };
 use crate::bot_core::bot::Bot;
 use crate::bot_core::{ConstructionRoute, PumpControl};
@@ -388,15 +388,21 @@ fn a_stream_end_lands_ended_and_publishes_one_session_end_fact() {
     });
     assert_eq!(
         runtime().block_on(driver.wait_session_end()),
-        crate::arb_engine::SessionEndCause::PumpFinished
+        SessionEnd::Ended(SessionEndCause::PumpFinished)
     );
-    // Exactly one exit fact: a second observation is the retained fact.
+    // Exactly one end fact: a second observation is the retained fact.
     assert_eq!(
         runtime().block_on(driver.wait_session_end()),
-        crate::arb_engine::SessionEndCause::PumpFinished
+        SessionEnd::Ended(SessionEndCause::PumpFinished)
     );
     runtime().block_on(driver.close());
     assert_eq!(driver.current_phase(), PumpPhase::Stopped);
+    // The write-once fact survives the teardown that follows: the session ended
+    // when the pump landed, and the owner's close is bookkeeping.
+    assert_eq!(
+        driver.session_end(),
+        SessionEnd::Ended(SessionEndCause::PumpFinished)
+    );
 }
 
 #[test]
@@ -410,10 +416,12 @@ fn a_panicking_live_loop_lands_ended_and_reports_the_join_error() {
     assert_eq!(driver.current_phase(), PumpPhase::Running);
 
     // A panic is a completion too: the broadcast closes during the unwind, and
-    // the exit guard has published the pose edge by then.
+    // the exit guard has published the pose edge by then. The LOOP never landed,
+    // so its end fact is the loud abort — never the clean pump finish.
     assert_eq!(
         runtime().block_on(driver.wait_session_end()),
-        crate::arb_engine::SessionEndCause::PumpFinished
+        SessionEnd::Ended(SessionEndCause::Aborted),
+        "a panic can never read as the clean pump end"
     );
     assert_eq!(
         driver.current_phase(),
@@ -452,7 +460,7 @@ fn a_live_loop_never_ticks_before_its_pose_lands() {
         );
         assert_eq!(
             runtime().block_on(driver.wait_session_end()),
-            crate::arb_engine::SessionEndCause::PumpFinished
+            SessionEnd::Ended(SessionEndCause::PumpFinished)
         );
         assert_eq!(driver.current_phase(), PumpPhase::Ended);
     }
@@ -468,7 +476,7 @@ fn a_shutdown_return_lands_ended() {
     // is gone.
     assert_eq!(
         runtime().block_on(driver.wait_session_end()),
-        crate::arb_engine::SessionEndCause::PumpFinished
+        SessionEnd::Ended(SessionEndCause::PumpFinished)
     );
     assert_eq!(driver.current_phase(), PumpPhase::Ended);
     runtime().block_on(driver.close());

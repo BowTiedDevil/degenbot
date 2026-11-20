@@ -552,14 +552,17 @@ class ArbitrageEngine:
         """
     def session_end_future(self, /) -> Any:
         """
-        Awaitable session-end DETECTION FACT: resolves the core
-        `SessionEndCause` name once the spawned pump task finishes — cooperative
-        timed exit (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. The
-        Python runner awaits this instead of polling, so a completed pump
-        triggers the ordinary graceful shutdown within one event-loop turn. A
-        consumer that awaits it AFTER the pump already ended still resolves (the
-        completion is a retained broadcast, not a one-shot signal consumed at
-        creation).
+        Awaitable session-end FACT: resolves the session's ONE end fact name —
+        the core `SessionEnd` spelling, whose cause is `IntendedStop`,
+        `PumpFinished`, `StallWatchdogTripped`, or `Aborted` — once the spawned
+        pump task finishes: a cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), a WS
+        stream end, an abort, or a panic. The answer is terminal by then: a session
+        still `Running` is a loop torn out from under the session, and it lands
+        `Aborted` rather than a clean finish. The Python runner awaits this instead
+        of polling, so a completed pump triggers the ordinary graceful shutdown
+        within one event-loop turn. A consumer that awaits it AFTER the pump already
+        ended still resolves (the completion is a retained broadcast, not a one-shot
+        signal consumed at creation).
         """
     def set_event_buffer_max_age(self, /, max_age: SupportsIndex | None) -> None:
         """
@@ -5215,10 +5218,11 @@ def session_end_rank(
     The core Session-end ranking over the stable fact spellings — the Python
     session watch's ONE verdict source (never a local task-completion table).
 
-    `cause` is the detection cause name (`PumpFinished` /
-    `StallWatchdogTripped`), `consumer` the translated consumer outcome
-    (`QuietEnd` / `PumpStopped` / `Failed`), `registration` the registration
-    outcome (`Completed` / `Failed`); `None` records an absent fact. Returns
+    `cause` is the session's end-cause name (`IntendedStop` / `PumpFinished` /
+    `StallWatchdogTripped` / `Aborted` — `IntendedStop` ranks as the intended
+    end), `consumer` the translated consumer outcome (`QuietEnd` / `PumpStopped`
+    / `Failed`), `registration` the registration outcome (`Completed` /
+    `Failed`); `None` records an absent fact. Returns
     the ranked `(verdict, raise_slot)` names — the core's stable spellings
     (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`, and `Nothing` /
     `Registration` / `Consumer` / `SessionEnd`).

@@ -186,8 +186,9 @@ impl EngineDriver {
 
     // observation of the session itself
     pub fn current_phase(&self) -> PumpPhase;
-    pub fn is_stopped(&self) -> bool;
-    pub async fn wait_session_end(&self) -> SessionEndCause;   // already in `session_end.rs`
+    pub fn is_stopped(&self) -> bool;                          // the pose projection: has teardown begun?
+    pub fn session_end(&self) -> SessionEnd;                   // the session's ONE end fact
+    pub async fn wait_session_end(&self) -> SessionEnd;        // already in `session_end.rs`
     pub fn bot(&self) -> &Arc<Bot>;
     pub fn stages(&self) -> &Arc<EngineStages>;
     pub fn hub(&self) -> &Arc<Hub>;
@@ -225,18 +226,19 @@ crawl (3, restated by D4), channel hand-offs (2, replaced by D5),
 `pump_handle_armed` (the pose answers it: `PumpPhase::live_loop_armed`,
 `pump_session.rs:83`), and the snapshot-seed pair (2 — S moves to the `Bot` door
 that already owns it, ADR-050 D2). The 41 members in `driver.rs`'s single
-`impl EngineDriver` block become 12; with `wait_session_end`, already in its own
-`impl EngineDriver` block (`session_end.rs:220`), the seam is 13 members — and
-the four that sequence a session are the ones that remain.
+`impl EngineDriver` block become 12; with the end fact's two readers
+(`session_end`, `wait_session_end`), already in their own `impl EngineDriver`
+block (`session_end.rs`), the seam is 14 members — and the four that sequence a
+session are the ones that remain.
 
-**As shipped (§6.8).** The seam carries twenty-one public members: those
-thirteen, the three crawl moves D2/D4 keep (`begin_crawl`, `begin_crawl_with`,
+**As shipped (§6.8).** The seam carries twenty-two public members: those
+fourteen, the three crawl moves D2/D4 keep (`begin_crawl`, `begin_crawl_with`,
 `crawl_handle`), and five one-line projections of state another home owns
 (`core`, `verify`, `pool_id_for_identity`, `snapshot_seed_block`,
 `set_snapshot_seed_block`). None of the five keeps a second copy of anything —
 each reads or writes the shared `Bot`, `BotState`, or verify home through that
 home's own door — so the decision (no capability state on the seam) stands
-while the count moved from thirteen to twenty-one. The snapshot-seed pair's
+while the count moved from fourteen to twenty-two. The snapshot-seed pair's
 authority is the shared `BotState` (`Bot::snapshot_seed_block` is the same
 read), and the FFI's engine getter goes through the shared core rather than
 through the driver. A caller inventory of the five
@@ -382,13 +384,19 @@ precedes every `Batch(N)`**, and a `Batch` never advances a block clock — the
 `Block` does. The enum has exactly two arms and **no `End` variant**. Natural
 end is the stream's exactly-once *closure*, and the delivery lifecycle stays its
 sole owner (`arb_engine/delivery_lifecycle.rs`): the session's pump loop maps
-that closure to the typed terminal fact — one per pump exit, stream end, panic,
-reorg/shutdown — where a *cause* is needed. The fact rides the session-end
-surface (`wait_session_end`, `session_end.rs:223`) and lands `Ended` or the
-teardown progression there; it is never a stream item. The stall arm leaves that
-vocabulary too: the Session consumer owns the watchdog that detects a stall (D6),
-so the verdict is the consumer's own report — a cause the reader produces cannot
-arrive on the stream the reader is consuming.
+that closure to the session's ONE end fact — the total `SessionEnd`, `Running`
+until a terminal observation lands and then exactly one typed cause
+(`IntendedStop` / `PumpFinished` / `StallWatchdogTripped` / `Aborted`). The
+landing is written where only the loop's own task can see it (a return lands
+`PumpFinished`, the stall its clock published before raising the cooperative
+close outranks that return, and a panic or an abort lands `Aborted`), while the
+owner's `close()` writes `IntendedStop` before it joins the pump; the fact is
+never a stream item. Its one slot (`SessionEndSlot`, read by `session_end()` and
+awaited through `wait_session_end`) is write-once, and a later observation is
+told the fact it retained (`SessionEndWrite`) instead of disappearing silently.
+The stall arm leaves that vocabulary too: the Session consumer owns the watchdog
+that detects a stall (D6), so the verdict is the consumer's own report — a cause
+the reader produces cannot arrive on the stream the reader is consuming.
 
 Exactly-once natural end keeps ADR-050 D3's mechanism: the delivery lifecycle is
 the one site that closes the stream, and closing it once is what makes the end a
@@ -441,23 +449,25 @@ clock (`consume.rs`'s `BlockClock`) and the progress/heartbeat record
 had begun to spell twice.
 
 **Session-end ranking is core-owned and pure.** The gathered end facts — the
-detection cause, the translated consumer outcome, the registration outcome, and
-the consumer's already-retrieved output — fold through one closed
+session's end cause, the translated consumer outcome, the registration outcome,
+and the consumer's already-retrieved output — fold through one closed
 `SessionEndObservation` and one pure `rank` in `arb_engine::session_end`:
 
 | Priority | Observation | `SessionEndVerdict` | `RaiseSlot` |
 |---|---|---|---|
 | 1 | registration outcome `Failed` (a task panic included — a panic is never clean completion) | `RegistrationFailed` | `Registration` |
-| 2 | consumer outcome `QuietEnd` (the intended consumer end) | `PumpEnded` | `Nothing` |
+| 2 | consumer outcome `QuietEnd`, or the end cause `IntendedStop` (the owner's stop) — the intended end | `PumpEnded` | `Nothing` |
 | 3 | consumer outcome `PumpStopped` (the unexpected session end) | `WatchdogTripped` | `SessionEnd` |
-| 4 | a detection cause, without an intended consumer end | `WatchdogTripped` | `SessionEnd` |
+| 4 | any other end cause (`PumpFinished` / `StallWatchdogTripped` / `Aborted`), without an intended end | `WatchdogTripped` | `SessionEnd` |
 | 5 | consumer outcome `Failed`, no higher-priority fact | `PumpEnded` | `Consumer` |
-| 6 | the empty remainder (no consumer outcome, no detection cause) | `PumpEnded` | `Nothing` |
+| 6 | the empty remainder (no consumer outcome, no end cause) | `PumpEnded` | `Nothing` |
 
-Registration failure is maximal; the intended consumer end disarms a
-simultaneous detection fact, because the expected close also publishes
-`PumpFinished`; the fold is total over every input combination and independent
-of fact arrival order — task completion order never re-authors the verdict.
+Registration failure is maximal; the intended end — the consumer's own close, or
+the owner's `IntendedStop` — disarms a simultaneous detection fact, because the
+expected close publishes one too. A pump that finished on its own, stalled, or
+was aborted is the unexpected session end: it never ranks as a clean end. The
+fold is total over every input combination and independent of fact arrival
+order — task completion order never re-authors the verdict.
 The core module never names `degenbot-batch-executor::ConsumerEnd`: the
 translation lives in that crate (the `From` impls on its own `ConsumerEnd` /
 `ConsumerReport`) and in the adapters. The fold returns the retained consumer
@@ -552,9 +562,9 @@ change: `PyArbEngine` (`rust/crates/shells/degenbot-python/src/bot/engine/`),
 
 ## 4. Consequences
 
-**The session becomes deep.** A caller learns twenty-one public members instead
-of forty-one — thirteen lifecycle moves, the three crawl moves, and five
-one-line projections of shared state (D1, as shipped) — and the sixteen
+**The session becomes deep.** A caller learns twenty-two public members instead
+of forty-one — fourteen lifecycle/observation members, the three crawl moves,
+and five one-line projections of shared state (D1, as shipped) — and the sixteen
 forwarded operations move to the seam that performs them, where they are
 already the interface. Locality improves in the
 opposite direction too: a failure in path registration no longer names the
@@ -705,7 +715,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 | start ordering | `subscribe()` … `resume()` with the consumer attached between them by convention | `connect(node)` → `Connected { link_block }`, then `run(claim)`; each move refuses a concurrent one, and the claim is the attachment proof |
 | close | `stop() -> Result<(), DriverError>` — synchronous, `block_on` inside the runtime | `close() -> TeardownReport` — asynchronous, total from every pose, idempotent, shared; the report is *returned*, not a `Result` union |
 | resume gate | `DriverError::NoResultReceiver` — deleted with its atomic as unrepresentable | a second `claim_consumer()` declines with `ClaimRefusal::AlreadyClaimed`; `run` cannot be called without a claim |
-| session end | natural end indistinguishable from a dropped channel; the stall verdict published on `SessionEndCause` beside the crate-level heartbeat; each driver ranked its own end verdict locally | the stream's exactly-once closure, plus one typed terminal fact per pump exit on the session-end surface; one core pure fold (`arb_engine::session_end::rank` over `SessionEndObservation`) returns the `SessionEndVerdict` + `RaiseSlot` + retained consumer output, and both drivers render that product |
+| session end | natural end indistinguishable from a dropped channel; the stall verdict published on `SessionEndCause` beside the crate-level heartbeat; each driver ranked its own end verdict locally | the stream's exactly-once closure, plus the session's ONE total end fact (`SessionEnd`: `Running`, else one typed `SessionEndCause` from `IntendedStop` / `PumpFinished` / `StallWatchdogTripped` / `Aborted`) written once through `SessionEndSlot` with a typed duplicate policy (`SessionEndWrite`); one core pure fold (`arb_engine::session_end::rank` over `SessionEndObservation`) returns the `SessionEndVerdict` + `RaiseSlot` + retained consumer output, and both drivers render that product |
 | snapshot seed | `EngineDriver::{snapshot_seed_block, set_snapshot_seed_block}` | `Bot::snapshot_seed_block` over the shared `BotState` fact it already owns (ADR-050 D2); the driver keeps a derived read/write pair over that same fact, which no consumer routes through (the FFI's engine getter reads the shared core) |
 | path registry | `EngineDriver::{register_path, register_and_solve_path, deregister_path, set_path_cap, path_count, path_dedups, path_info_for}` | `EngineStages::{…}` (same names) |
 | retune / inline sim | `EngineDriver::{apply_retune, set_inline_simulator}` | `EngineStages::{apply_retune, set_inline_simulator}` |
@@ -742,8 +752,9 @@ retired name in the "was" column only (the same rows the `CHANGELOG` carries):
   (the `Detached → Subscribed` move, returning the link block), `start` (this
   shell's own one-call ritual: `connect` plus the verify home's configuration),
   `close` as an awaitable returning the rendered teardown report, and
-  `session_end_future` (the core detection fact) — and loses the lifecycle/path
-  forwarders; its `map_path_registration_err`/verify mappers re-point at the
+  `session_end_future` (the session's ONE end fact name, whose cause spells
+  `IntendedStop` / `PumpFinished` / `StallWatchdogTripped` / `Aborted`) — and
+  loses the lifecycle/path forwarders; its `map_path_registration_err`/verify mappers re-point at the
   doors that now raise those refusals. The hand-off is not a pymethod:
   `SessionConsumer.attach(engine)` takes the engine's one `EventHandoff`, and
   the consumer's own `resume`/`run` are the session moves. Python awaits
@@ -889,8 +900,9 @@ both are recorded rather than re-litigated:
   shorthand written before the slice. The intent is unchanged — the move carries
   no configuration, because the provider and its retry policy are construction
   values on the verify home.
-- **The seam's member count.** Twenty-one, not thirteen (D1, as shipped): the
-  thirteen lifecycle members, the three crawl moves, and five one-line
+- **The seam's member count.** Twenty-two, not fourteen (D1, as shipped): the
+  fourteen lifecycle/observation members (the end fact's `session_end` read sits
+  beside `wait_session_end`), the three crawl moves, and five one-line
   projections of shared state.
 
 **Certification evidence.** The accepted gate set ran in order on this tree:

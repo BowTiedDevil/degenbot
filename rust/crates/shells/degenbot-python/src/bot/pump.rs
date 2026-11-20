@@ -138,13 +138,17 @@ pub(crate) fn start(
     })
 }
 
-/// Awaitable session-end DETECTION FACT over [`EngineDriver::wait_session_end`].
+/// Awaitable session-end FACT over [`EngineDriver::wait_session_end`].
 ///
-/// Resolves the core [`SessionEndCause`](degenbot_bot::arb_engine::SessionEndCause)
-/// name once the pump task finishes — cooperative timed exit
-/// (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. A consumer that
-/// awaits it AFTER the pump already ended still resolves (the completion is a
-/// retained broadcast, not a one-shot signal consumed at creation).
+/// Resolves the session's ONE end fact name — the core
+/// [`SessionEnd`](degenbot_bot::arb_engine::SessionEnd) spelling, whose cause is
+/// `IntendedStop`, `PumpFinished`, `StallWatchdogTripped`, or `Aborted` — once
+/// the pump task finishes: a cooperative timed exit (`HOTPATH_SHUTDOWN_MS`), a WS
+/// stream end, an abort, or a panic. The answer is terminal by then: a session
+/// still `Running` is a loop torn out from under the session, and it lands
+/// `Aborted` rather than a clean finish. A consumer that awaits it AFTER the pump
+/// already ended still resolves (the completion is a retained broadcast, not a
+/// one-shot signal consumed at creation).
 ///
 /// # Errors
 /// Only if the `PyO3` bridge itself fails to create the future.
@@ -162,10 +166,11 @@ pub(crate) fn session_end_future<'py>(
 /// The core Session-end ranking over the stable fact spellings — the Python
 /// session watch's ONE verdict source (never a local task-completion table).
 ///
-/// `cause` is the detection cause name (`PumpFinished` /
-/// `StallWatchdogTripped`), `consumer` the translated consumer outcome
-/// (`QuietEnd` / `PumpStopped` / `Failed`), `registration` the registration
-/// outcome (`Completed` / `Failed`); `None` records an absent fact. Returns
+/// `cause` is the session's end-cause name (`IntendedStop` / `PumpFinished` /
+/// `StallWatchdogTripped` / `Aborted` — `IntendedStop` ranks as the intended
+/// end), `consumer` the translated consumer outcome (`QuietEnd` / `PumpStopped`
+/// / `Failed`), `registration` the registration outcome (`Completed` /
+/// `Failed`); `None` records an absent fact. Returns
 /// the ranked `(verdict, raise_slot)` names — the core's stable spellings
 /// (`PumpEnded` / `RegistrationFailed` / `WatchdogTripped`, and `Nothing` /
 /// `Registration` / `Consumer` / `SessionEnd`).
