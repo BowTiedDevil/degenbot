@@ -351,11 +351,8 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # A str ("latest") or None maps to None (latest); an int maps to Some.
         block_opt = block_identifier if isinstance(block_identifier, int) else None
         rates = self._arm.fetch_rates(block_opt)
-        return cast(
-            "tuple[int, ...]",
-            tuple(
-                starmap(fixed_point_mul_down, zip(self._base_scaling_factors, rates, strict=True))
-            ),
+        return tuple(
+            starmap(fixed_point_mul_down, zip(self._base_scaling_factors, rates, strict=True))
         )
 
     def _stale_rates(self) -> bool:
