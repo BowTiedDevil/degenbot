@@ -12,7 +12,11 @@ from typing import Self
 
 import pytest
 
-from degenbot.exceptions import AnvilChildExitError, AnvilSpawnError
+from degenbot.exceptions import (
+    AnvilChildExitError,
+    AnvilSpawnError,
+    AnvilSpawnTimeoutError,
+)
 from tests.fork_endpoint import (
     ForkUpstreamUnavailable,
     UpstreamAnswer,
@@ -227,3 +231,31 @@ def test_spawn_does_not_retry_a_failure_that_spent_the_deadline():
             clock=_clock(0.0, 120.0),
         )
     assert spawn.calls == 1
+
+
+def test_spawn_does_not_retry_a_failure_outside_the_one_eligible_cause():
+    """Default-deny: only a child killed by its upstream ever reaches attempt two.
+
+    The typed family is the policy surface (ADR-103): a program that cannot run
+    is the environment's, a spent deadline is the budget's (180s spent twice is
+    past the suite's 300s per-test budget), and a failure the family does not
+    name is a fact about the fork or this code. Each propagates at the first
+    attempt — whatever the endpoint says about itself.
+    """
+
+    class UnmappedFailure(RuntimeError):
+        """A spawn failure the typed family does not name."""
+
+    for cause in (AnvilSpawnError, AnvilSpawnTimeoutError, UnmappedFailure):
+        spawn = _Spawn(failures=5, cause=cause)
+        slept: list[float] = []
+        with pytest.raises(cause):
+            spawn_fork(
+                spawn,
+                fork_url=URL,
+                probe=_scripted(UpstreamAnswer.ANSWERED, UpstreamAnswer.RATE_LIMITED),
+                sleep=slept.append,
+                clock=_clock(0.0),
+            )
+        assert spawn.calls == 1, cause
+        assert slept == [], cause

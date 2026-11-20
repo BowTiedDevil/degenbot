@@ -13,17 +13,18 @@ re-issue it. Two things the harness can do, and this module does:
 
 * wait for the endpoint to answer again *before* spawning — the probe is a
   plain ``eth_chainId`` liveness call, bounded, with exponential backoff;
-* give the spawn one second chance when a failed spawn coincides with an
-  unhealthy endpoint — never when the program itself could not run.
+* give a second attempt to the one failure that can differ on it: a child
+  killed by its upstream before readiness, and only when a failed spawn
+  coincides with an unhealthy endpoint.
 
-The classification is two-layered and never the message text: a typed cause
-names what failed (a program that could not run is the environment's problem
-and is never retried), and a second probe decides whether the upstream or the
-fork itself did — an endpoint that answers while the spawn failed is the
-fork's problem (bad flags, a missing block) and retrying would only hide it.
-Neither does the harness retry a spawn that was slow enough to have spent the
-deadline: only a fast child death leaves room in the test's budget for a
-second attempt.
+The rule is an allowlist over the typed cause (ADR-103), default-deny. A
+program that could not run is the environment's problem; a spent deadline is
+the budget's — one attempt already cost the whole fork spawn deadline, and a
+second would run past the suite's per-test budget; a readiness fault, or a
+failure the typed family does not name, is a fact about the fork or this
+code. Retrying those spends budget and can hide the fork's real failure
+behind the upstream's answer. A second attempt is never automatic: the
+re-probe and a cost gate each independently refuse one.
 
 Scope is the test lane: production spawn failures stay loud and unretried.
 
@@ -44,7 +45,7 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Final
 
-from degenbot.exceptions import AnvilSpawnError
+from degenbot.exceptions import AnvilChildExitError
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
@@ -190,7 +191,7 @@ def spawn_fork[T](
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> T:
-    """Spawn a fork after the target answers, retrying a transient failure.
+    """Spawn a fork after the target answers, retrying the one eligible failure.
 
     A local or in-memory spawn (``fork_url is None``) has no upstream to wait
     for, and a non-HTTP target cannot be probed; neither is retried.
@@ -200,10 +201,10 @@ def spawn_fork[T](
 
     Raises:
         ForkUpstreamUnavailable: The endpoint never answered the probe.
-        RuntimeError: The spawn failed; re-raised unchanged when the retry
-            budget, the deadline, or evidence of a healthy endpoint rules out an
-            upstream cause.
-
+        AnvilChildExitError: A child killed by its upstream; re-raised once
+            the re-probe or the cost gate rules out a second attempt.
+        RuntimeError: Any other spawn failure, re-raised at the first attempt
+            (default-deny).
     """
     target = fork_url if fork_url and fork_url.startswith(_PROBED_SCHEMES) else None
     attempt = 1
@@ -213,11 +214,12 @@ def spawn_fork[T](
         started = clock()
         try:
             return spawn()
-        except AnvilSpawnError:
-            # A program that could not run is the environment's problem:
-            # no endpoint state makes a second attempt more likely to run.
-            raise
-        except RuntimeError:
+        except AnvilChildExitError:
+            # The one cause a second attempt can differ on: a child killed by
+            # its upstream (a refused genesis fetch) gets another chance once
+            # the endpoint answers again. Everything else — a program that
+            # cannot run, a spent deadline, a readiness fault, a failure this
+            # family does not name — propagates at the first attempt.
             elapsed = clock() - started
             if (
                 target is None

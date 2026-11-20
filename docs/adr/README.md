@@ -132,7 +132,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [100](ADR-100-progressive-custom-adapter-validation.md) | Progressive custom-adapter validation — a declared interface, explicit cases, execution-backed certification | accepted (implemented) |
 | [101](ADR-101-immutable-typed-executor-release-packages.md) | Immutable typed executor release packages | accepted (implemented) |
 | [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier, with generated wiring | accepted (implemented for hook wiring; doc table and parity manifest pending) |
-| [103](ADR-103-fork-spawn-failure-vocabulary.md) | The fork spawn-failure vocabulary — cause-named at the seam, typed across the FFI | accepted (implemented) |
+| [103](ADR-103-fork-spawn-failure-vocabulary.md) | The fork spawn-failure vocabulary — cause-named at the seam, typed across the FFI, retried only by typed cause | accepted (implemented) |
 
 ## Historical — provenance only
 

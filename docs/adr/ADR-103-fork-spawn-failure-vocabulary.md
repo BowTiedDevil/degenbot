@@ -59,14 +59,26 @@ type; no wrapper classes and no message parsing. Everything else (the
 transport runtime, the IPC connect, a dev-RPC error) stays a `RuntimeError`
 carrying the cause's own text.
 
-### D3 — The retry policy acts on the cause
+### D3 — The retry rule is an allowlist over the typed cause, default-deny
 
-A spawn failure raises `AnvilSpawnError` when the program could not run: the
-environment is never the upstream's fault and no endpoint state makes a second
-attempt more likely to run, so the retry helper fails fast on it. Every other
-spawn failure keeps the evidence policy — a second probe decides whether the
-upstream or the fork failed — and the evidence is the typed cause plus the
-probe, never the message text.
+A spawn failure gets a second attempt only when its typed cause is
+`AnvilChildExitError` — a child killed by its upstream before readiness, the
+one failure that can differ on the next attempt once the endpoint answers
+again. Everything else propagates at the first attempt: a program that cannot
+run is the environment's; a spent deadline (`AnvilSpawnTimeoutError`) is the
+budget's — one attempt already cost the whole fork spawn deadline, so a second
+would run past the suite's per-test budget; a readiness fault, or a failure the
+family does not name, is a fact about the fork or this code. Retrying those
+spends budget and can hide the fork's real failure behind the upstream's
+answer.
+
+Eligibility is never automatic: the re-probe (the endpoint must still be
+unhealthy) and a cost gate (a failed spawn that spent past
+`SPAWN_RETRY_DEADLINE_S`) each independently refuse a second attempt. The rule
+lives with the policy that consumes it — the fork lane's one catch — and is
+pinned by tests on both the eligible and the refused side. The core carries the
+vocabulary, not the verdict: there is no `is_retryable()` on `ForkError`,
+because no core caller retries a spawn (see D6).
 
 ### D4 — The spawn shape owns its knobs
 
@@ -87,14 +99,30 @@ per real-world class — a dead child (`Fatal`), an unrunnable program
 detects a binding bump demoting one of those shapes: the loud `Unrecognized`
 path names it instead of silently re-bucketing.
 
+### D6 — The retry policy stays a test-lane composition
+
+No production spawn-retry entry ships. Such an entry would have to own the
+upstream probe, the attempt count, and the budget story — and the operator's
+endpoint declaration (`tests.env`) lives in the test lane, not in a core the
+bot ships. Deferred, not rejected: re-open when a production caller spawns
+forks (the entry and the core's eligibility verdict land together) or when a
+second retrying consumer appears.
+
+`ForkError::Spawn` keeps one `io::Error`, errno and all. The `ETXTBSY` class is
+fixed at its root (D5), and any remaining transient spawn fault is bounded by
+the cost gate to one extra attempt. Splitting the variant into
+transient/permanent io kinds would be vocabulary with no consumer — and
+`std::io::ErrorKind` does not name the interesting kinds with confidence on
+every platform this workspace compiles for.
+
 ## Consequences
 
 - The classification is one total pure table over every shape the binding's
   anvil spawn path produces, plus the shapes only the geth bindings (or no code
   at all) produce. Callers match our variants; the binding's enum is
   implementation.
-- The retry policy's one typed branch replaces the message-shaped coupling the
-  test fixture used to fabricate.
+- The retry rule is one catch and a default-deny, tested on both sides — the
+  vocabulary's consumer proves the classification is a product, not wording.
 - The public builder carries a real capability instead of two test knobs, and
   downstream crates' tests can reach the same seam.
 - A binding upgrade that changes a failure shape surfaces as a named
@@ -110,6 +138,12 @@ path names it instead of silently re-bucketing.
 - **Keep one `RuntimeError` and parse the sentence.** Rejected: that is the
   stringly coupling the fixture's docstring already apologized for, and it
   fails silently on a wording change.
+- **Default-allow: retry any spawn failure a re-probe can blame on the
+  upstream.** Rejected: it is what the first policy version did, and a failure
+  the family does not name then burns the probe budget and re-raises the
+  upstream's unavailability over the fork's real failure — the exact shape a
+  red test caught before the rule was named.
+
 - **Python-side wrapper classes under `AnvilError`.** Rejected: the repository's
   precedent for FFI-raised causes is a typed exception re-exported from
   `degenbot.exceptions`, and a second hierarchy would split one vocabulary in
