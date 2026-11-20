@@ -551,10 +551,10 @@ pub struct EngineDriver {
     /// The engine host's process-lifetime event hub.
     hub: Arc<Hub>,
 
-    /// The hub's ONE head source, which this session's pump owns: the pump's
-    /// accepted-header edge publishes into it. `None` when another transport
-    /// already registered the hub's head source, so this pump must not publish
-    /// beside it.
+    /// The hub's one CLAIMED head source, when this session's pump owns it: the
+    /// pump's accepted-header edge publishes every accepted header into it.
+    /// `None` when a host-side watch or poller owns the claim, so this pump
+    /// publishes nothing beside it.
     head_source: Option<HeadSender>,
     /// The one teardown's completion, shared by every `close` caller.
     close: tokio::sync::Mutex<Option<TeardownReport>>,
@@ -629,13 +629,29 @@ impl EngineDriver {
 
     /// Adapter adoption: the caller already built the stage seam (the `PyO3`
     /// wrapper path). The driver mints a private hub through the engine's own
-    /// channel registration and composes; a host-minted hub uses
-    /// [`Self::from_stages_with_hub`].
+    /// channel registration, CLAIMS that hub's head source, and composes; a
+    /// host-minted hub uses [`Self::from_stages_with_hub`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the freshly minted private hub's head source is already
+    /// claimed. The hub is built here and claimed once, so the first claim is an
+    /// invariant of this construction and a panic means that invariant was
+    /// violated, not a recoverable construction failure.
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
         let mut hub = Hub::new();
         let channels = EngineChannelHandles::registration().register_on(&mut hub);
-        Self::assemble(bot, stages, Arc::new(hub), channels)
+        let hub = Arc::new(hub);
+        #[expect(
+            clippy::expect_used,
+            reason = "a fresh private hub's head source is unclaimed by construction; the claim can only fail if this constructor claimed twice"
+        )]
+        let head_source = Some(
+            hub.claim_head_source()
+                .expect("a fresh private hub's head source is unclaimed"),
+        );
+        Self::assemble(bot, stages, hub, channels, head_source)
     }
 
     /// Adapter adoption against a host-minted hub.
@@ -645,22 +661,31 @@ impl EngineDriver {
     /// engine, [`EngineChannelHandles::registration`]). A named channel is keyed
     /// by name per hub, so a hub backs at most one engine driver — a second
     /// `claim_consumer` returns `None`.
+    ///
+    /// `head_source` is the hub's claimed head publisher when this driver's pump
+    /// owns the clock (the session boot claims it and routes it here); `None`
+    /// when another transport owns the clock, so this pump publishes nothing.
+    /// The driver never claims: ownership is a routing decision made once, where
+    /// the hub is minted.
     #[must_use]
     pub fn from_stages_with_hub(
         bot: Arc<Bot>,
         stages: Arc<EngineStages>,
         attached: HostHub<EngineChannelHandles>,
+        head_source: Option<HeadSender>,
     ) -> Self {
         let (hub, channels) = attached.into_parts();
-        Self::assemble(bot, stages, hub, channels)
+        Self::assemble(bot, stages, hub, channels, head_source)
     }
 
-    /// Compose a driver over an already-bound hub and channel producers.
+    /// Compose a driver over an already-bound hub, channel producers, and
+    /// claimed head publisher.
     fn assemble(
         bot: Arc<Bot>,
         stages: Arc<EngineStages>,
         hub: Arc<Hub>,
         channels: EngineChannelHandles,
+        head_source: Option<HeadSender>,
     ) -> Self {
         // The session's ordered source: ONE producer end for both arms, attached
         // before any caller can claim the consumer end.
@@ -676,25 +701,6 @@ impl EngineDriver {
         let (completion_tx, pump_finished_rx) = watch::channel(false);
         let session = Arc::new(PumpSession::new(completion_tx));
         stages.install_session(Arc::clone(&session));
-
-        // The head source's OWNERSHIP is claimed here, once, at composition:
-        // the pump's accepted-header edge is the process's head clock, so the
-        // hosted head edge, every driver's head subscription, and the per-head
-        // reconciliation all read the one `newHeads` subscription the pump
-        // already holds instead of dialing a second one. A hub whose source a
-        // transport already owns keeps that owner; the pump then publishes
-        // nothing rather than racing it.
-        let head_source = match hub.register_head_source() {
-            Ok(sender) => Some(sender),
-            Err(refusal) => {
-                op_error!(
-                    domain = pump,
-                    %refusal,
-                    "EngineDriver: the hub head source is already owned; this pump publishes no heads"
-                );
-                None
-            }
-        };
 
         let verify_core = stages.core();
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
@@ -728,6 +734,15 @@ impl EngineDriver {
             #[cfg(test)]
             backfill_fault: AtomicBool::new(false),
         }
+    }
+
+    /// The hub's claimed head publisher, when this driver's pump owns the
+    /// clock. Cloned so a test can publish a head through the session's one
+    /// source — the same handle the pump's accepted-header edge uses.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn head_publisher(&self) -> Option<HeadSender> {
+        self.head_source.clone()
     }
 
     /// The shared `BotState` arc (the stage surface's `core` handoff).
@@ -1669,7 +1684,8 @@ mod tests {
 
         let bot = Arc::new(Bot::new(1));
         let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
-        let driver = EngineDriver::from_stages_with_hub(bot, stages, attached);
+        let head_source = host.hub().claim_head_source().ok();
+        let driver = EngineDriver::from_stages_with_hub(bot, stages, attached, head_source);
 
         assert!(
             Arc::ptr_eq(host.hub(), driver.hub()),

@@ -53,11 +53,12 @@ production paths or fenced, and each fence is a mechanism rather than a
 convention:
 
 - **No bounded `.send().await` under a `select!` or a `timeout`.** The
-  value-carrying side of the event hub uses **drop-oldest / latest-only**
-  channels instead (`degenbot-eventhub`'s `OverflowPolicy::DropOldestCounted`
-  and `OverflowPolicy::LatestOnly`), so an unconsumed event is superseded rather
-  than parked on a full buffer — a ring that can discard the oldest entry cannot
-  make a producer wait on a consumer.
+  value-carrying side of the event hub has no bounded send at all: a registered
+  source uses the explicit `OverflowPolicy::DropOldestCounted` ring (an
+  unconsumed event is superseded rather than parked on a full buffer, and a ring
+  that can discard the oldest entry cannot make a producer wait on a consumer),
+  and the head clock is a typed `watch` value its one owner replaces with
+  `send_replace`, so only the newest head survives.
 - **`await_holding_lock` is `deny` workspace-wide**
   (`rust/Cargo.toml` `[workspace.lints.clippy]`), which is the compiler's title
   on holding a `std`/sync guard across an await.
@@ -148,11 +149,12 @@ correctness bug. Commits are `git log --oneline` abbreviations at close-out.
 These are the epic's rules. They are stated as rules because each one is a
 mechanism in the tree today, not a preference:
 
-1. **Drop-oldest / latest-only eventhub channels over a bounded send under a
-   select loop.** A bounded `.send().await` inside a `select!` is a deadlock
-   waiting for a slow consumer; the hub's `DropOldestCounted` and `LatestOnly`
-   policies make supersession the contract. If a new producer needs backpressure,
-   it is a policy decision with a name, not a channel constructor argument.
+1. **Drop-oldest rings and the latest-value head clock over a bounded send
+   under a select loop.** A bounded `.send().await` inside a `select!` is a
+   deadlock waiting for a slow consumer; the hub's `DropOldestCounted` policy and
+   the head clock's `watch::Sender::send_replace` make supersession the contract
+   (only the newest head survives). If a new producer needs backpressure, it is a
+   policy decision with a name, not a channel constructor argument.
 2. **Never extend the `tokio::Mutex` pattern to invariant-bearing state.** The
    one surviving `tokio::sync::Mutex` guards a channel receiver; its
    `# Cancel safety` section carries the explicit fence. A lock whose invariant

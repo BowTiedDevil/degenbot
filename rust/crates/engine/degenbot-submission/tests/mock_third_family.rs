@@ -26,7 +26,7 @@ use degenbot_bot::strategy_host::{
     DriverPose, FacetStatus, FsmDecline, HeadReconciler, HostError, SessionDecline, SessionPhase,
     StrategyHost, StrategyNotice,
 };
-use degenbot_eventhub::{Hub, HubClass, HubError, HubEvent};
+use degenbot_eventhub::{Head, Hub, HubClass, HubError};
 use degenbot_submission::{SubmissionLedger, SubmissionState};
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
 use degenbot_substrate::nonce::{LanePolicy, NonceAuthority, StrategyId};
@@ -93,10 +93,7 @@ impl MockThirdFamily {
             ),
             "the hub tick must not require a mempool source"
         );
-        let mut head = services
-            .hub
-            .subscribe_head()
-            .expect("the host hub carries a head source");
+        let mut head = services.hub.subscribe_head();
 
         // Lane consumption over the one process authority: the lease is the
         // lowest free nonce at or above the confirmed chain nonce.
@@ -127,7 +124,7 @@ impl MockThirdFamily {
         report
             .send(MockRunReport {
                 nonce: lease.nonce(),
-                ticked_head: head.head(),
+                ticked_head: head.head().map(|head| head.number),
             })
             .expect("run report");
         DriverExit::Stopped
@@ -149,13 +146,10 @@ fn registry() -> Arc<RouteRegistry> {
     Arc::new(RouteRegistry::new(V2ConnectorIndex::default()))
 }
 
-fn head_event(number: u64) -> HubEvent {
-    HubEvent::NewHead {
+fn head_event(number: u64) -> Head {
+    Head {
         number,
-        timestamp: 0,
-        base_fee_per_gas: None,
-        gas_used: 0,
-        gas_limit: 0,
+        metadata: None,
     }
 }
 
@@ -164,7 +158,9 @@ fn head_event(number: u64) -> HubEvent {
 #[tokio::test]
 async fn mock_family_registers_enables_runs_and_stops_through_the_host() {
     let hub = Arc::new(Hub::new());
-    let head = hub.register_head_source().expect("head source registered");
+    let head = hub
+        .claim_head_source()
+        .expect("the hub's head source is claimed once");
     let authority = Arc::new(NonceAuthority::new(7));
     let ledger = Arc::new(SubmissionLedger::new());
     let mut host = StrategyHost::new(Arc::clone(&hub), registry(), Arc::clone(&authority));

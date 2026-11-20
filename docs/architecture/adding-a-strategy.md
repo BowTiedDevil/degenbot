@@ -276,24 +276,31 @@ There is **no** `ReactionKind::EachPoll`. The typed reaction vocabulary is the
 hub class plus its declared overflow policy
 (`rust/crates/foundation/degenbot-eventhub/src/`):
 
-- `HubClass` (`event.rs`): `NewHead | PoolEvent | PendingTx`.
-- `OverflowPolicy` (`policy.rs`): `DropOldestCounted { name } | LatestOnly |
+- `HubClass` (`event.rs`): `PoolEvent | PendingTx`.
+- `OverflowPolicy` (`policy.rs`): `DropOldestCounted { name } |
   UnboundedFlagged { name }` — declared once per source at
   `Hub::register_source`, visible via `Hub::policy_of`.
-- `Hub::subscribe(class) -> Result<Subscription, HubError>` and the head clock
-  `Hub::subscribe_head() -> Result<HeadSubscription, HubError>` (`hub.rs`).
+- `Hub::subscribe(class) -> Result<Subscription, HubError>` for registered
+  classes.
+- The head clock is the hub's own, not a class: `Hub::claim_head_source() ->
+  Result<HeadSender, AlreadyClaimed>` is the one permanent claim, and
+  `Hub::subscribe_head() -> HeadSubscription` is infallible (`hub.rs`,
+  `head.rs`).
 
 The per-poll tick a strategy awaits is `HeadSubscription::changed()`
-(`head.rs`); `head()`/`borrow_and_update()` read the latest. A family whose hub
-tick arrives **without** a mempool stream subscribes to the head class and never
-registers `HubClass::PendingTx`; the mock pins exactly that
+(`head.rs`); `head()`/`borrow_and_update()` read the current `Head` (number plus,
+from a full header, its metadata). A subscription is live at the clock's current
+value, so a late subscriber does not replay the current head as a new edge. A
+family whose hub tick arrives **without** a mempool stream subscribes to the head
+clock and never registers `HubClass::PendingTx`; the mock pins exactly that
 (`tests/mock_third_family.rs`). Pending-transaction strategies consume the
 `PendingTx` drop-oldest ring the feed registers on the hub.
 
 **Evidence / Keeps / Retires**
 
-- Evidence: the three `HubClass` variants and three `OverflowPolicy` variants;
-  the `NewHead`/`LatestOnly` registration in `Hub::register_head_source`.
+- Evidence: the registered `HubClass` values and the named `OverflowPolicy`
+  variants; the permanent `Hub::claim_head_source` and the infallible
+  `Hub::subscribe_head` with its live-at-current-value subscription.
 - Keeps: registration declares strictness once; consumers receive a policy-typed
   subscription; the hub is transport-pure.
 - Retires: a per-call policy choice; an untyped "reaction kind" enum; treating
@@ -459,7 +466,7 @@ Pin every seam a family depends on at its own level:
 | Ledger reconcile | `submission_ledger.rs:673` | `reconcile(confirmed, outstanding) -> Vec<Notification>` |
 | Head policy | `submission_ledger.rs:527` | `on_notice(&HeadNotice) -> Result<PolicyAction, DeclineKind>` |
 | Hub subscribe | `degenbot-eventhub/src/hub.rs` | `subscribe(HubClass) -> Result<Subscription, HubError>` |
-| Hub head subscribe | `degenbot-eventhub/src/hub.rs` | `subscribe_head() -> Result<HeadSubscription, HubError>` |
+| Hub head subscribe | `degenbot-eventhub/src/hub.rs` | `subscribe_head() -> HeadSubscription` (infallible; `claim_head_source() -> Result<HeadSender, AlreadyClaimed>` is the one claim) |
 | Driver boot | `backrun_driver/driver_boot.rs:227` | `backrun_boot(...) -> BackrunBoot` |
 | Driver factory | `backrun_driver/driver_boot.rs:264` | `backrun_spawn_factory(...) -> DriverSpawnFactory` |
 | Driver loop | `backrun_driver/driver_loop.rs:1114` | `BackrunDriver::start(...) -> DriverHandle` |

@@ -233,7 +233,7 @@ impl PendingTxStream {
             .into_iter()
             .filter_map(|event| match event {
                 HubEvent::PendingTx(tx) => Some(tx),
-                other => {
+                other @ HubEvent::PoolEvent { .. } => {
                     op_warn!(
                         domain = rpc,
                         event = ?other,

@@ -549,10 +549,10 @@ fn hosted_arms(
             id,
             source,
             feed,
-            spawn: Box::new(move |hub, stream| {
+            spawn: Box::new(move |stream, head_source| {
                 degenbot_strategy::backrun_driver::backrun_spawn_factory(
                     strategy_boot,
-                    Arc::clone(hub),
+                    head_source,
                     lane,
                     stream,
                 )
@@ -869,8 +869,8 @@ mod tests {
             // registry a mixed boot uses: the engine's block pump owns the hub
             // head source, so Python and standalone hosting agree.
             assert!(
-                engine.session.host().lock().hub().subscribe_head().is_ok(),
-                "the pump registered the session's one head source at boot"
+                engine.session.host().lock().hub().head_source_is_claimed(),
+                "the session boot claimed the hub's one head source"
             );
             assert!(
                 !engine.session.host().lock().has_hosted_activity(),

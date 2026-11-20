@@ -1,22 +1,26 @@
-//! The per-process hub: registration, policy-typed subscription, and the
-//! three overflow channels.
+//! The per-process hub: registration, policy-typed subscription, the head
+//! clock, and the overflow channels.
 //!
 //! A [`Hub`] owns one channel per registered [`HubClass`]. A source calls
 //! [`Hub::register_source`] once (declaring its [`OverflowPolicy`]) and keeps
 //! the returned [`SourceHandle`]; consumers call [`Hub::subscribe`] to get the
 //! matching [`Subscription`]. Both ends share the same channel by `Arc`, so
 //! the channel outlives either handle.
+//!
+//! The head clock is the hub's own, not a registered class: one permanent
+//! [`Hub::claim_head_source`] hands the process's one [`HeadSender`] out, and
+//! [`Hub::subscribe_head`] is infallible for every reader.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::event::{HubClass, HubEvent};
-use crate::head::{HeadSender, HeadSubscription};
+use crate::head::{Head, HeadSender, HeadShared, HeadSubscription};
 use crate::named::{NamedChannel, NamedCounters, NamedReceiver, NamedSender};
 use crate::policy::{HubError, OverflowPolicy};
 
@@ -52,45 +56,31 @@ impl DropOldestChannel {
     }
 }
 
-/// Latest-value slot; each push supersedes the previous value and wakes
-/// every awaiting consumer.
+/// The typed refusal a second [`Hub::claim_head_source`] gets: the hub's one
+/// head source was already claimed, and a claim never lapses.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("this hub's head source is already claimed")]
+pub struct AlreadyClaimed;
+
+/// The hub's one head clock: the unclaimed sender slot and the shared
+/// receiver state.
 ///
-/// A `watch` channel supplies both the latest-value semantics and the async
-/// wakeup; `last_seen` is the hub-owned staleness clock (set at registration
-/// and refreshed on every push).
-struct LatestChannel {
-    tx: tokio::sync::watch::Sender<Option<HubEvent>>,
-    last_seen: Mutex<Option<Instant>>,
+/// `sender` is the permanent `Unclaimed -> Claimed` transition: [`Hub::claim_head_source`]
+/// takes it out once and never puts it back, so a claim never lapses and a
+/// second claim is always refused. The never-claimed slot sender is what closes
+/// a never-claimed clock's subscriptions at hub drop.
+struct HeadSlot {
+    sender: Mutex<Option<watch::Sender<Option<Head>>>>,
+    shared: Arc<HeadShared>,
 }
 
-impl LatestChannel {
+impl HeadSlot {
     fn new() -> Self {
-        let (tx, _rx) = tokio::sync::watch::channel(None);
+        let (tx, _rx) = watch::channel(None);
+        let shared = Arc::new(HeadShared::new(&tx));
         Self {
-            tx,
-            // A just-registered source is not immediately stale (matching
-            // the transport's "fresh at subscribe" contract).
-            last_seen: Mutex::new(Some(Instant::now())),
-        }
-    }
-
-    fn push(&self, event: HubEvent) {
-        self.tx.send_replace(Some(event));
-        *self.last_seen.lock() = Some(Instant::now());
-    }
-
-    fn latest(&self) -> Option<HubEvent> {
-        self.tx.borrow().clone()
-    }
-
-    fn last_seen_age(&self) -> Option<Duration> {
-        self.last_seen.lock().map(|at| at.elapsed())
-    }
-
-    fn stale(&self, threshold: Duration) -> bool {
-        match self.last_seen_age() {
-            Some(age) => age > threshold,
-            None => true,
+            sender: Mutex::new(Some(tx)),
+            shared,
         }
     }
 }
@@ -177,74 +167,6 @@ impl DropOldestReceiver {
     }
 }
 
-/// The source side of a [`OverflowPolicy::LatestOnly`] channel.
-#[derive(Clone)]
-pub struct LatestSender {
-    inner: Arc<LatestChannel>,
-}
-
-impl LatestSender {
-    /// Publish a value, superseding any previous one.
-    pub fn push(&self, event: HubEvent) {
-        self.inner.push(event);
-    }
-
-    /// Time since the last publish, or `None` if none was ever made.
-    #[must_use]
-    pub fn last_seen_age(&self) -> Option<Duration> {
-        self.inner.last_seen_age()
-    }
-
-    /// Whether no value has arrived for at least `threshold`.
-    #[must_use]
-    pub fn stale(&self, threshold: Duration) -> bool {
-        self.inner.stale(threshold)
-    }
-}
-
-/// The consumer side of a [`OverflowPolicy::LatestOnly`] channel.
-#[derive(Clone)]
-pub struct LatestReceiver {
-    inner: Arc<LatestChannel>,
-    rx: tokio::sync::watch::Receiver<Option<HubEvent>>,
-}
-
-impl LatestReceiver {
-    /// The most recent value, if any.
-    #[must_use]
-    pub fn latest(&self) -> Option<HubEvent> {
-        self.inner.latest()
-    }
-
-    /// The most recent value, marking it seen for the next [`Self::changed`].
-    #[must_use]
-    pub fn latest_and_update(&mut self) -> Option<HubEvent> {
-        self.rx.borrow_and_update().clone()
-    }
-
-    /// Wait until a newer value is published.
-    ///
-    /// # Errors
-    ///
-    /// Fails once every sender clone has dropped and no newer value will
-    /// arrive.
-    pub async fn changed(&mut self) -> Result<(), tokio::sync::watch::error::RecvError> {
-        self.rx.changed().await
-    }
-
-    /// Time since the last publish, or `None` if none was ever made.
-    #[must_use]
-    pub fn last_seen_age(&self) -> Option<Duration> {
-        self.inner.last_seen_age()
-    }
-
-    /// Whether no value has arrived for at least `threshold`.
-    #[must_use]
-    pub fn stale(&self, threshold: Duration) -> bool {
-        self.inner.stale(threshold)
-    }
-}
-
 /// The source side of a [`OverflowPolicy::UnboundedFlagged`] channel.
 #[derive(Clone)]
 pub struct UnboundedSender {
@@ -284,8 +206,6 @@ impl UnboundedReceiver {
 pub enum SourceHandle {
     /// Drop-oldest counted ring.
     DropOldestCounted(DropOldestSender),
-    /// Latest-value slot.
-    LatestOnly(LatestSender),
     /// Unbounded flagged buffer.
     UnboundedFlagged(UnboundedSender),
 }
@@ -296,15 +216,12 @@ pub enum SourceHandle {
 pub enum Subscription {
     /// Drop-oldest counted ring.
     DropOldestCounted(DropOldestReceiver),
-    /// Latest-value slot.
-    LatestOnly(LatestReceiver),
     /// Unbounded flagged buffer.
     UnboundedFlagged(UnboundedReceiver),
 }
 
 enum Channel {
     DropOldestCounted(Arc<DropOldestChannel>),
-    LatestOnly(Arc<LatestChannel>),
     UnboundedFlagged(Arc<UnboundedChannel>),
 }
 
@@ -318,20 +235,32 @@ struct SourceEntry {
 /// Sources register exactly once per [`HubClass`]; subscribers receive a
 /// policy-typed [`Subscription`]. The hub is transport-pure: it carries its
 /// own [`HubEvent`] vocabulary and never names `BotState` or the runtime.
-#[derive(Default)]
 pub struct Hub {
     sources: Mutex<HashMap<HubClass, SourceEntry>>,
+    /// The hub's one head clock: the shared receiver state and the unclaimed
+    /// sender slot.
+    head: HeadSlot,
     /// Named typed source channels, keyed by registration name. Always
     /// [`OverflowPolicy::UnboundedFlagged`]; the hub holds each channel's
     /// consumer end until [`Self::take_named_receiver`] hands it out once.
     named: Mutex<HashMap<&'static str, NamedChannel>>,
 }
 
+impl Default for Hub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Hub {
-    /// A hub with no registered sources.
+    /// A hub with no registered sources and an unclaimed head clock.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            sources: Mutex::new(HashMap::new()),
+            head: HeadSlot::new(),
+            named: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Register the one source for `class`, declaring its overflow policy and
@@ -357,13 +286,6 @@ impl Hub {
                 (
                     Channel::DropOldestCounted(Arc::clone(&channel)),
                     SourceHandle::DropOldestCounted(DropOldestSender { inner: channel }),
-                )
-            }
-            OverflowPolicy::LatestOnly => {
-                let channel = Arc::new(LatestChannel::new());
-                (
-                    Channel::LatestOnly(Arc::clone(&channel)),
-                    SourceHandle::LatestOnly(LatestSender { inner: channel }),
                 )
             }
             OverflowPolicy::UnboundedFlagged { name } => {
@@ -415,10 +337,6 @@ impl Hub {
                     inner: Arc::clone(channel),
                 })
             }
-            Channel::LatestOnly(channel) => Subscription::LatestOnly(LatestReceiver {
-                inner: Arc::clone(channel),
-                rx: channel.tx.subscribe(),
-            }),
             Channel::UnboundedFlagged(channel) => {
                 Subscription::UnboundedFlagged(UnboundedReceiver {
                     inner: Arc::clone(channel),
@@ -427,63 +345,45 @@ impl Hub {
         })
     }
 
-    /// Register the process's one head source as a `NewHead` /
-    /// [`OverflowPolicy::LatestOnly`] channel.
+    /// Claim this hub's one head source: the permanent `Unclaimed -> Claimed`
+    /// transition.
     ///
-    /// The hub owns the latest head and its staleness clock; the transport
-    /// (e.g. `degenbot_rpc::head_watch`) publishes every observed header and
-    /// keeps no head state of its own.
+    /// The claimer is the process's one head publisher — the engine block
+    /// pump's accepted-header edge, a hosted `newHeads` watch, or a standalone
+    /// driver's pump. Every publisher handle is a clone of the returned
+    /// [`HeadSender`], so a claimed clock's subscriptions close exactly when
+    /// the last clone drops.
     ///
     /// # Errors
     ///
-    /// [`HubError::AlreadyRegistered`] if a `NewHead` source already exists on
-    /// this hub.
-    pub fn register_head_source(&self) -> Result<HeadSender, HubError> {
-        match self.register_source(HubClass::NewHead, OverflowPolicy::LatestOnly, 0)? {
-            SourceHandle::LatestOnly(sender) => Ok(HeadSender::new(sender)),
-            _ => Err(HubError::PolicyMismatch {
-                expected: "LatestOnly",
-            }),
-        }
+    /// [`AlreadyClaimed`] — the transition is permanent. A claim never lapses,
+    /// and a second claim is refused even after every publisher has dropped.
+    pub fn claim_head_source(&self) -> Result<HeadSender, AlreadyClaimed> {
+        let Some(tx) = self.head.sender.lock().take() else {
+            return Err(AlreadyClaimed);
+        };
+        self.head.shared.reset_clock();
+        Ok(HeadSender::new(tx, Arc::clone(&self.head.shared)))
     }
 
-    /// A second sender for the registered head source — the handle a
-    /// fallback publisher (the stale-fallback head poller) pushes polled
-    /// heads through beside the transport's own.
-    ///
-    /// # Errors
-    ///
-    /// [`HubError::NotRegistered`] if [`Self::register_head_source`] has not
-    /// run on this hub; [`HubError::PolicyMismatch`] if the `NewHead` source
-    /// did not declare the `LatestOnly` policy.
-    pub fn head_sender(&self) -> Result<HeadSender, HubError> {
-        let sources = self.sources.lock();
-        let entry = sources
-            .get(&HubClass::NewHead)
-            .ok_or(HubError::NotRegistered(HubClass::NewHead))?;
-        match &entry.channel {
-            Channel::LatestOnly(channel) => Ok(HeadSender::new(LatestSender {
-                inner: Arc::clone(channel),
-            })),
-            _ => Err(HubError::PolicyMismatch {
-                expected: "LatestOnly",
-            }),
-        }
+    /// Whether this hub's head source has been claimed — the `PumpOwned` start
+    /// check. False only while the slot still holds its sender; it stays true
+    /// forever after a claim, whatever the publishers do.
+    #[must_use]
+    pub fn head_source_is_claimed(&self) -> bool {
+        self.head.sender.lock().is_none()
     }
 
     /// Subscribe to the hub head source.
     ///
-    /// # Errors
-    ///
-    /// [`HubError::NotRegistered`] if [`Self::register_head_source`] has not
-    /// run on this hub.
-    pub fn subscribe_head(&self) -> Result<HeadSubscription, HubError> {
-        match self.subscribe(HubClass::NewHead)? {
-            Subscription::LatestOnly(receiver) => Ok(HeadSubscription::new(receiver)),
-            _ => Err(HubError::PolicyMismatch {
-                expected: "LatestOnly",
-            }),
-        }
+    /// Infallible and multi-subscriber: the subscription is live at the
+    /// clock's CURRENT value, so a subscription created after a head was
+    /// published sees that head without treating it as a new edge. The
+    /// subscription closes when the claimer's publishers drop (a claimed
+    /// clock) or when the hub drops (a never-claimed clock).
+    #[must_use]
+    pub fn subscribe_head(&self) -> HeadSubscription {
+        self.head.shared.subscribe()
     }
 
     /// Mint + register a named, typed source channel while constructing the
@@ -638,7 +538,7 @@ mod tests {
     fn nonce_of(event: HubEvent) -> Option<u64> {
         match event {
             HubEvent::PendingTx(tx) => Some(tx.nonce),
-            HubEvent::NewHead { .. } | HubEvent::PoolEvent { .. } => None,
+            HubEvent::PoolEvent { .. } => None,
         }
     }
 
@@ -654,7 +554,7 @@ mod tests {
             .expect("registers")
         {
             SourceHandle::DropOldestCounted(sender) => sender,
-            _ => panic!("declared drop-oldest, got another handle"),
+            SourceHandle::UnboundedFlagged(_) => panic!("declared drop-oldest, got another handle"),
         }
     }
 
@@ -672,7 +572,7 @@ mod tests {
         assert!(matches!(
             hub.register_source(
                 HubClass::PendingTx(PendingTxSource::Mevblocker),
-                OverflowPolicy::LatestOnly,
+                OverflowPolicy::UnboundedFlagged { name: "late" },
                 4,
             ),
             Err(HubError::AlreadyRegistered(HubClass::PendingTx(_)))
@@ -782,56 +682,158 @@ mod tests {
         assert!(receiver.drain().is_empty(), "drain is an atomic take");
     }
 
-    fn new_head(number: u64) -> HubEvent {
-        HubEvent::NewHead {
+    fn head(number: u64) -> Head {
+        Head {
             number,
-            timestamp: 0,
-            base_fee_per_gas: None,
-            gas_used: 0,
-            gas_limit: 0,
+            metadata: None,
         }
     }
 
+    /// Teardown closure: a claimed clock's subscriptions end when every
+    /// publisher drops. The receiver must not keep the sender alive.
     #[tokio::test]
-    async fn head_advance_and_stale_falls_back_to_poll() {
+    async fn dropping_every_head_sender_closes_subscriptions() {
         use std::time::Duration;
 
         let hub = Hub::new();
-        let sender = hub.register_head_source().expect("registers");
-        assert_eq!(
-            hub.policy_of(HubClass::NewHead),
-            Some(OverflowPolicy::LatestOnly),
-            "the head source declares the LatestOnly policy"
-        );
-        let mut head = hub.subscribe_head().expect("subscribed");
-        assert_eq!(head.head(), None, "a fresh head source has no head");
+        let sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        let mut first = hub.subscribe_head();
+        let mut second = hub.subscribe_head();
+        let publisher = sender.clone();
+        sender.publish(head(1));
+        assert!(first.changed().await.is_ok());
+        assert_eq!(first.borrow_and_update(), Some(head(1)));
+        assert!(second.changed().await.is_ok());
+        assert_eq!(second.borrow_and_update(), Some(head(1)));
+
+        drop(sender);
+        drop(publisher);
+
+        let closed = tokio::time::timeout(Duration::from_secs(1), first.changed()).await;
         assert!(
-            !head.stale(Duration::from_secs(30)),
-            "a just-registered source is not stale"
+            matches!(closed, Ok(Err(_))),
+            "a claimed clock closes when every publisher drops: {closed:?}"
+        );
+        let closed = tokio::time::timeout(Duration::from_secs(1), second.changed()).await;
+        assert!(
+            matches!(closed, Ok(Err(_))),
+            "every subscription closes with the last publisher: {closed:?}"
+        );
+    }
+
+    /// A clock nobody claimed has no publisher to lose: its subscriptions stay
+    /// open until the hub drops the slot sender.
+    #[tokio::test]
+    async fn a_never_claimed_clock_closes_only_on_hub_drop() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let mut head = hub.subscribe_head();
+        assert!(
+            !hub.head_source_is_claimed(),
+            "a fresh hub's head source is unclaimed"
+        );
+        let quiet = tokio::time::timeout(Duration::from_millis(50), head.changed()).await;
+        assert!(
+            quiet.is_err(),
+            "a never-claimed clock is open, not closed: {quiet:?}"
         );
 
-        // LatestOnly: only the newest head survives.
-        sender.publish(new_head(10));
-        sender.publish(new_head(11));
+        drop(hub);
+
+        let closed = tokio::time::timeout(Duration::from_secs(1), head.changed()).await;
+        assert!(
+            matches!(closed, Ok(Err(_))),
+            "the hub's drop closes the never-claimed clock: {closed:?}"
+        );
+    }
+
+    /// A subscription is live at the clock's CURRENT value: the head published
+    /// before it attached is seen immediately, never replayed as a new edge.
+    #[tokio::test]
+    async fn a_late_subscription_does_not_replay_the_current_head_as_new() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        sender.publish(head(7));
+        let mut late = hub.subscribe_head();
         assert_eq!(
-            head.borrow_and_update(),
-            Some(11),
-            "superseded heads are dropped"
+            late.head(),
+            Some(head(7)),
+            "a late subscriber sees the current head"
+        );
+        let edge = tokio::time::timeout(Duration::from_millis(50), late.changed()).await;
+        assert!(
+            edge.is_err(),
+            "the current head is not a new edge for a late subscriber: {edge:?}"
         );
 
-        // The consumer awaits the next advance, then reads it.
-        let waiter = tokio::spawn(async move {
-            head.changed().await.expect("sender stays alive");
-            head.borrow_and_update()
-        });
-        sender.publish(new_head(12));
-        assert_eq!(waiter.await.expect("join"), Some(12));
+        sender.publish(head(8));
+        assert!(late.changed().await.is_ok());
+        assert_eq!(
+            late.borrow_and_update(),
+            Some(head(8)),
+            "the next published head is the edge"
+        );
+    }
 
-        // The stale->poll-fallback predicate: a quiet source past the
-        // threshold reports stale, which is exactly what makes the live loop
-        // poll `eth_blockNumber` for one iteration.
-        let probe = hub.subscribe_head().expect("subscribed");
-        assert!(!probe.stale(Duration::from_secs(30)), "just published");
+    /// The staleness clock is seeded at hub construction: an unclaimed clock is
+    /// fresh, so a start-time check cannot read an unclaimed clock as stale.
+    #[test]
+    fn fresh_before_claim_is_not_stale() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let head = hub.subscribe_head();
+        assert!(
+            !head.stale(Duration::from_millis(1)),
+            "a hub just constructed has a fresh clock"
+        );
+    }
+
+    /// The claim resets the clock: a hub that sat unclaimed for a long time
+    /// hands its claimer a fresh clock, not one already past a stale bound.
+    #[test]
+    fn fresh_at_claim_is_not_stale() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let head = hub.subscribe_head();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(
+            head.stale(Duration::from_millis(10)),
+            "an unclaimed clock ages with the hub"
+        );
+        let _sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        assert!(
+            !head.stale(Duration::from_millis(10)),
+            "the claim resets the clock every consumer reads"
+        );
+    }
+
+    /// A clock that published and then went quiet reports stale past the
+    /// threshold: the predicate the loop's fallback poll rides.
+    #[tokio::test]
+    async fn quiet_past_threshold_is_stale() {
+        use std::time::Duration;
+
+        let hub = Hub::new();
+        let sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        sender.publish(head(12));
+        let probe = hub.subscribe_head();
+        assert!(
+            !probe.stale(Duration::from_secs(30)),
+            "a just-published clock is fresh"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert!(
             probe.stale(Duration::from_millis(10)),
@@ -839,28 +841,38 @@ mod tests {
         );
     }
 
-    #[test]
-    fn latest_only_keeps_only_the_last() {
+    /// The claim is permanent: dropping every publisher closes the clock's
+    /// subscriptions but never re-opens the claim slot.
+    #[tokio::test]
+    async fn a_claim_never_lapses_when_publishers_drop() {
         let hub = Hub::new();
-        let handle = hub
-            .register_source(HubClass::NewHead, OverflowPolicy::LatestOnly, 0)
-            .expect("registers");
-        let SourceHandle::LatestOnly(sender) = handle else {
-            panic!("declared latest-only, got another handle");
-        };
-        let Subscription::LatestOnly(receiver) =
-            hub.subscribe(HubClass::NewHead).expect("subscribed")
-        else {
-            panic!("policy changed under test");
-        };
-        assert!(receiver.latest().is_none());
-        for nonce in 0..5 {
-            sender.push(HubEvent::PendingTx(tx(nonce)));
-        }
-        assert_eq!(receiver.latest().and_then(nonce_of), Some(4));
-        assert_eq!(
-            hub.policy_of(HubClass::NewHead),
-            Some(OverflowPolicy::LatestOnly)
+        let sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        assert!(hub.head_source_is_claimed());
+        drop(sender);
+        assert!(
+            hub.head_source_is_claimed(),
+            "the claim survives every publisher"
+        );
+        assert!(
+            matches!(hub.claim_head_source(), Err(AlreadyClaimed)),
+            "a second claim is always refused"
+        );
+    }
+
+    /// The clock is the hub's own, so a `HubClass` registration can never
+    /// shadow or duplicate it, and an unclaimed hub answers neither claim twice.
+    #[test]
+    fn the_head_clock_is_not_a_registered_class() {
+        let hub = Hub::new();
+        assert!(hub.registered_classes().is_empty());
+        let _sender = hub
+            .claim_head_source()
+            .expect("the fresh clock is unclaimed");
+        assert!(
+            hub.registered_classes().is_empty(),
+            "claiming the head source registers no hub class"
         );
     }
 

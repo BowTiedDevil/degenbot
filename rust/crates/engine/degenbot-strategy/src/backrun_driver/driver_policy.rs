@@ -14,6 +14,7 @@ use std::pin::Pin;
 
 use crate::backrun::BackrunConfig;
 use crate::frame_pipeline::priority_fee_wei;
+use degenbot_eventhub::{Head, HeadMetadata};
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::driver_boot::BackrunBootError;
@@ -37,6 +38,35 @@ pub(super) enum BaseFeeAnswer {
     MissingBaseFee,
     /// The node has no block at the read number.
     MissingBlock,
+}
+
+/// What the observed head itself proves about its base fee.
+///
+/// A full header carries the fee the chain charged, so the next-base-fee
+/// derivation needs no second read; a number-only poll proves nothing, so the
+/// policy reads the block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HeadEvidence {
+    /// The head's own metadata already proves its base fee.
+    Observed(BaseFeeAnswer),
+    /// The head carried only a block number: the fee must be read.
+    Unread,
+}
+
+/// The evidence one observed head carries.
+#[must_use]
+pub(super) fn head_evidence(metadata: Option<&HeadMetadata>) -> HeadEvidence {
+    match metadata {
+        Some(HeadMetadata {
+            base_fee_per_gas: Some(base_fee),
+            ..
+        }) => HeadEvidence::Observed(BaseFeeAnswer::Fee(u128::from(*base_fee))),
+        Some(HeadMetadata {
+            base_fee_per_gas: None,
+            ..
+        }) => HeadEvidence::Observed(BaseFeeAnswer::MissingBaseFee),
+        None => HeadEvidence::Unread,
+    }
 }
 
 /// The boxed future one narrow read resolves on, boxed so the trait stays
@@ -105,15 +135,24 @@ fn transport_refusal(read: &str, reason: &str) -> BackrunBootError {
 /// transport before the node answers anything, and
 /// [`BackrunBootError::WalletGasPriceMissingBlock`] when the node has no
 /// block at `head`. Both price nothing: a read failure can never move the
-/// wallet cost through a default.
+/// wallet cost through a default. A head whose metadata carries its fee
+/// prices with no read at all.
 pub(super) async fn wallet_gas_cost_at<R: BlockFeeReader + ?Sized>(
     reader: &R,
     head: u64,
     cfg: &BackrunConfig,
+    evidence: HeadEvidence,
 ) -> Result<u128, BackrunBootError> {
-    let read = reader.base_fee_wei(head).await;
-    let read_name = format!("block {head} base fee");
-    let answer = read.map_err(|reason| transport_refusal(&read_name, &reason))?;
+    let answer = match evidence {
+        HeadEvidence::Observed(answer) => answer,
+        HeadEvidence::Unread => {
+            let read_name = format!("block {head} base fee");
+            reader
+                .base_fee_wei(head)
+                .await
+                .map_err(|reason| transport_refusal(&read_name, &reason))?
+        }
+    };
     let base_fee_next = match answer {
         BaseFeeAnswer::Fee(base_fee) => base_fee * 12 / 10,
         BaseFeeAnswer::MissingBaseFee => LEGACY_NEXT_BASE_FEE_WEI,
@@ -140,5 +179,25 @@ pub(super) async fn initial_wallet_gas_cost<R: BlockFeeReader + ?Sized>(
 ) -> Result<u128, BackrunBootError> {
     let head_read = reader.head_number().await;
     let head = head_read.map_err(|reason| transport_refusal("head number", &reason))?;
-    wallet_gas_cost_at(reader, head, cfg).await
+    wallet_gas_cost_at(reader, head, cfg, HeadEvidence::Unread).await
+}
+
+/// The wallet cost for one OBSERVED head: a full header prices from its own
+/// metadata, a number-only poll falls back to the block read.
+///
+/// # Errors
+///
+/// Every refusal [`wallet_gas_cost_at`] carries.
+pub(super) async fn wallet_gas_cost_for_head<R: BlockFeeReader + ?Sized>(
+    reader: &R,
+    head: &Head,
+    cfg: &BackrunConfig,
+) -> Result<u128, BackrunBootError> {
+    wallet_gas_cost_at(
+        reader,
+        head.number,
+        cfg,
+        head_evidence(head.metadata.as_ref()),
+    )
+    .await
 }

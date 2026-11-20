@@ -4,11 +4,9 @@
 //!
 //! The order is load-bearing, and each step reads the previous one's product:
 //!
-//! 1. **Mint.** [`StrategyHost::mint`] validates the engine's channel
-//!    declaration and registers its named source channels on a fresh hub inside
-//!    the exclusive construction window the hub type requires, and the host
-//!    owns that hub from then on. Provisioning only: nothing is started and no
-//!    socket is opened.
+//! 1. **Mint.** [`StrategyHost::mint`] creates the session's fresh hub, and this
+//!    boot CLAIMS that hub's one head source before matching on the hosted
+//!    input, so no session shape is ever headless.
 //! 2. **Register.** Every row of the caller's facet table enters the driver
 //!    FSM in [`DriverPose::Registered`], carrying its admission status and the
 //!    loop its driver runs as values. A crate that can read the typed config
@@ -22,10 +20,9 @@
 //!    every admitted facet leaves the boot with the factory its `Enabled` pose
 //!    promises.
 //! 4. **Start** ([`EngineSession::start`]). The hosted sources' deferred I/O
-//!    launches before any driver: the head edge attaches to the hub head source
-//!    the engine's block pump owns (the pump registers it at driver composition
-//!    and publishes every accepted header), so a driver's loop always finds the
-//!    one source the whole session reads.
+//!    launches before any driver, and each arm's factory already carries the
+//!    session's head subscription, so a driver's loop always reads the one clock
+//!    the whole session shares.
 //!
 //! The boot returns handles and runs no consume loop (ADR-050 D9). Admission
 //! and lifecycle stay with the host (ADR-057): this module orders calls into
@@ -40,7 +37,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use degenbot_eventhub::{Hub, HubError, PendingTxSource};
+use degenbot_eventhub::{HeadSender, HeadSubscription, HubError, PendingTxSource};
 use degenbot_rpc::pending_tx_stream::{PendingTxFeedConfig, PendingTxStream};
 use degenbot_substrate::driver_spawn::DriverSpawnFactory;
 use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
@@ -50,7 +47,8 @@ use parking_lot::Mutex;
 use super::Bot;
 use crate::arb_engine::{EngineChannelHandles, EngineDriver, EngineStages};
 use crate::hosted_sources::{
-    HeadTrigger, HostedHeadClock, HostedSources, HostedStartError, StreamRefusal,
+    HeadTrigger, HostedClockBinding, HostedHeadClock, HostedSources, HostedStartError,
+    StreamRefusal,
 };
 use crate::strategy_host::{FacetStatus, HeadReconciler, HostError, HostSupervisor, StrategyHost};
 
@@ -83,13 +81,14 @@ pub enum FacetLoop {
 
 /// Composes one hosted arm's spawn factory.
 ///
-/// The boot hands it the hub the host minted (the arm's stream lives on that
-/// hub's ring) and the arm's typed stream, so the strategy crate that owns the
-/// loop builds the factory without this crate naming it. A stream is absent
-/// when the arm's pump was not minted; the strategy boot then refuses its live
-/// mode, which is the same refusal a feed-less boot always produced.
+/// The boot hands it the arm's typed stream and the session hub's head
+/// subscription, so the strategy crate that owns the loop builds the factory
+/// without this crate naming it. A stream is absent when the arm's pump was not
+/// minted; the strategy boot then refuses its live mode, which is the same
+/// refusal a feed-less boot always produced. The subscription is never absent:
+/// the session claims the hub's one head source before any arm is attached.
 pub type ArmSpawnComposer =
-    Box<dyn FnOnce(&Arc<Hub>, Option<PendingTxStream>) -> DriverSpawnFactory + Send>;
+    Box<dyn FnOnce(Option<PendingTxStream>, HeadSubscription) -> DriverSpawnFactory + Send>;
 
 /// One hosted arm: the pending-tx kind its pump provisions, the feed that pump
 /// dials at the start boundary, and the builder for its driver's spawn factory.
@@ -154,6 +153,18 @@ pub struct SessionConstruction {
     pub state_root: Option<PathBuf>,
 }
 
+/// What `provision_hosted` returns: the hosted sources the session owns and the
+/// claimed head publisher the driver routes to the clock's owner.
+#[derive(Default)]
+pub struct HostedProvisioning {
+    /// The hosted sources, when the boot hosted any.
+    pub hosted: Option<HostedSources>,
+    /// The claimed head publisher this session's pump publishes through, when
+    /// the pump owns the clock (`PumpOwned`, or a boot that declared no clock).
+    /// `None` when a host-side watch or poller owns it.
+    pub pump_publisher: Option<HeadSender>,
+}
+
 /// Why a session boot refused to compose the plane, or refused to start it.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionBootError {
@@ -212,6 +223,13 @@ impl EngineSession {
     /// declaration, a registration, or an attachment (two facet rows, or an arm
     /// under an unregistered id), and [`SessionBootError::Hosted`] when the
     /// hosted sources cannot be minted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the freshly minted session hub's head source is already
+    /// claimed. [`StrategyHost::mint`] always returns a fresh hub, so the first
+    /// claim is an invariant of this construction and a panic means that
+    /// invariant was violated, not a recoverable boot failure.
     pub fn boot(
         construction: SessionConstruction,
         facets: Vec<FacetBoot>,
@@ -234,6 +252,20 @@ impl EngineSession {
                 .map_err(HostError::ChannelRegistration)?;
         let host = Arc::new(Mutex::new(host));
 
+        // Claim the session hub's one head source on the freshly minted hub,
+        // before matching on the hosted input: a session whose clock nobody
+        // claimed would be headless in every shape. `StrategyHost::mint` always
+        // returns a fresh hub, so this first claim cannot fail.
+        #[expect(
+            clippy::expect_used,
+            reason = "StrategyHost::mint always returns a fresh hub, so its head source is unclaimed by construction"
+        )]
+        let head_sender = host
+            .lock()
+            .hub()
+            .claim_head_source()
+            .expect("a freshly minted session hub's head source is unclaimed");
+
         // Register the facet table in the caller's order, then the shared plane
         // attachments. The rows that name a driver loop are kept for the attach
         // step below, which needs the driver this boot mints last.
@@ -255,16 +287,29 @@ impl EngineSession {
         }
 
         // Provision the hosted sources and attach each arm's factory, which
-        // needs the arm's stream the provisioning step hands out.
-        let hosted = match hosted {
-            Some(boot) => Some(provision_hosted(&host, boot)?),
-            None => None,
+        // needs the arm's stream the provisioning step hands out. The claimed
+        // publisher is routed to exactly one owner: the host-side watch or
+        // poller when the boot declares one, otherwise this driver's pump.
+        let HostedProvisioning {
+            hosted,
+            pump_publisher,
+        } = match hosted {
+            Some(boot) => provision_hosted(&host, boot, head_sender)?,
+            None => HostedProvisioning {
+                hosted: None,
+                pump_publisher: Some(head_sender),
+            },
         };
 
         // Attach the driver to the hub the host minted, then attach the factory
         // of every facet the pump drives: that loop IS this session's lifetime,
         // so its factory is built over the driver it must watch.
-        let driver = Arc::new(EngineDriver::from_stages_with_hub(bot, stages, attached));
+        let driver = Arc::new(EngineDriver::from_stages_with_hub(
+            bot,
+            stages,
+            attached,
+            pump_publisher,
+        ));
         for id in pump_driven {
             let spawn = crate::arb_engine::settlement_driver::settlement_spawn(Arc::clone(&driver));
             host.lock().attach_spawn(&id, spawn)?;
@@ -354,10 +399,17 @@ impl EngineSession {
 }
 
 /// Provision the hosted sources and attach every arm's spawn factory.
+///
+/// `head_sender` is the session hub's claimed head publisher. The boot's public
+/// [`HostedHeadClock`] DECLARATION is converted here into the post-claim
+/// [`HostedClockBinding`] the hosted sources consume: a `Watch`/`Poll` boot
+/// moves the publisher into the owner, and a `PumpOwned` boot (or a boot that
+/// declared no clock) routes it back to the driver's pump.
 fn provision_hosted(
     host: &Arc<Mutex<StrategyHost>>,
     boot: HostedBoot,
-) -> Result<HostedSources, SessionBootError> {
+    head_sender: HeadSender,
+) -> Result<HostedProvisioning, SessionBootError> {
     let HostedBoot {
         arms,
         clock,
@@ -371,7 +423,29 @@ fn provision_hosted(
         .iter()
         .filter_map(|arm| arm.feed.clone().map(|feed| (arm.source, feed)))
         .collect::<Vec<_>>();
-    let mut hosted = HostedSources::mint(Arc::clone(&hub), feeds, clock, trigger)?;
+    let (binding, pump_publisher) = match clock {
+        None => (None, Some(head_sender)),
+        Some(HostedHeadClock::PumpOwned) => {
+            (Some(HostedClockBinding::PumpOwned), Some(head_sender))
+        }
+        Some(HostedHeadClock::Watch { ws_url, provider }) => (
+            Some(HostedClockBinding::Watch {
+                ws_url,
+                provider,
+                sender: head_sender,
+            }),
+            None,
+        ),
+        Some(HostedHeadClock::Poll { provider }) => (
+            Some(HostedClockBinding::Poll {
+                provider,
+                sender: head_sender,
+            }),
+            None,
+        ),
+    };
+    let mut hosted = HostedSources::mint(Arc::clone(&hub), feeds, binding, trigger)?;
+    let head_subscription = hub.subscribe_head();
     for arm in arms {
         // An arm with no minted pump is handed no stream (its driver halts at
         // its live-mode gate); a stream already handed out is a miswired boot
@@ -383,10 +457,13 @@ fn provision_hosted(
                 return Err(SessionBootError::Stream(refusal))
             }
         };
-        let spawn = (arm.spawn)(&hub, stream);
+        let spawn = (arm.spawn)(stream, head_subscription.clone());
         host.lock().attach_spawn(&arm.id, spawn)?;
     }
-    Ok(hosted)
+    Ok(HostedProvisioning {
+        hosted: Some(hosted),
+        pump_publisher,
+    })
 }
 
 impl Drop for EngineSession {
@@ -473,21 +550,19 @@ mod tests {
         }
     }
 
-    /// A fake arm whose driver loop reports what the start boundary handed it:
-    /// the stream kind for its pump and whether the hub head source was already
-    /// registered when the loop came up.
+    /// A fake arm whose driver loop reports what the attach handed it: the
+    /// stream kind for its pump and whether the session's head subscription was
+    /// already open (a live source, not a closed one) when the loop came up.
     fn fake_arm(id: &str, source: PendingTxSource) -> HostedArmBoot {
         HostedArmBoot {
             id: StrategyId::new(id),
             source,
             feed: Some(feed_for(source)),
-            spawn: Box::new(move |hub: &Arc<Hub>, stream| {
-                let hub = Arc::clone(hub);
+            spawn: Box::new(move |stream, head_subscription| {
                 let stream_kind = stream.as_ref().map(PendingTxStream::source);
                 Box::new(move |_lane| {
-                    let hub = Arc::clone(&hub);
                     Box::pin(async move {
-                        let head_source_live = hub.subscribe_head().is_ok();
+                        let head_source_live = fake_head_liveness(head_subscription).await;
                         DriverExit::Halted(format!(
                             "stream={stream_kind:?} head_source_live={head_source_live}"
                         ))
@@ -495,6 +570,15 @@ mod tests {
                 })
             }),
         }
+    }
+
+    /// An attached head subscription is live when it neither yields a head nor
+    /// reports a closed clock inside a short window: the session's claimed source
+    /// still has its publisher.
+    async fn fake_head_liveness(mut head: HeadSubscription) -> bool {
+        tokio::time::timeout(Duration::from_millis(50), head.changed())
+            .await
+            .is_err()
     }
 
     fn hosted_boot() -> HostedBoot {
@@ -579,9 +663,7 @@ mod tests {
             }
         }
         let hub = Arc::clone(session.host().lock().hub());
-        let head = hub
-            .subscribe_head()
-            .expect("the pump owns and registers the session's one head source");
+        let head = hub.subscribe_head();
         assert!(
             head.head().is_none(),
             "the mint published no head: no head read was dialed before the start boundary"
@@ -806,8 +888,8 @@ mod tests {
         // not deferred to a start, and shared by every reader on the hub.
         let hub = Arc::clone(session.host().lock().hub());
         assert!(
-            hub.subscribe_head().is_ok(),
-            "the pump registered the session's one head source"
+            hub.head_source_is_claimed(),
+            "the session boot claimed the hub's one head source"
         );
         assert!(
             session
@@ -818,10 +900,7 @@ mod tests {
             "a settlement-only boot admits no backrun arm, so it mints no pending-tx pump"
         );
         assert!(
-            hub.subscribe_head()
-                .expect("the head source is registered")
-                .head()
-                .is_none(),
+            hub.subscribe_head().head().is_none(),
             "the mint publishes nothing: no head has been dialed or read"
         );
 
@@ -839,14 +918,13 @@ mod tests {
                 crate::hosted_sources::HeadEdgeMode::PumpHosted,
                 "the edge consumes the pump-owned source instead of dialing its own"
             );
-            hub.head_sender()
-                .expect("the pump's publish handle")
-                .publish(degenbot_eventhub::HubEvent::NewHead {
+            session
+                .driver()
+                .head_publisher()
+                .expect("the pump owns the session's claimed head source")
+                .publish(degenbot_eventhub::Head {
                     number: 55,
-                    timestamp: 0,
-                    base_fee_per_gas: None,
-                    gas_used: 0,
-                    gas_limit: 0,
+                    metadata: None,
                 });
             let fired = tokio::time::timeout(Duration::from_secs(5), fire_rx.recv())
                 .await
@@ -857,5 +935,185 @@ mod tests {
                 "the reconcile trigger carries the pump's accepted head"
             );
         });
+    }
+
+    /// A boot that hosts NO clock still claims the session hub's one head
+    /// source and routes the publisher to its pump: a hostless session is never
+    /// headless.
+    #[test]
+    fn a_hostless_boot_claims_the_pump_owned_head_source() {
+        let session = EngineSession::boot(
+            construction(),
+            facet_table(|_| FacetStatus::Configured),
+            None,
+        )
+        .expect("a hostless boot composes the plane");
+        assert!(
+            session.hosted().is_none(),
+            "a boot with no hosted input provisions no pump and no head clock"
+        );
+        let hub = Arc::clone(session.host().lock().hub());
+        assert!(
+            hub.head_source_is_claimed(),
+            "the boot claims the hub's head source before matching the hosted input"
+        );
+        let mut head = hub.subscribe_head();
+        assert_eq!(head.head(), None, "the mint published no head");
+
+        degenbot_core::runtime::get_runtime().block_on(async {
+            session
+                .driver()
+                .head_publisher()
+                .expect("a hostless boot routes the claimed publisher to the pump")
+                .publish(degenbot_eventhub::Head {
+                    number: 41,
+                    metadata: None,
+                });
+            assert!(head.changed().await.is_ok(), "the publisher is live");
+            assert_eq!(
+                head.borrow_and_update().map(|head| head.number),
+                Some(41),
+                "the pump's publisher reaches every reader of the session's one source"
+            );
+        });
+    }
+
+    /// The arm's spawn factory receives the session's head subscription at
+    /// attach, so a driver's loop reads the one clock the session claimed — the
+    /// head published after the arm came up is the edge it awaits.
+    #[test]
+    fn drivers_receive_the_head_subscription_at_attach() {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let boot = HostedBoot {
+            arms: vec![HostedArmBoot {
+                id: StrategyId::new("mevblocker_backrun"),
+                source: PendingTxSource::Mevblocker,
+                feed: Some(feed_for(PendingTxSource::Mevblocker)),
+                spawn: Box::new(move |_stream, mut head| {
+                    Box::new(move |_lane| {
+                        Box::pin(async move {
+                            let attached_head = head.head();
+                            ready_tx.send(()).expect("the test waits for this arm");
+                            let observed =
+                                tokio::time::timeout(Duration::from_secs(5), head.changed()).await;
+                            let number = match observed {
+                                Ok(Ok(())) => head.borrow_and_update().map(|head| head.number),
+                                _ => None,
+                            };
+                            DriverExit::Halted(format!(
+                                "attached={:?} observed={number:?}",
+                                attached_head.map(|head| head.number)
+                            ))
+                        })
+                    })
+                }),
+            }],
+            clock: Some(HostedHeadClock::PumpOwned),
+            trigger: None,
+        };
+        let session = EngineSession::boot(
+            construction(),
+            facet_table(|_| FacetStatus::Configured),
+            Some(boot),
+        )
+        .expect("boot composes the plane");
+        let id = StrategyId::new("mevblocker_backrun");
+        session
+            .host()
+            .lock()
+            .enable(&id)
+            .expect("the configured arm admits");
+        degenbot_core::runtime::get_runtime()
+            .block_on(session.start())
+            .expect("start the session");
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the arm's loop comes up before the head is published");
+
+        degenbot_core::runtime::get_runtime().block_on(async {
+            session
+                .driver()
+                .head_publisher()
+                .expect("the pump owns the session's claimed head source")
+                .publish(degenbot_eventhub::Head {
+                    number: 64,
+                    metadata: None,
+                });
+        });
+
+        let detail = await_tombstone(&session, &id);
+        assert!(
+            detail.contains("attached=None"),
+            "the subscription is attached at the clock's current value: {detail}"
+        );
+        assert!(
+            detail.contains("observed=Some(64)"),
+            "the driver's loop awaited the head its own session published: {detail}"
+        );
+    }
+
+    /// A directly minted pump-owned owner over an unclaimed hub half-starts; the
+    /// recovery is a WHOLE fresh session and hub — whose boot claims the source
+    /// and registers the same pending arms — never an owner-level re-mint.
+    #[test]
+    fn a_half_started_direct_owner_recovers_via_fresh_session_and_hub() {
+        use crate::hosted_sources::HostedPhase;
+
+        let hub = Arc::new(Hub::new());
+        let direct = HostedSources::mint(
+            Arc::clone(&hub),
+            [(
+                PendingTxSource::Mevblocker,
+                feed_for(PendingTxSource::Mevblocker),
+            )],
+            Some(HostedClockBinding::PumpOwned),
+            None,
+        )
+        .expect("the direct owner mints");
+        let refused = degenbot_core::runtime::get_runtime().block_on(direct.start());
+        assert!(
+            matches!(refused, Err(HostedStartError::HeadSourceUnclaimed)),
+            "an unclaimed hub half-starts the direct owner: {refused:?}"
+        );
+        assert_eq!(direct.phase(), HostedPhase::HalfStarted);
+        drop(direct);
+
+        let session = EngineSession::boot(
+            construction(),
+            facet_table(|_| FacetStatus::Configured),
+            Some(hosted_boot()),
+        )
+        .expect("a fresh session and hub compose the same arms");
+        let hub = Arc::clone(session.host().lock().hub());
+        assert!(
+            hub.head_source_is_claimed(),
+            "the fresh session's boot claims its own hub's head source"
+        );
+        assert_eq!(
+            session
+                .hosted()
+                .expect("the fresh boot hosts the arms")
+                .phase(),
+            HostedPhase::Provisioned,
+            "the recovered session substitutes a fresh owner, not the half-started one"
+        );
+        for id in ["mevblocker_backrun", "txpool_backrun"] {
+            session
+                .host()
+                .lock()
+                .enable(&StrategyId::new(id))
+                .expect("the configured arm admits");
+        }
+        degenbot_core::runtime::get_runtime()
+            .block_on(session.start())
+            .expect("the recovered session starts");
+        assert_eq!(
+            session
+                .hosted()
+                .expect("the fresh boot hosts the arms")
+                .phase(),
+            HostedPhase::Running,
+            "the whole-session recovery reaches Running"
+        );
     }
 }

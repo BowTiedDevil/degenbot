@@ -16,7 +16,7 @@ use crate::backrun::{BackrunConfig, MevblockerBackrun, TxpoolBackrun};
 use crate::execution_context::ExecutionContext;
 use crate::strategy_kit::StrategyKit;
 use degenbot_db::connection::DegenbotDb;
-use degenbot_eventhub::Hub;
+use degenbot_eventhub::HeadSubscription;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickWordSource;
 use degenbot_substrate::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
@@ -399,8 +399,8 @@ pub async fn resolve_backrun_node_join(
     })
 }
 
-/// The driver's boot recipe: the process config, the host-owned hub, and the
-/// boot-resolved strategy kit + run-artifact scope.
+/// The driver's boot recipe: the process config, the session's head
+/// subscription, and the boot-resolved strategy kit + run-artifact scope.
 ///
 /// The driver has exactly ONE boot path — [`Self::into_driver_future`]. The
 /// boot may poll it inline (a driver panic still unwinds the process)
@@ -409,7 +409,7 @@ pub async fn resolve_backrun_node_join(
 /// drift apart.
 pub struct BackrunBoot {
     strategy: BackrunStrategyBoot,
-    hub: Arc<Hub>,
+    head_source: HeadSubscription,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
@@ -422,7 +422,7 @@ impl BackrunBoot {
     pub fn into_driver_future(self) -> DriverFuture {
         let Self {
             strategy,
-            hub,
+            head_source,
             namespace_root,
             nonce_lane,
             stream,
@@ -431,14 +431,20 @@ impl BackrunBoot {
             if let Some(error) = strategy.boot_error.clone() {
                 return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
             }
-            let handle =
-                match BackrunDriver::start(strategy, hub, namespace_root, nonce_lane, stream).await
-                {
-                    Ok(handle) => handle,
-                    Err(error) => {
-                        return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
-                    }
-                };
+            let handle = match BackrunDriver::start(
+                strategy,
+                head_source,
+                namespace_root,
+                nonce_lane,
+                stream,
+            )
+            .await
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    return DriverExit::Halted(format!("backrun driver boot refused: {error}"));
+                }
+            };
             handle.wait().await;
             DriverExit::Stopped
         })
@@ -757,7 +763,7 @@ fn install_frame_trace_sink_under(root: Option<&Path>, ecosystem: &BackrunEcosys
 #[must_use]
 pub fn backrun_boot(
     strategy: BackrunStrategyBoot,
-    hub: Arc<Hub>,
+    head_source: HeadSubscription,
     namespace_root: Option<PathBuf>,
     nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
@@ -765,7 +771,7 @@ pub fn backrun_boot(
     install_frame_trace_sink(&strategy.ecosystem);
     BackrunBoot {
         strategy,
-        hub,
+        head_source,
         namespace_root,
         nonce_lane,
         stream,
@@ -778,14 +784,14 @@ pub fn backrun_boot(
 #[must_use]
 pub fn backrun_spawn_factory(
     strategy: BackrunStrategyBoot,
-    hub: Arc<Hub>,
+    head_source: HeadSubscription,
     nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
 ) -> DriverSpawnFactory {
     Box::new(move |namespace| {
         let namespace_root = namespace.map(|ns| ns.root().to_path_buf());
         Box::pin(async move {
-            backrun_boot(strategy, hub, namespace_root, nonce_lane, stream)
+            backrun_boot(strategy, head_source, namespace_root, nonce_lane, stream)
                 .into_driver_future()
                 .await
         })

@@ -16,8 +16,6 @@ pub enum OverflowPolicy {
         /// Counter label for evictions.
         name: &'static str,
     },
-    /// Keep only the most recent event; older values are superseded.
-    LatestOnly,
     /// Unbounded buffer, intentionally flagged under `name` for audit.
     UnboundedFlagged {
         /// Audit label naming the deliberate unbounded choice.
@@ -31,7 +29,6 @@ impl OverflowPolicy {
     pub fn name(&self) -> Option<&'static str> {
         match self {
             Self::DropOldestCounted { name } | Self::UnboundedFlagged { name } => Some(name),
-            Self::LatestOnly => None,
         }
     }
 

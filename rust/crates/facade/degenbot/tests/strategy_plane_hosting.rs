@@ -149,13 +149,16 @@ fn probe_arm(id: &str, source: PendingTxSource) -> HostedArmBoot {
                 ..TxpoolFeedConfig::defaults()
             }),
         }),
-        spawn: Box::new(move |hub: &Arc<Hub>, stream| {
-            let hub = Arc::clone(hub);
+        spawn: Box::new(move |stream, mut head_subscription| {
             let stream_kind = stream.as_ref().map(PendingTxStream::source);
             Box::new(move |_lane| {
-                let hub = Arc::clone(&hub);
                 Box::pin(async move {
-                    let head_source_live = hub.subscribe_head().is_ok();
+                    let head_source_live = tokio::time::timeout(
+                        std::time::Duration::from_millis(50),
+                        head_subscription.changed(),
+                    )
+                    .await
+                    .is_err();
                     DriverExit::Halted(format!(
                         "stream={stream_kind:?} head_source_live={head_source_live}"
                     ))
@@ -222,9 +225,11 @@ fn the_umbrella_boots_the_hosted_strategy_plane() {
         "one pump per hosted arm"
     );
     let hub = Arc::clone(session.host().lock().hub());
-    let head = hub
-        .subscribe_head()
-        .expect("the pump owns and registers the session's one head source");
+    assert!(
+        hub.head_source_is_claimed(),
+        "the session boot claimed the hub's one head source"
+    );
+    let head = hub.subscribe_head();
     assert!(
         head.head().is_none(),
         "the mint published no head: nothing dialed"

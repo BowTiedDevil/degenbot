@@ -108,8 +108,8 @@ async fn accepted_headers_arrive_at_the_hub_head_source_and_dropped_ones_do_not(
 
     let hub = Arc::new(Hub::new());
     let sender = hub
-        .register_head_source()
-        .expect("the session hub's head source registers once");
+        .claim_head_source()
+        .expect("the session hub's head source is claimed once");
     let (mut pump, _sink) = pump_for_test(Some(100));
     pump.install_head_source_for_test(sender);
 
@@ -125,9 +125,9 @@ async fn accepted_headers_arrive_at_the_hub_head_source_and_dropped_ones_do_not(
     )
     .await;
 
-    let head = hub.subscribe_head().expect("the source is registered");
+    let head = hub.subscribe_head();
     assert_eq!(
-        head.head(),
+        head.head().map(|head| head.number),
         Some(101),
         "the source carries the accepted header, not the dropped one"
     );

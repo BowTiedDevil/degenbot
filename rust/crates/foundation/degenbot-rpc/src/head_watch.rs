@@ -1,11 +1,11 @@
 //! Subscription-driven head watch.
 //!
-//! [`HeadWatch`] is the transport half of the process hub's head source: it
+//! [`HeadWatch`] is the transport half of the process hub's head clock: it
 //! performs the `newHeads` subscribe + reconnect (reusing the FFI subscription
-//! pump's watchdog machinery), and publishes every observed header into the
-//! hub's `NewHead` / `LatestOnly` channel. The hub owns the latest head and
-//! the staleness clock ([`degenbot_eventhub::HeadSubscription`]); a consumer
-//! awaits [`degenbot_eventhub::HeadSubscription::changed`] instead of polling
+//! pump's watchdog machinery), and publishes every observed header through the
+//! hub's claimed [`HeadSender`]. The hub owns the latest head and the staleness
+//! clock ([`degenbot_eventhub::HeadSubscription`]); a consumer awaits
+//! [`degenbot_eventhub::HeadSubscription::changed`] instead of polling
 //! `eth_blockNumber` on a timer.
 //!
 //! It reuses the FFI subscription pump's watchdog + reconnect machinery
@@ -19,8 +19,7 @@ use crate::subscription::{
 };
 use alloy::network::Ethereum;
 use alloy::providers::Provider;
-use degenbot_eventhub::head::HeadSender;
-use degenbot_eventhub::{Hub, HubEvent};
+use degenbot_eventhub::{Head, HeadMetadata, HeadSender};
 use futures_util::StreamExt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -49,9 +48,6 @@ pub enum HeadWatchError {
     /// within the watchdog window.
     #[error("head watch subscribe failed: {0}")]
     Subscribe(String),
-    /// The hub already had a `NewHead` source registered.
-    #[error("head source registration failed: {0}")]
-    Register(#[from] degenbot_eventhub::HubError),
 }
 
 /// A live `newHeads` subscription feeding the hub head source.
@@ -65,13 +61,15 @@ pub enum HeadWatchError {
 pub struct HeadWatch;
 
 impl HeadWatch {
-    /// Subscribe to `newHeads`, register the hub's `NewHead` source, and start
-    /// publishing headers into it.
+    /// Subscribe to `newHeads` and start publishing headers through the hub's
+    /// claimed head source.
     ///
-    /// The initial subscribe is awaited here so a failure is reported
-    /// synchronously and the caller can fall back to polling; the hub source
-    /// is registered only after that subscribe succeeds. Once complete, the
-    /// driving task reconnects in the background on the shared curve.
+    /// `sender` is the hub's one claim ([`degenbot_eventhub::Hub::claim_head_source`]),
+    /// handed in by whichever boot hosts this watch: the watch never claims a
+    /// source of its own. The initial subscribe is awaited here so a failure is
+    /// reported synchronously and the caller can fall back to polling. Once
+    /// complete, the driving task reconnects in the background on the shared
+    /// curve.
     ///
     /// `spawn_on` is the runtime the driving task is spawned on. It MUST be the
     /// runtime the provider's pubsub service lives on, so a teardown that
@@ -84,10 +82,9 @@ impl HeadWatch {
     /// # Errors
     ///
     /// [`HeadWatchError::Subscribe`] if the initial `subscribe_blocks` fails
-    /// or does not answer within `config.watchdog`;
-    /// [`HeadWatchError::Register`] if the hub already has a `NewHead` source.
+    /// or does not answer within `config.watchdog`.
     pub async fn subscribe(
-        hub: &Hub,
+        sender: HeadSender,
         provider: Arc<dyn Provider<Ethereum>>,
         config: HeadWatchConfig,
         spawn_on: tokio::runtime::Handle,
@@ -106,7 +103,6 @@ impl HeadWatch {
             };
         tracing::info!("head watch subscribed");
 
-        let sender: HeadSender = hub.register_head_source()?;
         let provider_for_reconnect = Arc::clone(&provider);
         let attempt = Arc::new(AtomicU32::new(0));
         let stall_attempt = Arc::clone(&attempt);
@@ -123,12 +119,14 @@ impl HeadWatch {
                 reconnect,
                 move |header| {
                     tracing::debug!(number = header.number, "head watch header");
-                    sender.publish(HubEvent::NewHead {
+                    sender.publish(Head {
                         number: header.number,
-                        timestamp: header.timestamp,
-                        base_fee_per_gas: header.base_fee_per_gas,
-                        gas_used: header.gas_used,
-                        gas_limit: header.gas_limit,
+                        metadata: Some(HeadMetadata {
+                            timestamp: header.timestamp,
+                            base_fee_per_gas: header.base_fee_per_gas,
+                            gas_used: header.gas_used,
+                            gas_limit: header.gas_limit,
+                        }),
                     });
                     true
                 },

@@ -67,7 +67,7 @@ use alloy::primitives::B256;
 use alloy::rpc::types::Log;
 // The event/fetch surface of the ingestion crate. `PoolEvent` +
 // `build_backfill_filter` are imported by the test module below.
-use degenbot_eventhub::{HeadSender, HubEvent};
+use degenbot_eventhub::{Head, HeadMetadata, HeadSender};
 use degenbot_ingestion::{
     IngestEvent as WsEvent, Watchdog, WsIngestor, BACKFILL_TIMEOUT_SECS,
     DEFAULT_BACKFILL_CHUNK_SIZE, RELEVANT_TOPICS,
@@ -425,12 +425,14 @@ impl BlockPump {
         let Some(head) = self.head_source.as_ref() else {
             return;
         };
-        head.publish(HubEvent::NewHead {
+        head.publish(Head {
             number,
-            timestamp: metadata.timestamp,
-            base_fee_per_gas: metadata.base_fee_per_gas,
-            gas_used: metadata.gas_used,
-            gas_limit: metadata.gas_limit,
+            metadata: Some(HeadMetadata {
+                timestamp: metadata.timestamp,
+                base_fee_per_gas: metadata.base_fee_per_gas,
+                gas_used: metadata.gas_used,
+                gas_limit: metadata.gas_limit,
+            }),
         });
     }
 }

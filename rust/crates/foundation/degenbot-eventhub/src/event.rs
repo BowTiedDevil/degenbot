@@ -6,7 +6,7 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 ///
 /// One frame of the `degenbot-rpc` backrun feed: the feed parses the
 /// `MEVBlocker` notification into this vocabulary and rings it as
-/// [`HubEvent::PendingTx`](crate::HubEvent::PendingTx).
+/// [`HubEvent::PendingTx`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingTx {
     /// The chain the frame is pinned to (the feed enforces one chain id).
@@ -55,13 +55,14 @@ pub enum PendingTxSource {
     Txpool,
 }
 
-/// The classes an intake can emit. One hub registration exists per class
-/// value, so the two [`PendingTxSource`] kinds register — and are drained —
-/// independently.
+/// The classes a registered intake can emit. One hub registration exists per
+/// class value, so the two [`PendingTxSource`] kinds register — and are
+/// drained — independently.
+///
+/// The head clock is not a registered class: the hub owns it directly
+/// ([`crate::Hub::claim_head_source`] / [`crate::Hub::subscribe_head`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HubClass {
-    /// A new block header (the head clock).
-    NewHead,
     /// A pool-relevant log (the settled-block intake).
     PoolEvent,
     /// An observed pending transaction, keyed by the watched feed that
@@ -72,19 +73,6 @@ pub enum HubClass {
 /// A hub event, carrying exactly the fields its source carries today.
 #[derive(Debug, Clone)]
 pub enum HubEvent {
-    /// A new block header. Mirrors the ingestion emitter's fields.
-    NewHead {
-        /// Block number.
-        number: u64,
-        /// Block timestamp (seconds).
-        timestamp: u64,
-        /// Base fee per gas (`None` pre-EIP-1559).
-        base_fee_per_gas: Option<u64>,
-        /// Gas used by the block.
-        gas_used: u64,
-        /// Gas limit of the block.
-        gas_limit: u64,
-    },
     /// A pool-relevant log. Mirrors the ingestion emitter's `PoolEvent`
     /// (`epoch`, `log_index`, raw `Log` payload); `pool_kind` is a
     /// decode-time fact the intake does not know, so it is not carried here.

@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crate::backrun::{BackrunConfig, Decision, ObserveReason};
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_eventhub::{HeadSubscription, Hub};
+use degenbot_eventhub::{Head, HeadSubscription};
 use degenbot_rpc::pending_tx_stream::PendingTxStream;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::frame_replay::ReplayableTx;
@@ -44,7 +44,7 @@ use degenbot_submission::submission_ledger::SubmissionLedger;
 use degenbot_substrate::nonce::NonceLane;
 
 use super::driver_boot::{BackrunBootError, BackrunStrategyBoot};
-use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_at, BlockFeeReader};
+use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_for_head, BlockFeeReader};
 use super::node_capability::NodeCapability;
 
 /// How long the live loop waits on the head watch before servicing the frame
@@ -1079,7 +1079,7 @@ impl BackrunDriver {
     /// wallet cost from a default.
     pub async fn start(
         strategy: BackrunStrategyBoot,
-        hub: Arc<Hub>,
+        head_source: HeadSubscription,
         namespace_root: Option<PathBuf>,
         nonce_lane: Arc<NonceLane<SubmissionLedger>>,
         stream: Option<PendingTxStream>,
@@ -1207,7 +1207,7 @@ impl BackrunDriver {
             stream,
         };
         let shared = Arc::new(LoopShared::new());
-        let run = Box::pin(drive(cfg, hub, boot, Arc::clone(&shared)));
+        let run = Box::pin(drive(cfg, head_source, boot, Arc::clone(&shared)));
         Ok(DriverHandle {
             shared,
             run: Some(run),
@@ -1245,16 +1245,18 @@ async fn bundle_sim_provider(
 /// advanced, the loop's cursor moved, the compose gate committed - only
 /// when its wallet cost priced fresh. A failed refresh hands the typed
 /// refusal back with nothing touched, so the caller skips that head and
-/// nothing at it composes at the previous cost.
+/// nothing at it composes at the previous cost. A full header prices from its
+/// own metadata, so the gate needs no second read; a number-only poll reads
+/// the block instead.
 pub(super) async fn advance_priced_head<R: BlockFeeReader + ?Sized>(
     reader: &R,
-    head: u64,
+    head: &Head,
     cfg: &BackrunConfig,
     wallet_gas_cost_wei: &AtomicU64,
     dispatcher: &Mutex<Dispatcher>,
     current_block: &mut u64,
 ) -> Result<(), BackrunBootError> {
-    let wallet_gas_cost = wallet_gas_cost_at(reader, head, cfg).await?;
+    let wallet_gas_cost = wallet_gas_cost_for_head(reader, head, cfg).await?;
     wallet_gas_cost_wei.store(
         u64::try_from(wallet_gas_cost).unwrap_or(u64::MAX),
         Ordering::Relaxed,
@@ -1262,9 +1264,26 @@ pub(super) async fn advance_priced_head<R: BlockFeeReader + ?Sized>(
     dispatcher
         .lock()
         .expect("dispatcher mutex poisoned")
-        .advance_block(head);
-    *current_block = head;
+        .advance_block(head.number);
+    *current_block = head.number;
     Ok(())
+}
+
+/// The loop's head step: the next observed head advance, or one paced
+/// iteration with none.
+///
+/// A closed clock paces instead of spinning: the source can deliver no more
+/// heads, and this loop never polls the chain itself.
+pub(super) async fn await_head_advance(head_source: &mut HeadSubscription) -> Option<Head> {
+    match tokio::time::timeout(HEAD_WATCH_WAIT, head_source.changed()).await {
+        Ok(Ok(())) => head_source.borrow_and_update(),
+        Ok(Err(_)) => {
+            tracing::warn!("head source closed - pacing until it recovers");
+            tokio::time::sleep(HEAD_WATCH_WAIT).await;
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 /// The driver loop. Everything here is loop-local: the replay handle borrows
@@ -1273,7 +1292,12 @@ pub(super) async fn advance_priced_head<R: BlockFeeReader + ?Sized>(
     clippy::too_many_lines,
     reason = "the driver loop reads top-to-bottom and the slot/feed selection rides here"
 )]
-async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<LoopShared>) {
+async fn drive(
+    cfg: BackrunConfig,
+    mut head_source: HeadSubscription,
+    boot: LoopBoot,
+    shared: Arc<LoopShared>,
+) {
     let LoopBoot {
         provider,
         execution,
@@ -1376,11 +1400,9 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         return;
     };
 
-    // The head clock is hosted too: the hub's head source belongs to the
-    // engine's block pump, whose accepted-header edge publishes every head, and
-    // this loop is one of its subscribers. No feed spawn, no watch, and no poll
-    // live here.
-    let mut head_source: Option<HeadSubscription> = hub.subscribe_head().ok();
+    // The head clock is hosted too: the session claimed the hub's one head
+    // source and handed this loop its subscription at attach, so the clock is
+    // always present — a closed clock paces, it never disappears.
 
     loop {
         if cfg.stop_file.exists() || shared.stop_requested() {
@@ -1392,31 +1414,16 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         // fallback poller lives in the hosted sources: a stale or closed
         // source just paces this loop until the clock recovers, and the loop
         // never polls the chain itself.
-        let next_head: Option<u64> = if let Some(head) = head_source.as_mut() {
-            match tokio::time::timeout(HEAD_WATCH_WAIT, head.changed()).await {
-                Ok(Ok(())) => head.borrow_and_update(),
-                Ok(Err(_)) => {
-                    tracing::warn!("head source closed - pacing until it recovers");
-                    tokio::time::sleep(HEAD_WATCH_WAIT).await;
-                    None
-                }
-                Err(_) => None,
-            }
-        } else {
-            // No head source (a joinless boot): pace; the stop file is still
-            // serviced each iteration.
-            tokio::time::sleep(HEAD_WATCH_WAIT).await;
-            None
-        };
+        let next_head = await_head_advance(&mut head_source).await;
 
         if let Some(head) = next_head {
-            if head > current_block {
+            if head.number > current_block {
                 // A failed gas-price refresh is no price evidence: the head
                 // is skipped unprocessed, so nothing at it composes at the
                 // previous cost and no state claims it was handled.
                 if let Err(error) = advance_priced_head(
                     provider.as_ref(),
-                    head,
+                    &head,
                     &cfg,
                     &pl.wallet_gas_cost_wei,
                     &dispatcher,
@@ -1424,11 +1431,20 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                 )
                 .await
                 {
-                    tracing::warn!("gas-price refresh failed - head {head} skipped: {error}");
+                    tracing::warn!(
+                        "gas-price refresh failed - head {} skipped: {error}",
+                        head.number
+                    );
                     continue;
                 }
-                match build_block_handle(&provider, head, &execution, &runtime.warm_cache, oracle)
-                    .await
+                match build_block_handle(
+                    &provider,
+                    head.number,
+                    &execution,
+                    &runtime.warm_cache,
+                    oracle,
+                )
+                .await
                 {
                     Some(h) => handle = Some(h),
                     None => {

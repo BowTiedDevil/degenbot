@@ -10,14 +10,15 @@
 //! # The contract
 //!
 //! - **Vocabulary, never raw substrate.** [`HubEvent`] names the classes a
-//!   source can emit ([`HubClass::NewHead`], [`HubClass::PoolEvent`],
+//!   registered source can emit ([`HubClass::PoolEvent`],
 //!   [`HubClass::PendingTx`] keyed by [`PendingTxSource`]) and carries
 //!   exactly the fields today's sources carry; it is not a raw WS/log
 //!   passthrough and no field is invented.
-//! - **The head clock lives here.** The hub owns the latest head and its
-//!   staleness ([`head::HeadSender`] / [`head::HeadSubscription`]); the
-//!   transport only subscribes and publishes ([`HeadSubscription::stale`]).
-//! - **Registration declares strictness.** Every source names its
+//! - **The head clock lives here.** The hub owns the one head source
+//!   ([`Hub::claim_head_source`] is the permanent claim, [`Hub::subscribe_head`]
+//!   the infallible subscription) and the staleness clock ([`HeadSubscription::stale`]).
+//!   A claimed clock's subscriptions close when every publisher drops.
+//! - **Registration declares strictness.** Every registered source names its
 //!   [`OverflowPolicy`] when it registers (once per class per process). A
 //!   second registration of the same class is refused; subscribing to an
 //!   unregistered class is refused.
@@ -31,9 +32,8 @@
 //! # Overflow policies
 //!
 //! [`OverflowPolicy::DropOldestCounted`] is the explicit bounded ring (the
-//! `MEVBlocker` feed's move in this slice); [`OverflowPolicy::LatestOnly`]
-//! is the latest-value clock; [`OverflowPolicy::UnboundedFlagged`] is a
-//! deliberate, named audit flag rather than a convenience. The declared
+//! `MEVBlocker` feed's move in this slice); [`OverflowPolicy::UnboundedFlagged`]
+//! is a deliberate, named audit flag rather than a convenience. The declared
 //! policy is visible via [`Hub::policy_of`] and [`Hub::unbounded_flagged_count`].
 
 pub mod event;
@@ -43,10 +43,10 @@ pub mod named;
 pub mod policy;
 
 pub use event::{HubClass, HubEvent, PendingTx, PendingTxSource};
-pub use head::{HeadSender, HeadSubscription};
+pub use head::{Head, HeadMetadata, HeadSender, HeadSubscription};
 pub use hub::{
-    DropOldestReceiver, DropOldestSender, Hub, LatestReceiver, LatestSender, SourceHandle,
-    Subscription, UnboundedReceiver, UnboundedSender,
+    AlreadyClaimed, DropOldestReceiver, DropOldestSender, Hub, SourceHandle, Subscription,
+    UnboundedReceiver, UnboundedSender,
 };
 pub use named::{NamedReceiver, NamedSender};
 pub use policy::{HubError, OverflowPolicy};

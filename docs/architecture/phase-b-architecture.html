@@ -75,7 +75,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
   <text class="t" x="1055" y="50" text-anchor="middle">EngineDriver / stages</text>
   <text class="d" x="1055" y="66" text-anchor="middle">settled-block arb pipeline</text>
   <text class="crate" x="1055" y="82" text-anchor="middle">degenbot-bot · arb_engine</text>
-  <text class="s" x="1055" y="98" text-anchor="middle">consumes PoolEvent + NewHead</text>
+  <text class="s" x="1055" y="98" text-anchor="middle">consumes PoolEvent + the head clock</text>
 
   <rect class="b" x="1210" y="30" width="190" height="76" fill="#f4f4f4" rx="8"/>
   <text class="t" x="1305" y="50" text-anchor="middle">Python driver</text>
@@ -130,13 +130,13 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
 
   <rect class="b" x="614" y="194" width="262" height="78" fill="#fffdf8" rx="6"/>
   <text class="d" x="745" y="212" text-anchor="middle" font-weight="600">Sources register with a DECLARED policy</text>
-  <text class="s" x="745" y="229" text-anchor="middle">DropOldestCounted{name} · LatestOnly</text>
+  <text class="s" x="745" y="229" text-anchor="middle">DropOldestCounted{name} (bounded)</text>
   <text class="s" x="745" y="244" text-anchor="middle">UnboundedFlagged{name} (audited)</text>
   <text class="s" x="745" y="260" text-anchor="middle">feed ring counters stay observable by name</text>
 
   <rect class="b" x="614" y="288" width="262" height="86" fill="#fffdf8" rx="6"/>
   <text class="d" x="745" y="306" text-anchor="middle" font-weight="600">Subscribers get typed events</text>
-  <text class="s" x="745" y="323" text-anchor="middle">PendingTx · NewHead · PoolEvent</text>
+  <text class="s" x="745" y="323" text-anchor="middle">PendingTx · PoolEvent · head clock</text>
   <text class="s" x="745" y="339" text-anchor="middle">named channels carry engine-owned payloads</text>
   <text class="s" x="745" y="358" text-anchor="middle">Hub::named_pending(name) = live queue depth</text>
 
@@ -174,7 +174,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
 
   <!-- ingestion -> hub (pool + head classes) -->
   <path class="arr" d="M530 65 C 575 65 560 130 598 152"/>
-  <text class="lbl" x="537" y="112">PoolEvent + NewHead</text>
+  <text class="lbl" x="537" y="112">PoolEvent + head clock</text>
 
   <!-- feed socket -> adapter -->
   <path class="arr" d="M230 215 H300"/>
@@ -195,7 +195,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
   <!-- hub -> engine driver -->
   <path class="arr" d="M745 140 V110" />
   <path class="arr" d="M745 110 H946" />
-  <text class="lbl" x="755" y="103">NewHead + PoolEvent subscriptions</text>
+  <text class="lbl" x="755" y="103">head clock + PoolEvent subscriptions</text>
 
   <!-- hub -> backrun strategy -->
   <path class="arr" d="M890 215 H948"/>
@@ -232,9 +232,9 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
 <table>
   <tr><th>Seam</th><th>Lifestyle type</th><th>Where</th><th>Hook for a strategy</th></tr>
   <tr><td>Intake vocabulary</td><td><code>HubEvent</code> enum</td><td><code>degenbot-eventhub/src/event.rs</code></td><td>subscribe to a CLASS (PendingTx / NewHead / PoolEvent); never own a transport</td></tr>
-  <tr><td>Overflow discipline</td><td><code>OverflowPolicy</code> enum</td><td><code>degenbot-eventhub/src/policy.rs</code></td><td>declared at registration; <code>DropOldestCounted{name}</code> · <code>LatestOnly</code> · <code>UnboundedFlagged{name}</code></td></tr>
+  <tr><td>Overflow discipline</td><td><code>OverflowPolicy</code> enum</td><td><code>degenbot-eventhub/src/policy.rs</code></td><td>declared at registration; <code>DropOldestCounted{name}</code> · <code>UnboundedFlagged{name}</code></td></tr>
   <tr><td>Named sink channels</td><td><code>NamedSender/NamedReceiver</code></td><td><code>degenbot-eventhub/src/named.rs</code></td><td>engine-shaped payloads (ResultBatch etc.) without inventing vocabulary; depth readable via <code>Hub::named_pending</code></td></tr>
-  <tr><td>Head source</td><td><code>HeadSender/HeadSubscription</code></td><td><code>degenbot-eventhub/src/head.rs</code></td><td>latest-head + staleness (LatestOnly); the 200ms poll fallback stays driver-side</td></tr>
+  <tr><td>Head clock</td><td><code>HeadSender/HeadSubscription</code></td><td><code>degenbot-eventhub/src/head.rs</code></td><td>one permanent claim (<code>claim_head_source</code>) + infallible <code>subscribe_head</code>; latest head + staleness; the 200ms poll fallback stays hosted-side</td></tr>
   <tr><td>World snapshot</td><td><code>RouteRegistry</code></td><td><code>degenbot-bot/src/bot_core/route_registry.rs</code></td><td>frozen at registration: connector index, decoder mirror, membership</td></tr>
   <tr><td>Pool-membership oracle</td><td><code>SimAnchorOracle</code></td><td><code>degenbot-bot/src/bot_core/sim_anchor.rs</code></td><td>engine answers from driver snapshots; backrun lane answers from the registry</td></tr>
   <tr><td>Strategy trait</td><td><code>PendingTxReaction</code></td><td><code>degenbot-strategy/src/pending_tx.rs</code></td><td>survives frame restarts; converts an event into a submission unit</td></tr>

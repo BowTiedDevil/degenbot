@@ -82,6 +82,19 @@ _Avoid_: per-driver feed spawning, a per-driver head watch or head poller, a per
 telemetry scrape, driver-owned reconciliation triggers; a lifecycle inferred from which
 resource exists.
 
+**Head clock**:
+The hub-owned block-head source (`degenbot-eventhub/src/head.rs`): one permanent claim
+(`Hub::claim_head_source`) hands the process's single `HeadSender` to the clock's owner —
+the engine block pump's accepted-header edge, or a hosted `newHeads` watch — and
+`Hub::subscribe_head` is infallible for every reader. A `Head` carries the block number
+and, from a full header, its metadata; a number-only poll carries none, so a consumer
+that needs the fee reads the block. A claimed clock's subscriptions close when the last
+publisher drops; a never-claimed clock's close when the hub drops.
+
+_Avoid_: a subscriber that keeps a publisher alive; a re-claimable or lapsing head
+source; reading channel closure as mid-session transport liveness (the watchdog and the
+staleness bound own that).
+
 **Pending-transaction driver**:
 The `degenbot-strategy` driver owning the strategy-neutral loop around a strategy's
 stages: pending-tx replay (ADR-054 seam 1), journal extraction (seam 2), the bundle-sim

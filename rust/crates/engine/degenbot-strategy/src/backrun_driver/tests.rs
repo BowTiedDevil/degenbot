@@ -1653,8 +1653,10 @@ async fn an_undialable_sim_endpoint_is_a_typed_refusal() {
 // reader, never a live node.
 
 use super::driver_policy::{
-    initial_wallet_gas_cost, wallet_gas_cost_at, BaseFeeAnswer, BlockFeeFuture, BlockFeeReader,
+    head_evidence, initial_wallet_gas_cost, wallet_gas_cost_at, wallet_gas_cost_for_head,
+    BaseFeeAnswer, BlockFeeFuture, BlockFeeReader, HeadEvidence,
 };
+use degenbot_eventhub::{Head, HeadMetadata};
 
 /// A scripted block/fee reader: each read answers from a canned result and
 /// records the block number the fee read was asked for, so a test can prove
@@ -1734,7 +1736,7 @@ async fn rpc_failure_is_no_price_never_the_legacy_default() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(7), Err(String::from("rpc timeout")));
 
-    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg, HeadEvidence::Unread).await;
     let error = priced.expect_err("a refused read prices nothing");
 
     assert!(
@@ -1754,7 +1756,7 @@ async fn missing_block_is_no_price_never_block_zero() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(7), Ok(BaseFeeAnswer::MissingBlock));
 
-    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg, HeadEvidence::Unread).await;
     let error = priced.expect_err("a block the node does not have prices nothing");
 
     assert_eq!(
@@ -1771,7 +1773,7 @@ async fn missing_base_fee_prices_the_explicit_legacy_policy_only() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(7), Ok(BaseFeeAnswer::MissingBaseFee));
 
-    let priced = wallet_gas_cost_at(&reader, 7, &cfg).await;
+    let priced = wallet_gas_cost_at(&reader, 7, &cfg, HeadEvidence::Unread).await;
     let cost = priced.expect("a proven legacy block prices at the explicit policy");
 
     assert_eq!(cost, 9_600_000_000_000_000);
@@ -1784,7 +1786,7 @@ async fn fresh_base_fee_prices_the_wallet_cost() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
 
-    let priced = wallet_gas_cost_at(&reader, 42, &cfg).await;
+    let priced = wallet_gas_cost_at(&reader, 42, &cfg, HeadEvidence::Unread).await;
     let cost = priced.expect("a fresh base fee prices");
 
     assert_eq!(cost, 4_200_000_000_000_000);
@@ -1849,7 +1851,11 @@ async fn a_failed_gas_price_refresh_leaves_the_head_unhandled() {
     let dispatcher = Mutex::new(Dispatcher::for_block(5));
     let mut cursor = 5;
 
-    let advanced = advance_priced_head(&reader, 42, &cfg, &gate, &dispatcher, &mut cursor).await;
+    let head = Head {
+        number: 42,
+        metadata: None,
+    };
+    let advanced = advance_priced_head(&reader, &head, &cfg, &gate, &dispatcher, &mut cursor).await;
     let error = advanced.expect_err("a refused refresh never handles the head");
 
     assert!(
@@ -1882,7 +1888,11 @@ async fn a_fresh_gas_price_refresh_advances_the_head_and_the_gate() {
     let dispatcher = Mutex::new(Dispatcher::for_block(5));
     let mut cursor = 5;
 
-    let advanced = advance_priced_head(&reader, 42, &cfg, &gate, &dispatcher, &mut cursor).await;
+    let head = Head {
+        number: 42,
+        metadata: None,
+    };
+    let advanced = advance_priced_head(&reader, &head, &cfg, &gate, &dispatcher, &mut cursor).await;
     advanced.expect("a fresh price handles the head");
 
     assert_eq!(
@@ -1898,4 +1908,115 @@ async fn a_fresh_gas_price_refresh_advances_the_head_and_the_gate() {
         42
     );
     assert_eq!(cursor, 42);
+}
+
+/// A full header prices its own base fee: the wallet cost uses the header's fee
+/// through the SAME `*12/10` next-base-fee derivation, and the fee reader is
+/// never asked — no redundant block read rides a head that already proved it.
+#[tokio::test]
+async fn a_full_head_prices_at_one_point_two_times_the_header_fee_without_a_refetch() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Err(String::from("must not read")));
+    let head = Head {
+        number: 42,
+        metadata: Some(HeadMetadata {
+            timestamp: 0,
+            base_fee_per_gas: Some(10_000_000_000),
+            gas_used: 0,
+            gas_limit: 0,
+        }),
+    };
+
+    let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
+        .await
+        .expect("a full header prices from its own metadata");
+
+    assert_eq!(
+        cost, 4_200_000_000_000_000,
+        "300_000 gas x (10 gwei x 1.2 next base fee + 2 gwei priority)"
+    );
+    assert_eq!(
+        reader.asked(),
+        None,
+        "a full header's fee needs no block read"
+    );
+}
+
+/// A full header that carries no base fee proves itself pre-EIP-1559, so the
+/// explicit legacy policy prices it — still with no read.
+#[tokio::test]
+async fn a_proven_legacy_head_uses_the_legacy_fee_policy() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Err(String::from("must not read")));
+    let head = Head {
+        number: 42,
+        metadata: Some(HeadMetadata {
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        }),
+    };
+
+    let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
+        .await
+        .expect("a proven legacy header prices at the explicit policy");
+
+    assert_eq!(cost, 9_600_000_000_000_000);
+    assert_eq!(
+        reader.asked(),
+        None,
+        "the proven legacy state is the header's own evidence"
+    );
+    assert_eq!(
+        head_evidence(head.metadata.as_ref()),
+        HeadEvidence::Observed(BaseFeeAnswer::MissingBaseFee)
+    );
+}
+
+/// A number-only head proves nothing about its fee, so the policy reads the
+/// block: the polled clock keeps the fee reader.
+#[tokio::test]
+async fn a_number_only_head_falls_back_to_the_fee_reader() {
+    let cfg = pricing_cfg();
+    let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
+    let head = Head {
+        number: 42,
+        metadata: None,
+    };
+
+    let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
+        .await
+        .expect("a number-only head prices through the reader");
+
+    assert_eq!(cost, 4_200_000_000_000_000);
+    assert_eq!(
+        reader.asked(),
+        Some(42),
+        "a number-only head falls back to the block read"
+    );
+    assert_eq!(head_evidence(head.metadata.as_ref()), HeadEvidence::Unread);
+}
+
+/// A closed clock paces without advancing: the loop's head step returns no
+/// head after one wait, so no dispatcher, cursor, or gate moves.
+#[tokio::test]
+async fn a_closed_backrun_clock_paces_without_advancing() {
+    use degenbot_eventhub::Hub;
+
+    let hub = Hub::new();
+    let publisher = hub
+        .claim_head_source()
+        .expect("the fresh clock is unclaimed");
+    drop(publisher);
+    let mut head = hub.subscribe_head();
+
+    let started = std::time::Instant::now();
+    let observed = super::driver_loop::await_head_advance(&mut head).await;
+
+    assert!(observed.is_none(), "a closed clock advances nothing");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(2),
+        "the closed clock paces one wait instead of spinning"
+    );
 }
