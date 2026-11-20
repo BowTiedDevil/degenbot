@@ -2246,36 +2246,48 @@ fn assert_umbrella_aliases_catalogged(
     }
 }
 
-/// Expand charter rules into per-crate (crate, forbidden prefixes) pairs.
+/// Strip the `cargo tree` glyphs from a line, then take `<name>` from
+/// `<name> v<version>`. Unicode box-drawing glyphs (`│ ├── └ ─`), not ASCII,
+/// prefix every non-root tree line.
+fn tree_entry_name(line: &str) -> &str {
+    let entry = line
+        .trim_start_matches([' ', '│', '├', '└', '─', '|', '`', '+', '-', '\\'])
+        .trim();
+    entry.split(" v").next().unwrap_or(entry).trim()
+}
+
+/// Expand charter rules into per-rule (member crates, forbidden prefixes)
+/// groups.
 fn expand_charter_rules(
     rules: &[(Vec<String>, Vec<String>, Vec<String>)],
     members: &[String],
-) -> Vec<(String, Vec<String>)> {
-    let mut checks: Vec<(String, Vec<String>)> = Vec::new();
+) -> Vec<(Vec<String>, Vec<String>)> {
+    let mut groups: Vec<(Vec<String>, Vec<String>)> = Vec::new();
     for (targets, prefixes, except) in rules {
-        if targets.len() == 1 && targets[0] == "*" {
-            for member in members {
-                if except.contains(member) {
-                    continue;
-                }
-                checks.push((member.clone(), prefixes.clone()));
-            }
+        let crates = if targets.len() == 1 && targets[0] == "*" {
+            members
+                .iter()
+                .filter(|member| !except.contains(member))
+                .cloned()
+                .collect()
         } else {
             for target in targets {
                 assert!(
                     members.contains(target),
                     "charter rule names non-member crate {target:?}"
                 );
-                checks.push((target.clone(), prefixes.clone()));
             }
-        }
+            targets.clone()
+        };
+        groups.push((crates, prefixes.clone()));
     }
-    checks
+    groups
 }
 
 /// ADR-084 D3: the dependency charter is the published contract. Every rule
-/// in `dependency_charter.txt` is asserted over `cargo tree -p X -e normal`
-/// at single-package, default-feature resolution.
+/// in `dependency_charter.txt` is asserted over `cargo tree` at single-package,
+/// default-feature resolution: one batched spawn settles a clean rule, and a
+/// dirty batch falls back to the per-crate trees, the only exact attribution.
 ///
 /// live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against `tests/dependency_charter.txt`; not tripwire precedent.
 #[test]
@@ -2344,34 +2356,39 @@ fn dependency_charter_is_respected() {
     }
     assert!(!rules.is_empty(), "dependency charter lost its rules");
 
-    // Expand rules into (crate, forbidden prefixes) pairs.
-    let checks = expand_charter_rules(&rules, &members);
-    assert!(
-        checks.len() >= 30,
-        "charter coverage collapsed: {} checks",
-        checks.len()
-    );
+    // Expand rules into per-rule (crates, forbidden prefixes) groups.
+    let groups = expand_charter_rules(&rules, &members);
+    let checks: usize = groups.iter().map(|(crates, _)| crates.len()).sum();
+    assert!(checks >= 30, "charter coverage collapsed: {checks} checks");
 
     let mut violations: Vec<String> = Vec::new();
-    for (crate_name, prefixes) in &checks {
-        let tree = cargo_tree_of(crate_name);
-        for line in tree.lines().skip(1) {
-            // Strip the tree glyphs, then take `<name>` from `<name> v<version>`.
-            // Unicode box-drawing glyphs (`│ ├── └ ─`), not ASCII, prefix
-            // every non-root tree line.
-            let entry = line
-                .trim_start_matches([' ', '│', '├', '└', '─', '|', '`', '+', '-', '\\'])
-                .trim();
-            if entry.is_empty() {
-                continue;
-            }
-            let name = entry.split(" v").next().unwrap_or(entry).trim();
-            if name.is_empty() {
-                continue;
-            }
-            for prefix in prefixes {
-                if name.starts_with(prefix.as_str()) {
-                    violations.push(format!("{crate_name}: {name} (prefix {prefix})"));
+    for (rule_crates, prefixes) in &groups {
+        // One batched spawn settles a clean rule: feature unification across the
+        // selected members can only ADD edges (the claim `core_crates_are_pyo3_free_under_default_features`
+        // runs on), so a batch with no forbidden name proves every member's tree
+        // clean. A dirty batch — or a single-crate rule, whose batch would only
+        // restate its own attribution tree — pays the per-crate attribution loop,
+        // the only exact verdict at the charter's single-package resolution.
+        let needs_attribution = rule_crates.len() <= 1
+            || batched_cargo_tree(rule_crates).lines().any(|line| {
+                let name = tree_entry_name(line);
+                prefixes
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+            });
+        if !needs_attribution {
+            continue;
+        }
+        for crate_name in rule_crates {
+            for line in cargo_tree_of(crate_name).lines().skip(1) {
+                let name = tree_entry_name(line);
+                if name.is_empty() {
+                    continue;
+                }
+                for prefix in prefixes {
+                    if name.starts_with(prefix.as_str()) {
+                        violations.push(format!("{crate_name}: {name} (prefix {prefix})"));
+                    }
                 }
             }
         }
