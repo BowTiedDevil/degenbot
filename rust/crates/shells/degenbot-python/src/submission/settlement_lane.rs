@@ -127,8 +127,10 @@ mod tests {
             Some(namespace("/state")),
             Arc::clone(&filed),
         );
+        // An operator account no other test over the process's registry
+        // claims: the account rule spans every filing in the registry.
         let resolved = home
-            .lane(Address::repeat_byte(0x01), 11, true)
+            .lane(Address::repeat_byte(0x03), 11, true)
             .expect("the host resolves its own lane");
         assert!(
             Arc::ptr_eq(&resolved, &filed),

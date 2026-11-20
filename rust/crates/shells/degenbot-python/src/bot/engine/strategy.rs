@@ -878,9 +878,10 @@ mod tests {
             );
             // The boot files the settlement lane under this host's own lane
             // namespace, and it is the lane the hosted head reconciliation
-            // folds notices through.
+            // folds notices through. The operator account is one no other test
+            // over the process's registry claims.
             let settlement_lane = engine
-                .settlement_lane(alloy::primitives::Address::repeat_byte(0x01), 0, true)
+                .settlement_lane(alloy::primitives::Address::repeat_byte(0x02), 0, true)
                 .expect("the boot filed the settlement lane");
 
             settlement_lane.stamp().expect("settlement lane stamps");
@@ -983,7 +984,12 @@ mod tests {
     }
 
     /// Teardown removes exactly the host's own filing: a peer engine booted over
-    /// the same registry keeps its registration.
+    /// the same registry keeps its registration, and the operator account the
+    /// teardown released is free again.
+    ///
+    /// Every test in this binary boots into the process's one registry, so these
+    /// assertions name this test's own filings and never a registry total — a
+    /// peer test's live engine is a filing this test does not own.
     #[test]
     fn teardown_removes_the_hosts_own_registration() {
         hermetic_db_layer();
@@ -991,24 +997,28 @@ mod tests {
         Python::attach(|py| {
             let first = PyArbEngine::new(py, None).expect("boot the first engine");
             let second = PyArbEngine::new(py, None).expect("boot the second engine");
-            let lanes = second.settlement_lanes();
-            let scope = second.settlement_lane_scope();
-            assert_eq!(
-                lanes.scopes(),
-                vec![scope.clone(), scope.clone()],
+            assert!(
+                Arc::ptr_eq(&first.settlement_lanes(), &second.settlement_lanes()),
                 "both boots filed into the one registry"
+            );
+
+            // The account is this test's own handle on the filing: a lane only
+            // claims it while its filing is registered.
+            let account = alloy::primitives::Address::repeat_byte(0x0c);
+            first
+                .settlement_lane(account, 0, true)
+                .expect("the first host claims the operator account");
+            assert_eq!(
+                second.settlement_lane(account, 0, true).err(),
+                Some(degenbot_submission::LaneRefusal::AccountOwned { account }),
+                "the peer host's filing is already a second authority for the account"
             );
 
             drop(first);
 
-            assert_eq!(
-                lanes.scopes(),
-                vec![scope],
-                "the teardown removed only the filing its own stake owned"
-            );
             second
-                .settlement_lane(alloy::primitives::Address::repeat_byte(0x0b), 0, true)
-                .expect("the peer engine's filing survives");
+                .settlement_lane(account, 0, true)
+                .expect("the teardown removed only this host's filing, leaving the peer's");
         });
     }
 
