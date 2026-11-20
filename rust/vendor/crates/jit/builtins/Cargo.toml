@@ -6,7 +6,7 @@
 name = "degenbot-evm2-jit-builtins"
 description = "EVM bytecode compiler builtins"
 
-version = "0.6.0-alpha.19"
+version = "0.6.0-alpha.20"
 authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
 edition = "2024"
 rust-version = "1.97"
