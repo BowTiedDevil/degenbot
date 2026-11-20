@@ -1324,15 +1324,10 @@ mod dissolution_complete {
     #[test]
     fn survivors_own_their_reallocated_items() {
         // The walk-adjacent helpers moved to lane_walk.
-        for marker in [
-            "pub(crate) fn clamp_result_in_worker(",
-            "pub(crate) fn flush_solved_item(",
-        ] {
-            assert!(
-                LANE_WALK.contains(marker),
-                "lane_walk.rs must own {marker:?}"
-            );
-        }
+        assert!(
+            LANE_WALK.contains("pub(crate) fn clamp_result_in_worker("),
+            "lane_walk.rs must own the worker clamp"
+        );
         // The clamp body + its profit recompute moved to solve_cycle.
         for marker in [
             "fn clamp_result_with_state(",

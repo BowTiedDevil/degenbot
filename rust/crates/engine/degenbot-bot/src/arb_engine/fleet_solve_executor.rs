@@ -1218,8 +1218,10 @@ mod tests {
                 update_stamp: vec![],
                 solve_span: tracing::Span::none(),
             };
-            lane.solved(arm);
-            lane.suppressed(11);
+            lane.solved(arm)
+                .expect("the traced bin's outcome concludes path 10");
+            lane.suppressed(11)
+                .expect("the traced bin's outcome concludes path 11");
             red_panic("path 12 panicked mid-bin (red harness)");
             // 13/14 never run — the panic ends the bin body.
         });
@@ -1303,8 +1305,10 @@ mod tests {
             metadata: crate::arb_engine::BlockMetadata::default(),
             update_stamp: vec![],
             solve_span: tracing::Span::none(),
-        });
-        lane.suppressed(31);
+        })
+        .expect("the bin's first record concludes path 30");
+        lane.suppressed(31)
+            .expect("the bin's second record concludes path 31");
         // The response (the production wiring drives this body with the
         // process owner; hermetic tests inject their own — same code):
         let patched = lane_death_response(&mut lane, Some(owner));
@@ -1373,7 +1377,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<LaneOutcome>();
         let mut lane = SolveLane::new(9, 1, vec![40, 41, 42], tx, None, None);
         run_solve_lane(&mut lane, &SeatSurvivesPolicy, |lane| {
-            lane.suppressed(40);
+            lane.suppressed(40)
+                .expect("the delivered path concludes before the abandon");
             // The body simply STOPS: 41/42 still owed. (A deliberate
             // abandon — the injection shape of a mid-flight lane death.)
         });
@@ -1421,7 +1426,8 @@ mod tests {
                 let work: SubmitWork = Box::new(move |_ctx: &LaneCtx| {
                     let mut lane = SolveLane::new(bin, bin, pids, tx.clone(), None, None);
                     run_solve_lane(&mut lane, &SeatSurvivesPolicy, |lane| {
-                        lane.suppressed(base);
+                        lane.suppressed(base)
+                            .expect("the corpus's first record concludes its path");
                         if bin == 1 {
                             red_panic("the corpus's deliberate mid-bin panic");
                         }
@@ -1441,9 +1447,12 @@ mod tests {
                             metadata: crate::arb_engine::BlockMetadata::default(),
                             update_stamp: vec![],
                             solve_span: tracing::Span::none(),
-                        });
-                        lane.suppressed(base + 2);
-                        lane.suppressed(base + 3);
+                        })
+                        .expect("the corpus's second record concludes its path");
+                        lane.suppressed(base + 2)
+                            .expect("the corpus's third record concludes its path");
+                        lane.suppressed(base + 3)
+                            .expect("the corpus's fourth record concludes its path");
                     });
                 });
                 executor
@@ -1534,15 +1543,18 @@ mod tests {
                         );
                         run_solve_lane(&mut lane, verdict.as_ref(), |lane| {
                             if cycle == 0 {
-                                lane.suppressed(cycle * 10); // one pid emitted before the panic
+                                lane.suppressed(cycle * 10)
+                                    .expect("one pid is emitted before the panic");
                                 red_panic("cycle-0 bin panics (red harness)");
                             } else {
                                 // cycle 1 runs CLEAN — every path delivers on
                                 // the surviving seat (a bin that returns
                                 // with still-owed paths is a lane death, not a
                                 // clean cycle; this body owes both and pays both).
-                                lane.suppressed(cycle * 10);
-                                lane.suppressed(cycle * 10 + 1);
+                                lane.suppressed(cycle * 10)
+                                    .expect("the clean cycle pays its first path");
+                                lane.suppressed(cycle * 10 + 1)
+                                    .expect("the clean cycle pays its second path");
                             }
                         });
                         drop(lane); // close the pipe so the per-cycle drain completes

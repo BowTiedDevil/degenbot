@@ -12,8 +12,8 @@
 //! inline_sim}`: the walk reads the cycle context, `min_profit_floor`, and
 //! the shared clamp body (`clamp_result_with_state`) from `solve_cycle`, and
 //! the lane/pipelined-sim seams from `executor`/`inline_sim`. The
-//! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
-//! `inline_sim_payload`) are defined HERE.
+//! walk-adjacent helpers (`clamp_result_in_worker`, `inline_sim_payload`) and
+//! the walk's witness doors are defined HERE.
 use super::hooked_leg_requote::{
     commit_plan_hook_fees, hooked_leg_facts, HookedLegAnchor, HookedLegPlan,
 };
@@ -97,37 +97,6 @@ pub(crate) fn inline_sim_payload(
     crate::arb_engine::inline_sim::run_inline_sim(sim, request, result.profit, parent_span.clone())
 }
 
-/// Stamp the sim payload onto the held Solved outcome and submit it — ONE
-/// flush shape for BOTH solve arms. The arms differ only in the `submit`
-/// closure: the detached arm's closure sends on the merge pipe and bumps its
-/// in-flight gauge at SEND success (a bin that dies before sending never
-/// leaks a count); the in-cycle arm's closure is `lane.solved`.
-pub(crate) fn flush_solved_item(
-    held: &mut Vec<(u64, Option<SolveOutcome>)>,
-    submit: &mut dyn FnMut(SolveOutcome),
-    done_pid: u64,
-    payload: Option<SimulatedPathResult>,
-) {
-    let Some(ix) = held.iter().position(|(pid, _)| *pid == done_pid) else {
-        // The outcome already left `held` (the releasing flush ran — its
-        // last sim landed and the walk's final `drain_ready` handed it
-        // over). A LATER `drain_ready`/`join_all` receipt for the same
-        // pid (an aliased or duplicate scheduler receipt accessor) must
-        // NOT resurrect it: a second release would re-bump the detached
-        // gauge and false-trip the exactness fuse. The late payload (if
-        // any) has no carrier — drop it silently (same contract the
-        // former twin helpers' "already flushed" arm kept).
-        return;
-    };
-    let Some(o) = held[ix].1.as_mut() else {
-        return; // already flushed
-    };
-    o.payload = payload;
-    let (_, outcome) = held.remove(ix);
-    if let Some(outcome) = outcome {
-        submit(outcome);
-    }
-}
 /// Per-path solve + diagnostics: the former `solve_fn`
 /// closure moved out verbatim so every dispatch arm (the legacy
 /// the dedicated tokio executor - dispatch a path identically. Takes the
@@ -299,91 +268,120 @@ pub(crate) fn drive_lane_walk(
     ws_ctx: &WalkSubmitCtx,
     lane: &mut SolveLane,
 ) -> LaneWalkReads {
-    // (pipelined arm): results park until their sim lands;
-    // the walk never waits on a sim. Sims pace on the fleet
-    // SimDriver seat pool (the budget's sim slot cap), so walk + sim
+    // (pipelined arm): a clamp-committed outcome PARKS on the lane witness
+    // until its sim lands; the walk never waits on a sim. Sims pace on the
+    // fleet SimDriver seat pool (the budget's sim slot cap), so walk + sim
     // demand never exceeds the CPU quota by construction.
-    let mut held: Vec<(u64, Option<SolveOutcome>)> = Vec::new();
     let mut pending = PipelinedSims::default();
-    let mut suppressed_but_unsent: Vec<u64> = Vec::new();
+
     for &i in &bin_plan.indices {
         let (pid, resolved) = &bin_plan.items[i];
         let outcome = solve_one_path(shared, solve_span, *pid, resolved).and_then(|(pid, r)| {
-            // Clamp in the worker (stance-gated) BEFORE the
-            // profitless filter — the clamp recompute can zero a candidate,
-            // and the filter must see the commit-ready values. `None` here is
-            // the clamp's refusal: the candidate dies with the `None` arm
-            // below (one Suppressed outcome).
+            // Clamp in the worker (stance-gated) BEFORE the profitless filter —
+            // the clamp recompute can zero a candidate, and the filter must see
+            // the commit-ready values. `None` here is the clamp's refusal: the
+            // candidate dies with the `None` arm below (one Suppressed outcome).
             clamp_result_in_worker(shared, i, pid, r).map(|clamp| (pid, clamp))
         });
-        {
-            // The profitless filter runs BEFORE the sim is scheduled —
-            // a clamp-zeroed candidate never needs its payload.
-            // Acceptance note (arm-as-data): the pre-fold arms
-            // DIFFERED here by delivery-shape only (the detached arm
-            // suppressed pre-filter `continue` skips; the in-cycle arm
-            // suppressed post-solve `None` arms). Both reductions
-            // converge at the same exact delivery contract: exactly one
-            // outcome per submitted pid.
-            if let Some((pid, clamp)) = outcome {
-                let result = clamp.result();
-                if result.optimal_input.is_zero() || result.profit.is_zero() {
-                    if !result.solver_pool_states.is_empty() {
-                        diag!(
-                            domain = solver,
-                            "path_id={pid} hops=[{}]",
-                            result.solver_pool_states.join(";")
-                        );
-                    }
-                    // The pre-filter skip IS one delivered outcome
-                    // (this IS the detached arm's live record —
-                    //): no gauge (contract 1's pairing — it
-                    // never bumped), keyless → no claim (contract 4).
-                    lane.suppressed(pid);
-                    continue;
-                }
-                if !pending.schedule_one(shared, i, pid, result, solve_span) {
-                    // No sim rides this item (no hook / clamp
-                    // off) — flush immediately.
-                    held.push((pid, Some(stamp_outcome(pid, clamp, None, policy, ws_ctx))));
-                    flush_solved_item(&mut held, &mut |o| lane.solved(o), pid, None);
-                    continue;
-                }
-                if !result.solver_pool_states.is_empty() {
-                    diag!(
-                        domain = solver,
-                        "path_id={pid} hops=[{}]",
-                        result.solver_pool_states.join(";")
-                    );
-                }
-                held.push((pid, Some(stamp_outcome(pid, clamp, None, policy, ws_ctx))));
-                // Fan while walking: send every sim that landed
-                // during this iteration's solve.
-                for (done_pid, payload) in pending.drain_ready() {
-                    flush_solved_item(&mut held, &mut |o| lane.solved(o), done_pid, payload);
-                }
-            } else {
-                // A None IS an outcome: exactly one
-                // Suppressed record through the LANE (both arms
-                // delivered this arm on the lane in the unfused
-                // code; the reads vector is the walk's silent
-                // label — no gauge, no claim, no merge).
-                lane.suppressed(*pid);
-                suppressed_but_unsent.push(*pid);
+
+        let Some((pid, clamp)) = outcome else {
+            // A None IS an outcome: exactly one Suppressed record through the
+            // lane (no gauge bump, no ledger claim, no merge).
+            conclude_suppressed(lane, *pid);
+            continue;
+        };
+
+        let result = clamp.result();
+
+        // The profitless filter runs BEFORE the sim is scheduled — a
+        // clamp-zeroed candidate never needs its payload. The skip IS one
+        // delivered outcome, so it concludes through the walk's Suppressed door.
+        if result.optimal_input.is_zero() || result.profit.is_zero() {
+            if !result.solver_pool_states.is_empty() {
+                diag!(
+                    domain = solver,
+                    "path_id={pid} hops=[{}]",
+                    result.solver_pool_states.join(";")
+                );
             }
+            conclude_suppressed(lane, pid);
+            continue;
+        }
+
+        if !pending.schedule_one(shared, i, pid, result, solve_span) {
+            // No sim rides this item (no hook / clamp off / refused boot): the
+            // outcome concludes now, payload-less.
+            conclude_solved(lane, stamp_outcome(pid, clamp, None, policy, ws_ctx));
+            continue;
+        }
+
+        if !result.solver_pool_states.is_empty() {
+            diag!(
+                domain = solver,
+                "path_id={pid} hops=[{}]",
+                result.solver_pool_states.join(";")
+            );
+        }
+
+        // Park the outcome on its path: the witness owes exactly this record,
+        // concluded by the scheduled sim's receipt (or by a failure patch).
+        park_outcome(lane, stamp_outcome(pid, clamp, None, policy, ws_ctx));
+
+        // Fan while walking: conclude every parked outcome whose sim landed
+        // during this iteration's solve.
+        for (done_pid, payload) in pending.drain_ready() {
+            deliver_receipt(lane, done_pid, payload);
         }
     }
-    // Tail: join every outstanding sim and send.
+
+    // Tail: join every outstanding sim and conclude its parked outcome.
+    // `join_all` is total — a receipt whose sim never ran (a dead unit's
+    // dropped sender) still arrives, as a payload-less record.
     if !pending.is_empty() {
         for (done_pid, payload) in pending.join_all() {
-            flush_solved_item(&mut held, &mut |o| lane.solved(o), done_pid, payload);
+            deliver_receipt(lane, done_pid, payload);
         }
     }
+
     LaneWalkReads {
-        suppressed_unsent: suppressed_but_unsent,
-        held_unflushed: held.len(),
+        held_unflushed: lane.parked(),
     }
 }
+
+/// The walk's Suppressed door: a refusal is an exactness violation the witness
+/// logs at its own door (lane identity + reason), and debug builds fail where
+/// the contradiction was produced while release builds keep paying the bin's
+/// other obligations.
+fn conclude_suppressed(lane: &mut SolveLane, pid: u64) {
+    let conclusion = lane.suppressed(pid);
+    debug_assert!(
+        conclusion.is_ok(),
+        "Suppressed record refused for path {pid}"
+    );
+}
+
+/// The walk's immediate Solved door (no sim rode the path).
+fn conclude_solved(lane: &mut SolveLane, item: SolveOutcome) {
+    let pid = item.pid;
+    let conclusion = lane.solved(item);
+    debug_assert!(conclusion.is_ok(), "Solved record refused for path {pid}");
+}
+
+/// The walk's park door: the path stays owed the SAME record, concluded by its
+/// sim receipt.
+fn park_outcome(lane: &mut SolveLane, item: SolveOutcome) {
+    let pid = item.pid;
+    let parked = lane.park(item);
+    debug_assert!(parked.is_ok(), "outcome could not park on path {pid}");
+}
+
+/// The walk's receipt door: a sim receipt concludes its parked outcome exactly
+/// once (a late or un-parked receipt is the witness's refusal to make).
+fn deliver_receipt(lane: &mut SolveLane, pid: u64, payload: Option<SimulatedPathResult>) {
+    let conclusion = lane.receipt(pid, payload);
+    debug_assert!(conclusion.is_ok(), "sim receipt refused for path {pid}");
+}
+
 /// The walk's per-bin plan: the items eligible for solving (aligned to
 /// cycle order) and the bin's index window into them (the LPT bin's owned
 /// indices). Same byte shape both arms compute today.
@@ -408,22 +406,14 @@ pub(crate) struct WalkSubmitCtx {
     /// The enqueue cycle span; `None` on the in-cycle arm.
     pub(crate) solve_span: Option<tracing::Span>,
 }
-/// What the walk reports to the arm that drove it:
-/// - `suppressed_unsent`: the post-solve None arms (the CONVERGENT
-///   ancestral shape — the DETACHED arm delivered its profitless skips ON
-///   the lane instead, per the in-walk record comment; Suppressed never
-///   claims/bumps in either arm).
-/// - `held_unflushed`: Solved envelopes pushed but not yet handed to the
-///   lane (always 0 — the tail flush drains every sim; both arms debug-
-///   assert it).
+/// What the walk reports to the bin body that drove it: the outcomes still
+/// parked on their sim receipts. The witness owns every other per-path fact, so
+/// this is the ONE read (a parked outcome left behind would strand a path the
+/// ledger already counts as submitted).
 pub(crate) struct LaneWalkReads {
-    #[expect(
-        dead_code,
-        reason = "consumed per-arm by tests asserting which arm delivered a skipped solve"
-    )]
-    pub(crate) suppressed_unsent: Vec<u64>,
     pub(crate) held_unflushed: usize,
 }
+
 /// Stamp ONE outcome from the policy (the carrier-stamp half of the arm
 /// difference). The detached arm fills `cycle_seq`/`update_stamp`/
 /// `solve_span` from the enqueue; the in-cycle arm fills the inert
