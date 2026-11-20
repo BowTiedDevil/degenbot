@@ -1,48 +1,10 @@
-//! ABI decoding for Ethereum data.
-//!
-//! High-performance decoding of ABI-encoded data using alloy's `dyn_abi`.
-//!
-//! # Architecture
-//!
-//! This module uses a two-layer architecture:
-//!
-//! 1. **Pure Rust core**: `decode_rust()` functions that operate
-//!    entirely without `PyO3` dependencies. This enables:
-//!    - Unit testing without Python
-//!    - Parallel decoding without GIL
-//!    - Reuse in non-Python Rust code
-//!
-//! 2. **Thin `PyO3` wrapper**: `decode()` and `decode_single()` functions that convert
-//!    `AbiValue` results to Python objects in a single pass.
-//!
-//! # Caching
-//!
-//! Type parsing is cached internally for repeated calls with the same type signatures.
-//! This provides significant performance benefits when processing thousands of values
-//! (e.g., decoding Transfer events from historical blocks).
+//! Type strings are parsed once and cached by signature, which is what makes
+//! decoding thousands of `Transfer`-shaped logs from historical blocks cheap.
 
 use crate::abi_types::cached::get_cached_types;
 use crate::abi_types::value::AbiValue;
 use degenbot_core::errors::AbiDecodeError;
 
-// =============================================================================
-// Pure Rust decoding functions
-// =============================================================================
-
-/// Decode ABI-encoded data for multiple types (pure Rust).
-///
-/// This is the core decoding function with no Python dependencies.
-/// Uses internal type parsing cache for performance.
-///
-/// # Arguments
-///
-/// * `types` - Slice of ABI type strings
-/// * `data` - Raw ABI-encoded bytes
-///
-/// # Returns
-///
-/// A vector of `AbiValue` enums representing the decoded values.
-///
 /// # Errors
 ///
 /// Returns `AbiDecodeError` if decoding fails.
@@ -51,7 +13,8 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
         return Err(AbiDecodeError::EmptyTypesList);
     }
 
-    // Check for fixed-point types (not yet implemented)
+    // Fixed-point types have no `AbiValue` representation and no alloy `DynSolType`
+    // mapping; reject up front so the binding layer can fall back to `eth_abi`.
     for ty in types {
         if ty.contains("fixed") || ty.contains("ufixed") {
             return Err(AbiDecodeError::FixedPointNotImplemented);
@@ -62,16 +25,10 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
         return Err(AbiDecodeError::EmptyData);
     }
 
-    // Use cached types for decoding
     let cached = get_cached_types(types)?;
     cached.decode(data)
 }
 
-/// Decode a single ABI value (pure Rust).
-///
-/// Convenience function for decoding a single value without Python dependencies.
-/// Uses internal type parsing cache for performance.
-///
 /// # Panics
 ///
 /// Panics if `cached.decode()` returns a different number of values than
@@ -86,7 +43,6 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
         return Err(AbiDecodeError::EmptyData);
     }
 
-    // Use cached types for decoding
     let cached = get_cached_types(&[abi_type])?;
     let mut values = cached.decode(data)?;
     if values.len() != 1 {
@@ -100,20 +56,8 @@ pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDe
     Ok(values.pop().expect("length verified above"))
 }
 
-/// Decode ABI-encoded data using pre-parsed `AbiType` values.
-///
-/// This is more efficient than `decode_rust()` because it avoids
-/// string parsing for each type. Use this when you already have
-/// `AbiType` instances (e.g., from `FunctionSignature::outputs`).
-///
-/// # Arguments
-///
-/// * `types` - Slice of `AbiType` values
-/// * `data` - Raw ABI-encoded bytes
-///
-/// # Returns
-///
-/// A vector of `AbiValue` enums representing the decoded values.
+/// For callers that already hold parsed types (`FunctionSignature::outputs`): more
+/// efficient than `decode_rust()` because it skips type-string parsing.
 ///
 /// # Errors
 ///
@@ -428,15 +372,10 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // decode_for_types tests (pre-parsed AbiType)
-    // =========================================================================
-
     #[test]
     fn test_decode_for_types_basic() {
         use crate::abi_types::type_::AbiType;
 
-        // Encode uint256 and bool
         let mut data = Vec::new();
         let mut word1 = vec![0u8; 32];
         word1[31] = 42;
@@ -467,7 +406,6 @@ mod tests {
     fn test_decode_for_types_matches_decode_rust() {
         use crate::abi_types::type_::AbiType;
 
-        // Create test data
         let mut data = Vec::new();
         let mut word1 = vec![0u8; 32];
         word1[31] = 42;
@@ -481,7 +419,6 @@ mod tests {
         word3[19] = 1;
         data.extend(word3);
 
-        // Compare both methods
         let types_str = vec!["uint256", "bool", "address"];
         let types_abi = vec![AbiType::Uint(256), AbiType::Bool, AbiType::Address];
 
@@ -500,20 +437,14 @@ mod tests {
         assert!(decoded.is_empty());
     }
 
-    // =========================================================================
-    // Caching tests (verify the shared cache works for decoding)
-    // =========================================================================
-
     #[test]
     fn test_type_caching() {
         use crate::abi_types::cached::get_cached_types;
 
-        // Two calls with the same key return the same Arc allocation
         let cached1 = get_cached_types(&["uint256"]).unwrap();
         let cached2 = get_cached_types(&["uint256"]).unwrap();
         assert!(Arc::ptr_eq(&cached1, &cached2));
 
-        // Different key returns a different Arc
         let cached3 = get_cached_types(&["address"]).unwrap();
         assert!(!Arc::ptr_eq(&cached1, &cached3));
     }
@@ -522,12 +453,10 @@ mod tests {
     fn test_type_caching_multiple_types() {
         use crate::abi_types::cached::get_cached_types;
 
-        // Same multi-type key returns same Arc
         let cached1 = get_cached_types(&["uint256", "bool"]).unwrap();
         let cached2 = get_cached_types(&["uint256", "bool"]).unwrap();
         assert!(Arc::ptr_eq(&cached1, &cached2));
 
-        // Different order is a different key
         let cached3 = get_cached_types(&["bool", "uint256"]).unwrap();
         assert!(!Arc::ptr_eq(&cached1, &cached3));
     }

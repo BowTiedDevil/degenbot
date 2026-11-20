@@ -1,41 +1,9 @@
-//! ABI encoding for Ethereum data.
-//!
-//! High-performance encoding of ABI data using alloy's `dyn_abi`.
-//!
-//! # Architecture
-//!
-//! This module uses a two-layer architecture:
-//!
-//! 1. **Pure Rust core**: `encode_rust()` functions that operate
-//!    entirely without `PyO3` dependencies. This enables:
-//!    - Unit testing without Python
-//!    - Parallel encoding without GIL
-//!    - Reuse in non-Python Rust code
-//!
-//! 2. **Thin `PyO3` wrapper**: `encode()` and `encode_single()` functions that convert
-//!    Python objects to `AbiValue` and encode them.
-
 use crate::abi_types::cached::get_cached_types;
 use crate::abi_types::type_::AbiType;
 use crate::abi_types::value::AbiValue;
 use degenbot_core::errors::AbiDecodeError;
 
-// =============================================================================
-// Pure Rust encoding functions
-// =============================================================================
-
-/// Encode a single ABI value (pure Rust).
-///
-/// Uses the shared `CachedAbiTypes` cache to avoid repeated type parsing.
-///
-/// # Arguments
-///
-/// * `abi_type` - ABI type string (e.g., "uint256", "address", "bytes")
-/// * `value` - The value to encode
-///
-/// # Returns
-///
-/// The ABI-encoded bytes.
+/// Uses the shared `CachedAbiTypes` cache to avoid re-parsing the type string.
 ///
 /// # Errors
 ///
@@ -52,19 +20,7 @@ pub fn encode_single_rust(abi_type: &str, value: &AbiValue) -> Result<Vec<u8>, A
     cached.encode(&values)
 }
 
-/// Encode multiple ABI values (pure Rust).
-///
-/// Delegates to `encode_for_types` after parsing type strings,
-/// which uses the shared `CachedAbiTypes` cache.
-///
-/// # Arguments
-///
-/// * `types` - Slice of ABI type strings
-/// * `values` - Slice of values to encode
-///
-/// # Returns
-///
-/// The ABI-encoded bytes (without function selector).
+/// Encoded as parameters only — no function selector.
 ///
 /// # Errors
 ///
@@ -91,26 +47,14 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
         }
     }
 
-    // Delegate to the shared cache + encode_for_types path
     let cached = get_cached_types(types)?;
     cached.encode(values)
 }
 
-/// Encode multiple ABI values using pre-parsed `AbiType` values.
+/// For callers that already hold parsed types (`FunctionSignature::inputs`): more
+/// efficient than `encode_rust()` because it skips type-string parsing.
 ///
-/// Uses the shared `CachedAbiTypes` cache for `DynSolType` conversions.
-/// This is more efficient than `encode_rust()` because it avoids
-/// string parsing for each type. Use this when you already have
-/// `AbiType` instances (e.g., from `FunctionSignature::inputs`).
-///
-/// # Arguments
-///
-/// * `types` - Slice of `AbiType` values
-/// * `values` - Slice of values to encode
-///
-/// # Returns
-///
-/// The ABI-encoded bytes (without function selector).
+/// Encoded as parameters only — no function selector.
 ///
 /// # Errors
 ///
@@ -148,30 +92,17 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
         return Ok(Vec::new());
     }
 
-    // Build CachedAbiTypes from pre-parsed AbiType values (uses cache internally)
     let cached = crate::abi_types::cached::CachedAbiTypes::from_abi_types(types)?;
     cached.encode(values)
 }
 
-/// Encode multiple ABI values in **non-standard packed mode** (Solidity
-/// `abi.encodePacked` / `eth_abi.packed.encode_packed`).
+/// Solidity `abi.encodePacked` / `eth_abi.packed.encode_packed`: values are
+/// concatenated in their packed forms, with no 32-byte word padding and no length
+/// prefix for dynamic types. Tuples pack element-by-element.
 ///
-/// Each value is encoded tightly with no 32-byte word padding and no length
-/// prefix for dynamic types — the values are simply concatenated in their
-/// packed forms. Tuples are packed element-by-element.
-///
-/// Uses the same `value_to_alloy_for_type` coercion path as `encode_rust`
-/// (so non-negative Python ints can satisfy signed `Int` slots, 20-byte
-/// `bytes` can satisfy `address`, etc.).
-///
-/// # Arguments
-///
-/// * `types` - Slice of ABI type strings
-/// * `values` - Slice of values to pack-encode
-///
-/// # Returns
-///
-/// The packed-encoded bytes (no function selector, no padding).
+/// Uses the same `value_to_alloy_for_type` coercion path as `encode_rust`, so
+/// non-negative Python ints can satisfy signed `Int` slots and 20-byte `bytes` can
+/// satisfy `address`.
 ///
 /// # Errors
 ///
@@ -289,7 +220,6 @@ mod tests {
         let value = AbiValue::Uint(U256::from(12345u64), 256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
-        // Value should be in the last bytes
         assert_eq!(encoded[30], 0x30);
         assert_eq!(encoded[31], 0x39);
     }
@@ -317,7 +247,6 @@ mod tests {
         let value = AbiValue::Address(addr.into());
         let encoded = encode_single_rust("address", &value).unwrap();
         assert_eq!(encoded.len(), 32);
-        // Address should be in the last 20 bytes
         assert_eq!(
             &encoded[12..],
             hex::decode("d3cda913deb6f67967b99d67acdfa1712c293601").unwrap()
@@ -351,16 +280,11 @@ mod tests {
         let bytes = hex::decode("deadbeef").unwrap();
         let value = AbiValue::Bytes(bytes.clone());
         let encoded = encode_single_rust("bytes", &value).unwrap();
-        // Dynamic bytes as single value: offset (32) + length (32) + data + padding
-        // Total: 32 + 32 + 32 = 96 bytes for 4 bytes of data
         assert_eq!(encoded.len(), 96);
-        // Check offset (should point to the length field, which is at byte 32)
         let offset = alloy::primitives::U256::from_be_slice(&encoded[0..32]);
         assert_eq!(offset, alloy::primitives::U256::from(32));
-        // Check length (at offset 32)
         let len = alloy::primitives::U256::from_be_slice(&encoded[32..64]);
         assert_eq!(len, alloy::primitives::U256::from(4));
-        // Check data (at offset 64)
         assert_eq!(&encoded[64..68], &bytes);
     }
 
@@ -369,16 +293,11 @@ mod tests {
         let s = "Hello, World!";
         let value = AbiValue::String(s.to_string());
         let encoded = encode_single_rust("string", &value).unwrap();
-        // Dynamic string as single value: offset (32) + length (32) + data + padding
-        // Total: 32 + 32 + 32 = 96 bytes for 13 bytes of data
         assert_eq!(encoded.len(), 96);
-        // Check offset (should point to the length field, which is at byte 32)
         let offset = alloy::primitives::U256::from_be_slice(&encoded[0..32]);
         assert_eq!(offset, alloy::primitives::U256::from(32));
-        // Check length (at offset 32)
         let len = alloy::primitives::U256::from_be_slice(&encoded[32..64]);
         assert_eq!(len, alloy::primitives::U256::from(13));
-        // Check data (at offset 64)
         assert_eq!(&encoded[64..77], s.as_bytes());
     }
 
@@ -387,7 +306,6 @@ mod tests {
         let value = AbiValue::Int(I256::MINUS_ONE, 256);
         let encoded = encode_single_rust("int256", &value).unwrap();
         assert_eq!(encoded.len(), 32);
-        // -1 in two's complement should be all 0xFF
         assert!(encoded.iter().all(|&b| b == 0xFF));
     }
 
@@ -400,7 +318,6 @@ mod tests {
         ];
         let value = AbiValue::Array(values);
         let encoded = encode_single_rust("uint256[]", &value).unwrap();
-        // Dynamic array: offset (32) + length (32) + elements (3 * 32)
         assert_eq!(encoded.len(), 32 + 32 + 96);
     }
 
@@ -409,9 +326,7 @@ mod tests {
         let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
         let encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
         assert_eq!(encoded.len(), 64);
-        // First word: 42
         assert_eq!(encoded[31], 42);
-        // Second word: true
         assert_eq!(encoded[63], 1);
     }
 
@@ -482,7 +397,6 @@ mod tests {
         assert_eq!(encoded[31], 42);
         assert_eq!(encoded[63], 1);
 
-        // Verify it produces the same output as encode_rust
         let encoded_rust = encode_rust(&["uint256", "bool"], &values).unwrap();
         assert_eq!(encoded, encoded_rust);
     }
@@ -500,19 +414,16 @@ mod tests {
         let encoded = encode_for_types(&types, &values).unwrap();
         assert!(!encoded.is_empty());
 
-        // Verify roundtrip
         let encoded_rust = encode_rust(&["uint256[]"], &values).unwrap();
         assert_eq!(encoded, encoded_rust);
     }
 
     #[test]
     fn test_roundtrip() {
-        // Encode then decode should give back the same value
         let original = U256::from(12_345_678_901_234_567_890_u128);
         let value = AbiValue::Uint(original, 256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
 
-        // Decode using the decoder module
         let decoded = crate::decoder::decode_single_rust("uint256", &encoded).unwrap();
         match decoded {
             AbiValue::Uint(n, bits) => {
@@ -527,7 +438,6 @@ mod tests {
     fn test_encode_roundtrip_with_decode() {
         use crate::decoder::decode_single_rust;
 
-        // Test uint256
         let original = U256::from(12_345_678_901_234_567_890_u128);
         let value = AbiValue::Uint(original, 256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
@@ -540,7 +450,6 @@ mod tests {
             _ => panic!("Expected Uint"),
         }
 
-        // Test address
         let addr_str = "0xd3cda913deb6f67967b99d67acdfa1712c293601";
         let addr = Address::from_str(addr_str).unwrap();
         let value = AbiValue::Address(addr.into());
@@ -551,7 +460,6 @@ mod tests {
             _ => panic!("Expected Address"),
         }
 
-        // Test string
         let s = "Hello, World!";
         let value = AbiValue::String(s.to_string());
         let encoded = encode_single_rust("string", &value).unwrap();
@@ -562,14 +470,8 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Boundary condition tests for Python integer conversion
-    // These test the abi_value_from_python function behavior
-    // =========================================================================
-
     #[test]
     fn test_u256_max_roundtrip() {
-        // U256::MAX should encode and decode correctly
         let max = U256::MAX;
         let value = AbiValue::Uint(max, 256);
         let encoded = encode_single_rust("uint256", &value).unwrap();
@@ -585,7 +487,6 @@ mod tests {
 
     #[test]
     fn test_i256_max_roundtrip() {
-        // I256::MAX should encode and decode correctly
         let max = I256::MAX;
         let value = AbiValue::Int(max, 256);
         let encoded = encode_single_rust("int256", &value).unwrap();
@@ -601,7 +502,6 @@ mod tests {
 
     #[test]
     fn test_i256_min_roundtrip() {
-        // I256::MIN should encode and decode correctly
         let min = I256::MIN;
         let value = AbiValue::Int(min, 256);
         let encoded = encode_single_rust("int256", &value).unwrap();
@@ -615,20 +515,14 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Shared cache tests
-    // =========================================================================
-
     #[test]
     fn test_encoder_uses_shared_cache() {
         use crate::abi_types::cached::get_cached_types;
 
-        // The encode path should hit the same cache as direct get_cached_types calls
         let cached_direct = get_cached_types(&["uint256"]).unwrap();
         let value = AbiValue::Uint(U256::from(42u64), 256);
         let _encoded = encode_single_rust("uint256", &value).unwrap();
 
-        // If the encoder used the cache, the Arc refcount increased
         assert!(Arc::strong_count(&cached_direct) >= 2);
     }
 
@@ -641,14 +535,9 @@ mod tests {
         let values = vec![AbiValue::Uint(U256::from(42u64), 256), AbiValue::Bool(true)];
         let _encoded = encode_rust(&["uint256", "bool"], &values).unwrap();
 
-        // Encoder used the same cached Arc
         assert!(Arc::strong_count(&cached_direct) >= 2);
     }
 }
-
-// =============================================================================
-// Property-based tests for encoding/decoding
-// =============================================================================
 
 #[cfg(test)]
 mod proptests {

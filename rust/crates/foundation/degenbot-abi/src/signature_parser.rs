@@ -1,40 +1,31 @@
-//! Function signature parser with robust error handling.
-//!
-//! Parses signatures like `"transfer(address,uint256) returns (uint256)"`.
+//! Parses source-level signatures such as
+//! `transfer(address,uint256) returns (uint256)`.
 
 use crate::abi_types::type_::{AbiType, AbiTypeError};
 use std::iter::Peekable;
 use std::str::Chars;
 
-/// Errors that can occur during signature parsing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// Unexpected character at position.
     #[error("at position {pos}: expected {expected}, found '{found}'")]
     UnexpectedChar {
         pos: usize,
         expected: String,
         found: char,
     },
-    /// Unexpected end of input.
     #[error("at position {pos}: unexpected end of input, expected {expected}")]
     UnexpectedEnd { pos: usize, expected: String },
-    /// Invalid identifier.
     #[error("at position {pos}: {msg}")]
     InvalidIdentifier { pos: usize, msg: String },
-    /// Invalid ABI type.
     #[error("at position {pos}: invalid type - {err}")]
     InvalidType { pos: usize, err: AbiTypeError },
-    /// Empty function name.
     #[error("function name cannot be empty")]
     EmptyFunctionName,
-    /// Unmatched `(` or `[` in type string.
     #[error("at position {pos}: unmatched '(' or '[' in type string")]
     UnmatchedBracket { pos: usize },
 }
 
-/// Parser state for function signatures.
 struct SignatureParser<'a> {
     chars: Peekable<Chars<'a>>,
     pos: usize,
@@ -48,30 +39,23 @@ impl<'a> SignatureParser<'a> {
         }
     }
 
-    /// Parse a complete function signature.
     fn parse(mut self) -> Result<ParsedSignature, ParseError> {
-        // Skip leading whitespace
         self.skip_whitespace();
 
-        // Parse function name
         let name = self.parse_identifier()?;
         if name.is_empty() {
             return Err(ParseError::EmptyFunctionName);
         }
 
-        // Parse input parameter list
         self.skip_whitespace();
         self.expect_char('(')?;
         let inputs = self.parse_type_list()?;
         self.expect_char(')')?;
 
-        // Parse optional returns clause
         let outputs = self.parse_returns_clause()?;
 
-        // Skip trailing whitespace
         self.skip_whitespace();
 
-        // Ensure we've consumed all input
         if self.chars.peek().is_some() {
             let pos = self.pos;
             let found = self.chars.peek().copied().unwrap_or('\0');
@@ -89,36 +73,28 @@ impl<'a> SignatureParser<'a> {
         })
     }
 
-    /// Parse the returns clause if present.
     fn parse_returns_clause(&mut self) -> Result<Vec<AbiType>, ParseError> {
         self.skip_whitespace();
 
-        // Check for 'returns' keyword
         if !self.peek_keyword("returns") {
             return Ok(Vec::new());
         }
 
-        // Consume 'returns'
         self.consume_keyword("returns")?;
         self.skip_whitespace();
 
-        // Expect opening paren
         self.expect_char('(')?;
 
-        // Parse output types
         let outputs = self.parse_type_list()?;
 
-        // Expect closing paren
         self.expect_char(')')?;
 
         Ok(outputs)
     }
 
-    /// Parse a comma-separated list of types.
     fn parse_type_list(&mut self) -> Result<Vec<AbiType>, ParseError> {
         self.skip_whitespace();
 
-        // Empty list
         if self.peek_char(')') {
             return Ok(Vec::new());
         }
@@ -128,7 +104,6 @@ impl<'a> SignatureParser<'a> {
         loop {
             self.skip_whitespace();
 
-            // Parse type string (collect until comma or closing paren)
             let type_start = self.pos;
             let type_str = self.collect_type_string()?;
 
@@ -140,7 +115,6 @@ impl<'a> SignatureParser<'a> {
                 });
             }
 
-            // Parse the ABI type
             let abi_type = AbiType::parse(&type_str).map_err(|e| ParseError::InvalidType {
                 pos: type_start,
                 err: e,
@@ -149,7 +123,6 @@ impl<'a> SignatureParser<'a> {
 
             self.skip_whitespace();
 
-            // Check for comma or end of list
             if self.peek_char(',') {
                 self.consume_char(',');
             } else if self.peek_char(')') {
@@ -224,11 +197,9 @@ impl<'a> SignatureParser<'a> {
         Ok(result)
     }
 
-    /// Parse an identifier (function name).
     fn parse_identifier(&mut self) -> Result<String, ParseError> {
         let mut result = String::new();
 
-        // First char must be alphabetic or underscore
         match self.chars.peek() {
             Some(&c) if c.is_alphabetic() || c == '_' => {
                 result.push(c);
@@ -249,7 +220,6 @@ impl<'a> SignatureParser<'a> {
             }
         }
 
-        // Rest can be alphanumeric or underscore
         while let Some(&c) = self.chars.peek() {
             if c.is_alphanumeric() || c == '_' {
                 result.push(c);
@@ -261,8 +231,6 @@ impl<'a> SignatureParser<'a> {
 
         Ok(result)
     }
-
-    // ========== Helper methods ==========
 
     fn skip_whitespace(&mut self) {
         while let Some(&c) = self.chars.peek() {
@@ -341,7 +309,6 @@ impl<'a> SignatureParser<'a> {
     }
 }
 
-/// Parsed function signature result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSignature {
     pub name: String,
@@ -349,25 +316,21 @@ pub struct ParsedSignature {
     pub outputs: Vec<AbiType>,
 }
 
-/// Parse a function signature.
 #[expect(clippy::missing_errors_doc)]
 pub fn parse_signature(input: &str) -> Result<ParsedSignature, ParseError> {
     SignatureParser::new(input).parse()
 }
 
 impl ParsedSignature {
-    /// Reconstruct the canonical signature string (without the returns clause).
-    ///
-    /// The canonical form is `name(type1,type2,...)` using `AbiType::Display` for each type.
+    /// Canonical signature text without the returns clause: the form a selector is
+    /// hashed from.
     #[must_use]
     pub fn to_signature_string(&self) -> String {
         let input_types: Vec<String> = self.inputs.iter().map(ToString::to_string).collect();
         format!("{}({})", self.name, input_types.join(","))
     }
 
-    /// Reconstruct the full signature string including the returns clause.
-    ///
-    /// The canonical form is `name(type1,type2,...) returns (type1,type2,...)`.
+    /// Canonical signature text including the returns clause, for display.
     #[must_use]
     pub fn to_full_signature_string(&self) -> String {
         let input_types: Vec<String> = self.inputs.iter().map(ToString::to_string).collect();
@@ -409,7 +372,6 @@ mod tests {
     #[test]
     fn test_no_parens() {
         let err = parse_signature("transfer").unwrap_err();
-        // After parsing "transfer", we expect '(' but get EOF
         assert!(matches!(err, ParseError::UnexpectedEnd { .. }));
     }
 
@@ -422,7 +384,6 @@ mod tests {
     #[test]
     fn test_returns_no_close_paren() {
         let err = parse_signature("foo()returns(uint256").unwrap_err();
-        // Inside parse_type_list after "uint256": expects ',' or ')', finds EOF
         assert!(
             matches!(err, ParseError::UnexpectedEnd { .. })
                 || matches!(err, ParseError::UnexpectedChar { .. }),
@@ -439,11 +400,6 @@ mod tests {
     #[test]
     fn test_only_open_paren() {
         let err = parse_signature("transfer(").unwrap_err();
-        // After seeing '(', parse_type_list is called.
-        // It skips whitespace, sees ')' or EOF. For "transfer(", chars ends.
-        // peek_char(')') returns false, so it tries to parse a type.
-        // collect_type_string sees EOF, returns empty string.
-        // We check if type_str.is_empty() and return UnexpectedChar.
         assert!(
             matches!(err, ParseError::UnexpectedEnd { .. })
                 || matches!(err, ParseError::UnexpectedChar { .. }),
@@ -471,7 +427,6 @@ mod tests {
                 AbiType::Bytes,
             ]
         );
-        // The canonical signature text the selector hashes round-trips.
         assert_eq!(
             sig.to_signature_string(),
             "quoteExactInputSingle((address,address),bool,uint128,bytes)"
@@ -492,7 +447,6 @@ mod tests {
 
     #[test]
     fn test_tuple_array_signature() {
-        // Array suffixes attach to the collapsed tuple form.
         let sig = parse_signature("f((bool,bytes)[],(uint256,bool)[2])").unwrap();
         assert_eq!(
             sig.inputs[0],
@@ -512,7 +466,6 @@ mod tests {
 
     #[test]
     fn test_unmatched_tuple_paren() {
-        // EOF inside the tuple's own paren group.
         let err = parse_signature("f((uint256,bool").unwrap_err();
         assert!(
             matches!(err, ParseError::UnmatchedBracket { .. }),
@@ -535,7 +488,6 @@ mod tests {
     #[test]
     fn test_empty_function_name() {
         let err = parse_signature("()").unwrap_err();
-        // ')' is not a valid start for an identifier
         assert!(matches!(err, ParseError::UnexpectedChar { .. }));
     }
 
@@ -560,7 +512,6 @@ mod proptests {
     use super::*;
     use proptest::prelude::*;
 
-    /// Generate a valid identifier (function name).
     fn arb_identifier() -> impl Strategy<Value = String> {
         (1..10usize).prop_flat_map(|len| {
             proptest::string::string_regex(format!("[a-zA-Z_][a-zA-Z0-9_]{{{}}}", len - 1).as_str())
@@ -568,14 +519,12 @@ mod proptests {
         })
     }
 
-    /// Generate a valid ABI type string.
     fn arb_abi_type_string() -> impl Strategy<Value = String> {
         let leaf = prop_oneof![
             Just("address".to_string()),
             Just("bool".to_string()),
             Just("string".to_string()),
             Just("bytes".to_string()),
-            // Valid uint bit widths: 8, 16, 24, ..., 256
             (1u8..=32).prop_map(|b| format!("uint{}", u16::from(b) * 8)),
             (1u8..=32).prop_map(|b| format!("int{}", u16::from(b) * 8)),
             (1u8..=32).prop_map(|n| format!("bytes{n}")),
@@ -589,7 +538,6 @@ mod proptests {
         })
     }
 
-    /// Generate a valid signature string.
     fn arb_signature_string() -> impl Strategy<Value = String> {
         let types = prop::collection::vec(arb_abi_type_string(), 0..5);
         (arb_identifier(), types).prop_map(|(name, type_list)| {
@@ -598,7 +546,6 @@ mod proptests {
         })
     }
 
-    /// Generate a valid full signature with returns.
     fn arb_full_signature_string() -> impl Strategy<Value = String> {
         let input_types = prop::collection::vec(arb_abi_type_string(), 0..5);
         let output_types = prop::collection::vec(arb_abi_type_string(), 0..5);
@@ -614,23 +561,18 @@ mod proptests {
     }
 
     proptest! {
-        /// Valid signatures should always parse successfully.
         #[test]
         fn valid_signatures_parse(sig in arb_signature_string()) {
             let result = parse_signature(&sig);
             prop_assert!(result.is_ok(), "Failed to parse '{}': {:?}", sig, result.err());
         }
 
-        /// Full signatures (with returns) should always parse successfully.
         #[test]
         fn full_signatures_parse(sig in arb_full_signature_string()) {
             let result = parse_signature(&sig);
             prop_assert!(result.is_ok(), "Failed to parse '{}': {:?}", sig, result.err());
         }
 
-        /// Parsing a signature and reconstructing it should roundtrip.
-        /// The canonical form (from to_signature_string) should parse to
-        /// the same name and input types.
         #[test]
         fn signature_roundtrip(sig in arb_signature_string()) {
             let parsed = parse_signature(&sig)?;
@@ -641,7 +583,6 @@ mod proptests {
             prop_assert_eq!(parsed.inputs, reparsed.inputs);
         }
 
-        /// Full signature roundtrip (including outputs).
         #[test]
         fn full_signature_roundtrip(sig in arb_full_signature_string()) {
             let parsed = parse_signature(&sig)?;
@@ -653,28 +594,6 @@ mod proptests {
             prop_assert_eq!(parsed.outputs, reparsed.outputs);
         }
 
-        /// Each parsed input/output should be a valid AbiType.
-        /// (This is guaranteed by the parser, but proptest verifies it
-        /// at scale for randomly generated signatures.)
-        #[test]
-        fn parsed_types_are_valid(sig in arb_full_signature_string()) {
-            let parsed = parse_signature(&sig)?;
-            // All input types should have a valid string representation
-            for ty in &parsed.inputs {
-                let type_str = ty.to_string();
-                let re_parsed = AbiType::parse(&type_str);
-                prop_assert!(re_parsed.is_ok(), "Type '{}' failed to re-parse: {:?}", type_str, re_parsed.err());
-                prop_assert_eq!(ty, &re_parsed.unwrap());
-            }
-            for ty in &parsed.outputs {
-                let type_str = ty.to_string();
-                let re_parsed = AbiType::parse(&type_str);
-                prop_assert!(re_parsed.is_ok(), "Type '{}' failed to re-parse: {:?}", type_str, re_parsed.err());
-                prop_assert_eq!(ty, &re_parsed.unwrap());
-            }
-        }
-
-        /// Whitespace around the signature should not affect parsing.
         #[test]
         fn whitespace_around_signature(sig in arb_signature_string()) {
             let padded = format!("  {sig}  ");
@@ -682,10 +601,8 @@ mod proptests {
             prop_assert!(result.is_ok(), "Failed to parse padded '{}': {:?}", padded, result.err());
         }
 
-        /// Case-insensitive 'returns' keyword.
         #[test]
         fn case_insensitive_returns_keyword(name in arb_identifier(), n_bits in 1u8..=32u8) {
-            // Generate a simple signature with returns, using valid bit widths
             let bit_width = u16::from(n_bits) * 8;
             let sig_lower = format!("{name}(uint256) returns (uint{bit_width})");
             let sig_upper = format!("{name}(uint256) RETURNS (uint{bit_width})");

@@ -1,11 +1,3 @@
-//! Cached ABI types for batch encoding/decoding.
-//!
-//! Provides `CachedAbiTypes` for pre-parsed type sets and
-//! `value_to_alloy_for_type` for type-aware value conversion.
-//!
-//! This module also provides the global type cache (`get_cached_types`)
-//! which is the single caching point for both encoding and decoding.
-
 use crate::abi_types::type_::AbiType;
 use crate::abi_types::value::AbiValue;
 use degenbot_core::errors::AbiDecodeError;
@@ -14,23 +6,13 @@ use parking_lot::Mutex;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, LazyLock};
 
-// =============================================================================
-// Global type cache
-// =============================================================================
-
-/// Maximum number of cached type sets.
 const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).expect("10_000 is non-zero");
-
-// =============================================================================
-// String interner (Level 1)
-// =============================================================================
 
 /// Interns individual Solidity type strings ("uint256", "address", etc.).
 /// ~20 entries, fixed set, no eviction needed.
 pub(crate) static TYPE_STR_INTERNER: LazyLock<Mutex<std::collections::HashMap<String, Arc<str>>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-/// Intern a type string: returns `Arc::clone` on hit, allocates on miss.
 fn intern_type_str(s: &str) -> Arc<str> {
     let mut cache = TYPE_STR_INTERNER.lock();
     if let Some(interned) = cache.get(s) {
@@ -42,25 +24,18 @@ fn intern_type_str(s: &str) -> Arc<str> {
     arc_str
 }
 
-// =============================================================================
-// Type cache (Level 2)
-// =============================================================================
-
-/// Type alias for the type cache key: interned type strings.
 type TypeCacheKey = Arc<[Arc<str>]>;
 
-/// Global LRU cache for parsed ABI types.
-/// Key is interned type strings; value is `Arc<CachedAbiTypes>` for cheap cloning.
+/// Keyed by interned type strings, so a hit clones an `Arc` rather than the
+/// `DynSolType` tree inside it.
 pub(crate) static TYPE_CACHE: LazyLock<Mutex<LruCache<TypeCacheKey, Arc<CachedAbiTypes>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(CACHE_CAPACITY)));
 
-/// Return the current number of entries in the type cache (test-only helper).
 #[cfg(test)]
 pub fn cache_len() -> usize {
     TYPE_CACHE.lock().len()
 }
 
-/// Clear the type cache (test-only helper).
 #[cfg(test)]
 pub fn cache_clear() {
     TYPE_CACHE.lock().clear();
@@ -71,23 +46,17 @@ pub fn cache_clear() {
 #[cfg(test)]
 static CACHE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Acquire the global cache-test mutex. Drop the guard to release.
 #[cfg(test)]
 #[expect(clippy::missing_panics_doc, clippy::unwrap_used)]
 pub fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
     CACHE_TEST_MUTEX.lock().unwrap()
 }
 
-/// Get or create cached types for the given type strings.
+/// The single caching point the string-keyed encode and decode paths share, so a
+/// signature is parsed once per process, not once per call.
 ///
-/// This function checks the global cache first, and only parses
-/// if the types haven't been seen before. Uses LRU eviction when cache is full.
-///
-/// This is the single caching point for both encoding and decoding.
-/// The cache is keyed by interned type strings to avoid collision risk.
-///
-/// Returns `Arc<CachedAbiTypes>` — cloning the Arc is O(1), avoiding
-/// deep-clone of the `DynSolType` tree on every cache hit.
+/// Returns `Arc<CachedAbiTypes>`: a hit costs an `Arc` bump, never a deep clone of
+/// the `DynSolType` tree.
 ///
 /// # Errors
 ///
@@ -106,12 +75,11 @@ pub fn get_cached_types(types: &[&str]) -> Result<Arc<CachedAbiTypes>, AbiDecode
     Ok(cached)
 }
 
-/// Pre-parsed ABI types for high-performance batch encoding/decoding.
+/// Pre-parsed types for batch encode/decode.
 ///
-/// When processing thousands of values with the same type signature
-/// (e.g., decoding Transfer events from historical blocks), parsing the
-/// type string each time adds significant overhead. This struct caches
-/// the parsed types for reuse.
+/// Thousands of values sharing one signature (`Transfer` logs from historical
+/// blocks) re-parse the same type strings on every call; this holds the parse
+/// result instead.
 ///
 /// # Example
 ///
@@ -139,25 +107,13 @@ pub fn get_cached_types(types: &[&str]) -> Result<Arc<CachedAbiTypes>, AbiDecode
 /// ```
 #[derive(Clone, Debug)]
 pub struct CachedAbiTypes {
-    /// The individual parsed types
     types: Vec<AbiType>,
-    /// The individual cached alloy types (parallel to `types`)
     alloy_types: Vec<alloy::dyn_abi::DynSolType>,
-    /// The tuple type for encoding/decoding multiple values
     tuple_type: alloy::dyn_abi::DynSolType,
-    /// Cached type strings for debugging/display
     type_strings: Vec<String>,
 }
 
 impl CachedAbiTypes {
-    /// Create a new cached type set from type strings.
-    ///
-    /// Parses all types upfront and caches them for reuse.
-    ///
-    /// # Arguments
-    ///
-    /// * `types` - Slice of ABI type strings (e.g., `["address", "uint256"]`)
-    ///
     /// # Errors
     ///
     /// Returns `AbiDecodeError` if any type string is invalid.
@@ -200,17 +156,8 @@ impl CachedAbiTypes {
         })
     }
 
-    /// Create from already-parsed `AbiType` values.
-    ///
-    /// Use this when you already have `AbiType` instances
-    /// (e.g., from `FunctionSignature::inputs`).
-    ///
-    /// Returns `Arc<CachedAbiTypes>` — consistent with `get_cached_types`.
-    /// Cloning the Arc is O(1), avoiding deep-clone of the `DynSolType` tree.
-    ///
-    /// # Arguments
-    ///
-    /// * `types` - Slice of `AbiType` values
+    /// For callers that already hold parsed types (`FunctionSignature::inputs`);
+    /// returns `Arc` for consistency with [`get_cached_types`].
     ///
     /// # Errors
     ///
@@ -238,14 +185,8 @@ impl CachedAbiTypes {
         }))
     }
 
-    /// Decode ABI-encoded data using cached types.
-    ///
-    /// This is significantly faster than calling `decode_rust()` for each
-    /// decode when processing many values with the same type signature.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - ABI-encoded bytes
+    /// Significantly faster than `decode_rust()` per value when many values share
+    /// one type signature.
     ///
     /// # Errors
     ///
@@ -269,15 +210,6 @@ impl CachedAbiTypes {
         values.into_iter().map(AbiValue::from_alloy).collect()
     }
 
-    /// Decode multiple ABI-encoded values using cached types.
-    ///
-    /// This is the batch version of `decode()`, optimized for processing
-    /// thousands of values with the same type signature.
-    ///
-    /// # Arguments
-    ///
-    /// * `data_items` - Slice of ABI-encoded byte slices
-    ///
     /// # Errors
     ///
     /// Returns `AbiDecodeError` if any decode fails. Partial results are
@@ -308,12 +240,6 @@ impl CachedAbiTypes {
         data_items.iter().map(|data| self.decode(data)).collect()
     }
 
-    /// Encode values using cached types.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - Slice of `AbiValue` to encode
-    ///
     /// # Errors
     ///
     /// Returns `AbiDecodeError` if encoding fails or value count doesn't match type count.
@@ -327,7 +253,6 @@ impl CachedAbiTypes {
             )));
         }
 
-        // Use cached alloy types instead of re-deriving from AbiType on every call
         let mut alloy_values = Vec::with_capacity(self.types.len());
         for (alloy_type, value) in self.alloy_types.iter().zip(values.iter()) {
             let alloy_value = value_to_alloy_for_type(value, alloy_type)?;
@@ -338,20 +263,9 @@ impl CachedAbiTypes {
         Ok(tuple_value.abi_encode_params())
     }
 
-    /// Pack-encode multiple values (Solidity `abi.encodePacked`).
-    ///
-    /// Uses the same coercion path as `encode` but calls `abi_encode_packed`
-    /// on the tuple, which concatenates each value's packed form (no word
-    /// padding, no length prefix for dynamic types). Mirrors
-    /// `eth_abi.packed.encode_packed` exactly.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - Slice of values to pack-encode
-    ///
-    /// # Returns
-    ///
-    /// The packed-encoded bytes.
+    /// Solidity `abi.encodePacked`: each value concatenates in its packed form, with
+    /// no word padding and no length prefix for dynamic types. Mirrors
+    /// `eth_abi.packed.encode_packed` exactly, coercion path included.
     ///
     /// # Errors
     ///
@@ -376,12 +290,6 @@ impl CachedAbiTypes {
         Ok(tuple_value.abi_encode_packed())
     }
 
-    /// Encode multiple value sets using cached types.
-    ///
-    /// # Arguments
-    ///
-    /// * `values_batch` - Slice of value slices to encode
-    ///
     /// # Errors
     ///
     /// Returns `AbiDecodeError` if any encode fails.
@@ -396,21 +304,18 @@ impl CachedAbiTypes {
             .collect()
     }
 
-    /// Get the cached type strings.
     #[must_use]
     #[inline]
     pub const fn type_strings(&self) -> &Vec<String> {
         &self.type_strings
     }
 
-    /// Get the number of types.
     #[must_use]
     #[inline]
     pub const fn len(&self) -> usize {
         self.types.len()
     }
 
-    /// Check if there are no types.
     #[must_use]
     #[inline]
     pub const fn is_empty(&self) -> bool {
@@ -418,9 +323,10 @@ impl CachedAbiTypes {
     }
 }
 
-/// Convert an `AbiValue` to a `DynSolValue` for a specific expected type.
+/// Coerce `value` into the shape `ty` expects before encoding.
 ///
-/// Handles special cases like `FixedBytes` and `FixedArray`.
+/// The cross-type arms mirror `eth_abi`'s permissive encoder, so call sites that
+/// worked against the Python implementation keep working.
 #[expect(clippy::missing_errors_doc)]
 pub fn value_to_alloy_for_type(
     value: &AbiValue,
@@ -429,7 +335,6 @@ pub fn value_to_alloy_for_type(
     use alloy::dyn_abi::DynSolType;
 
     match (ty, value) {
-        // Handle FixedBytes conversion from Bytes
         (DynSolType::FixedBytes(size), AbiValue::Bytes(bytes)) => {
             if bytes.len() != *size {
                 return Err(AbiDecodeError::UnsupportedType(format!(
@@ -461,15 +366,10 @@ pub fn value_to_alloy_for_type(
             ))
         }
 
-        // Handle Uint with correct bit width (to_alloy() hardcodes 256)
-        // Handle Uint: use the AbiValue's stored bit width when the
-        // DynSolType expects 256 (the common case for alloy decoding).
-        // For non-256-bit types the stored width and the type width agree.
         (DynSolType::Uint(bits), AbiValue::Uint(n, val_bits)) => {
             // DynSolType constructed from a parsed AbiType should never have
             // bit width 0. If it does, that's a bug in the caller.
             debug_assert!(*bits > 0, "Uint bit width should never be 0");
-            // Prefer the actual type width; fall back to stored width.
             let effective_bits = if *bits > 0 { *bits } else { *val_bits };
             Ok(alloy::dyn_abi::DynSolValue::Uint(*n, effective_bits))
         }
@@ -524,8 +424,7 @@ pub fn value_to_alloy_for_type(
         (DynSolType::Tuple(components), AbiValue::Array(values)) => {
             if values.len() != components.len() {
                 return Err(AbiDecodeError::UnsupportedType(format!(
-                    "Tuple of {} components requires exactly {} values, got {}",
-                    components.len(),
+                    "Tuple requires exactly {} values, got {}",
                     components.len(),
                     values.len()
                 )));
@@ -537,7 +436,6 @@ pub fn value_to_alloy_for_type(
                 .collect();
             Ok(alloy::dyn_abi::DynSolValue::Tuple(alloy_values?))
         }
-        // Handle FixedArray conversion
         (DynSolType::FixedArray(inner_ty, expected_size), AbiValue::Array(values)) => {
             if values.len() != *expected_size {
                 return Err(AbiDecodeError::UnsupportedType(format!(
@@ -552,7 +450,6 @@ pub fn value_to_alloy_for_type(
             Ok(alloy::dyn_abi::DynSolValue::FixedArray(alloy_values?))
         }
 
-        // For all other cases, use the standard conversion
         _ => {
             let alloy_value = value.to_alloy()?;
             if !ty.matches(&alloy_value) {

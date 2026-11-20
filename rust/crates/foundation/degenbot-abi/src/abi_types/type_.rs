@@ -1,46 +1,25 @@
-//! ABI type representation and parsing.
-//!
-//! Provides `AbiType` enum and `AbiTypeError` for representing and parsing
-//! Ethereum ABI type signatures. Supports all standard ABI types including
-//! nested arrays.
-
 use degenbot_core::errors::AbiDecodeError;
 use std::borrow::Cow;
 use std::fmt;
 
-/// Represents an Ethereum ABI type.
-///
-/// Supports all standard ABI types including nested arrays.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbiType {
-    /// Ethereum address (20 bytes)
     Address,
-    /// Boolean value
     Bool,
-    /// Unsigned integer with bit width (8-256, multiples of 8)
+    /// Bit width.
     Uint(usize),
-    /// Signed integer with bit width (8-256, multiples of 8)
+    /// Bit width.
     Int(usize),
-    /// Fixed-size bytes (bytes1-bytes32)
     FixedBytes(usize),
-    /// Dynamic bytes
     Bytes,
-    /// Dynamic string
     String,
-    /// Dynamic array of a type (e.g., `uint256[]`)
     Array(Box<Self>),
-    /// Fixed-size array of a type (e.g., `uint256[3]`)
     FixedArray(Box<Self>, usize),
-    /// Tuple of types (e.g., `(address,bool,bytes)`) - parenthesized
-    /// Solidity tuple components as used by aggregate3-style calls
+    /// Solidity tuple components, parenthesized in signature text.
     Tuple(Vec<Self>),
 }
 
 impl AbiType {
-    /// Parse an ABI type from a string.
-    ///
-    /// Supports type aliases: `uint` → `uint256`, `int` → `int256`, `function` → `bytes24`.
-    ///
     /// # Errors
     ///
     /// Returns `AbiTypeError` if the type string is invalid.
@@ -48,7 +27,6 @@ impl AbiType {
         parse_abi_type(s.trim())
     }
 
-    /// Check if this type is dynamically sized.
     #[must_use]
     pub fn is_dynamic(&self) -> bool {
         match self {
@@ -59,10 +37,7 @@ impl AbiType {
         }
     }
 
-    /// Get the bit width for integer and fixed-bytes types.
-    /// Returns `None` for non-sized types.
-    ///
-    /// For `FixedBytes(n)`, returns `n * 8` (bit count, not byte count).
+    /// For `FixedBytes(n)` this is `n * 8`: bit count, not byte count.
     #[must_use]
     pub const fn size_bits(&self) -> Option<usize> {
         match self {
@@ -72,11 +47,8 @@ impl AbiType {
         }
     }
 
-    /// Get the canonical type string without allocating for common types.
-    ///
-    /// This is more efficient than `to_string()` for types that don't need
-    /// formatting (e.g., `address`, `bool`, `bytes`). Sized types like
-    /// `uint256` still allocate but this avoids intermediate collections.
+    /// Canonical type string, borrowed for the fixed-width types so the common
+    /// cases allocate nothing.
     ///
     /// # Example
     ///
@@ -112,9 +84,8 @@ impl AbiType {
         }
     }
 
-    /// Convert this `AbiType` to an alloy `DynSolType`.
-    ///
-    /// This enables direct encoding/decoding without string parsing.
+    /// Bridge to alloy's `DynSolType`, so encoding and decoding never re-parse a
+    /// type string.
     ///
     /// # Errors
     ///
@@ -154,29 +125,19 @@ impl fmt::Display for AbiType {
     }
 }
 
-/// Errors that can occur when parsing an ABI type string.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum AbiTypeError {
-    /// Unknown or unsupported ABI type.
     #[error("Unknown ABI type: {0}")]
     UnknownType(String),
-    /// Invalid array size specification.
     #[error("Invalid array size: {0}")]
     InvalidArraySize(String),
-    /// Invalid bit width for integer type.
     #[error("Invalid bit width for {type_name}: {}", if *bits == 0 { "expected number after 'int'/'uint'".to_string() } else { format!("{bits} (must be 8-256, multiple of 8)") })]
     InvalidBitWidth { type_name: String, bits: usize },
-    /// Invalid byte size for fixed bytes type.
     #[error("Invalid byte size for {type_name}: {}", if *size == 0 { "expected number after 'bytes'".to_string() } else { format!("{size} (must be 1-32)") })]
     InvalidByteSize { type_name: String, size: usize },
 }
 
-// =============================================================================
-// Internal parsing implementation
-// =============================================================================
-
-/// Normalize a type string by applying aliases.
 #[inline]
 fn normalize_type(abi_type: &str) -> &str {
     match abi_type {
@@ -187,7 +148,6 @@ fn normalize_type(abi_type: &str) -> &str {
     }
 }
 
-/// Parse a comma-separated list of types.
 #[expect(clippy::missing_errors_doc)]
 pub fn parse_type_list(types_str: &str) -> Result<Vec<AbiType>, AbiTypeError> {
     if types_str.is_empty() {
@@ -214,7 +174,6 @@ pub fn parse_type_list(types_str: &str) -> Result<Vec<AbiType>, AbiTypeError> {
     Ok(types)
 }
 
-/// Core recursive parser that handles arrays and base types.
 fn parse_abi_type(s: &str) -> Result<AbiType, AbiTypeError> {
     // Handle array types - find the last '[' to support nested arrays
     if let Some(bracket_idx) = s.rfind('[') {
@@ -242,12 +201,10 @@ fn parse_abi_type(s: &str) -> Result<AbiType, AbiTypeError> {
         }
     }
 
-    // Handle tuple types: (t1,t2,...)
     if s.starts_with('(') {
         return parse_tuple_type(s);
     }
 
-    // Parse base type
     parse_base_type(normalize_type(s))
 }
 
@@ -284,7 +241,6 @@ fn parse_tuple_type(maybe_tuple: &str) -> Result<AbiType, AbiTypeError> {
     Ok(AbiType::Tuple(components))
 }
 
-/// Parse a normalized base type string (no arrays).
 fn parse_base_type(normalized: &str) -> Result<AbiType, AbiTypeError> {
     match normalized {
         "address" => Ok(AbiType::Address),
@@ -295,19 +251,15 @@ fn parse_base_type(normalized: &str) -> Result<AbiType, AbiTypeError> {
     }
 }
 
-/// Parse sized types like bytesN, uintN, intN.
 fn parse_sized_type(t: &str) -> Result<AbiType, AbiTypeError> {
-    // Try bytesN first
     if let Some(n_str) = t.strip_prefix("bytes") {
         return parse_byte_size(t, n_str);
     }
 
-    // Try uintN
     if let Some(n_str) = t.strip_prefix("uint") {
         return parse_uint_bits(t, n_str);
     }
 
-    // Try intN
     if let Some(n_str) = t.strip_prefix("int") {
         return parse_int_bits(t, n_str);
     }
@@ -315,7 +267,6 @@ fn parse_sized_type(t: &str) -> Result<AbiType, AbiTypeError> {
     Err(AbiTypeError::UnknownType(t.to_string()))
 }
 
-/// Parse bytes size (1-32).
 fn parse_byte_size(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError> {
     match n_str.parse::<usize>() {
         Ok(n) if n > 0 && n <= 32 => Ok(AbiType::FixedBytes(n)),
@@ -330,7 +281,6 @@ fn parse_byte_size(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError
     }
 }
 
-/// Parse uint bits (8-256, multiple of 8).
 fn parse_uint_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError> {
     match n_str.parse::<usize>() {
         Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Uint(bits)),
@@ -345,7 +295,6 @@ fn parse_uint_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError
     }
 }
 
-/// Parse int bits (8-256, multiple of 8).
 fn parse_int_bits(type_name: &str, n_str: &str) -> Result<AbiType, AbiTypeError> {
     match n_str.parse::<usize>() {
         Ok(bits) if bits > 0 && bits <= 256 && bits % 8 == 0 => Ok(AbiType::Int(bits)),
