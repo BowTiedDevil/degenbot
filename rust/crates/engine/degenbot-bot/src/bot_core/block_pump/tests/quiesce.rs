@@ -83,6 +83,139 @@ async fn early_slice_disabled_restores_gate_parity() {
     );
 }
 
+/// One scheduled `(delay_ms, event)` step stream: step 0 lands at `t0`, each
+/// later one after its own delay. Gaps are what the slice window measures, and
+/// a stream built from a table keeps each window's shape in one readable place.
+fn scheduled_stream(steps: Vec<(u64, WsEvent)>) -> stream::BoxStream<'static, WsEvent> {
+    use stream::StreamExt;
+    stream::unfold(steps.into_iter(), |mut steps| async move {
+        let (delay_ms, event) = steps.next()?;
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+        Some((event, steps))
+    })
+    .boxed()
+}
+
+/// A block header for the scheduled windows.
+fn window_header(number: u64) -> WsEvent {
+    WsEvent::BlockHeader {
+        number,
+        timestamp: number * 1_000,
+        base_fee_per_gas: Some(1_000_000_001),
+        gas_used: 10_000_001,
+        gas_limit: 30_000_001,
+        hash: B256::ZERO,
+        parent_hash: B256::ZERO,
+    }
+}
+
+/// A V2 Sync at `block` for the registered burst pool — the dirt a window's
+/// burst is made of.
+fn window_log(block: u64) -> WsEvent {
+    use alloy::primitives::{Address as A, U256};
+    WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(
+        A::from([0xccu8; 20]),
+        U256::from(1_000),
+        U256::from(2_000),
+        block,
+        false,
+    )))
+}
+
+/// The window's slice budget is per BLOCK window: a second header reopens it,
+/// so each window gets its own mid-burst solve on top of its own tail solve.
+///
+/// Window 101 (header at t0, logs at 40/80 ms) gains nothing after 25 ms, so it
+/// settles its slice and then has no dispatch left. Window 102 opens at 120 ms
+/// and repeats the shape: slice at 145 ms, tail at the burst end.
+#[tokio::test(start_paused = true)]
+async fn a_new_header_reopens_the_slice_window() {
+    let bot = Arc::new(Bot::new(1));
+    register_burst_pool(&bot);
+    let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+    pump.set_early_slice_ms_for_test(25);
+    sink.set_dirty(true);
+
+    let combined = scheduled_stream(vec![
+        (0, window_header(101)),
+        (40, window_log(101)),
+        (40, window_log(101)),
+        (40, window_header(102)),
+        (40, window_log(102)),
+        (40, window_log(102)),
+    ]);
+    let t0 = tokio::time::Instant::now();
+    pump.run_test_loop(combined, 100).await;
+
+    let stamps = sink.drained_at();
+    let rel: Vec<Duration> = stamps.iter().map(|stamp| *stamp - t0).collect();
+    assert_eq!(
+        sink.drained_blocks(),
+        vec![101, 101, 102],
+        "each window carries one early slice plus its tail (dispatch times {rel:?}); the          drain resolves to the log-driven open block, so window 102's slice at 145 ms still          reports 101 (no 102 log has been applied yet)"
+    );
+    assert!(
+        rel[0] >= Duration::from_millis(20) && rel[0] <= Duration::from_millis(45),
+        "window 101's slice dispatches at first-dirty + 25 ms, got {:?}",
+        rel[0]
+    );
+    assert!(
+        rel[1] >= Duration::from_millis(135) && rel[1] <= Duration::from_millis(160),
+        "window 102's slice dispatches 25 ms after its header, got {:?}",
+        rel[1]
+    );
+    assert!(
+        rel[2] >= Duration::from_millis(190),
+        "window 102's tail settles at the burst end, got {:?}",
+        rel[2]
+    );
+}
+
+/// A quiet stretch longer than the settle window lands the burst's tail solve
+/// mid-block; that tail closes the burst's budget, so a SECOND burst in the
+/// same window arms and fires a slice of its own.
+///
+/// Header 101 at t0, one log at 40 ms (slice at 25 ms, tail at 90 ms), then a
+/// second burst at 140/180 ms: it re-arms at 140 ms, slices at 165 ms, and
+/// tails at 180 ms — four dispatches, one slice per burst.
+#[tokio::test(start_paused = true)]
+async fn a_settle_tail_reopens_the_slice_budget_for_the_next_burst() {
+    let bot = Arc::new(Bot::new(1));
+    register_burst_pool(&bot);
+    let (mut pump, sink, _shutdown) = pump_for_test_with_bot(bot, Some(100));
+    pump.set_early_slice_ms_for_test(25);
+    sink.set_dirty(true);
+
+    let combined = scheduled_stream(vec![
+        (0, window_header(101)),
+        (40, window_log(101)),
+        (100, window_log(101)),
+        (40, window_log(101)),
+    ]);
+    let t0 = tokio::time::Instant::now();
+    pump.run_test_loop(combined, 100).await;
+
+    assert_eq!(
+        sink.drained_blocks(),
+        vec![101, 101, 101, 101],
+        "two bursts in one block window: a slice and a tail each"
+    );
+    let stamps = sink.drained_at();
+    let rel: Vec<Duration> = stamps.iter().map(|stamp| *stamp - t0).collect();
+    let expected = [25u64, 90, 165, 180];
+    for (i, want) in expected.iter().enumerate() {
+        let want = Duration::from_millis(*want);
+        assert!(
+            rel[i] >= want.saturating_sub(Duration::from_millis(15))
+                && rel[i] <= want + Duration::from_millis(15),
+            "dispatch #{i} should land at ~{want:?} (slice, tail, slice, tail); got {:?} (all: {rel:?})",
+            rel[i]
+        );
+    }
+}
+
 /// adaptive quiesce: with `quiesce_mode = adaptive` (pre-seed
 /// window = the 20 ms ceiling) the drained-settle gate arms the
 /// ESTIMATOR window, not the fixed 50 ms debounce: the same 40 ms-gapped

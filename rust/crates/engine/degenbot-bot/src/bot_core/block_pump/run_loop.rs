@@ -46,6 +46,117 @@ fn settle_window_state(fsm: &StageMachine) -> (bool, Duration) {
     }
 }
 
+/// The early-slice window's state machine.
+///
+/// The drained-settle gate normally waits for burst quiesce before solving, so
+/// a burst whose logs trickle in across hundreds of milliseconds solves once,
+/// at its tail. A burst that outlives `pump.early_slice_ms` gets ONE bounded
+/// extra solve at that deadline instead: the pools dirtied by the burst's
+/// first logs reach the solver instead of waiting behind its last log.
+///
+/// This machine owns the budget and its anchor — the armed deadline, the one
+/// shot per burst, and the two resets that reopen it (the burst's tail settle
+/// and the next accepted header). The configured window rides the states as
+/// data, so config stays on the pump and telemetry stays outside; every
+/// transition takes the instant it folds, which keeps the loop's single clock
+/// (virtual under a paused runtime) and lets tests drive it deterministically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SliceGate {
+    /// `pump.early_slice_ms = 0`: the declared off posture. Nothing arms, and
+    /// the settle peek always waits the bare quiesce window.
+    Disabled,
+    /// No unsolved dirt in this window: the next dirt observation anchors the
+    /// deadline.
+    Idle { window: Duration },
+    /// Unsolved dirt has waited since `first_dirty`: the settle peek shortens
+    /// to the remaining deadline so the slice self-wakes instead of waiting
+    /// out quiesce.
+    Armed {
+        first_dirty: tokio::time::Instant,
+        window: Duration,
+    },
+    /// The burst's one early slice dispatched: dirt no longer rearms it.
+    Fired { window: Duration },
+}
+
+impl SliceGate {
+    /// A window of `early_slice_ms`; `0` is the declared off posture.
+    fn new(early_slice_ms: u64) -> Self {
+        if early_slice_ms == 0 {
+            Self::Disabled
+        } else {
+            Self::Idle {
+                window: Duration::from_millis(early_slice_ms),
+            }
+        }
+    }
+
+    /// Fold one gate iteration's dirt observation.
+    ///
+    /// Dirt seen while idle anchors the deadline; later dirt leaves the anchor
+    /// alone, so the slice stays due at first-dirty + window however long the
+    /// burst runs.
+    #[must_use]
+    fn observe(self, dirty: bool, now: tokio::time::Instant) -> Self {
+        match (self, dirty) {
+            (Self::Idle { window }, true) => Self::Armed {
+                first_dirty: now,
+                window,
+            },
+            (state, _) => state,
+        }
+    }
+
+    /// How long the settle peek may wait for the slice deadline; `None` leaves
+    /// it the bare quiesce window.
+    #[must_use]
+    fn deadline_in(self, now: tokio::time::Instant) -> Option<Duration> {
+        match self {
+            Self::Armed {
+                first_dirty,
+                window,
+            } => Some(window.saturating_sub(now.saturating_duration_since(first_dirty))),
+            Self::Disabled | Self::Idle { .. } | Self::Fired { .. } => None,
+        }
+    }
+
+    /// Fold the settle dispatch that just ran.
+    ///
+    /// A dispatch landing on or after the deadline IS the burst's early slice
+    /// (one per burst, then [`Self::Fired`]); one landing earlier — and the
+    /// tail the loop dispatches after a slice — closes the burst and leaves
+    /// the window idle, free to arm the next burst's first dirt.
+    #[must_use]
+    fn take(self, now: tokio::time::Instant) -> Self {
+        match self {
+            Self::Armed {
+                first_dirty,
+                window,
+            } => {
+                if now.saturating_duration_since(first_dirty) >= window {
+                    Self::Fired { window }
+                } else {
+                    Self::Idle { window }
+                }
+            }
+            Self::Fired { window } => Self::Idle { window },
+            Self::Disabled | Self::Idle { .. } => self,
+        }
+    }
+
+    /// Fold an accepted header: the next block window starts with a fresh
+    /// budget.
+    #[must_use]
+    fn reset(self) -> Self {
+        match self {
+            Self::Idle { window } | Self::Armed { window, .. } | Self::Fired { window } => {
+                Self::Idle { window }
+            }
+            Self::Disabled => Self::Disabled,
+        }
+    }
+}
+
 impl BlockPump {
     // phasing-trigger POLICY: phase
     // this method only when a single change must touch MORE THAN TWO of its five
@@ -414,14 +525,10 @@ impl BlockPump {
         let mut last_relevant_log_at: Option<std::time::Instant> = None;
         let mut block_max_gap_us: u64 = 0;
 
-        // `Some` from the first gate iteration
-        // that observed unsolved dirt in the current block window; the slice
-        // fires once when the age crosses `early_slice_ms`. `slice_done`
-        // makes it one-per-window. Reset at each accepted header (new window)
-        // and at each settle dispatch. `tokio::time::Instant` (not std) so
-        // paused-runtime tests advance the age with virtual time.
-        let mut slice_first_dirty: Option<tokio::time::Instant> = None;
-        let mut slice_done = false;
+        // The early-slice window's budget and anchor: it folds the gate's
+        // dirt observations and its settle dispatches, and an accepted header
+        // reopens it. The deadline arithmetic lives in the machine.
+        let mut slice_gate = SliceGate::new(self.early_slice_ms);
 
         // Reorg-window telemetry state: the episode span + its
         // per-window counters live ACROSS loop iterations (EnterReorg →
@@ -853,8 +960,7 @@ impl BlockPump {
                     last_relevant_log_at = None;
                     block_max_gap_us = 0;
                     // new block window — re-arm the early slice.
-                    slice_first_dirty = None;
-                    slice_done = false;
+                    slice_gate = slice_gate.reset();
                     // a new epoch root — close any held stage interval
                     // from the prior epoch (an all-quiet prior block never
                     // reached a settle) so nothing dangles into the new one.
@@ -1573,43 +1679,17 @@ impl BlockPump {
             // solve. 50ms is well within the 12s block interval (same
             // `DEBOUNCE_MS` as the publish gate).
             let dirty_now = self.control.has_dirty_paths();
-            // designed first-slice trigger: remember when the
-            // window's unsolved dirt was first observed. While the burst
-            // outlives `early_slice_ms`, ONE bounded early Drain fires
-            // mid-burst (the timed peek below is shortened to the slice
-            // deadline, so the dispatch happens at first-dirty + ~25ms
-            // without waiting for quiesce — the latency the retired finalize
-            // steal was accidentally providing). The slice consumes the dirty
-            // sets (`take_all` semantics) and re-derives its anchor per
-            // cycle, so a following tail solve only re-solves NEWLY dirtied
-            // pools; one slice per block window keeps the unbounded
-            // serial solves from returning. `0` = disabled → the wait below
-            // is always the bare debounce window.
-            if dirty_now && slice_first_dirty.is_none() && !slice_done {
-                slice_first_dirty = Some(tokio::time::Instant::now());
-            }
-            let slice_pending =
-                self.early_slice_ms > 0 && slice_first_dirty.is_some() && !slice_done;
+            // Fold this iteration's dirt observation BEFORE the peek: an armed
+            // window's remaining deadline is what shortens the wait below, so
+            // the slice self-wakes at the deadline instead of waiting for the
+            // next event.
+            slice_gate = slice_gate.observe(dirty_now, tokio::time::Instant::now());
+            let settle_window = Duration::from_millis(fsm.settle_window_ms());
             // The timed peek waits only as long as the EARLIEST of the settle
-            // debounce and the slice deadline — the gate self-wakes at the
-            // deadline instead of waiting for the next event.
-            let peek_wait = match (slice_pending, slice_first_dirty) {
-                (true, Some(first)) => {
-                    let age = first.elapsed();
-                    let target = Duration::from_millis(self.early_slice_ms);
-                    if age >= target {
-                        // Deadline passed: the slice dispatch decision is
-                        // purely a function of the age below; the timed peek
-                        // resolves immediately (zero wait).
-                        Duration::ZERO.min(Duration::from_millis(fsm.settle_window_ms()))
-                    } else {
-                        target
-                            .saturating_sub(age)
-                            .min(Duration::from_millis(fsm.settle_window_ms()))
-                    }
-                }
-                _ => Duration::from_millis(fsm.settle_window_ms()),
-            };
+            // window and the slice deadline.
+            let peek_wait = slice_gate
+                .deadline_in(tokio::time::Instant::now())
+                .map_or(settle_window, |remaining| remaining.min(settle_window));
             let has_buffered = if dirty_now {
                 // Only await when there's work to solve — otherwise skip
                 // straight to the select (no dirty paths = nothing to do).
@@ -1630,24 +1710,15 @@ impl BlockPump {
                 false
             };
             if !has_buffered && dirty_now {
+                // Fold the dispatch at the instant it is decided: a solve can
+                // take milliseconds, and whether this dispatch IS the window's
+                // early slice is a judgement about the moment the gate chose
+                // to dispatch.
+                slice_gate = slice_gate.take(tokio::time::Instant::now());
                 // Strictly-synchronous solve dispatch: enter the cursor
                 // block span just long enough for dispatch() to capture it
                 // as the drainer parent (no await inside).
-                let slice_due = slice_pending
-                    && slice_first_dirty.is_some_and(|first| {
-                        first.elapsed() >= Duration::from_millis(self.early_slice_ms)
-                    });
                 self.boundary_drain_dispatch(&fsm, block_span.as_ref(), &mut header_receipts);
-                if slice_due {
-                    // The bounded slice took its one shot this window.
-                    slice_done = true;
-                    slice_first_dirty = None;
-                } else {
-                    // Settled-quiet solve: the window's tail is done, and the
-                    // slice budget resets with the next header.
-                    slice_done = false;
-                    slice_first_dirty = None;
-                }
             }
         }
         // the loop has unwound — every span guard (pump iteration,
@@ -1664,5 +1735,144 @@ impl BlockPump {
             }
             crate::metrics::shutdown_global_metrics();
         }
+    }
+}
+
+#[cfg(test)]
+mod slice_gate_tests {
+    use super::*;
+
+    const WINDOW_MS: u64 = 25;
+
+    fn window() -> Duration {
+        Duration::from_millis(WINDOW_MS)
+    }
+
+    fn idle() -> SliceGate {
+        SliceGate::new(WINDOW_MS)
+    }
+
+    #[tokio::test]
+    async fn a_disabled_window_never_arms() {
+        let now = tokio::time::Instant::now();
+        let gate = SliceGate::new(0);
+        assert_eq!(
+            gate,
+            SliceGate::Disabled,
+            "a zero window IS the off posture"
+        );
+        let gate = gate.observe(true, now);
+        assert_eq!(gate, SliceGate::Disabled, "dirt finds nothing to arm");
+        assert_eq!(gate.deadline_in(now + Duration::from_secs(60)), None);
+        assert_eq!(
+            gate.take(now + Duration::from_secs(60)),
+            SliceGate::Disabled
+        );
+        assert_eq!(gate.reset(), SliceGate::Disabled);
+    }
+
+    #[tokio::test]
+    async fn dirt_arms_the_deadline_and_later_dirt_keeps_the_first_anchor() {
+        let t0 = tokio::time::Instant::now();
+        let armed = idle().observe(true, t0);
+        assert_eq!(
+            armed,
+            SliceGate::Armed {
+                first_dirty: t0,
+                window: window(),
+            }
+        );
+        assert_eq!(
+            armed.observe(false, t0 + Duration::from_millis(10)),
+            armed,
+            "an unflagged iteration leaves the window as it was"
+        );
+        assert_eq!(
+            armed.observe(true, t0 + Duration::from_millis(10)),
+            armed,
+            "later dirt must not restart the deadline"
+        );
+        assert_eq!(idle().observe(false, t0), idle());
+    }
+
+    #[tokio::test]
+    async fn the_deadline_shortens_the_settle_wait_to_the_remaining_window() {
+        let t0 = tokio::time::Instant::now();
+        let armed = idle().observe(true, t0);
+        assert_eq!(armed.deadline_in(t0), Some(window()));
+        assert_eq!(
+            armed.deadline_in(t0 + Duration::from_millis(10)),
+            Some(Duration::from_millis(15))
+        );
+        assert_eq!(
+            armed.deadline_in(t0 + window()),
+            Some(Duration::ZERO),
+            "the deadline has passed: the peek resolves at once"
+        );
+        assert_eq!(
+            armed.deadline_in(t0 + Duration::from_secs(1)),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(SliceGate::Disabled.deadline_in(t0), None);
+        assert_eq!(idle().deadline_in(t0), None, "no dirt, no deadline");
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_past_the_deadline_fires_the_windows_one_slice() {
+        let t0 = tokio::time::Instant::now();
+        let fired = idle().observe(true, t0).take(t0 + window());
+        assert_eq!(fired, SliceGate::Fired { window: window() });
+        assert_eq!(
+            fired.observe(true, t0 + Duration::from_millis(40)),
+            fired,
+            "dirt cannot rearm a fired window"
+        );
+        assert_eq!(fired.deadline_in(t0 + Duration::from_millis(40)), None);
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_before_the_deadline_is_a_tail_settle_that_leaves_the_window_idle() {
+        let t0 = tokio::time::Instant::now();
+        let gate = idle().observe(true, t0);
+        let idle_again = gate.take(t0 + Duration::from_millis(10));
+        assert_eq!(
+            idle_again,
+            SliceGate::Idle { window: window() },
+            "a burst that settles inside the window owns its whole budget"
+        );
+        assert_eq!(
+            idle_again.observe(true, t0 + Duration::from_millis(30)),
+            SliceGate::Armed {
+                first_dirty: t0 + Duration::from_millis(30),
+                window: window(),
+            },
+            "the next burst arms from its own first dirt"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_tail_after_a_fired_slice_reopens_the_budget_for_the_next_burst() {
+        let t0 = tokio::time::Instant::now();
+        let fired = idle().observe(true, t0).take(t0 + window());
+        assert_eq!(
+            fired.take(t0 + Duration::from_millis(90)),
+            SliceGate::Idle { window: window() },
+            "the burst's tail closes that burst's budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_accepted_header_reopens_the_window() {
+        let t0 = tokio::time::Instant::now();
+        let reopened = SliceGate::Idle { window: window() };
+        let armed = idle().observe(true, t0);
+        let fired = armed.take(t0 + window());
+        assert_eq!(idle().reset(), reopened);
+        assert_eq!(armed.reset(), reopened);
+        assert_eq!(
+            fired.reset(),
+            reopened,
+            "a new block window re-arms the slice"
+        );
     }
 }
