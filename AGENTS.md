@@ -2,15 +2,26 @@
 
 `degenbot` is a Rust core of standalone crates with two equally first-class consumers. **Rust is the engine; Python is a driver shell, not a co-implementation.**
 
-1. **Pure-Rust MEV bot.** `cargo add degenbot` (the umbrella crate re-exporting the cores) must yield a fully functional MEV bot using Rust components only — the core owns **everything** a functional MEV bot needs.
+1. **Pure-Rust MEV bot.** A project must be able to access all of the components necessary to build a MEV bot using `cargo add degenbot`. The core owns **everything** an operator needs.
 
 2. **Python-driven MEV bot.** The Python interface is a thin PyO3 **driver** over the same Rust core, translating Python calls into Rust calls.
+
+## Comments
+
+Avoid comments. Write self-documenting code. Comments describing **why** code is being executed is acceptable, if and only if its purpose is not obvious.
+
+Sequencing rules belong in types, acceptance criteria in named tests, history in ADRs. Full rules and the first-home test: `docs/comments.md`.
 
 ## Concurrent Work Coordination
 
 Check for other agents working concurrently before you begin work and any time you notice edits, files, or tree changes unrelated to your work. Do not revert or overwrite them.
 
-pi-fabric announces peer root sessions via `<fabric-peers>` notices. Inside `fabric_exec`: `agents.peers()` / `agents.sessions()` (discover), `agents.steer({id, message, triggerTurn})` / `agents.followUp({id, message, triggerTurn})` (deliver now / children: after settle; peers: hidden steering at the next turn boundary), `decisions.raise` + `decisions.wait` (blocking questions, answerable via `/fabric decisions`), `mesh.put` / `mesh.get` (compare-and-swap claims when two sessions must not touch the same files). Peer messages are passive by default: they never resume an idle peer, only wait in its context. Pass `triggerTurn: true` (`True` in Python) whenever the peer must act, leave it off for informational updates, and never send acknowledgement-only replies.
+pi-fabric announces peer root sessions in a `<fabric-peers>` transcript notice, re-sent only when that set changes; `Fabric peers:` is its one-line human UI form. `fabric_exec` here is Monty Python: pass keyword arguments or one dict, and `True`/`False`.
+
+- `await agents.peers()` lists the other live root sessions, with `status` and `pendingMessages` to filter on. Their children and actors are not peers — use `agents.list(scope="project")` or `agents.members`. `await agents.sessions()` includes this root, flagged `local: true`; `agents.self()` and `agents.main()` give identity. A durable `agents.subscribe({"from": peer["id"], "events": ["pi.agent_settled"], "delivery": "followUp", "triggerTurn": True, "once": True})` replaces re-polling (`from` is a Python keyword, so pass one dict).
+- `await agents.steer(id=..., message=..., triggerTurn=..., data=...)` and `agents.followUp(...)` deliver the same thing to a peer: hidden steering at its next turn boundary. For Main and one-shot agents, `steer` lands after the current turn's tool calls, never mid-turn, and `agents.setSteeringMode` defaults to one message per turn. Both are passive by default and never wake an idle peer: pass `triggerTurn=True` only when the peer must act, leave it off for informational updates, and never send acknowledgement-only replies. Delivery to a child is rechecked at dispatch, so a run that finished first refuses the message instead of receiving it late. A non-local target returns after owner acknowledgment and fails with "targets a previous owner incarnation" if that host restarted; Fabric does not retry, so re-read the participant and resend only if still wanted.
+- `did = (await decisions.raise(title="...", kind="question", holder="root"))["id"]` files a durable decision; `await decisions.wait(id=did)` returns its record once it is answered, expires, or is cancelled, or — with no `timeoutMs` and no decision deadline — still open at `executor.maxTimeoutMs`. The program deadline pauses while it waits, so inspect `status` instead of assuming an answer. `holder` defaults to `"user"`, which only a person answers (`/fabric decisions`, `pi-fabric decisions answer`), and `decisions.answer` never answers a user-held decision, so a question aimed at a peer must name it (`holder="root"` or `"supervisor:<participantId>"`); never answer a decision you raised.
+- `await mesh.get(key=...)` returns `{key, value, version, updatedAt, updatedBy}`, or `None` when the key is absent. Claim with `mesh.put(key=..., value=..., ifVersion=0)` to create or `ifVersion=<the version you read>` to take over; on a failed claim stop and re-read rather than overwrite a competitor's version. Release with `mesh.delete(key=..., ifVersion=...)`, discover with `mesh.list(prefix=...)`. Keys are project-shared, and `topology/`, `sessions/`, `actors/` are host-reserved.
 
 ## Build and test through `just`
 
@@ -44,11 +55,9 @@ Use red/green test-driven development when refactoring and adding new features. 
 
 ## Complex System State
 
-Prefer enum-based finite state machines to manage transitions within systems. When you encounter an existing system with ad-hoc rules and detailed comments meant to clarify complex interactions, propose a refactor to encapsulate that logic into a state machine.
+Use finite state machines to manage system state and transitions within and between systems.
 
-## Comment Hygiene
 
-Comments carry the *why* only if it outlives its lookup: no task/epic IDs (commits carry those), no "RED/merged/post-fix" narration, no refactor provenance. Sequencing rules belong in types, acceptance criteria in named tests, history in ADRs. Full rules and the first-home test: `docs/comments.md`.
 
 ## Web
 
