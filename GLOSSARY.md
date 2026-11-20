@@ -82,6 +82,22 @@ _Avoid_: per-driver feed spawning, a per-driver head watch or head poller, a per
 telemetry scrape, driver-owned reconciliation triggers; a lifecycle inferred from which
 resource exists.
 
+**Event hub**:
+
+The per-process fan-out owner (`degenbot-eventhub/src/hub.rs`): one typed
+pending-transaction ring per `PendingTxSource`, plus the head clock. A feed opens its
+kind's ring once (`Hub::open_pending_tx_ring(source, capacity: NonZeroUsize)`), keeping
+the cloneable `PendingTxPublisher` (`push` / `dropped`) while the ring's one
+`PendingTxView` (`drain` / `dropped` / `capacity`, deliberately not `Clone`) goes to the
+consumer that drains it. One ring per source kind and one view per ring make a second
+drainer, a wrong-payload consumer, and a zero-capacity ring unrepresentable. A feed that
+is its own host — the Python eager path — opens a detached ring instead. The hub is
+transport-pure and owns no runtime state.
+
+_Avoid_: a union event type consumers re-match through a "wrong variant" arm;
+policy-typed source handles; clamping a zero ring; merging both pending-tx sources into
+one ring; reporting feed drop telemetry through a consumer.
+
 **Head clock**:
 The hub-owned block-head source (`degenbot-eventhub/src/head.rs`): one permanent claim
 (`Hub::claim_head_source`) hands the process's single `HeadSender` to the clock's owner —

@@ -9,10 +9,11 @@
 #![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex as StdMutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
-use degenbot_rpc::backrun_feed::{BackrunFeed, BackrunFeedConfig};
+use degenbot_rpc::backrun_feed::{BackrunFeedConfig, EagerBackrunFeed};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -75,15 +76,15 @@ fn cfg_with(port: u16, watchdog: Duration, ring: usize) -> BackrunFeedConfig {
     BackrunFeedConfig {
         url: format!("ws://127.0.0.1:{port}"),
         watchdog,
-        ring_capacity: ring,
+        ring_capacity: NonZeroUsize::new(ring).expect("a test ring holds at least one frame"),
         reconnect_backoff: Duration::from_millis(20),
         ..BackrunFeedConfig::for_mainnet()
     }
 }
 
 /// Spawn a feed on its own detached ring (one feed per test, no shared hub).
-fn spawn_feed(cfg: BackrunFeedConfig) -> BackrunFeed {
-    BackrunFeed::spawn(cfg)
+fn spawn_feed(cfg: BackrunFeedConfig) -> EagerBackrunFeed {
+    EagerBackrunFeed::spawn(cfg)
 }
 
 struct MockServer {
@@ -178,7 +179,7 @@ fn seen(server: &MockServer) -> Vec<String> {
 }
 
 async fn drain_until(
-    feed: &BackrunFeed,
+    feed: &EagerBackrunFeed,
     want: usize,
     timeout: Duration,
 ) -> Vec<degenbot_eventhub::PendingTx> {

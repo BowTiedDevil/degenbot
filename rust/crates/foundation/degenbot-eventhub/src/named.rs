@@ -1,11 +1,11 @@
 //! Named, typed source channels held by the hub.
 //!
-//! The hub's vocabulary channels are keyed by [`HubClass`] and carry
-//! [`HubEvent`]. A *named* source channel carries a domain payload the hub
-//! vocabulary deliberately does not name — the engine's `ResultBatch` and
+//! The hub's pending rings are keyed by [`crate::PendingTxSource`] and carry
+//! [`crate::PendingTx`]. A *named* source channel carries a domain payload the
+//! hub vocabulary deliberately does not name — the engine's `ResultBatch` and
 //! `BlockNotification` are engine-owned downstream types, so forcing them
-//! through `HubEvent` would invent vocabulary. A named channel is instead
-//! keyed by a `&'static str` and its strictness is fixed at
+//! through the pending vocabulary would invent vocabulary. A named channel is
+//! instead keyed by a `&'static str` and its strictness is fixed at
 //! [`OverflowPolicy::UnboundedFlagged`]: lossless by construction, flagged
 //! because unbounded intake is a deliberate, audited choice.
 //!

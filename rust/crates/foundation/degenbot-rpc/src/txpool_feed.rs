@@ -3,10 +3,12 @@
 //! Connects a WebSocket to the CHAIN NODE, subscribes to
 //! `newPendingTransactions`, and resolves each delivered hash with
 //! `eth_getTransactionByHash` over the same socket to build the full pending
-//! tx. Typed `HubEvent::PendingTx`s flow through a hub-owned bounded ring
-//! (the `DropOldestCounted` policy) drained by [`TxpoolFeed::drain`] — the
-//! same vocabulary the `MEVBlocker` feed publishes, so the frame pipeline is
-//! feed-agnostic.
+//! tx. Typed [`PendingTx`](degenbot_eventhub::PendingTx) frames are published
+//! on the source kind's bounded ring by the feed's
+//! [`PendingTxPublisher`](degenbot_eventhub::PendingTxPublisher) — the same
+//! vocabulary the `MEVBlocker` feed publishes, so the frame pipeline is
+//! feed-agnostic. The ring's one view belongs to the arm's stream
+//! (`degenbot_rpc::pending_tx_stream`).
 //!
 //! Wire notes:
 //! - subscribe: `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe",
@@ -29,6 +31,7 @@
 //! chain ids and malformed payloads are counted, never fatal.
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -43,13 +46,12 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent};
+use degenbot_eventhub::PendingTxPublisher;
 
 use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
 
-/// The hub `DropOldestCounted` counter label this feed registers under; the
-/// same string is exposed as `TxpoolFeedStatus::dropped_ring`.
-pub const TXPOOL_DROPPED_RING_METRIC: &str = "dropped_ring";
+/// The txpool feed's production ring capacity: 4096 frames.
+pub const DEFAULT_RING_CAPACITY: NonZeroUsize = NonZeroUsize::new(4096).expect("4096 is non-zero");
 
 const SUBSCRIBE_ID: u64 = 1;
 const SUBSCRIBE_METHOD: &str = "newPendingTransactions";
@@ -65,7 +67,7 @@ pub struct TxpoolFeedConfig {
     /// Tear down + reconnect when no frame (the subscribe ack included)
     /// arrives within the window.
     pub watchdog: Duration,
-    pub ring_capacity: usize,
+    pub ring_capacity: NonZeroUsize,
     pub reconnect_backoff: Duration,
     pub max_backoff: Duration,
 }
@@ -81,7 +83,7 @@ impl TxpoolFeedConfig {
             ws_url: String::new(),
             expected_chain_id: 1,
             watchdog: Duration::from_secs(16),
-            ring_capacity: 4096,
+            ring_capacity: DEFAULT_RING_CAPACITY,
             reconnect_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(5),
         }
@@ -90,18 +92,21 @@ impl TxpoolFeedConfig {
 
 /// Handle over a txpool feed pump.
 ///
-/// [`Self::build`] provisions the pump (the ring ends, the shared counters,
+/// [`Self::build`] provisions the pump (the publisher, the shared counters,
 /// the stop channel) and spawns NOTHING; [`Self::start`] launches the
 /// reconnect loop, which is the first dial. This split is what lets a host
 /// mint a feed without touching the network — the deferred-I/O discipline the
 /// engine's start boundary relies on.
+///
+/// The pump owns only the ring's publishing end: a hosted arm drains through
+/// its one `PendingTxStream`, and no feed-level `drain` exists to compete with
+/// that stream.
 pub struct TxpoolFeed {
     /// The shared lifecycle shell (the one-shot latch, the stop channel, the
     /// launch dispatch); declared first so its `Drop` — the stop send — runs
     /// before the pump's other fields tear down.
     shell: DeferredFeedShell,
     shared: Arc<Shared>,
-    ring: DropOldestReceiver,
     /// The provisioning config [`Self::start`] consumes to spawn the loop.
     /// Held (not consumed at build) so provisioning stays dial-free.
     cfg: TxpoolFeedConfig,
@@ -122,7 +127,7 @@ pub struct TxpoolFeedStatus {
 
 struct Shared {
     cfg_backoff: (Duration, Duration),
-    source: DropOldestSender,
+    source: PendingTxPublisher,
     connected: AtomicBool,
     accepted: AtomicU64,
     rejected_chain_id: AtomicU64,
@@ -137,7 +142,7 @@ impl Shared {
         self.accepted.fetch_add(1, Ordering::Relaxed);
         self.last_event_unix_ms
             .store(now_unix_ms(), Ordering::Relaxed);
-        self.source.push(HubEvent::PendingTx(ev));
+        self.source.push(ev);
     }
 
     fn count(&self, which: Count) {
@@ -167,35 +172,14 @@ fn now_unix_ms() -> u64 {
 }
 
 impl TxpoolFeed {
-    /// Spawn the pump on a private, unattached drop-oldest ring (the
-    /// Python-exposed single-feed path). The loop starts immediately (this is
-    /// the eager path); a host that defers the dial calls [`Self::build`] then
-    /// [`Self::start`] at its own start boundary. Must be called within a tokio
-    /// runtime context, or the crate-global runtime is used.
+    /// Provision the pump over its ring's publishing end, spawning nothing.
     ///
-    /// Kept as the eager path's exact [`Self::build`] + [`Self::start`] so the
-    /// Python single-feed path stays behavior-identical: no extra dial, no
-    /// extra registration, no deferred boundary.
-    #[must_use]
-    pub fn spawn(cfg: TxpoolFeedConfig) -> Self {
-        let hub = Hub::new();
-        let (source, ring) =
-            hub.detached_drop_oldest(TXPOOL_DROPPED_RING_METRIC, cfg.ring_capacity);
-        let feed = Self::build(cfg, source, ring);
-        feed.start();
-        feed
-    }
-
-    /// Provision the pump over a hub-registered ring's two ends, spawning
-    /// nothing. The host registers the class and subscribes the consumer views
-    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning); the feed
-    /// only owns the pump over the source end. [`Self::start`] launches the
-    /// reconnect loop later.
-    pub(crate) fn build(
-        cfg: TxpoolFeedConfig,
-        source: DropOldestSender,
-        ring: DropOldestReceiver,
-    ) -> Self {
+    /// The ring is opened by whoever owns the consumer end: a process host
+    /// opens it on its [`degenbot_eventhub::Hub`]
+    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning, and is the
+    /// txpool arm's only production drain). The feed owns only the publisher.
+    /// [`Self::start`] launches the reconnect loop later.
+    pub(crate) fn build(cfg: TxpoolFeedConfig, source: PendingTxPublisher) -> Self {
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
             source,
@@ -210,7 +194,6 @@ impl TxpoolFeed {
         Self {
             shell: DeferredFeedShell::new(),
             shared,
-            ring,
             cfg,
         }
     }
@@ -228,33 +211,13 @@ impl TxpoolFeed {
         });
     }
 
-    /// All buffered events, ordered, atomically.
-    #[must_use]
-    pub fn drain(&self) -> Vec<degenbot_eventhub::PendingTx> {
-        self.ring
-            .drain()
-            .into_iter()
-            .filter_map(|event| match event {
-                HubEvent::PendingTx(tx) => Some(tx),
-                other @ HubEvent::PoolEvent { .. } => {
-                    op_warn!(
-                        domain = rpc,
-                        event = ?other,
-                        "txpool feed: non-pending event on the pending ring"
-                    );
-                    None
-                }
-            })
-            .collect()
-    }
-
     #[must_use]
     pub fn status(&self) -> TxpoolFeedStatus {
         let s = &self.shared;
         TxpoolFeedStatus {
             connected: s.connected.load(Ordering::Relaxed),
             accepted: s.accepted.load(Ordering::Relaxed),
-            dropped_ring: self.ring.dropped(),
+            dropped_ring: s.source.dropped(),
             rejected_chain_id: s.rejected_chain_id.load(Ordering::Relaxed),
             rejected_parse: s.rejected_parse.load(Ordering::Relaxed),
             mine_misses: s.mine_misses.load(Ordering::Relaxed),
@@ -576,8 +539,7 @@ mod tests {
     /// A `Shared` over a throwaway detached ring, mirroring `TxpoolFeed::build`
     /// (the session never touches the ring on the stop path).
     fn test_shared() -> Arc<Shared> {
-        let hub = Hub::new();
-        let (source, _ring) = hub.detached_drop_oldest(TXPOOL_DROPPED_RING_METRIC, 4);
+        let (source, _ring) = degenbot_eventhub::detached_pending_ring(DEFAULT_RING_CAPACITY);
         Arc::new(Shared {
             cfg_backoff: (Duration::from_millis(20), Duration::from_millis(50)),
             source,

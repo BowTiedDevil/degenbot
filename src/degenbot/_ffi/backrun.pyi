@@ -30,11 +30,18 @@ class BackrunFeed:
         /,
         url: str | None = None,
         watchdog_secs: SupportsIndex = 0,
-        ring_capacity: SupportsIndex = 0,
+        ring_capacity: SupportsIndex | None = None,
     ) -> BackrunFeed:
         """
         Spawn the feed pump. Watchdog/ring/backoff are config-able; `0`
-        watchdog selects the production default.
+        watchdog selects the production default, and `ring_capacity=None` does
+        the same for the ring — an explicit `0` ring is a `ValueError`.
+
+        # Errors
+
+        `ValueError` when `ring_capacity` is `0`. The refusal is decided from
+        the config alone, before any feed is constructed, so nothing spawns and
+        nothing dials on the rejected path.
         """
     def drain(self, /) -> list[Any]:
         """

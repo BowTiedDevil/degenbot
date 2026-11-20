@@ -112,8 +112,8 @@ pub use registration_lifecycle::{
 /// values injected. The boot returns handles and never runs a consume loop
 /// (ADR-050 D9).
 pub use session_boot::{
-    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedBoot,
-    SessionBootError, SessionConstruction,
+    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedArmFeed,
+    HostedBoot, SessionBootError, SessionConstruction,
 };
 
 pub use stage_handlers::{

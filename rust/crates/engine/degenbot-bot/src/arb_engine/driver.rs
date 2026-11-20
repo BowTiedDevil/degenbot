@@ -92,8 +92,8 @@ use degenbot_ingestion::IngestEvent as WsEvent;
 /// Hub registration name for the session's ONE ordered event source.
 ///
 /// A named source channel ([`degenbot_eventhub::NamedSender`]) rather than a
-/// [`degenbot_eventhub::HubEvent`] variant: `SessionEvent` is an engine-owned
-/// downstream type the hub vocabulary deliberately does not name.
+/// pending-ring payload: `SessionEvent` is an engine-owned downstream type the
+/// hub vocabulary deliberately does not name.
 pub const SESSION_EVENT_CHANNEL_NAME: &str = "engine_session_event";
 
 /// How long [`EngineDriver::close`] waits for each loop to exit

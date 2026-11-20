@@ -1,60 +1,32 @@
-//! The per-process hub: registration, policy-typed subscription, the head
-//! clock, and the overflow channels.
+//! The per-process hub: typed pending rings, the head clock, and the named
+//! engine channels.
 //!
-//! A [`Hub`] owns one channel per registered [`HubClass`]. A source calls
-//! [`Hub::register_source`] once (declaring its [`OverflowPolicy`]) and keeps
-//! the returned [`SourceHandle`]; consumers call [`Hub::subscribe`] to get the
-//! matching [`Subscription`]. Both ends share the same channel by `Arc`, so
-//! the channel outlives either handle.
+//! A [`Hub`] owns one pending-transaction ring per [`PendingTxSource`]. A feed
+//! calls [`Hub::open_pending_tx_ring`] once, keeping the returned
+//! [`PendingTxPublisher`]; the ring's one [`PendingTxView`] goes to the
+//! consumer that drains it. Both ends share the ring by `Arc`, so the ring
+//! outlives either handle.
 //!
-//! The head clock is the hub's own, not a registered class: one permanent
+//! The head clock is the hub's own, not a ring: one permanent
 //! [`Hub::claim_head_source`] hands the process's one [`HeadSender`] out, and
 //! [`Hub::subscribe_head`] is infallible for every reader.
+//!
+//! Named engine channels carry payloads this vocabulary does not name; they
+//! are the deliberate unbounded audit posture and are handed out once.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
-use crate::event::{HubClass, HubEvent};
+use crate::event::PendingTxSource;
 use crate::head::{Head, HeadSender, HeadShared, HeadSubscription};
 use crate::named::{NamedChannel, NamedCounters, NamedReceiver, NamedSender};
+use crate::pending::{PendingTxPublisher, PendingTxRing, PendingTxView};
 use crate::policy::{HubError, OverflowPolicy};
-
-/// Bounded drop-oldest ring, counted on eviction.
-struct DropOldestChannel {
-    name: &'static str,
-    capacity: usize,
-    ring: Mutex<VecDeque<HubEvent>>,
-    dropped: AtomicU64,
-}
-
-impl DropOldestChannel {
-    fn new(name: &'static str, capacity: usize) -> Self {
-        Self {
-            name,
-            capacity,
-            ring: Mutex::new(VecDeque::with_capacity(capacity)),
-            dropped: AtomicU64::new(0),
-        }
-    }
-
-    fn push(&self, event: HubEvent) {
-        let mut ring = self.ring.lock();
-        if ring.len() >= self.capacity {
-            ring.pop_front();
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-        ring.push_back(event);
-    }
-
-    fn drain(&self) -> Vec<HubEvent> {
-        std::mem::take(&mut *self.ring.lock()).into_iter().collect()
-    }
-}
 
 /// The typed refusal a second [`Hub::claim_head_source`] gets: the hub's one
 /// head source was already claimed, and a claim never lapses.
@@ -85,158 +57,13 @@ impl HeadSlot {
     }
 }
 
-/// Unbounded FIFO, lossless by construction and flagged for audit.
-struct UnboundedChannel {
-    name: &'static str,
-    queue: Mutex<VecDeque<HubEvent>>,
-}
-
-impl UnboundedChannel {
-    fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            queue: Mutex::new(VecDeque::new()),
-        }
-    }
-
-    fn push(&self, event: HubEvent) {
-        self.queue.lock().push_back(event);
-    }
-
-    fn drain(&self) -> Vec<HubEvent> {
-        std::mem::take(&mut *self.queue.lock())
-            .into_iter()
-            .collect()
-    }
-}
-
-/// The source side of a [`OverflowPolicy::DropOldestCounted`] channel.
-#[derive(Clone)]
-pub struct DropOldestSender {
-    inner: Arc<DropOldestChannel>,
-}
-
-impl DropOldestSender {
-    /// Append an event, evicting (and counting) the oldest at capacity.
-    pub fn push(&self, event: HubEvent) {
-        self.inner.push(event);
-    }
-
-    /// Evictions counted on this channel.
-    #[must_use]
-    pub fn dropped(&self) -> u64 {
-        self.inner.dropped.load(Ordering::Relaxed)
-    }
-
-    /// The declared counter label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.inner.name
-    }
-}
-
-/// The consumer side of a [`OverflowPolicy::DropOldestCounted`] channel.
-#[derive(Clone)]
-pub struct DropOldestReceiver {
-    inner: Arc<DropOldestChannel>,
-}
-
-impl DropOldestReceiver {
-    /// Take every buffered event, oldest first, atomically.
-    #[must_use]
-    pub fn drain(&self) -> Vec<HubEvent> {
-        self.inner.drain()
-    }
-
-    /// Evictions counted on this channel.
-    #[must_use]
-    pub fn dropped(&self) -> u64 {
-        self.inner.dropped.load(Ordering::Relaxed)
-    }
-
-    /// The declared counter label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.inner.name
-    }
-
-    /// The configured ring capacity.
-    #[must_use]
-    pub fn capacity(&self) -> usize {
-        self.inner.capacity
-    }
-}
-
-/// The source side of a [`OverflowPolicy::UnboundedFlagged`] channel.
-#[derive(Clone)]
-pub struct UnboundedSender {
-    inner: Arc<UnboundedChannel>,
-}
-
-impl UnboundedSender {
-    /// Append an event; never drops.
-    pub fn push(&self, event: HubEvent) {
-        self.inner.push(event);
-    }
-}
-
-/// The consumer side of a [`OverflowPolicy::UnboundedFlagged`] channel.
-#[derive(Clone)]
-pub struct UnboundedReceiver {
-    inner: Arc<UnboundedChannel>,
-}
-
-impl UnboundedReceiver {
-    /// Take every buffered event, oldest first, atomically.
-    #[must_use]
-    pub fn drain(&self) -> Vec<HubEvent> {
-        self.inner.drain()
-    }
-
-    /// The declared audit label.
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.inner.name
-    }
-}
-
-/// The source-side handle handed back by [`Hub::register_source`]; its variant
-/// reflects the declared policy.
-#[derive(Clone)]
-pub enum SourceHandle {
-    /// Drop-oldest counted ring.
-    DropOldestCounted(DropOldestSender),
-    /// Unbounded flagged buffer.
-    UnboundedFlagged(UnboundedSender),
-}
-
-/// The consumer-side receiver handed back by [`Hub::subscribe`]; its variant
-/// reflects the policy declared at registration.
-#[derive(Clone)]
-pub enum Subscription {
-    /// Drop-oldest counted ring.
-    DropOldestCounted(DropOldestReceiver),
-    /// Unbounded flagged buffer.
-    UnboundedFlagged(UnboundedReceiver),
-}
-
-enum Channel {
-    DropOldestCounted(Arc<DropOldestChannel>),
-    UnboundedFlagged(Arc<UnboundedChannel>),
-}
-
-struct SourceEntry {
-    policy: OverflowPolicy,
-    channel: Channel,
-}
-
 /// One event hub per host process.
 ///
-/// Sources register exactly once per [`HubClass`]; subscribers receive a
-/// policy-typed [`Subscription`]. The hub is transport-pure: it carries its
-/// own [`HubEvent`] vocabulary and never names `BotState` or the runtime.
+/// A source opens its kind's ring exactly once; the ring's publisher and its
+/// one view carry the typed [`crate::PendingTx`] frames. The hub is
+/// transport-pure: it carries no runtime state and names no `BotState`.
 pub struct Hub {
-    sources: Mutex<HashMap<HubClass, SourceEntry>>,
+    pending: Mutex<HashMap<PendingTxSource, Arc<PendingTxRing>>>,
     /// The hub's one head clock: the shared receiver state and the unclaimed
     /// sender slot.
     head: HeadSlot,
@@ -253,96 +80,43 @@ impl Default for Hub {
 }
 
 impl Hub {
-    /// A hub with no registered sources and an unclaimed head clock.
+    /// A hub with no pending ring, an unclaimed head clock, and no named
+    /// channel.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            sources: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
             head: HeadSlot::new(),
             named: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Register the one source for `class`, declaring its overflow policy and
-    /// the channel `capacity` (used by `DropOldestCounted`, ignored otherwise).
+    /// Open `source`'s pending ring at `capacity` and hand back its two ends.
+    ///
+    /// The capacity is a [`NonZeroUsize`], so a zero-capacity ring cannot be
+    /// requested. The publisher is the feed's end; the view is the one
+    /// consumer's end and cannot be cloned.
     ///
     /// # Errors
     ///
-    /// [`HubError::AlreadyRegistered`] if `class` already has a source on this
-    /// hub.
-    pub fn register_source(
+    /// [`HubError::AlreadyRegistered`] if `source`'s ring is already open on
+    /// this hub: one ring per source kind, so a second consumer would be a
+    /// second drainer.
+    pub fn open_pending_tx_ring(
         &self,
-        class: HubClass,
-        policy: OverflowPolicy,
-        capacity: usize,
-    ) -> Result<SourceHandle, HubError> {
-        let mut sources = self.sources.lock();
-        if sources.contains_key(&class) {
-            return Err(HubError::AlreadyRegistered(class));
+        source: PendingTxSource,
+        capacity: NonZeroUsize,
+    ) -> Result<(PendingTxPublisher, PendingTxView), HubError> {
+        let mut pending = self.pending.lock();
+        if pending.contains_key(&source) {
+            return Err(HubError::AlreadyRegistered(source));
         }
-        let (channel, handle) = match policy {
-            OverflowPolicy::DropOldestCounted { name } => {
-                let channel = Arc::new(DropOldestChannel::new(name, capacity));
-                (
-                    Channel::DropOldestCounted(Arc::clone(&channel)),
-                    SourceHandle::DropOldestCounted(DropOldestSender { inner: channel }),
-                )
-            }
-            OverflowPolicy::UnboundedFlagged { name } => {
-                let channel = Arc::new(UnboundedChannel::new(name));
-                (
-                    Channel::UnboundedFlagged(Arc::clone(&channel)),
-                    SourceHandle::UnboundedFlagged(UnboundedSender { inner: channel }),
-                )
-            }
-        };
-        sources.insert(class, SourceEntry { policy, channel });
-        Ok(handle)
-    }
-
-    /// Build a drop-oldest ring that this hub does **not** track in its
-    /// registry.
-    ///
-    /// For a consumer that is its own host — one feed whose channel has no
-    /// sibling source to collide with (the Python-exposed `BackrunFeed`
-    /// constructor). A process host that owns a shared hub uses
-    /// [`Self::register_source`] + [`Self::subscribe`] instead.
-    #[must_use]
-    pub fn detached_drop_oldest(
-        &self,
-        name: &'static str,
-        capacity: usize,
-    ) -> (DropOldestSender, DropOldestReceiver) {
-        let channel = Arc::new(DropOldestChannel::new(name, capacity));
-        (
-            DropOldestSender {
-                inner: Arc::clone(&channel),
-            },
-            DropOldestReceiver { inner: channel },
-        )
-    }
-
-    /// Subscribe to `class`, receiving the policy-typed receiver declared at
-    /// registration.
-    ///
-    /// # Errors
-    ///
-    /// [`HubError::NotRegistered`] if no source has registered `class`.
-    pub fn subscribe(&self, class: HubClass) -> Result<Subscription, HubError> {
-        let sources = self.sources.lock();
-        let entry = sources.get(&class).ok_or(HubError::NotRegistered(class))?;
-        Ok(match &entry.channel {
-            Channel::DropOldestCounted(channel) => {
-                Subscription::DropOldestCounted(DropOldestReceiver {
-                    inner: Arc::clone(channel),
-                })
-            }
-            Channel::UnboundedFlagged(channel) => {
-                Subscription::UnboundedFlagged(UnboundedReceiver {
-                    inner: Arc::clone(channel),
-                })
-            }
-        })
+        let ring = Arc::new(PendingTxRing::new(capacity));
+        pending.insert(source, Arc::clone(&ring));
+        Ok((
+            PendingTxPublisher::new(Arc::clone(&ring)),
+            PendingTxView::new(ring),
+        ))
     }
 
     /// Claim this hub's one head source: the permanent `Unclaimed -> Claimed`
@@ -474,40 +248,25 @@ impl Hub {
             .then_some(OverflowPolicy::UnboundedFlagged { name })
     }
 
-    /// The policy declared for `class`, if registered.
-    #[must_use]
-    pub fn policy_of(&self, class: HubClass) -> Option<OverflowPolicy> {
-        self.sources.lock().get(&class).map(|entry| entry.policy)
-    }
-
-    /// Every registered class.
-    #[must_use]
-    pub fn registered_classes(&self) -> Vec<HubClass> {
-        self.sources.lock().keys().copied().collect()
-    }
-
-    /// Count of registrations using the deliberate unbounded audit posture —
-    /// the flagged `HubClass` sources plus every named source channel.
+    /// Count of named source channels — the deliberate unbounded audit posture.
+    ///
+    /// Pending rings are neither unbounded nor audit-flagged: their capacity is
+    /// the ring's own [`NonZeroUsize`], so this count names only the named
+    /// channels.
     #[must_use]
     pub fn unbounded_flagged_count(&self) -> usize {
-        let named = self.named.lock().len();
-        let classes = self
-            .sources
-            .lock()
-            .values()
-            .filter(|entry| entry.policy.is_unbounded_flagged())
-            .count();
-        named + classes
+        self.named.lock().len()
     }
 }
 
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::panic,
-    reason = "hub unit tests assert on registration/subscription outcomes"
+    reason = "hub unit tests unwrap the ring openings and the one head claim"
 )]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use alloy::primitives::{Address, Bytes, B256, U256};
     use serde_json::Value;
 
@@ -515,6 +274,10 @@ mod tests {
     use crate::event::{PendingTx, PendingTxSource};
 
     const NAMED_TEST_CHANNEL: &str = "test_named_channel";
+
+    fn capacity(capacity: usize) -> NonZeroUsize {
+        NonZeroUsize::new(capacity).expect("a test capacity is non-zero")
+    }
 
     fn tx(nonce: u64) -> PendingTx {
         PendingTx {
@@ -535,151 +298,118 @@ mod tests {
         }
     }
 
-    fn nonce_of(event: HubEvent) -> Option<u64> {
-        match event {
-            HubEvent::PendingTx(tx) => Some(tx.nonce),
-            HubEvent::PoolEvent { .. } => None,
-        }
+    fn nonces(frames: Vec<PendingTx>) -> Vec<u64> {
+        frames.into_iter().map(|frame| frame.nonce).collect()
     }
 
-    fn drop_oldest_sender(hub: &Hub, capacity: usize) -> DropOldestSender {
-        match hub
-            .register_source(
-                HubClass::PendingTx(PendingTxSource::Mevblocker),
-                OverflowPolicy::DropOldestCounted {
-                    name: "dropped_ring",
-                },
-                capacity,
-            )
-            .expect("registers")
-        {
-            SourceHandle::DropOldestCounted(sender) => sender,
-            SourceHandle::UnboundedFlagged(_) => panic!("declared drop-oldest, got another handle"),
-        }
-    }
-
-    #[test]
-    fn policy_is_fixed_at_registration() {
-        let hub = Hub::new();
-        assert!(matches!(
-            hub.subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker)),
-            Err(HubError::NotRegistered(HubClass::PendingTx(
-                PendingTxSource::Mevblocker
-            )))
-        ));
-        let handle = drop_oldest_sender(&hub, 4);
-        assert_eq!(handle.name(), "dropped_ring");
-        assert!(matches!(
-            hub.register_source(
-                HubClass::PendingTx(PendingTxSource::Mevblocker),
-                OverflowPolicy::UnboundedFlagged { name: "late" },
-                4,
-            ),
-            Err(HubError::AlreadyRegistered(HubClass::PendingTx(_)))
-        ));
-        assert!(matches!(
-            hub.subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker)),
-            Ok(Subscription::DropOldestCounted(_))
-        ));
-        assert_eq!(
-            hub.policy_of(HubClass::PendingTx(PendingTxSource::Mevblocker)),
-            Some(OverflowPolicy::DropOldestCounted {
-                name: "dropped_ring"
-            })
-        );
-        assert_eq!(
-            hub.registered_classes(),
-            vec![HubClass::PendingTx(PendingTxSource::Mevblocker)]
-        );
-        assert_eq!(hub.unbounded_flagged_count(), 0);
-    }
-
-    /// The two pending-tx source kinds register independently on one hub:
-    /// neither collides with the other, and each class's ring carries exactly
-    /// its own feed's frames (the per-kind corpus split).
+    /// The two pending-tx source kinds open independently on one hub: neither
+    /// collides with the other, and each ring carries exactly its own feed's
+    /// frames (the per-kind corpus split).
     #[test]
     fn both_pending_tx_source_kinds_register_and_drain_independently() {
         let hub = Hub::new();
-        let mevblocker = drop_oldest_sender(&hub, 4);
-        let SourceHandle::DropOldestCounted(txpool) = hub
-            .register_source(
-                HubClass::PendingTx(PendingTxSource::Txpool),
-                OverflowPolicy::DropOldestCounted {
-                    name: "txpool_dropped_ring",
-                },
-                8,
-            )
-            .expect("the second kind registers without a tombstone")
-        else {
-            panic!("declared drop-oldest, got another handle");
-        };
-        let mut classes = hub.registered_classes();
-        classes.sort();
-        assert_eq!(
-            classes,
-            vec![
-                HubClass::PendingTx(PendingTxSource::Mevblocker),
-                HubClass::PendingTx(PendingTxSource::Txpool),
-            ],
-            "one registration per class VALUE, not per class variant"
-        );
+        let (mevblocker, mevblocker_ring) = hub
+            .open_pending_tx_ring(PendingTxSource::Mevblocker, capacity(4))
+            .expect("the mevblocker kind opens");
+        let (txpool, txpool_ring) = hub
+            .open_pending_tx_ring(PendingTxSource::Txpool, capacity(8))
+            .expect("the txpool kind opens without a tombstone");
 
-        mevblocker.push(HubEvent::PendingTx(tx(1)));
-        txpool.push(HubEvent::PendingTx(tx(2)));
+        mevblocker.push(tx(1));
+        txpool.push(tx(2));
 
-        let Subscription::DropOldestCounted(mevblocker_ring) = hub
-            .subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker))
-            .expect("subscribed")
-        else {
-            panic!("policy changed under test");
-        };
-        let Subscription::DropOldestCounted(txpool_ring) = hub
-            .subscribe(HubClass::PendingTx(PendingTxSource::Txpool))
-            .expect("subscribed")
-        else {
-            panic!("policy changed under test");
-        };
-        let mevblocker_nonces: Vec<u64> = mevblocker_ring
-            .drain()
-            .into_iter()
-            .filter_map(nonce_of)
-            .collect();
-        let txpool_nonces: Vec<u64> = txpool_ring
-            .drain()
-            .into_iter()
-            .filter_map(nonce_of)
-            .collect();
         assert_eq!(
-            mevblocker_nonces,
+            nonces(mevblocker_ring.drain()),
             vec![1],
             "the mevblocker ring is its feed's corpus"
         );
         assert_eq!(
-            txpool_nonces,
+            nonces(txpool_ring.drain()),
             vec![2],
             "the txpool ring is its feed's corpus"
+        );
+    }
+
+    /// One ring per source kind: the second open is refused, so a kind cannot
+    /// grow a second drainer.
+    #[test]
+    fn a_second_registration_of_one_kind_is_refused() {
+        let hub = Hub::new();
+        let _first = hub
+            .open_pending_tx_ring(PendingTxSource::Mevblocker, capacity(4))
+            .expect("the first ring opens");
+        assert_eq!(
+            hub.open_pending_tx_ring(PendingTxSource::Mevblocker, capacity(4))
+                .err(),
+            Some(HubError::AlreadyRegistered(PendingTxSource::Mevblocker)),
+            "the kind's ring is already open"
+        );
+        assert!(
+            hub.open_pending_tx_ring(PendingTxSource::Txpool, capacity(4))
+                .is_ok(),
+            "the refused second open does not tombstone the other kind"
         );
     }
 
     #[test]
     fn drop_oldest_counted_evicts_oldest_and_counts() {
         let hub = Hub::new();
-        let sender = drop_oldest_sender(&hub, 4);
-        let Subscription::DropOldestCounted(receiver) = hub
-            .subscribe(HubClass::PendingTx(PendingTxSource::Mevblocker))
-            .expect("subscribed")
-        else {
-            panic!("policy changed under test");
-        };
+        let (publisher, ring) = hub
+            .open_pending_tx_ring(PendingTxSource::Mevblocker, capacity(4))
+            .expect("the ring opens");
+
         for nonce in 0..6 {
-            sender.push(HubEvent::PendingTx(tx(nonce)));
+            publisher.push(tx(nonce));
         }
-        assert_eq!(sender.dropped(), 2);
-        assert_eq!(receiver.dropped(), 2);
-        assert_eq!(receiver.capacity(), 4);
-        let nonces: Vec<u64> = receiver.drain().into_iter().filter_map(nonce_of).collect();
-        assert_eq!(nonces, vec![2, 3, 4, 5], "oldest evicted, order preserved");
-        assert!(receiver.drain().is_empty(), "drain is an atomic take");
+
+        assert_eq!(publisher.dropped(), 2);
+        assert_eq!(ring.dropped(), 2);
+        assert_eq!(ring.capacity(), capacity(4));
+        assert_eq!(
+            nonces(ring.drain()),
+            vec![2, 3, 4, 5],
+            "oldest evicted, order preserved"
+        );
+        assert!(ring.drain().is_empty(), "drain is an atomic take");
+    }
+
+    /// A capacity-one ring holds only the newest frame: every older frame is
+    /// evicted and counted, never retained beside the new one.
+    #[test]
+    fn capacity_one_evicts_every_older_frame() {
+        let hub = Hub::new();
+        let (publisher, ring) = hub
+            .open_pending_tx_ring(PendingTxSource::Txpool, capacity(1))
+            .expect("the ring opens");
+
+        for nonce in 0..3 {
+            publisher.push(tx(nonce));
+        }
+
+        assert_eq!(publisher.dropped(), 2, "each push evicts its predecessor");
+        assert_eq!(ring.capacity(), capacity(1));
+        assert_eq!(nonces(ring.drain()), vec![2], "only the newest frame stays");
+    }
+
+    /// Drop telemetry belongs to the publisher: a feed reports its own
+    /// evictions with no consumer view in existence.
+    #[test]
+    fn publisher_drop_telemetry_needs_no_consumer_view() {
+        let hub = Hub::new();
+        let (publisher, ring) = hub
+            .open_pending_tx_ring(PendingTxSource::Mevblocker, capacity(2))
+            .expect("the ring opens");
+        drop(ring);
+
+        for nonce in 0..5 {
+            publisher.push(tx(nonce));
+        }
+
+        assert_eq!(
+            publisher.dropped(),
+            3,
+            "the publisher counts the evictions its ring performed"
+        );
     }
 
     fn head(number: u64) -> Head {
@@ -859,51 +589,6 @@ mod tests {
             matches!(hub.claim_head_source(), Err(AlreadyClaimed)),
             "a second claim is always refused"
         );
-    }
-
-    /// The clock is the hub's own, so a `HubClass` registration can never
-    /// shadow or duplicate it, and an unclaimed hub answers neither claim twice.
-    #[test]
-    fn the_head_clock_is_not_a_registered_class() {
-        let hub = Hub::new();
-        assert!(hub.registered_classes().is_empty());
-        let _sender = hub
-            .claim_head_source()
-            .expect("the fresh clock is unclaimed");
-        assert!(
-            hub.registered_classes().is_empty(),
-            "claiming the head source registers no hub class"
-        );
-    }
-
-    #[test]
-    fn unbounded_flagged_stays_lossless() {
-        let hub = Hub::new();
-        let handle = hub
-            .register_source(
-                HubClass::PoolEvent,
-                OverflowPolicy::UnboundedFlagged {
-                    name: "engine_results",
-                },
-                0,
-            )
-            .expect("registers");
-        assert_eq!(hub.unbounded_flagged_count(), 1);
-        let SourceHandle::UnboundedFlagged(sender) = handle else {
-            panic!("declared unbounded, got another handle");
-        };
-        let Subscription::UnboundedFlagged(receiver) =
-            hub.subscribe(HubClass::PoolEvent).expect("subscribed")
-        else {
-            panic!("policy changed under test");
-        };
-        for nonce in 0..100 {
-            sender.push(HubEvent::PendingTx(tx(nonce)));
-        }
-        let nonces: Vec<u64> = receiver.drain().into_iter().filter_map(nonce_of).collect();
-        assert_eq!(nonces, (0..100).collect::<Vec<_>>());
-        assert_eq!(receiver.name(), "engine_results");
-        assert!(receiver.drain().is_empty());
     }
 
     #[test]

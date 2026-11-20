@@ -2,11 +2,11 @@
 //! source provisioning and the head clock.
 //!
 //! One typed stream per source kind, minted once at boot: each active arm's
-//! pump registers its own [`HubClass::PendingTx`] ring under its
-//! [`PendingTxSource`], so two backrun arms can run in one process without a
-//! registration tombstone and each arm's frame corpus is exactly its own
-//! feed's. The head clock is also engine-lifetime and, in every composition root
-//! that drives an engine, owned by the BLOCK PUMP: the pump registers the hub's
+//! pump opens its own [`degenbot_eventhub::Hub::open_pending_tx_ring`] ring for
+//! its [`PendingTxSource`], so two backrun arms can run in one process and each
+//! arm's frame corpus is exactly its own feed's. The head clock is also
+//! engine-lifetime and, in every composition root that drives an engine, owned
+//! by the BLOCK PUMP: the pump registers the hub's
 //! one head source and publishes each accepted header into it, so there is ONE
 //! `newHeads` subscription and no polled duplicate. A boot that hosts its own
 //! watch instead adds ONE stale-fallback `eth_blockNumber` poller. Either way
@@ -783,12 +783,14 @@ enum StreamSlot {
 }
 
 impl HostedSources {
-    /// Mint the hosted sources: one pump per named arm kind (provisioned, not
+    /// Mint the hosted sources: one pump per arm config (provisioned, not
     /// started), the dedicated head-watch runtime, and the deferred head clock.
     ///
-    /// `arms` names every ACTIVE arm's kind; an arm whose kind is absent gets
-    /// no pump and no stream (its driver halts at its live-mode gate, the
-    /// same refusal a boot with no resolvable feed produced).
+    /// Each config NAMES its source kind, so a pump cannot be minted for one
+    /// kind over another kind's feed. An arm the boot could not resolve gets no
+    /// config and therefore no pump and no stream (its driver halts at its
+    /// live-mode gate, the same refusal a boot with no resolvable feed
+    /// produced).
     ///
     /// Nothing here dials: the feed pumps and the head-watch WS connect are
     /// launched by [`Self::start`] at the engine's start boundary, so an
@@ -805,18 +807,20 @@ impl HostedSources {
     ///
     /// # Errors
     ///
-    /// [`HubError`] when a pump provisioning fails — a miswired boot (two
-    /// mints over one hub) fails closed rather than half-hosting.
+    /// [`HubError`] when a ring cannot be opened — a miswired boot (two arms
+    /// naming one source kind over one hub) fails closed rather than
+    /// half-hosting.
     pub fn mint(
         hub: Arc<Hub>,
-        arms: impl IntoIterator<Item = (PendingTxSource, PendingTxFeedConfig)>,
+        arms: impl IntoIterator<Item = PendingTxFeedConfig>,
         clock: Option<HostedClockBinding>,
         trigger: Option<HeadTrigger>,
     ) -> Result<Self, HubError> {
         let mut pumps = Vec::new();
         let mut streams = Vec::new();
-        for (source, cfg) in arms {
-            let (pump, stream) = PendingTxPump::provision_on_ring(&hub, source, cfg)?;
+        for cfg in arms {
+            let source = cfg.source();
+            let (pump, stream) = PendingTxPump::mint(&hub, cfg)?;
             pumps.push(pump);
             streams.push((source, StreamSlot::Available(stream)));
         }
@@ -1566,14 +1570,8 @@ mod tests {
         let mut hosted = HostedSources::mint(
             Arc::clone(&hub),
             [
-                (
-                    PendingTxSource::Mevblocker,
-                    PendingTxFeedConfig::Mevblocker(BackrunFeedConfig::for_mainnet()),
-                ),
-                (
-                    PendingTxSource::Txpool,
-                    PendingTxFeedConfig::Txpool(TxpoolFeedConfig::defaults()),
-                ),
+                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig::for_mainnet()),
+                PendingTxFeedConfig::Txpool(TxpoolFeedConfig::defaults()),
             ],
             None,
             None,
@@ -1632,8 +1630,8 @@ mod tests {
         alloy::primitives::B256::repeat_byte(0x22)
     }
 
-    fn frame(source: PendingTxSource, nonce: u64) -> degenbot_eventhub::HubEvent {
-        degenbot_eventhub::HubEvent::PendingTx(degenbot_eventhub::PendingTx {
+    fn frame(source: PendingTxSource, nonce: u64) -> degenbot_eventhub::PendingTx {
+        degenbot_eventhub::PendingTx {
             raw_signed_tx: None,
             chain_id: 1,
             from: alloy::primitives::Address::ZERO,
@@ -1651,7 +1649,7 @@ mod tests {
             access_list: serde_json::Value::Null,
             tx_type: 2,
             received_unix_ms: 0,
-        })
+        }
     }
 
     /// The head edge fires the trigger once per observed head — the source
@@ -1992,13 +1990,7 @@ mod tests {
         let (hub, sender) = claimed_hub();
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: format!("ws://{addr}"),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            )],
+            [mev_feed(format!("ws://{addr}"))],
             Some(HostedClockBinding::Watch {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
@@ -2026,13 +2018,7 @@ mod tests {
         let (hub, sender) = claimed_hub();
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: format!("ws://{addr}"),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            )],
+            [mev_feed(format!("ws://{addr}"))],
             Some(HostedClockBinding::Watch {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
@@ -2071,13 +2057,7 @@ mod tests {
         let (hub, sender) = claimed_hub();
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: format!("ws://{addr}"),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            )],
+            [mev_feed(format!("ws://{addr}"))],
             Some(HostedClockBinding::Watch {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
@@ -2381,6 +2361,14 @@ mod tests {
     /// endpoint.
     const CLOSED_FEED: &str = "ws://127.0.0.1:1";
 
+    /// A `MEVBlocker` arm config pointing at a local endpoint.
+    fn mev_feed(url: String) -> PendingTxFeedConfig {
+        PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+            url,
+            ..BackrunFeedConfig::for_mainnet()
+        })
+    }
+
     /// A hub nobody claimed: the pump-owned clock's post-launch head step fails
     /// on it — the partial-start seam this lifecycle must never project as
     /// success.
@@ -2390,14 +2378,8 @@ mod tests {
 
     /// A pump arm over [`CLOSED_FEED`], for a boot that must launch a pump and
     /// then fail later in its start.
-    fn closed_feed_arm() -> (PendingTxSource, PendingTxFeedConfig) {
-        (
-            PendingTxSource::Mevblocker,
-            PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                url: CLOSED_FEED.to_string(),
-                ..BackrunFeedConfig::for_mainnet()
-            }),
-        )
+    fn closed_feed_arm() -> PendingTxFeedConfig {
+        mev_feed(CLOSED_FEED.to_string())
     }
 
     /// A start that fails AFTER the pumps launched is TERMINAL: the owner is
@@ -2413,13 +2395,7 @@ mod tests {
         let hub = unclaimed_head_hub();
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: format!("ws://{addr}"),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            )],
+            [mev_feed(format!("ws://{addr}"))],
             Some(HostedClockBinding::PumpOwned),
             None,
         )
@@ -2571,13 +2547,7 @@ mod tests {
         let hub = unclaimed_head_hub();
         let hosted = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: format!("ws://{addr}"),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            )],
+            [mev_feed(format!("ws://{addr}"))],
             Some(HostedClockBinding::PumpOwned),
             None,
         )

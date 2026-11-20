@@ -13,8 +13,8 @@ use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, Unkn
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::{
-    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedBoot,
-    SessionBootError, SessionConstruction,
+    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedArmFeed,
+    HostedBoot, SessionBootError, SessionConstruction,
 };
 use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
 use degenbot_substrate::driver_spawn::LaneNamespace;
@@ -498,9 +498,13 @@ fn head_trigger(
 }
 
 /// Resolve one hosted arm per ACTIVE backrun facet (both arms can run
-/// simultaneously — each kind registers its own hub class), plus the one head
-/// clock the join resolves. Each arm's spawn-factory composer receives its own
-/// kind's typed stream from the boot.
+/// simultaneously — each kind opens its own hub ring), plus the one head clock
+/// the join resolves. Each arm's spawn-factory composer receives its own kind's
+/// typed stream from the boot.
+///
+/// An arm whose endpoint the join could not resolve still hosts a driver: its
+/// row names the source kind alone ([`HostedArmFeed::Unresolved`]), so the boot
+/// provisions no pump and the driver halts at its live-mode gate.
 #[cfg(feature = "submission")]
 fn hosted_arms(
     cfg: &degenbot_config::schema::BotConfig,
@@ -532,22 +536,24 @@ fn hosted_arms(
         };
         let feed = match ecosystem {
             BackrunEcosystem::Mevblocker => {
-                Some(PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                HostedArmFeed::Resolved(PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
                     url: boot.feed_url().to_string(),
                     ..BackrunFeedConfig::for_mainnet()
                 }))
             }
-            BackrunEcosystem::Txpool => boot.head_ws_url().map(|ws_url| {
-                PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
-                    ws_url: ws_url.to_string(),
-                    ..TxpoolFeedConfig::defaults()
-                })
-            }),
+            BackrunEcosystem::Txpool => boot.head_ws_url().map_or_else(
+                || HostedArmFeed::Unresolved(source),
+                |ws_url| {
+                    HostedArmFeed::Resolved(PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
+                        ws_url: ws_url.to_string(),
+                        ..TxpoolFeedConfig::defaults()
+                    }))
+                },
+            ),
         };
         let strategy_boot = backrun_resources.strategy_boot(ecosystem);
         arms.push(HostedArmBoot {
             id,
-            source,
             feed,
             spawn: Box::new(move |stream, head_source| {
                 degenbot_strategy::backrun_driver::backrun_spawn_factory(

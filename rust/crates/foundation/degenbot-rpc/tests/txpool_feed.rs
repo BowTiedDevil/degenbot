@@ -1,17 +1,22 @@
 //! Txpool feed client spec.
 //!
-//! Seam: `degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig, TxpoolFeedStatus}`
-//! and the hub `PendingTx` events it emits. Tests drive a local mock WS server
-//! and assert on wire behavior: the subscribe handshake, hash-fetch correlation,
-//! full-tx parse (1559 + legacy fee mapping + raw bytes), chain-id gate, and
-//! mine-miss counting.
+//! Seam: `degenbot_rpc::txpool_feed::TxpoolFeedConfig` minted through
+//! `degenbot_rpc::pending_tx_stream::{PendingTxFeedConfig, PendingTxPump,
+//! PendingTxStream}` over a hub ring, and the typed `PendingTx` frames it
+//! publishes. Tests drive a local mock WS server and assert on wire behavior:
+//! the subscribe handshake, hash-fetch correlation, full-tx parse (1559 +
+//! legacy fee mapping + raw bytes), chain-id gate, and mine-miss counting.
 
 #![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
-use degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig, TxpoolFeedStatus};
+use degenbot_eventhub::Hub;
+use degenbot_rpc::backrun_feed::BackrunFeedStatus;
+use degenbot_rpc::pending_tx_stream::{PendingTxFeedConfig, PendingTxPump, PendingTxStream};
+use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value as Json};
 use tokio::net::TcpListener;
@@ -177,14 +182,25 @@ fn cfg(port: u16) -> TxpoolFeedConfig {
         // stall detector, and CI contention must not tear down a live
         // session that is merely slow to be scheduled.
         watchdog: Duration::from_secs(30),
-        ring_capacity: 32,
+        ring_capacity: NonZeroUsize::new(32).expect("the test ring holds frames"),
         reconnect_backoff: Duration::from_millis(20),
         max_backoff: Duration::from_millis(50),
         ..TxpoolFeedConfig::defaults()
     }
 }
 
-async fn drain_until(feed: &TxpoolFeed, want: usize, timeout: Duration) -> Vec<Json> {
+/// The txpool arm's one production shape: a hub ring minted into a pump (its
+/// status counters) and the arm's typed stream (its one drainer). Starting the
+/// pump is the first dial.
+fn txpool_pump(cfg: TxpoolFeedConfig) -> (PendingTxPump, PendingTxStream) {
+    let hub = Hub::new();
+    let (pump, stream) = PendingTxPump::mint(&hub, PendingTxFeedConfig::Txpool(cfg))
+        .expect("the txpool kind opens its ring");
+    pump.start();
+    (pump, stream)
+}
+
+async fn drain_until(feed: &PendingTxStream, want: usize, timeout: Duration) -> Vec<Json> {
     let mut acc: Vec<Json> = Vec::new();
     let deadline = Instant::now() + timeout;
     loop {
@@ -209,35 +225,36 @@ async fn drain_until(feed: &TxpoolFeed, want: usize, timeout: Duration) -> Vec<J
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for {want} events (got {}) status={:?}",
-            acc.len(),
-            feed.status()
+            "timed out waiting for {want} events (got {})",
+            acc.len()
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
-/// Wait until the pump's own status counters satisfy `ready`, then return them.
+/// Wait until the pump's own status counters satisfy `ready`, then return them
+/// beside the txpool arm's mine-miss counter.
 ///
 /// A notice-driven test cannot read the pump's counters on a fixed delay: the
 /// classification the assertions read is the pump's published state, so this
 /// waits for THAT state. `timeout` only bounds a regression that never gets
 /// there, and the panic names the condition plus the last observed counters.
 async fn status_until(
-    feed: &TxpoolFeed,
+    pump: &PendingTxPump,
     what: &str,
     timeout: Duration,
-    ready: impl Fn(&TxpoolFeedStatus) -> bool,
-) -> TxpoolFeedStatus {
+    ready: impl Fn(&BackrunFeedStatus, Option<u64>) -> bool,
+) -> (BackrunFeedStatus, Option<u64>) {
     let deadline = Instant::now() + timeout;
     loop {
-        let status = feed.status();
-        if ready(&status) {
-            return status;
+        let status = pump.status();
+        let mine_misses = pump.mine_misses();
+        if ready(&status, mine_misses) {
+            return (status, mine_misses);
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for {what}: status={status:?}"
+            "timed out waiting for {what}: status={status:?} mine_misses={mine_misses:?}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -254,10 +271,11 @@ async fn hash_notice_fetches_and_publishes_full_tx() {
         Step::FetchResult(full_tx_1559()),
     ]])
     .await;
-    let feed = TxpoolFeed::spawn(cfg(server.addr.port()));
-    let events = drain_until(&feed, 1, Duration::from_secs(30)).await;
-    feed.stop();
+    let (pump, stream) = txpool_pump(cfg(server.addr.port()));
+    let events = drain_until(&stream, 1, Duration::from_secs(30)).await;
+    pump.stop();
 
+    assert_eq!(stream.capacity(), cfg(server.addr.port()).ring_capacity);
     assert_eq!(events[0]["hash"], TX_HASH_FULL);
     assert_eq!(
         events[0]["from"],
@@ -287,9 +305,9 @@ async fn legacy_tx_maps_gas_price_to_both_caps() {
         Step::FetchResult(full_tx_legacy()),
     ]])
     .await;
-    let feed = TxpoolFeed::spawn(cfg(server.addr.port()));
-    let events = drain_until(&feed, 1, Duration::from_secs(30)).await;
-    feed.stop();
+    let (pump, stream) = txpool_pump(cfg(server.addr.port()));
+    let events = drain_until(&stream, 1, Duration::from_secs(30)).await;
+    pump.stop();
 
     assert_eq!(events[0]["hash"], TX_HASH_LEGACY);
     assert_eq!(events[0]["tx_type"], 0);
@@ -313,27 +331,27 @@ async fn chain_gate_and_null_fetch_are_counted_not_fatal() {
         Step::FetchResult(json!({ "result": null })),
     ]])
     .await;
-    let feed = TxpoolFeed::spawn(cfg(server.addr.port()));
+    let (pump, stream) = txpool_pump(cfg(server.addr.port()));
     // Both fetches must have been consumed and classified before the
     // assertions read the counters — the pump's own status is that signal, so
     // no "give it a moment" delay decides when they are ready.
-    let status = status_until(
-        &feed,
+    let (status, mine_misses) = status_until(
+        &pump,
         "the wrong-chain reject and the null-fetch mine miss to be counted",
         Duration::from_secs(30),
-        |s| s.rejected_chain_id >= 1 && s.mine_misses >= 1,
+        |s, mine_misses| s.rejected_chain_id >= 1 && mine_misses.is_some_and(|misses| misses >= 1),
     )
     .await;
-    feed.stop();
+    pump.stop();
 
-    assert_eq!(feed.drain().len(), 0);
+    assert!(stream.drain().is_empty(), "nothing was published");
     assert!(
         status.rejected_chain_id >= 1,
         "wrong chain id must be counted: {status:?}"
     );
     assert!(
-        status.mine_misses >= 1,
-        "null fetch = mine miss: {status:?}"
+        mine_misses.is_some_and(|misses| misses >= 1),
+        "null fetch = mine miss: {mine_misses:?}"
     );
     assert!(
         status.connected || status.reconnects >= 1,

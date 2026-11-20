@@ -272,17 +272,22 @@ re-bid itself stays with the caller.
 
 ## 5. Hub subscription — the typed reaction
 
-There is **no** `ReactionKind::EachPoll`. The typed reaction vocabulary is the
-hub class plus its declared overflow policy
+There is **no** `ReactionKind::EachPoll`. The reaction vocabulary is the hub's
+typed pending ring plus the head clock
 (`rust/crates/foundation/degenbot-eventhub/src/`):
 
-- `HubClass` (`event.rs`): `PoolEvent | PendingTx`.
-- `OverflowPolicy` (`policy.rs`): `DropOldestCounted { name } |
-  UnboundedFlagged { name }` — declared once per source at
-  `Hub::register_source`, visible via `Hub::policy_of`.
-- `Hub::subscribe(class) -> Result<Subscription, HubError>` for registered
-  classes.
-- The head clock is the hub's own, not a class: `Hub::claim_head_source() ->
+- `Hub::open_pending_tx_ring(source: PendingTxSource, capacity: NonZeroUsize) ->
+  Result<(PendingTxPublisher, PendingTxView), HubError>` — one ring per source
+  kind. The publisher is `Clone` (`push(PendingTx)` / `dropped()`); the view is
+  NOT `Clone` (`drain() -> Vec<PendingTx>` / `dropped()` / `capacity()`), so one
+  ring has exactly one drainer. A second open for a kind is refused.
+- A hosted arm never opens a ring itself: `PendingTxPump::mint(&hub,
+  PendingTxFeedConfig)` opens it from the config alone (the config names its
+  source kind, so a mismatch is unrepresentable) and hands the arm its
+  `PendingTxStream` — the ring's one view behind the pump that owns the feed's
+  telemetry. A feed that is its own host (the Python eager path) opens a
+  detached ring through `EagerBackrunFeed`.
+- The head clock is the hub's own, not a ring: `Hub::claim_head_source() ->
   Result<HeadSender, AlreadyClaimed>` is the one permanent claim, and
   `Hub::subscribe_head() -> HeadSubscription` is infallible (`hub.rs`,
   `head.rs`).
@@ -292,19 +297,21 @@ The per-poll tick a strategy awaits is `HeadSubscription::changed()`
 from a full header, its metadata). A subscription is live at the clock's current
 value, so a late subscriber does not replay the current head as a new edge. A
 family whose hub tick arrives **without** a mempool stream subscribes to the head
-clock and never registers `HubClass::PendingTx`; the mock pins exactly that
-(`tests/mock_third_family.rs`). Pending-transaction strategies consume the
-`PendingTx` drop-oldest ring the feed registers on the hub.
+clock and never opens a pending ring; the mock pins exactly that
+(`tests/mock_third_family.rs`). Pending-transaction strategies drain the typed
+view of their own source kind's ring.
 
 **Evidence / Keeps / Retires**
 
-- Evidence: the registered `HubClass` values and the named `OverflowPolicy`
-  variants; the permanent `Hub::claim_head_source` and the infallible
-  `Hub::subscribe_head` with its live-at-current-value subscription.
-- Keeps: registration declares strictness once; consumers receive a policy-typed
-  subscription; the hub is transport-pure.
-- Retires: a per-call policy choice; an untyped "reaction kind" enum; treating
-  the head tick as requiring a mempool source.
+- Evidence: the typed `PendingTxPublisher`/`PendingTxView` pair behind the
+  per-kind `Hub::open_pending_tx_ring`; the permanent `Hub::claim_head_source`
+  and the infallible `Hub::subscribe_head` with its live-at-current-value
+  subscription.
+- Keeps: one ring per source kind; one drainer per ring; the hub is
+  transport-pure.
+- Retires: a per-call or per-registration policy choice; an untyped "reaction
+  kind" enum; a union event type with a wrong-variant arm; treating the head tick
+  as requiring a mempool source.
 
 ## 6. The three driver partitions (boot / loop / policy)
 
@@ -465,7 +472,7 @@ Pin every seam a family depends on at its own level:
 | Lane stamp | `submission_ledger.rs:404` | `stamp() -> Result<NonceLease, DeclineKind>` |
 | Ledger reconcile | `submission_ledger.rs:673` | `reconcile(confirmed, outstanding) -> Vec<Notification>` |
 | Head policy | `submission_ledger.rs:527` | `on_notice(&HeadNotice) -> Result<PolicyAction, DeclineKind>` |
-| Hub subscribe | `degenbot-eventhub/src/hub.rs` | `subscribe(HubClass) -> Result<Subscription, HubError>` |
+| Hub pending ring | `degenbot-eventhub/src/hub.rs` | `open_pending_tx_ring(PendingTxSource, NonZeroUsize) -> Result<(PendingTxPublisher, PendingTxView), HubError>` |
 | Hub head subscribe | `degenbot-eventhub/src/hub.rs` | `subscribe_head() -> HeadSubscription` (infallible; `claim_head_source() -> Result<HeadSender, AlreadyClaimed>` is the one claim) |
 | Driver boot | `backrun_driver/driver_boot.rs:227` | `backrun_boot(...) -> BackrunBoot` |
 | Driver factory | `backrun_driver/driver_boot.rs:264` | `backrun_spawn_factory(...) -> DriverSpawnFactory` |
@@ -482,7 +489,7 @@ inventing them:
 
 | Brief name | Landed shape | Disposition |
 |---|---|---|
-| `ReactionKind` / `EachPoll` | `HubClass` + `OverflowPolicy` typed at `Hub::register_source`; per-poll tick is `HeadSubscription::changed` | Documented as the typed reaction (§5); no production change needed. |
+| `ReactionKind` / `EachPoll` | Typed pending ring (`Hub::open_pending_tx_ring`) + the per-poll tick `HeadSubscription::changed` | Documented as the typed reaction (§5); no production change needed. |
 | `NonceAuthority::lane_for` | `NonceAuthority::mint_lane(strategy, ledger, LanePolicy)` (`degenbot-substrate/src/nonce.rs`) | Documented as the lane's only constructor (§3). |
 | `DriverState` | `DriverPose` (`strategy_host.rs:41`) | Documented as `DriverPose` (§1); `DriverState` is retired prose. |
 | `persist_observables` (test) | Observability-name pins `tests/trace_default.rs`, `tests/trace_explicit.rs` | Documented as the observability pin pattern (§9). |

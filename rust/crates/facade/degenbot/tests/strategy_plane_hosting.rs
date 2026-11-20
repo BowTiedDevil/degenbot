@@ -23,7 +23,8 @@ use degenbot::substrate::state_lock::StateLock;
 use degenbot::substrate::BotState;
 use degenbot::substrate::RouteRegistry;
 use degenbot::{
-    EngineSession, FacetBoot, FacetLoop, HostedArmBoot, HostedBoot, SessionConstruction,
+    EngineSession, FacetBoot, FacetLoop, HostedArmBoot, HostedArmFeed, HostedBoot,
+    SessionConstruction,
 };
 use std::sync::Arc;
 
@@ -138,8 +139,7 @@ fn probe_construction() -> SessionConstruction {
 fn probe_arm(id: &str, source: PendingTxSource) -> HostedArmBoot {
     HostedArmBoot {
         id: StrategyId::new(id),
-        source,
-        feed: Some(match source {
+        feed: HostedArmFeed::Resolved(match source {
             PendingTxSource::Mevblocker => PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
                 url: CLOSED_FEED.to_string(),
                 ..BackrunFeedConfig::for_mainnet()

@@ -4,9 +4,9 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 
 /// One unsigned pending transaction revealed by the `MEVBlocker` auction.
 ///
-/// One frame of the `degenbot-rpc` backrun feed: the feed parses the
-/// `MEVBlocker` notification into this vocabulary and rings it as
-/// [`HubEvent::PendingTx`].
+/// One frame of a pending-transaction feed: the feed parses the wire
+/// notification into this vocabulary and publishes it on its source kind's
+/// ring ([`crate::PendingTxPublisher`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingTx {
     /// The chain the frame is pinned to (the feed enforces one chain id).
@@ -41,49 +41,16 @@ pub struct PendingTx {
     pub raw_signed_tx: Option<Bytes>,
 }
 
-/// Which pending-transaction feed a hub channel belongs to.
+/// Which pending-transaction feed a hub ring belongs to.
 ///
 /// The two watched feeds publish the same frame vocabulary but never the same
-/// events, and each arm's frame corpus must be exactly its own feed's — so
-/// the hub keys them as distinct [`HubClass`] values (one registration per
-/// class value) instead of merging both feeds into one ring.
+/// events, and each arm's frame corpus must be exactly its own feed's — so the
+/// hub keys its rings by source kind (one ring per value) instead of merging
+/// both feeds into one ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PendingTxSource {
     /// The `MEVBlocker` searcher feed (the mevblocker arm).
     Mevblocker,
     /// The chain-node txpool feed (the txpool arm).
     Txpool,
-}
-
-/// The classes a registered intake can emit. One hub registration exists per
-/// class value, so the two [`PendingTxSource`] kinds register — and are
-/// drained — independently.
-///
-/// The head clock is not a registered class: the hub owns it directly
-/// ([`crate::Hub::claim_head_source`] / [`crate::Hub::subscribe_head`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum HubClass {
-    /// A pool-relevant log (the settled-block intake).
-    PoolEvent,
-    /// An observed pending transaction, keyed by the watched feed that
-    /// publishes it.
-    PendingTx(PendingTxSource),
-}
-
-/// A hub event, carrying exactly the fields its source carries today.
-#[derive(Debug, Clone)]
-pub enum HubEvent {
-    /// A pool-relevant log. Mirrors the ingestion emitter's `PoolEvent`
-    /// (`epoch`, `log_index`, raw `Log` payload); `pool_kind` is a
-    /// decode-time fact the intake does not know, so it is not carried here.
-    PoolEvent {
-        /// The block epoch the log belongs to.
-        epoch: u64,
-        /// On-chain log index (`None` when the node omits it).
-        log_index: Option<u64>,
-        /// The raw log payload.
-        payload: alloy::rpc::types::Log,
-    },
-    /// An observed pending transaction.
-    PendingTx(PendingTx),
 }

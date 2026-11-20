@@ -26,7 +26,7 @@ use degenbot_bot::strategy_host::{
     DriverPose, FacetStatus, FsmDecline, HeadReconciler, HostError, SessionDecline, SessionPhase,
     StrategyHost, StrategyNotice,
 };
-use degenbot_eventhub::{Head, Hub, HubClass, HubError};
+use degenbot_eventhub::{Head, Hub};
 use degenbot_submission::{SubmissionLedger, SubmissionState};
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
 use degenbot_substrate::nonce::{LanePolicy, NonceAuthority, StrategyId};
@@ -82,17 +82,8 @@ impl MockThirdFamily {
         ready: mpsc::Sender<()>,
         report: mpsc::Sender<MockRunReport>,
     ) -> DriverExit {
-        // The reaction is declared by hub class: a family reacts to the head
-        // tick without a mempool (`PendingTx`) stream ever being registered.
-        assert!(
-            matches!(
-                services.hub.subscribe(HubClass::PendingTx(
-                    degenbot_eventhub::PendingTxSource::Mevblocker
-                )),
-                Err(HubError::NotRegistered(HubClass::PendingTx(_)))
-            ),
-            "the hub tick must not require a mempool source"
-        );
+        // The reaction is the head clock: a family reacts to the head tick
+        // without a pending-transaction ring ever being opened for it.
         let mut head = services.hub.subscribe_head();
 
         // Lane consumption over the one process authority: the lease is the

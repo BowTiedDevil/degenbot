@@ -90,26 +90,61 @@ pub enum FacetLoop {
 pub type ArmSpawnComposer =
     Box<dyn FnOnce(Option<PendingTxStream>, HeadSubscription) -> DriverSpawnFactory + Send>;
 
-/// One hosted arm: the pending-tx kind its pump provisions, the feed that pump
-/// dials at the start boundary, and the builder for its driver's spawn factory.
+/// One hosted arm: the feed its pump dials at the start boundary, and the
+/// builder for its driver's spawn factory.
 ///
-/// The feed is optional because the two couplings differ: an active arm whose
-/// endpoint the boot could not resolve provisions no pump (and hands its
-/// factory no stream, so the driver halts at its live-mode gate rather than
-/// silently never starting), while the factory itself is attached for every
-/// arm the boot hosts. A facet with no arm — one the caller left inactive — gets
-/// neither, since its admission status already refuses the enable.
+/// The two couplings differ, and [`HostedArmFeed`] is the one value that says
+/// which: an arm whose endpoint the boot could not resolve provisions no pump
+/// (and hands its factory no stream, so the driver halts at its live-mode gate
+/// rather than silently never starting), while the factory itself is attached
+/// for every arm the boot hosts. A facet with no arm — one the caller left
+/// inactive — gets neither, since its admission status already refuses the
+/// enable.
 pub struct HostedArmBoot {
     /// The facet whose driver loop this arm hosts. It must also appear in the
     /// facet table, and it is the id the host attaches the factory under.
     pub id: StrategyId,
-    /// The source kind. One pump per kind.
-    pub source: PendingTxSource,
-    /// The feed the pump dials — at the start boundary, never at mint. `None`
-    /// provisions no pump for this kind.
-    pub feed: Option<PendingTxFeedConfig>,
+    /// The arm's feed: the resolved config its pump dials, or the source kind
+    /// whose endpoint the boot could not resolve.
+    pub feed: HostedArmFeed,
     /// Builds the arm's spawn factory from the booted hub and the arm's stream.
     pub spawn: ArmSpawnComposer,
+}
+
+/// One hosted arm's feed: the config the boot resolved, or the source kind whose
+/// endpoint it could not resolve.
+///
+/// The source kind and the config cannot disagree: [`Self::Resolved`] derives the
+/// kind from the config it carries, and [`Self::Unresolved`] carries a kind with
+/// no feed at all. A boot that named the mevblocker arm with the txpool arm's
+/// config is therefore unrepresentable rather than a mint-time refusal.
+#[derive(Debug, Clone)]
+pub enum HostedArmFeed {
+    /// The arm's feed, ready for its pump to dial at the start boundary.
+    Resolved(PendingTxFeedConfig),
+    /// The arm's source kind, whose endpoint the boot could not resolve. No
+    /// pump is provisioned, so the arm's driver halts at its live-mode gate.
+    Unresolved(PendingTxSource),
+}
+
+impl HostedArmFeed {
+    /// The source kind this arm hosts.
+    #[must_use]
+    pub fn source(&self) -> PendingTxSource {
+        match self {
+            Self::Resolved(cfg) => cfg.source(),
+            Self::Unresolved(source) => *source,
+        }
+    }
+
+    /// The feed config, when the boot resolved one.
+    #[must_use]
+    pub fn config(&self) -> Option<&PendingTxFeedConfig> {
+        match self {
+            Self::Resolved(cfg) => Some(cfg),
+            Self::Unresolved(_) => None,
+        }
+    }
 }
 
 /// Composes the per-head trigger the hosted head edge fires, given the shared
@@ -421,7 +456,7 @@ fn provision_hosted(
     let trigger = trigger.map(|compose| compose(host));
     let feeds = arms
         .iter()
-        .filter_map(|arm| arm.feed.clone().map(|feed| (arm.source, feed)))
+        .filter_map(|arm| arm.feed.config().cloned())
         .collect::<Vec<_>>();
     let (binding, pump_publisher) = match clock {
         None => (None, Some(head_sender)),
@@ -450,7 +485,7 @@ fn provision_hosted(
         // An arm with no minted pump is handed no stream (its driver halts at
         // its live-mode gate); a stream already handed out is a miswired boot
         // and fails closed.
-        let stream = match hosted.take_stream(arm.source) {
+        let stream = match hosted.take_stream(arm.feed.source()) {
             Ok(stream) => Some(stream),
             Err(StreamRefusal::NoPump(_)) => None,
             Err(refusal @ StreamRefusal::AlreadyTaken(_)) => {
@@ -556,8 +591,7 @@ mod tests {
     fn fake_arm(id: &str, source: PendingTxSource) -> HostedArmBoot {
         HostedArmBoot {
             id: StrategyId::new(id),
-            source,
-            feed: Some(feed_for(source)),
+            feed: HostedArmFeed::Resolved(feed_for(source)),
             spawn: Box::new(move |stream, head_subscription| {
                 let stream_kind = stream.as_ref().map(PendingTxStream::source);
                 Box::new(move |_lane| {
@@ -810,12 +844,23 @@ mod tests {
 
     /// An active arm whose endpoint the boot could not resolve keeps its spawn
     /// factory and provisions no pump, so its driver boots and halts at its
-    /// live-mode gate instead of silently never starting.
+    /// live-mode gate instead of silently never starting. Its source kind is the
+    /// unresolved arm's own name — never a config that would have to agree with
+    /// it.
     #[test]
-    fn an_arm_without_a_feed_attaches_its_factory_and_provisions_no_pump() {
+    fn an_unresolved_arm_has_a_source_without_a_feed() {
         let mut boot = hosted_boot();
         boot.arms.truncate(1);
-        boot.arms[0].feed = None;
+        boot.arms[0].feed = HostedArmFeed::Unresolved(PendingTxSource::Txpool);
+        assert_eq!(
+            boot.arms[0].feed.source(),
+            PendingTxSource::Txpool,
+            "an unresolved arm still names the kind its stream would have had"
+        );
+        assert!(
+            boot.arms[0].feed.config().is_none(),
+            "an unresolved arm carries no feed to dial"
+        );
         let session = EngineSession::boot(
             construction(),
             facet_table(|_| FacetStatus::Configured),
@@ -987,8 +1032,7 @@ mod tests {
         let boot = HostedBoot {
             arms: vec![HostedArmBoot {
                 id: StrategyId::new("mevblocker_backrun"),
-                source: PendingTxSource::Mevblocker,
-                feed: Some(feed_for(PendingTxSource::Mevblocker)),
+                feed: HostedArmFeed::Resolved(feed_for(PendingTxSource::Mevblocker)),
                 spawn: Box::new(move |_stream, mut head| {
                     Box::new(move |_lane| {
                         Box::pin(async move {
@@ -1062,10 +1106,7 @@ mod tests {
         let hub = Arc::new(Hub::new());
         let direct = HostedSources::mint(
             Arc::clone(&hub),
-            [(
-                PendingTxSource::Mevblocker,
-                feed_for(PendingTxSource::Mevblocker),
-            )],
+            [feed_for(PendingTxSource::Mevblocker)],
             Some(HostedClockBinding::PumpOwned),
             None,
         )

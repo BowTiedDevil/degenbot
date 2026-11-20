@@ -206,8 +206,8 @@ pub use degenbot_bot::bot_core::{ConstructionVerdict, PoolConstruction};
 /// facet table, the arm feeds, the head trigger, and the reconciler arrive as
 /// values, so the boot carries no strategy or submission dependency of its own.
 pub use degenbot_bot::bot_core::{
-    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedBoot,
-    SessionBootError, SessionConstruction,
+    EngineSession, FacetBoot, FacetLoop, HeadTriggerComposer, HostedArmBoot, HostedArmFeed,
+    HostedBoot, SessionBootError, SessionConstruction,
 };
 
 /// [`PoolConstruction::V4`]'s caller-supplied identity overrides — the door's

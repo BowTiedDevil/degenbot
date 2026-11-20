@@ -1,11 +1,13 @@
 //! `MEVBlocker` searcher feed client.
 //!
 //! Connects to `<wss://searchers.mevblocker.io>`, subscribes to
-//! `mevblocker_partialPendingTransactions`, and delivers typed
-//! [`PendingTx`](degenbot_eventhub::PendingTx) frames through a hub-owned
-//! bounded ring (the hub's `DropOldestCounted` policy) drained by
-//! [`BackrunFeed::drain`]; the `dropped_ring` counter is the hub channel's
-//! eviction count.
+//! `mevblocker_partialPendingTransactions`, and publishes typed
+//! [`PendingTx`](degenbot_eventhub::PendingTx) frames on its source kind's
+//! bounded ring ([`PendingTxPublisher`]): the publisher owns the eviction
+//! counter the feed reports, and the ring's one view
+//! ([`degenbot_eventhub::PendingTxView`]) belongs to whoever drains it —
+//! [`EagerBackrunFeed`] for the single-feed eager path, a
+//! `degenbot_rpc::pending_tx_stream::PendingTxStream` for a hosted arm.
 //!
 //! Wire behavior (docs.mevblocker.io, searcher onboarding):
 //! - subscribe: `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe",
@@ -20,6 +22,7 @@
 //! session proves it can deliver events. Non-1 chain ids and malformed
 //! notifications are counted, never fatal.
 
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -35,7 +38,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::{DropOldestReceiver, DropOldestSender, Hub, HubEvent, PendingTx};
+use degenbot_eventhub::{detached_pending_ring, PendingTx, PendingTxPublisher, PendingTxView};
 
 use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
 
@@ -43,9 +46,11 @@ use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
 /// this crate share one constant.
 pub use degenbot_config::DEFAULT_BACKRUN_STREAM_URL as DEFAULT_STREAM_URL;
 pub const BACKRUN_SUBSCRIPTION_METHOD: &str = "mevblocker_partialPendingTransactions";
-/// The hub `DropOldestCounted` counter label the feed registers under; the
-/// same string is exposed as [`BackrunFeedStatus::dropped_ring`].
-pub const DROPPED_RING_METRIC: &str = "dropped_ring";
+/// The production pending-ring capacity: 4096 frames per source kind.
+///
+/// A ring is always bounded — the capacity is a [`NonZeroUsize`], so the
+/// zero-capacity ring a caller could once request is unrepresentable.
+pub const DEFAULT_RING_CAPACITY: NonZeroUsize = NonZeroUsize::new(4096).expect("4096 is non-zero");
 
 const SUBSCRIBE_ID: u64 = 1;
 
@@ -59,9 +64,18 @@ pub struct BackrunFeedConfig {
     /// this budget also covers) arrives within the window. Mirrors the header
     /// watchdog rationale in `subscription.rs`.
     pub watchdog: Duration,
-    pub ring_capacity: usize,
+    pub ring_capacity: NonZeroUsize,
     pub reconnect_backoff: Duration,
     pub max_backoff: Duration,
+}
+
+/// Why a caller-supplied ring capacity was refused.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RingCapacityError {
+    /// A ring must hold at least one frame: an explicit zero is refused, never
+    /// silently replaced by the default.
+    #[error("ring capacity must be at least one frame; omit it to select the default")]
+    Zero,
 }
 
 impl BackrunFeedConfig {
@@ -74,10 +88,26 @@ impl BackrunFeedConfig {
             url: DEFAULT_STREAM_URL.to_string(),
             expected_chain_id: 1,
             watchdog: Duration::from_secs(48),
-            ring_capacity: 4096,
+            ring_capacity: DEFAULT_RING_CAPACITY,
             reconnect_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(5),
         }
+    }
+
+    /// Apply a caller-supplied ring capacity: an absent value keeps this
+    /// config's default, and an explicit zero is refused rather than absorbed.
+    ///
+    /// # Errors
+    ///
+    /// [`RingCapacityError::Zero`] when `capacity` is `Some(0)`.
+    pub fn with_ring_capacity(
+        mut self,
+        capacity: Option<usize>,
+    ) -> Result<Self, RingCapacityError> {
+        if let Some(capacity) = capacity {
+            self.ring_capacity = NonZeroUsize::new(capacity).ok_or(RingCapacityError::Zero)?;
+        }
+        Ok(self)
     }
 }
 
@@ -94,9 +124,9 @@ pub struct BackrunFeedStatus {
 
 struct Shared {
     cfg_backoff: (Duration, Duration),
-    /// The hub-owned drop-oldest ring's source side (capacity + eviction
-    /// counter live on the hub channel, not here).
-    source: DropOldestSender,
+    /// The publishing end of this source kind's ring (the ring owns the
+    /// capacity and the eviction counter the feed reports).
+    source: PendingTxPublisher,
     connected: AtomicBool,
     accepted: AtomicU64,
     rejected_chain_id: AtomicU64,
@@ -110,7 +140,7 @@ impl Shared {
         self.accepted.fetch_add(1, Ordering::Relaxed);
         self.last_event_unix_ms
             .store(now_unix_ms(), Ordering::Relaxed);
-        self.source.push(HubEvent::PendingTx(ev));
+        self.source.push(ev);
     }
 
     fn count(&self, which: Count) {
@@ -150,48 +180,21 @@ pub struct BackrunFeed {
     /// before the pump's other fields tear down.
     shell: DeferredFeedShell,
     shared: Arc<Shared>,
-    /// The hub-owned ring's consumer side.
-    ring: DropOldestReceiver,
     /// The provisioning config [`Self::start`] consumes to spawn the loop.
     /// Held (not consumed at build) so provisioning stays dial-free.
     cfg: BackrunFeedConfig,
 }
 
 impl BackrunFeed {
-    /// Spawn the pump on a private, unattached drop-oldest ring.
+    /// Provision the pump over its ring's publishing end, spawning nothing.
     ///
-    /// This is the Python-exposed single-feed path
-    /// (`degenbot._ffi.backrun`): the feed is its own host, so there is no
-    /// shared hub registry to join. A process host that owns a [`Hub`]
-    /// registers the ring itself and mints through
-    /// `degenbot_rpc::pending_tx_stream` instead. The loop starts immediately
-    /// (this is the eager path); a host that defers the dial calls
-    /// [`Self::build`] then [`Self::start`] at its own start boundary. Must be
-    /// called within a tokio runtime context, or the crate-global
-    /// `degenbot_core::runtime::get_runtime()` is used.
-    ///
-    /// Kept as the eager path's exact [`Self::build`] + [`Self::start`] so the
-    /// Python single-feed path stays behavior-identical: no extra dial, no
-    /// extra registration, no deferred boundary.
-    #[must_use]
-    pub fn spawn(cfg: BackrunFeedConfig) -> Self {
-        let hub = Hub::new();
-        let (source, ring) = hub.detached_drop_oldest(DROPPED_RING_METRIC, cfg.ring_capacity);
-        let feed = Self::build(cfg, source, ring);
-        feed.start();
-        feed
-    }
-
-    /// Provision the pump over a hub-registered ring's two ends, spawning
-    /// nothing. The host registers the class and subscribes the consumer views
-    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning); the feed
-    /// only owns the pump over the source end. [`Self::start`] launches the
-    /// reconnect loop later.
-    pub(crate) fn build(
-        cfg: BackrunFeedConfig,
-        source: DropOldestSender,
-        ring: DropOldestReceiver,
-    ) -> Self {
+    /// The ring is opened by whoever owns the consumer end: a process host
+    /// opens it on its [`degenbot_eventhub::Hub`]
+    /// (`degenbot_rpc::pending_tx_stream` owns that provisioning), and the
+    /// eager single-feed path opens a detached one ([`EagerBackrunFeed`]). The
+    /// feed owns only the publisher. [`Self::start`] launches the reconnect
+    /// loop later.
+    pub(crate) fn build(cfg: BackrunFeedConfig, source: PendingTxPublisher) -> Self {
         let shared = Arc::new(Shared {
             cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
             source,
@@ -205,7 +208,6 @@ impl BackrunFeed {
         Self {
             shell: DeferredFeedShell::new(),
             shared,
-            ring,
             cfg,
         }
     }
@@ -223,37 +225,13 @@ impl BackrunFeed {
         });
     }
 
-    /// All buffered events, ordered, atomically (rings swap; concurrent drains
-    /// may interleave but never duplicate or lose between both buffers).
-    ///
-    /// The hub ring only ever carries [`HubEvent::PendingTx`]; a stray other
-    /// variant is warned about (never silently discarded).
-    #[must_use]
-    pub fn drain(&self) -> Vec<PendingTx> {
-        self.ring
-            .drain()
-            .into_iter()
-            .filter_map(|event| match event {
-                HubEvent::PendingTx(tx) => Some(tx),
-                other @ HubEvent::PoolEvent { .. } => {
-                    op_warn!(
-                        domain = rpc,
-                        event = ?other,
-                        "backrun feed: non-pending event on the pending ring"
-                    );
-                    None
-                }
-            })
-            .collect()
-    }
-
     #[must_use]
     pub fn status(&self) -> BackrunFeedStatus {
         let s = &self.shared;
         BackrunFeedStatus {
             connected: s.connected.load(Ordering::Relaxed),
             accepted: s.accepted.load(Ordering::Relaxed),
-            dropped_ring: self.ring.dropped(),
+            dropped_ring: s.source.dropped(),
             rejected_chain_id: s.rejected_chain_id.load(Ordering::Relaxed),
             rejected_parse: s.rejected_parse.load(Ordering::Relaxed),
             reconnects: s.reconnects.load(Ordering::Relaxed),
@@ -264,6 +242,54 @@ impl BackrunFeed {
     /// Politely stop the pump (idempotent).
     pub fn stop(&self) {
         self.shell.stop();
+    }
+}
+
+/// The eager single-feed path: one detached ring, one feed, one drainer.
+///
+/// The Python `degenbot._ffi.backrun` binding is this adapter's production
+/// caller. The feed is its own host, so it opens a detached ring instead of
+/// joining a process hub's registry — and this struct holds that ring's one
+/// [`PendingTxView`], so the eager path has no optional view and no hosted
+/// drain branch to fall through.
+pub struct EagerBackrunFeed {
+    feed: BackrunFeed,
+    view: PendingTxView,
+}
+
+impl EagerBackrunFeed {
+    /// Provision a detached ring at the config's capacity and launch the feed
+    /// loop — the eager dial. Must be called within a tokio runtime context, or
+    /// the crate-global `degenbot_core::runtime::get_runtime()` is used.
+    #[must_use]
+    pub fn spawn(cfg: BackrunFeedConfig) -> Self {
+        let (publisher, view) = detached_pending_ring(cfg.ring_capacity);
+        let feed = BackrunFeed::build(cfg, publisher);
+        feed.start();
+        Self { feed, view }
+    }
+
+    /// All buffered frames, ordered, atomically (rings swap; concurrent drains
+    /// may interleave but never duplicate or lose between both buffers).
+    #[must_use]
+    pub fn drain(&self) -> Vec<PendingTx> {
+        self.view.drain()
+    }
+
+    /// The ring capacity this feed drains.
+    #[must_use]
+    pub fn capacity(&self) -> NonZeroUsize {
+        self.view.capacity()
+    }
+
+    #[must_use]
+    pub fn status(&self) -> BackrunFeedStatus {
+        self.feed.status()
+    }
+
+    /// Politely stop the pump (idempotent).
+    pub fn stop(&self) {
+        self.feed.stop();
     }
 }
 
