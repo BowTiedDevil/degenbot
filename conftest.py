@@ -72,6 +72,26 @@ class _LiveRpcSkipParser(AbstractSkipParser):
         return super().__call__(document)
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Land xdist's ``loadgroup`` ``@group`` node-id suffix under pytest 9.
+
+    ``--dist=loadgroup`` groups the order-sensitive README items by an ``@group``
+    suffix xdist writes through ``item._nodeid``; pytest 9 derives ``nodeid`` from
+    a structured ``NodeId``, so that write is inert and the items scatter across
+    workers, breaking their shared Sybil namespace and skip state. Sync the
+    legacy write into the node id before xdist ships the collection to its
+    scheduler, preserving the grouping contract the hook above relies on.
+
+    """
+    from _pytest.nodeid import NodeId  # ruff: ignore[import-private-name, import-outside-top-level]
+
+    for item in session.items:
+        legacy = getattr(item, "_nodeid", None)
+        if legacy is not None and legacy != item.nodeid:
+            item._id = NodeId.parse(legacy)  # ruff: ignore[private-member-access]
+
+
 pytest_collect_file = Sybil(
     parsers=[
         PythonCodeBlockParser(),
