@@ -303,7 +303,9 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
     /// A verified pool returns `Ok` without invoking `run`. Otherwise the run
     /// enters [`VerifyClaims`]: concurrent callers share the leader's run and
     /// its outcome, and a failed or abandoned window is released so a later
-    /// caller retries. Success records the durable fact.
+    /// caller retries. Only an outcome that
+    /// [`records_verified_fact`](LifecycleOutcome::records_verified_fact) — a
+    /// `Completed` lifecycle — records the durable fact.
     ///
     /// # Errors
     ///
@@ -322,9 +324,10 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
             return Ok(LifecycleOutcome::Completed);
         }
         let outcome = self.claims.run_exclusive(&key.to_string(), run).await;
-        // ONLY a completed lifecycle is a durable fact. A deferred drain still
-        // owes its verification, so it records nothing and stays retriable.
-        if matches!(outcome, Ok(LifecycleOutcome::Completed)) {
+        // The lifecycle outcome decides alone (`records_verified_fact`): a
+        // deferred drain and an unverified no-op both still owe their
+        // verification, so they record nothing and stay retriable.
+        if matches!(outcome, Ok(settled) if settled.records_verified_fact()) {
             self.mark_verified(*key);
         }
         outcome
@@ -676,6 +679,49 @@ mod tests {
             "only the completed call records the durable fact"
         );
         assert_eq!(verifications.verified_pool_count(), 1);
+    }
+
+    /// A lifecycle that verified NOTHING (`NotOwed`: the key named no registered
+    /// tracked pool) records NO fact and stays retriable — a missing required
+    /// verification can never be memoized as an established one.
+    #[tokio::test]
+    async fn pool_verifications_not_owed_lifecycle_records_no_fact_and_stays_retriable() {
+        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let runs = Arc::new(AtomicUsize::new(0));
+
+        let first = verifications
+            .run_exclusive(&v3_key(0xdf), || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    Ok(LifecycleOutcome::NotOwed)
+                }
+            })
+            .await;
+        assert_eq!(first, Ok(LifecycleOutcome::NotOwed));
+        assert!(
+            !verifications.is_verified(&v3_key(0xdf)),
+            "an unverified no-op is not a durable fact"
+        );
+        assert_eq!(verifications.verified_pool_count(), 0);
+        assert_eq!(
+            verifications.live_claim_count(),
+            0,
+            "the window is released so the retry can claim it"
+        );
+
+        let second = verifications
+            .run_exclusive(&v3_key(0xdf), || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    COMPLETED
+                }
+            })
+            .await;
+        assert_eq!(second, Ok(LifecycleOutcome::Completed));
+        assert_eq!(runs.load(Ordering::SeqCst), 2, "the retry re-ran the work");
+        assert!(verifications.is_verified(&v3_key(0xdf)));
     }
 
     /// A failed lifecycle records NO fact and stays retriable; the retry that

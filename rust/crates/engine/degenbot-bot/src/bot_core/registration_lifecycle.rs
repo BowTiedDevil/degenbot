@@ -22,8 +22,23 @@
 //!   pump event back at/below the map's own liquidity clock) is neither
 //!   verified nor promoted: the pin parks it in `VerificationDeferred` and the
 //!   machine answers `Ok`, deferring to a later call whose drain completed that
-//!   block. `Ok` therefore means "this lifecycle call finished", never
-//!   unconditionally "verified".
+//!   block;
+//! - a key that names **no registered `Tracked` pool** at a step that requires
+//!   one is neither verified nor promoted either: the machine answers
+//!   [`LifecycleOutcome::NotOwed`]. `Ok` therefore means "this lifecycle call
+//!   finished", never unconditionally "verified" — a missing required step is
+//!   never a completed one.
+//!
+//! # One owner for the verification inputs
+//!
+//! The pinned snapshot seed and the pinned post-drain `(tick_data, block)` pair
+//! are the inputs of this machine, and the call that reaches for them consumes
+//! them: the seed is taken under its own short write whether or not a snapshot
+//! block makes it verifiable, and the post-drain pair is minted and taken under
+//! the SAME write hold that drained the map, so a `Pinned` verdict and the map
+//! it froze cannot be observed apart and no arm can leave a pair behind. A
+//! tracked pool therefore reaches `Live` with both slots empty — nothing a later
+//! call could mistake for an owed (or a freshly minted) verification.
 //!
 //! The module is deliberately **runtime-agnostic**: the two RPC-bound verify
 //! steps (`verify_seed`, `verify_post_drain`) are supplied as async closures,
@@ -56,22 +71,39 @@ use degenbot_pools::TickInfo;
 use degenbot_substrate::concentrated_liquidity_orchestration::PostDrainPin;
 use degenbot_substrate::BotState;
 
-/// What one registration verify-lifecycle call established.
+/// What one registration verify-lifecycle call established — the whole outcome
+/// space of the one ladder, so a caller cannot read a missing verification as a
+/// finished one.
 ///
-/// The machine has two successful answers, and they differ in exactly the fact a
-/// caller records: a `Completed` call reached its tripwire gate and promoted the
-/// pool to `Live` (or was a sparse / unregistered no-op that owed nothing),
-/// while a `Deferred` call found the post-drain pin INCOMPLETE — no block the
-/// drained map can back — and left the pool parked with its verification still
-/// owed. A caller records a durable "verified" fact ONLY for `Completed`: a
-/// `Deferred` pool must stay retriable.
+/// `Completed` reached the end of the ladder this call owed (a `Tracked` pool
+/// verified and `Live`, or a `Sparse` pool whose coverage owes no verification);
+/// `Deferred` found the post-drain pin incomplete and left the pool parked with
+/// its verification still owed; `NotOwed` found no registered `Tracked` pool to
+/// verify at the moment a step required one. Only `Completed` may be recorded as
+/// a durable "verified" fact (see [`Self::records_verified_fact`]): a `Deferred`
+/// or `NotOwed` pool must stay retriable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LifecycleOutcome {
-    /// The lifecycle ran to its end: verified (or nothing was owed), live.
+    /// The lifecycle ran to its end: verified, or the coverage owed nothing.
     Completed,
     /// The drain was incomplete, so nothing was verified and nothing was
     /// promoted. The pool remains parked and a later call retries it.
     Deferred,
+    /// Nothing was verified because nothing was there to verify: the key named
+    /// no registered `Tracked` pool when a step required one (unregistered, or
+    /// the pool left the registry mid-call), so no map could be pinned. Nothing
+    /// was promoted, and the next call re-runs the ladder.
+    NotOwed,
+}
+
+impl LifecycleOutcome {
+    /// Whether this outcome may record the durable verified-pool fact — the ONE
+    /// spelling of that rule. A `Deferred` or `NotOwed` call still owes its
+    /// verification, so memoizing one would skip the verify the pool needs.
+    #[must_use]
+    pub const fn records_verified_fact(self) -> bool {
+        matches!(self, Self::Completed)
+    }
 }
 
 /// A **tracked** pool reached a verify step with no provider configured (the
@@ -105,22 +137,29 @@ fn missing_tick_spacing() -> RefusalKind {
 /// this on whatever tokio runtime owns registration; `core` is the `BotState`
 /// `RwLock`, and the closures capture the verify access (provider).
 ///
-/// # Deferred (incomplete) drains
+/// # Pin verdicts (the whole space)
 ///
 /// Step-2 needs a `(tick_data, block)` pair the drain can back: the drained map
-/// must hold every buffered pump event at/below its own liquidity clock. When
-/// the tombstone cutoff held one back, the pin answers
-/// [`PostDrainPin::Incomplete`] and stores nothing (dropping any stale pair),
-/// parks the pool as `VerificationDeferred`, and this machine returns
-/// [`LifecycleOutcome::Deferred`] WITHOUT invoking `verify_post_drain` and
-/// WITHOUT `set_live`. A later call whose drain has completed that block
-/// re-quarantines, re-pins, verifies and promotes it.
+/// must hold every buffered pump event at/below its own liquidity clock. The
+/// pin's answer, together with the pair it minted, decides the rest
+/// exhaustively:
+///
+/// - [`PostDrainPin::Pinned`] carries the map, so step-2 runs at the pin's own
+///   captured block;
+/// - [`PostDrainPin::Incomplete`] stores nothing (dropping any stale pair),
+///   parks the pool as `VerificationDeferred`, and returns
+///   [`LifecycleOutcome::Deferred`] WITHOUT invoking `verify_post_drain` and
+///   WITHOUT `set_live`. A later call whose drain has completed that block
+///   re-quarantines, re-pins, verifies and promotes it;
+/// - [`PostDrainPin::NotPinnable`] means the key stopped naming a registered
+///   `Tracked` pool, so there is no map and no verification to report: the
+///   machine returns [`LifecycleOutcome::NotOwed`], never a success.
 ///
 /// # Lock-scope contract
 ///
 /// No guard is held across the `verify_seed`/`verify_post_drain` `.await`s
 /// (each take runs under a short `core.write()` then drops it), and the drain
-/// (`apply_backfill_buffer` → `apply_pump_buffer`) + pin run under ONE
+/// (`apply_backfill_buffer` → `apply_pump_buffer`) + pin + take run under ONE
 /// `core.write()` hold — the step-2 rolling-start race fix.
 ///
 /// # Errors
@@ -132,11 +171,14 @@ fn missing_tick_spacing() -> RefusalKind {
 ///
 /// # Returns
 ///
-/// [`LifecycleOutcome::Completed`] when the call ran to its end (verified, or a
-/// sparse / unregistered no-op that owed nothing), or
-/// [`LifecycleOutcome::Deferred`] when the post-drain pin was incomplete — the
-/// pool stays parked and a later call retries it. A caller must record a
-/// durable "verified" fact only for `Completed`.
+/// [`LifecycleOutcome::Completed`] when the call ran to the end of the ladder it
+/// owed (a verified `Tracked` pool, or a `Sparse` pool that owes no
+/// verification), [`LifecycleOutcome::Deferred`] when the post-drain pin was
+/// incomplete (the pool stays parked and a later call retries it), or
+/// [`LifecycleOutcome::NotOwed`] when the key named no registered `Tracked` pool
+/// (nothing verified, nothing promoted). A caller must record a durable
+/// "verified" fact only for `Completed` — see
+/// [`LifecycleOutcome::records_verified_fact`].
 ///
 pub async fn run_verify_lifecycle<F1, Fut1, F2, Fut2, E>(
     core: &StateLock<BotState>,
@@ -154,14 +196,17 @@ where
     // Coverage branch up-front. A Sparse pool stays `Live`, receives NO
     // verification deferral and NO verify RPC, but its buffered backfill/pump
     // events (buffered while the pool was still unregistered) must still be
-    // drained onto the pool — draining is not verification. An unregistered /
-    // non-matching pool → no-op Ok.
+    // drained onto the pool — draining is not verification, and the ladder a
+    // Sparse pool owes is empty, so it ends `Completed`. A key that names no
+    // registered concentrated-liquidity pool owes nothing AND proved nothing:
+    // `NotOwed`, never `Completed`, so a caller cannot memoize an unverified
+    // pool as verified.
     let coverage = {
         let state = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.coverage(&state)
     };
     match coverage {
-        None => return Ok(LifecycleOutcome::Completed),
+        None => return Ok(LifecycleOutcome::NotOwed),
         Some(PoolTickCoverage::Sparse) => {
             let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             key.drain(&mut state);
@@ -178,9 +223,13 @@ where
         key.begin_registration_quarantine(&mut state);
     }
 
-    // Step-1: verify the pinned snapshot SEED @ snapshot block. Only when a
-    // snapshot block is supplied (the seam's gated-skip posture); the seed is
-    // consumed exactly once so memory is bounded. The comparison is
+    // Step-1: verify the pinned snapshot SEED @ snapshot block. The step runs
+    // only when a snapshot block is supplied (the seam's gated-skip posture:
+    // with no block there is nothing to compare the seed against), but the seed
+    // is the input this ONE call owns either way, so it is taken under the same
+    // short write: a skipped step-1 drops it instead of leaving a pinned map for
+    // a later call to verify against a clock that has since moved. It is
+    // consumed exactly once, so memory is bounded. The comparison is
     // seed-vs-on-chain@snapshot, NOT engine-current (which would false-mismatch
     // every active pool under a rolling start).
     //
@@ -191,61 +240,75 @@ where
     // stale-but-internally-consistent DB pool verifies against on-chain @ ITS
     // block (passes) instead of @ `S` (a fabricated mismatch on any tick that
     // moved in between). Falls back to `S` only when the pool clock is unset.
-    if let Some(snapshot_block) = snapshot_block {
-        let seed = {
-            let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            key.take_seed(&mut state)
-        };
-        if let Some(seed) = seed {
-            // Single acquisition by construction: the leased accessor chains
-            // key → liquidity clock inside ONE `read_with(Registration)`.
-            // Never recompose the two single-step reads here — nested reads
-            // are a self-deadlock when a writer queues between them.
-            let own = key.own_liquidity_clock(core);
-            let seed_block = if own > 0 { own } else { snapshot_block };
-            verify_seed(seed, seed_block).await?;
-        }
+    let seed = {
+        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+        key.take_seed(&mut state)
+    };
+    if let (Some(snapshot_block), Some(seed)) = (snapshot_block, seed) {
+        // Single acquisition by construction: the leased accessor chains
+        // key → liquidity clock inside ONE `read_with(Registration)`.
+        // Never recompose the two single-step reads here — nested reads
+        // are a self-deadlock when a writer queues between them.
+        let own = key.own_liquidity_clock(core);
+        let seed_block = if own > 0 { own } else { snapshot_block };
+        verify_seed(seed, seed_block).await?;
     }
 
-    // Drain + pin under a SINGLE `core.write()` hold: backfill buffer, then
-    // pump buffer, then freeze the post-drain `(tick_data, block)` pair
-    // atomically with the drain (the step-2 rolling-start race fix). The pin
-    // answers its own completeness verdict: a pump event the tombstone cutoff
-    // held back at/below the map's own liquidity clock leaves no block the map
-    // can claim.
-    let pin_outcome = {
+    // Drain + pin + take under a SINGLE `core.write()` hold: backfill buffer,
+    // pump buffer, freeze the post-drain `(tick_data, block)` pair atomically
+    // with the drain (the step-2 rolling-start race fix), and take the pair the
+    // pin just minted. Bonding the take to the mint is what makes the pair the
+    // property of THIS call: a `Pinned` verdict cannot be observed without the
+    // map it froze, and every arm below leaves the pool's post-drain slot empty.
+    let (pin, minted) = {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.drain(&mut state);
-        key.pin_post_drain(&mut state)
+        let pin = key.pin_post_drain(&mut state);
+        let minted = key.take_post_drain(&mut state);
+        (pin, minted)
     };
 
-    // An INCOMPLETE drain is neither verifiable nor promotable: the seam stored
-    // no pair (dropping any stale one), so return WITHOUT step-2 and WITHOUT
-    // `set_live`. The pin has already parked the pool in
-    // `RegistrationLifecycle::VerificationDeferred` — verification is still
-    // owed, so its live events keep buffering exactly as under `Quarantined`
-    // and the orphan sweep skips it (`VerificationDeferred` is not an orphan). A
-    // later call whose drain has completed that block re-quarantines, re-pins,
-    // verifies and promotes it.
-    if let PostDrainPin::Incomplete { .. } = pin_outcome {
-        return Ok(LifecycleOutcome::Deferred);
-    }
+    // Every pin answer is handled here, and only `Pinned` — with the very map
+    // it minted — may continue to the required step-2.
+    let (tick_data, pinned_block) = match (pin, minted) {
+        (PostDrainPin::Pinned { clock, .. }, Some((tick_data, pinned_block))) => {
+            debug_assert_eq!(
+                clock, pinned_block,
+                "the pin stamps the map with its own liquidity clock"
+            );
+            (tick_data, pinned_block)
+        }
+        // An INCOMPLETE drain is neither verifiable nor promotable: the pin
+        // stored no pair (dropping any stale one), so return WITHOUT step-2 and
+        // WITHOUT `set_live`. The pin has already parked the pool in
+        // `RegistrationLifecycle::VerificationDeferred` — verification is still
+        // owed, so its live events keep buffering exactly as under
+        // `Quarantined` and the orphan sweep skips it (`VerificationDeferred` is
+        // not an orphan). A later call whose drain has completed that block
+        // re-quarantines, re-pins, verifies and promotes it.
+        (PostDrainPin::Incomplete { .. }, _) => return Ok(LifecycleOutcome::Deferred),
+        // Two shapes, ONE disposition: nothing was verified, so nothing may be
+        // promoted or recorded.
+        // - `NotPinnable`: the key stopped naming a registered `Tracked` pool
+        //   between the coverage read and the drain (unregistered, or its entry
+        //   no longer carries a complete map), so no step ran at all;
+        // - `Pinned` with no map: unreachable by construction, because the pair
+        //   is taken under the hold that minted it — and the safe answer if it
+        //   ever is reached, since a missing map is NOT a verification.
+        (PostDrainPin::NotPinnable, _) | (PostDrainPin::Pinned { .. }, None) => {
+            return Ok(LifecycleOutcome::NotOwed);
+        }
+    };
 
     // Step-2: verify the pinned POST-DRAIN pair @ the pin's OWN captured block
     // (the `tick_data_block` — liquidity clock, two-stamp rule). Comparing
     // against a caller-supplied constant would fabricate a mismatch on active
-    // pools. The pin is consumed exactly once.
-    let pin = {
-        let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        key.take_post_drain(&mut state)
-    };
-    if let Some((tick_data, pinned_block)) = pin {
-        verify_post_drain(tick_data, pinned_block).await?;
-    }
+    // pools.
+    verify_post_drain(tick_data, pinned_block).await?;
 
     // Tripwire passed (ADR-022 D2) — the final gate before `Live`. Reaching
-    // here means a Tracked pool's verification succeeded; `Live` is the last
-    // transition.
+    // here means a Tracked pool's required verification succeeded; `Live` is
+    // the last transition.
     {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
         key.mark_registration_live(&mut state);
@@ -269,8 +332,10 @@ where
 ///
 /// A tracked pool whose drain is incomplete answers
 /// `Ok(`[`LifecycleOutcome::Deferred`]`)` with the pool still parked (a deferred
-/// retry — see [`run_verify_lifecycle`]), so a caller must not record that
-/// outcome as an established "verified" fact.
+/// retry — see [`run_verify_lifecycle`]), and a key that names no registered
+/// tracked pool answers `Ok(`[`LifecycleOutcome::NotOwed`]`)`. Neither is an
+/// established "verified" fact: only [`LifecycleOutcome::records_verified_fact`]
+/// may be recorded.
 ///
 /// # Errors
 ///
@@ -472,6 +537,168 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+    }
+
+    /// A key that names NO registered concentrated-liquidity pool owes no
+    /// verification — and proved none: the machine answers
+    /// [`LifecycleOutcome::NotOwed`], never `Completed`, so a caller cannot
+    /// record an unverified pool as verified. Both closures are `unreachable!`:
+    /// there is no state to verify.
+    #[tokio::test]
+    async fn an_unregistered_key_owes_no_verification() {
+        let core = new_core();
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            PoolLookup::from_address(Address::from([0x90u8; 20])),
+            Some(123),
+            |_, _| async move { unreachable!("no seed verify for an unregistered key") },
+            |_, _| async move { unreachable!("no post-drain verify for an unregistered key") },
+        )
+        .await;
+        assert_eq!(
+            result.expect("an unregistered key is not a refusal"),
+            LifecycleOutcome::NotOwed,
+            "nothing was owed and nothing was verified"
+        );
+    }
+
+    /// A `Tracked` pool that leaves the registry while its seed is being
+    /// verified has no map left to pin: the pin answers
+    /// [`PostDrainPin::NotPinnable`] and the machine must answer
+    /// [`LifecycleOutcome::NotOwed`] — never `Completed` — because the required
+    /// post-drain verification never ran. The step-1 closure is the caller's one
+    /// interleave point, so it unregisters the pool.
+    #[tokio::test]
+    async fn a_tracked_pool_that_leaves_the_registry_before_the_pin_owes_no_verification() {
+        let core = new_core();
+        let addr = Address::from([0x91u8; 20]);
+        {
+            let mut c = core.write_at(LockSite::Registration);
+            reg_v3(&mut c, addr, PoolTickCoverage::Tracked);
+        }
+        let unregistering = Arc::clone(&core);
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            PoolLookup::from_address(addr),
+            Some(42),
+            move |_seed, _block| {
+                let core = Arc::clone(&unregistering);
+                async move {
+                    core.write_at(LockSite::Registration)
+                        .unregister_pool(PoolLookup::from_address(addr));
+                    Ok(())
+                }
+            },
+            |_, _| async move { unreachable!("no post-drain verify: the pin had no map") },
+        )
+        .await;
+        assert_eq!(
+            result.expect("a vanished pool is not a refusal"),
+            LifecycleOutcome::NotOwed,
+            "a missing required verification is not a completed one"
+        );
+        let c = core.read_at(LockSite::Registration);
+        assert_eq!(
+            c.pool_id_by_address(&addr),
+            None,
+            "precondition: the pool left the registry mid-flight"
+        );
+    }
+
+    /// A promoted pool carries NO verification residue: the seed and the
+    /// post-drain pair are the inputs of the one call that owns them, so a Live
+    /// pool never keeps a pinned map for a later call to verify against a clock
+    /// that has since moved.
+    #[tokio::test]
+    async fn a_promoted_tracked_pool_keeps_no_verification_residue() {
+        let core = new_core();
+        let addr = Address::from([0x92u8; 20]);
+        let key = PoolLookup::from_address(addr);
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            reg_v3_clocked(&mut c, addr, 100)
+        };
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert!(
+                c.snapshot_seed(key).is_some(),
+                "precondition: a Tracked registration pins its seed"
+            );
+        }
+        // No snapshot block means step-1 has no block to compare the seed at, so
+        // the call owns the seed without verifying it — and drops it.
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            key,
+            None,
+            |_, _| async move { unreachable!("no snapshot block, so no seed verify") },
+            |_, _| async move { Ok(()) },
+        )
+        .await;
+        assert_eq!(
+            result.expect("the lifecycle completes"),
+            LifecycleOutcome::Completed
+        );
+        let mut c = core.write_at(LockSite::Registration);
+        assert_eq!(
+            lifecycle_v3(&c, pid),
+            RegistrationLifecycle::Live,
+            "precondition: the pool is promoted"
+        );
+        assert_eq!(
+            key.take_seed(&mut c),
+            None,
+            "a Live pool keeps no snapshot seed"
+        );
+        assert_eq!(
+            key.take_post_drain(&mut c),
+            None,
+            "a Live pool keeps no pinned post-drain pair"
+        );
+    }
+
+    /// The V4 twin of [`a_promoted_tracked_pool_keeps_no_verification_residue`]:
+    /// one residue rule for both designs.
+    #[tokio::test]
+    async fn a_promoted_tracked_v4_pool_keeps_no_verification_residue() {
+        let core = new_core();
+        let pm = Address::from([0x93u8; 20]);
+        let pid_bytes = [0x94u8; 32];
+        let key = PoolLookup::V4 {
+            pool_manager: pm,
+            pool_id: pid_bytes,
+        };
+        let pid = {
+            let mut c = core.write_at(LockSite::Registration);
+            reg_v4_clocked(&mut c, pm, pid_bytes, 100)
+        };
+        {
+            let c = core.read_at(LockSite::Registration);
+            assert!(
+                c.snapshot_seed(key).is_some(),
+                "precondition: a Tracked V4 registration pins its seed"
+            );
+        }
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
+            &core,
+            key,
+            None,
+            |_, _| async move { unreachable!("no snapshot block, so no seed verify") },
+            |_, _| async move { Ok(()) },
+        )
+        .await;
+        assert_eq!(
+            result.expect("the V4 lifecycle completes"),
+            LifecycleOutcome::Completed
+        );
+        let mut c = core.write_at(LockSite::Registration);
+        assert_eq!(lifecycle_v4(&c, pid), RegistrationLifecycle::Live);
+        assert_eq!(key.take_seed(&mut c), None, "no V4 seed residue on Live");
+        assert_eq!(
+            key.take_post_drain(&mut c),
+            None,
+            "no V4 post-drain pair residue on Live"
+        );
     }
 
     /// A Tracked V3 pool is deferred: it must run seed verify (@ snapshot

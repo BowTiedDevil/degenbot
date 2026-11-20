@@ -122,8 +122,8 @@ impl VerifyLifecycle {
     /// The claim is keyed by the same identity the registration ledger memos on
     /// ([`PreBuildIdentity`]), so an admission ledger and this claim table share
     /// one fact instead of three private string formats. An unregistered pool is
-    /// a no-op `Ok` that records nothing — a later registration of that pool
-    /// still needs the verify it is owed.
+    /// a no-op that verified nothing and records nothing — a later registration
+    /// of that pool still needs the verify it is owed.
     ///
     /// The retry runs INSIDE the claim window: concurrent callers share one
     /// attempt sequence and its final outcome, and a failed sequence releases
@@ -131,12 +131,13 @@ impl VerifyLifecycle {
     ///
     /// # Returns
     ///
-    /// [`LifecycleOutcome::Completed`] when the lifecycle finished (verified, or
-    /// a sparse / unregistered no-op that owed nothing — the only outcome that
-    /// records the durable verified-pool fact), or
-    /// [`LifecycleOutcome::Deferred`] when the post-drain pin was incomplete: the
-    /// pool is parked with its verification still owed, NO fact is recorded, and
-    /// a later call retries it.
+    /// [`LifecycleOutcome::Completed`] when the lifecycle finished (a verified
+    /// `Tracked` pool, or a `Sparse` pool that owed no verification — the only
+    /// outcome that records the durable verified-pool fact),
+    /// [`LifecycleOutcome::Deferred`] when the post-drain pin was incomplete (the
+    /// pool is parked with its verification still owed), or
+    /// [`LifecycleOutcome::NotOwed`] when the key names no registered pool.
+    /// Neither of the last two records a fact, and both stay retriable.
     ///
     /// # Errors
     ///
@@ -152,14 +153,15 @@ impl VerifyLifecycle {
         if self.verifications.is_verified(&claim_key) {
             return Ok(LifecycleOutcome::Completed);
         }
-        // An unregistered pool is a no-op: recording a fact here would skip the
-        // verify the pool still owes once it IS registered.
+        // An unregistered pool is a no-op that verified nothing: `NotOwed`, so
+        // no fact is recorded — otherwise the verify the pool owes once it IS
+        // registered would be skipped.
         let registered = {
             let state = self.core.read_at(LockSite::Registration);
             key.coverage(&state).is_some()
         };
         if !registered {
-            return Ok(LifecycleOutcome::Completed);
+            return Ok(LifecycleOutcome::NotOwed);
         }
         let config = self.config.lock().clone();
         self.verifications
@@ -196,6 +198,9 @@ impl VerifyLifecycle {
                     }
                     Ok(LifecycleOutcome::Deferred) => {
                         diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle deferred: the drain was incomplete, so the pool is parked and stays retriable");
+                    }
+                    Ok(LifecycleOutcome::NotOwed) => {
+                        diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle verified nothing: the key names no registered tracked pool, so nothing is promoted or recorded");
                     }
                     Err(_) => {
                         op_warn!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle FAILED");
@@ -427,16 +432,24 @@ mod tests {
         assert_eq!(lifecycle.verified_pool_count(), 1);
     }
 
-    /// An unregistered pool is a no-op `Ok` that records NO fact: the verify it
-    /// is owed must still happen when it is finally registered.
+    /// An unregistered pool verified nothing: the lifecycle answers
+    /// [`LifecycleOutcome::NotOwed`] — never `Completed` — and records NO fact,
+    /// so the verify it is owed still happens when it is finally registered.
     #[tokio::test]
     async fn an_unregistered_pool_records_no_fact() {
         let lifecycle = lifecycle();
         let address = Address::from([0x13u8; 20]);
-        lifecycle
+        let outcome = lifecycle
             .run(PoolLookup::from_address(address), Some(SNAPSHOT))
             .await
-            .expect("an unregistered pool is a no-op");
+            .expect("an unregistered pool is a no-op, not a refusal");
+        assert_eq!(
+            outcome,
+            LifecycleOutcome::NotOwed,
+            "nothing was there to verify"
+        );
+        assert!(!outcome.records_verified_fact());
+        assert!(!lifecycle.is_verified(&PreBuildIdentity::Address(address)));
         assert_eq!(lifecycle.verified_pool_count(), 0);
     }
 
