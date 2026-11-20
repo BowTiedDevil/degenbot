@@ -805,10 +805,6 @@ mod block_clock_contract {
         // owned by an authoritative eth_getLogs catch-up, so the live WS is
         // NOT its delivery authority — the completeness cross-check is
         // vacuous there (an empty delivered set is expected, not a drop).
-        // Regression guard for the false abort observed live: the inactivity
-        // watchdog backfilled [25821576..25821578], then the first WS log of
-        // 25821579 tombstoned 25821578 and the check compared 2 on-chain
-        // logs against an empty delivered set -> spurious process abort.
         let mut fsm = StageMachine::new(200, 0);
         fsm.record_backfill(205);
 

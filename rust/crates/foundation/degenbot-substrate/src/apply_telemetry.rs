@@ -154,8 +154,8 @@ pub(crate) fn trace_apply_swap_v4(
 
 /// V3 apply-route trace: log how a V3 liquidity update was routed —
 /// `(lifecycle, routed_to)` where `routed_to` ∈ {"buffer-pump",
-/// "buffer-pump-quarantined", "direct-live", "no-pool"}. Always-on DEBUG on
-/// `state`.
+/// "buffer-pump-quarantined", "direct-live", "no-pool"}. The spellings are
+/// diagnostic vocabulary — nothing parses them. Always-on DEBUG on `state`.
 pub(crate) fn trace_apply_route_v3(
     address: Address,
     tick_lower: i32,

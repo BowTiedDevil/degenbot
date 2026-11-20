@@ -1161,7 +1161,6 @@ impl ConcentratedLiquidityOrchestration {
                 ApplyOutcome::Applied(pool_id)
             }
             RouteAction::Buffer(kind) => {
-                // Preserve historical live-path route traces (grep compat).
                 if phase == Phase::Live && presence != PoolPresence::Live {
                     if let BufferedV3PoolEvent::Liquidity(u) = &event {
                         let label = match presence {
@@ -1899,7 +1898,6 @@ impl ConcentratedLiquidityOrchestration {
                 ApplyOutcome::Applied(id)
             }
             RouteAction::Buffer(kind) => {
-                // Preserve historical live-path route traces (grep compat).
                 if phase == Phase::Live && presence != PoolPresence::Live {
                     if let BufferedV4PoolEvent::Liquidity(u) = &event {
                         let label = if presence == PoolPresence::Unregistered {

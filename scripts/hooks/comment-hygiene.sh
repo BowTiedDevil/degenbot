@@ -3,6 +3,9 @@
 # rule (docs/comments.md): code comments never restate work-tracker state.
 #
 # Detector 1 — anchored citations (the regex in "pat" below):
+#   - retirement/incident narration: a retired-artifact name, a label kept
+#     "for grep", an incident ordinal, a gate-placeholder note (the "narr"
+#     alternation; no census — these shapes are swept and stay out)
 #   - "ergo <6-char ID>" / "ergo epic|task|slice <ID>" citations
 #   - "epic|task|slice <ID>" citations
 #   - RED/GREEN gate narration co-occurring with a 6-char ID token
@@ -174,7 +177,14 @@ census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
 # join the anchored citation class: a digit must follow the label word, so
 # data-slice prose and the plan(..)/plan[..] call and index forms survive.
 label='(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)|(\b[Pp]lan([[:space:]]+|-)[0-9]+\b)'
-pat="(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
+# Retirement / incident narration: a comment written in the voice of the change
+# that produced it (a file described as retired, a label kept "for grep", an
+# incident ordinal). The rule the change introduced IS the comment; the history
+# belongs in the ADR or the commit. Each alternative is spelled with a
+# character class or a whitespace expression so this header cannot cite itself
+# (Detector 1 scans this hook like any other file).
+narr='(retired[[:space:]]+grab)|(twin-colla[p]se)|(grep[[:space:]]+compat)|(crash[[:space:]]+#[0-9]+)|(RED[[:space:]]+placeholders)'
+pat="(${narr})|(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
 
 fail=0
 command -v rg >/dev/null 2>&1 || {

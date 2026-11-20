@@ -187,13 +187,13 @@ class EngineRegistry:
     def register_v2_pool(pool: UniswapV2Pool) -> int:
         """Return the shared-core ``pool_id`` of a V2 pool.
 
-        The engine shares the bot's BotState, so the V2
-        pool is ALREADY registered there by `bot.build_pool` (the V2 builder
-        calls `py_bot.register_v2_pool` + hands back the Pool
-        handle), and re-registering via `engine.register_v2_pool` would panic
-        on the duplicate address. The id is read off the pool's own core
-        handle — the state owner's answer, not a Python cache — and
-        orientation is decided at register_path time (no `fwd_key + 1` shim).
+        The engine shares the bot's BotState, so the V2 pool is ALREADY
+        registered there by the build path (the construction door registers
+        through the core and hands back the `Pool` handle), and re-registering
+        via `engine.register_v2_pool` would panic on the duplicate address. The
+        id is read off the pool's own core handle — the state owner's answer, not
+        a Python cache — and orientation is decided at register_path time (no
+        `fwd_key + 1` shim).
 
         Returns:
             The pool's engine ``pool_id``.

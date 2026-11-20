@@ -149,7 +149,7 @@ fn finish_scaled_token_balance_state(
     let current_balance_i =
         alloy::primitives::I256::try_from(current_balance).unwrap_or(alloy::primitives::I256::MAX);
     let new_balance_i = current_balance_i + balance_delta;
-    // Aave V3 `_burnScaled` cap-to-scaledBalance clamp (crash #11 family).
+    // Aave V3 `_burnScaled` cap-to-scaledBalance clamp.
     // The on-chain `_burnScaled` computes `amountScaled =
     // amountTotal.rayDiv(index)` then `if (amountScaled > scaledBalance)
     // amountScaled = scaledBalance;` before burning — the contract NEVER
@@ -159,8 +159,8 @@ fn finish_scaled_token_balance_state(
     // the on-chain `scaledBalance`), the unguarded `current_balance_i +
     // balance_delta` goes negative and would crash the chunk with
     // `balance would go negative`. Mirroring the contract, clamp the new
-    // balance to ZERO instead of erroring. Symmetric with the GHO-side fix
-    // in `process_gho_debt_burn`'s `>=` branch (commit a419f87f — crash #11).
+    // balance to ZERO instead of erroring. Symmetric with the GHO-side clamp
+    // in `process_gho_debt_burn`'s `>=` branch.
     //
     // NB: this is the ACTUAL on-chain rule for BOTH aToken collateral burns
     // AND vToken debt burns (`_burnScaled` is defined on both). Applied
@@ -467,9 +467,8 @@ impl DegenbotDb {
             // burn-to-zero leg). Mirrors Python's `transfers.py:
             // _process_collateral_transfer` recipient guard (`if
             // scaled_event.target_address != ZERO_ADDRESS:` — the recipient
-            // block is gated on !=0x0; delete dial-back was landing
-            // extra 0-address collateral rows in Rust otherwise, surfacing as
-            // crash #8 on the 21.9M→22M march checkpoint). The dispatcher passes
+            // block is gated on !=0x0; an ungated apply lands the burn-to-zero
+            // leg as an extra 0-address collateral row). The dispatcher passes
             // `None` for the position id when the recipient is 0x0.
             if let Some(to_position_id) = to_position_id {
                 // The Python sets `recipient_position.last_index = transfer_index`

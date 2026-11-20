@@ -121,14 +121,12 @@ impl DegenbotDb {
         /// is skipped entirely; only the `Some` side is mutated. The degenerate
         /// `Transfer(0→0)` case lands both `None` and applies nothing.
         ///
-        /// Retirement (crash #3): the prior design dedupe-skipped the
-        /// zero-leg here + processed the paired Staked/Redeem via separate apply
-        /// fns. The empirical reality (verified via cast logs) is that some
-        /// actions emit ONLY the `Transfer(X→0)` event with NO paired Redeem;
-        /// skipping the zero-leg left the sender's `stk_aave_balance` stuck at
-        /// the pre-burn cache value → wrong `calculate_gho_discount_rate` →
-        /// GHO-burn delta overshoots the scaled balance → crash (byte-exact
-        /// match: overshoot == `discount_scaled` at stale `prev_discount`).
+        /// The zero-leg is applied, never dedupe-skipped: some actions emit
+        /// ONLY the `Transfer(X→0)` event with no paired Redeem, and skipping
+        /// it leaves the sender's `stk_aave_balance` at the stale pre-burn
+        /// value → a wrong `calculate_gho_discount_rate` → a GHO-burn delta that
+        /// overshoots the scaled balance (the overshoot equals
+        /// `discount_scaled` at the stale `prev_discount`).
         ///
         /// The `from`-leg underflow guard (value > from's balance) errors as
         /// [`DbError::Decode`] rather than panicking: a chain that could produce

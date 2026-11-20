@@ -401,9 +401,10 @@ pub struct V3PoolIdentity {
     /// itself for non-JSON pools. Stored on the identity so the companion
     /// reads it off the handle.
     pub deployer: Address,
-    /// The CREATE2 init code hash (Fork A). The JSON row's `init_hash`
-    /// when shipped, else the Uniswap V3 mainnet fallback const. Off the
-    /// handle, not the retired Python `ClassVar`.
+    /// The CREATE2 init code hash (Fork A). A shipped row's measured hash, or
+    /// the deployment table's assumed-mainnet default for an unshipped factory
+    /// — admitted on mainnet and the chain-0 placeholder only. Read off the
+    /// handle, never a Python-side constant.
     pub init_hash: B256,
     /// The pool contract's storage-slot layout family — drives
     /// every slot-index consumer (divergence probe, sim-anchor projection,

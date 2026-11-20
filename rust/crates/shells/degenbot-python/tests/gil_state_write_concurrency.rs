@@ -160,14 +160,12 @@ fn no_gil_held_botstate_locks_in_bot_sources() {
                 (2..=10).contains(&checked_in_file),
                 "pool.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
             ),
-            // mod.rs is at the migration floor (UX66EM/3MXFTV, build-cluster
-            // move): only the register_v2_pool_test_only T1-scan-exempt test
-            // seam still names `.write_at()` directly — every pymethod path
-            // routes through the core `Bot` (LockSite::Core) or
-            // `py.detach`.
+            // mod.rs holds no direct lock site: every pymethod path routes
+            // through the core `Bot` (LockSite::Core) or `py.detach`. The
+            // ceiling is the drift bound, not a floor.
             "mod.rs" => assert!(
-                (1..=10).contains(&checked_in_file),
-                "mod.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"
+                checked_in_file <= 10,
+                "mod.rs lock-site count {checked_in_file} above the drift ceiling - the pattern moved"
             ),
             _ => {}
         }

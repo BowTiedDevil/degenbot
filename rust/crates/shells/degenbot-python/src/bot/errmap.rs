@@ -10,9 +10,9 @@
 //! (ADR-077 D2): every registration-phase refusal — the register, build,
 //! identity, verify, lifecycle, and snapshot-load families — is a
 //! [`RefusalKind`] variant, and this module renders it. The typed
-//! `degenbot_pools` register errors keep a thin entry (`map_register_v2_err`)
-//! that delegates to it; the V4 family's refusals cross only as the one
-//! [`RefusalKind`] vocabulary (no typed-error mapper).
+//! `degenbot_pools` register errors cross as that vocabulary too
+//! (`RefusalKind::from_register_v2_error`); no family carries a typed-error
+//! mapper of its own.
 //!
 //! Build refusals ([`BuildFailure`]) additionally cross as DATA: every raised
 //! instance carries the closed `kind` and structured `detail` attributes (the
@@ -36,7 +36,6 @@ use degenbot_bot::bot_core::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
     SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
-use degenbot_pools::RegisterV2PoolError;
 use degenbot_pools::RegisteredPoolFamily;
 
 use crate::bot::engine::{
@@ -319,12 +318,6 @@ fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
 }
 
 // --- Pool registration (admission) ---
-
-/// Map a [`RegisterV2PoolError`] to its Python surface through the one
-/// refusal mapper (the V2 address-keyed insert refusal).
-pub(crate) fn map_register_v2_err(err: &RegisterV2PoolError) -> PyErr {
-    map_refusal(RefusalKind::from_register_v2_error(err))
-}
 
 /// Map the typed path-registration refusal: a full registry is the benign
 /// `PathRegistryFullError` stop signal; every `Invalid` refusal keeps the
@@ -681,19 +674,23 @@ mod tests {
 
     #[test]
     fn register_v2_err_pins_the_vocabulary() {
-        let err = map_register_v2_err(&RegisterV2PoolError::AlreadyRegistered {
-            address: addr("0x0101010101010101010101010101010101010101"),
-        });
+        let err = map_refusal(RefusalKind::from_register_v2_error(
+            &RegisterV2PoolError::AlreadyRegistered {
+                address: addr("0x0101010101010101010101010101010101010101"),
+            },
+        ));
         assert_eq!(
             message(&err),
             "v2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
 
-        let err = map_register_v2_err(&RegisterV2PoolError::SpecViolation(SpecViolation {
-            field: "reserve0",
-            value: SpecValue::U256(U256::from(7u8)),
-            bound: "uint112 (≤ 2^112 − 1)",
-        }));
+        let err = map_refusal(RefusalKind::from_register_v2_error(
+            &RegisterV2PoolError::SpecViolation(SpecViolation {
+                field: "reserve0",
+                value: SpecValue::U256(U256::from(7u8)),
+                bound: "uint112 (≤ 2^112 − 1)",
+            }),
+        ));
         assert_eq!(
             message(&err),
             "v2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"

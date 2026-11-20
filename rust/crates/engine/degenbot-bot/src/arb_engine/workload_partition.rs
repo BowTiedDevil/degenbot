@@ -1,12 +1,11 @@
-//! Pure workload-analysis cluster (from the retired grab-file dissolution):
-//! the solve-bin sizing seam (`solve_bin_count`), the
-//! LPT pre-balanced partition (`lpt_partition`), the
+//! Pure workload-analysis cluster: the solve-bin sizing seam
+//! (`solve_bin_count`), the LPT pre-balanced partition (`lpt_partition`), the
 //! named cordon-fallback seat plan (`plan_bins` + `SeatPlan` +
-//! `CordonFallbackDecision`, LW-T7), and the resolve-time cost proxies
+//! `CordonFallbackDecision`), and the resolve-time cost proxies
 //! (`path_cost_proxy`, `sims_aware_cost`).
 //!
-//! Extracted from the retired grab file so the pure binning/costing seams and their invariants live at their
-//! own interface, independently of the lane walk.
+//! The binning/costing seams and their invariants live at this interface,
+//! independently of the lane walk.
 use ::degenbot_pools::solve::ResolvedMixedPath;
 use degenbot_core::op_info;
 // ---------------------------------------------------------------------------

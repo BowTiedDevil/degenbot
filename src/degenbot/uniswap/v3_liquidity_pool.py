@@ -189,12 +189,13 @@ class UniswapV3Pool(
         self._token0 = Erc20Token.from_handle(py_token0)
         self._token1 = Erc20Token.from_handle(py_token1)
 
-        # Deployer / init-hash: read off the Rust handle (Fork A).
-        # The builder resolved the JSON-sourced deployer (effective deployer,
-        # covering PancakeSwap V3's separate-deployer case) + init_hash at
-        # registration; the companion reads them here instead of the retired
-        # `UNISWAP_V3_MAINNET_POOL_INIT_HASH` ClassVar. Non-JSON V3 pools get
-        # the factory as deployer + the mainnet fallback init hash.
+        # Deployer / init-hash: read off the Rust handle (Fork A). The builder
+        # resolved the deployment table's effective deployer (covering
+        # PancakeSwap V3's separate-deployer case) and the admitted init hash at
+        # registration, so nothing here re-derives either. A non-JSON factory's
+        # deployer is the factory itself; its init hash is the table's
+        # assumed-mainnet default, which only mainnet and the chain-0
+        # placeholder admit.
         self.deployer_address = get_checksum_address(self._py_pool.deployer or self.factory)
         self.init_hash = self._py_pool.init_hash
 

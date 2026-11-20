@@ -4,7 +4,26 @@ from __future__ import annotations
 
 import pytest
 
-from tests.helpers.pool_handle_factory import make_v2_handle
+from degenbot.registry.deployment_records import load_deployments
+from degenbot.uniswap.v2_functions import generate_v2_pool_address
+from tests.helpers.pool_handle_factory import TOKEN0, TOKEN1, make_v2_handle
+
+#: SushiSwap V2's mainnet factory — a shipped row, so its pairs' addresses are
+#: measured and the fixture registers the derivation, never an arbitrary address.
+SUSHI_V2_FACTORY = "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+
+
+def _sushi_v2_pair_address() -> str:
+    """The CREATE2 address SushiSwap V2 derives for the fixture's token pair."""
+    [record] = [
+        row for row in load_deployments() if row.chain_id == 1 and row.factory == SUSHI_V2_FACTORY
+    ]
+    assert record.init_hash is not None
+    return generate_v2_pool_address(
+        record.deployer or record.factory,
+        (TOKEN0, TOKEN1),
+        record.init_hash,
+    )
 
 
 @pytest.fixture
@@ -38,8 +57,8 @@ def test_calculate_tokens_out(v2_pool) -> None:
 def test_dex_name_resolved_from_known_sushiswap_deployment() -> None:
     # SushiSwap V2 mainnet factory (chain 1) → "sushiswap".
     handle = make_v2_handle(
-        address="0x3333333333333333333333333333333333333333",
-        factory="0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
+        address=_sushi_v2_pair_address(),
+        factory=SUSHI_V2_FACTORY,
     )
     assert handle.dex_name == "sushiswap"
 

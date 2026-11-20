@@ -1330,7 +1330,7 @@ mod tests {
     #[test]
     fn sparse_v3_pool_missing_word_surfaces_exhaustion_with_caveat_free_error() {
         // Sparse + empty ticks + no fetcher: the walk cannot establish its
-        // first bitmap word → FetchExhausted (the legacy silent-ZERO path).
+        // first bitmap word → FetchExhausted, never a silent zero quote.
         let mut bot = BotState::new();
         let pid = register_canonical_v3(&mut bot, PoolTickCoverage::Sparse, false);
         let read = bot.swap_simulation(

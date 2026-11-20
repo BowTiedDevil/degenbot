@@ -43,8 +43,10 @@ pub struct V2PoolIdentity {
     /// (chain,factory) deployer into the protocol preset (replacing the
     /// canonical-mainnet preset deployer).
     pub deployer: Address,
-    /// The CREATE2 init code hash (Fork A). The JSON row's `init_hash`,
-    /// or the V2 mainnet fallback const for non-JSON pools.
+    /// The CREATE2 init code hash (Fork A). A shipped row's measured hash, or
+    /// the deployment table's assumed-mainnet default for an unshipped factory
+    /// — which mainnet and the chain-0 placeholder admit and any other chain
+    /// refuses loud.
     pub init_hash: B256,
     /// The DEX+variant discriminator. Resolves the canonical
     /// [`degenbot_uniswap::dex_identity::DexIdentity`] preset
@@ -119,9 +121,10 @@ pub struct RegisterV2PoolParams {
     /// `dex` getter merges the per-(chain,factory) deployer (no getter-time
     /// `chain_id` lookup).
     pub deployer: Address,
-    /// The CREATE2 init code hash the builder verified against (Fork A).
-    /// The JSON row's `init_hash`; the V2 mainnet fallback const
-    /// for non-JSON pools.
+    /// Ignored on the door: the request interior completes the derived
+    /// identity, storing the shipped row's measured init code hash or the
+    /// deployment table's assumed-mainnet default (admitted on mainnet and the
+    /// chain-0 placeholder only).
     pub init_hash: B256,
     /// Block number of the registration state — seeds the genesis reorg
     /// journal delta. The landed-at journal must anchor the registration state

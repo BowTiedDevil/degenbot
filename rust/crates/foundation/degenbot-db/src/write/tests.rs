@@ -953,7 +953,7 @@ fn reset_debt_position_missing_row_returns_err() {
     assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
 }
 
-// ── crash #11 family: Aave V3 `_burnScaled` cap-to-scaledBalance ─────
+// ── Aave V3 `_burnScaled` cap-to-scaledBalance clamp ────────────────
 // On-chain, `_burnScaled` clamps the burn amount to the position's
 // `scaledBalance` before decrementing (the contract NEVER goes below
 // zero). Rust's stored balance can drift by 1-2 wei vs the chain on

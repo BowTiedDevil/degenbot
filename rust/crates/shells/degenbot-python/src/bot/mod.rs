@@ -37,7 +37,7 @@ use degenbot_bot::crawl::FlightKey;
 use crate::bot::engine::{hex_string_to_pool_id, refusal_err, SpecViolationError};
 use crate::bot::errmap::{
     map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_connect_err,
-    map_no_construction_io, map_refusal, map_register_v2_err,
+    map_no_construction_io, map_refusal,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -1761,72 +1761,8 @@ impl PyBot {
     }
 }
 
-// (The `resolve_v4_identity` / `build_v4_pool` pymethod pair retired with
-// the V4 fold: ONE `construct_pool` request carries the identity overrides,
-// the core door resolves + builds + registers, and the registered handle is
-// self-describing — no two-call choreography, no caller-supplied-identity
-// echo to guard.)
 #[pymethods]
 impl PyBot {
-    /// Prototype test-only V2 registration that bypasses CREATE2 verification.
-    /// Wire to a new method on Python so tests can build a synthetic V2 pool.
-    #[expect(clippy::too_many_arguments)]
-    pub(crate) fn register_v2_pool_test_only(
-        &self,
-        address: &str,
-        token0: &str,
-        token1: &str,
-        reserve0: &Bound<'_, PyAny>,
-        reserve1: &Bound<'_, PyAny>,
-        gamma_numer0: u64,
-        fee_denom0: u64,
-        gamma_numer1: u64,
-        fee_denom1: u64,
-        factory: &str,
-        update_block: u64,
-        variant: &str,
-        stable_swap: bool,
-    ) -> PyResult<u64> {
-        let addr = parse_address(address)?;
-        let t0 = parse_address(token0)?;
-        let t1 = parse_address(token1)?;
-        let fac = parse_address(factory)?;
-        let r0 = narrow_reserve(
-            crate::conversion::alloy::extract_python_u256(reserve0)?,
-            "reserve0",
-        )?;
-        let r1 = narrow_reserve(
-            crate::conversion::alloy::extract_python_u256(reserve1)?,
-            "reserve1",
-        )?;
-        let variant_enum = DexVariant::try_from(variant)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        // The retained pair is validated at this boundary too: an unusable
-        // tuple raises rather than registering.
-        let fee_token0 = fee_ratio_param(gamma_numer0, fee_denom0)?;
-        let fee_token1 = fee_ratio_param(gamma_numer1, fee_denom1)?;
-        // T1-scan-exempt: test-only seam (pure-Rust test callers, no GIL held).
-        self.bot
-            .state_arc()
-            .write_at(degenbot_substrate::state_lock::LockSite::Python)
-            .register_v2_pool(&RegisterV2PoolParams {
-                address: addr,
-                token0: t0,
-                token1: t1,
-                reserve0: r0,
-                reserve1: r1,
-                fee_token0,
-                fee_token1,
-                factory: fac,
-                deployer: fac,
-                init_hash: alloy::primitives::B256::default(),
-                update_block,
-                variant: variant_enum,
-                stable_swap,
-            })
-            .map_err(|err| map_register_v2_err(&err))
-    }
-
     /// Update a V2 pool's reserves from a Sync event.
     #[pyo3(signature = (address, reserve0, reserve1, block_number))]
     fn update_v2_pool(

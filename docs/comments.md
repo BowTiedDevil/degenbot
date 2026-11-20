@@ -66,12 +66,24 @@ existing conventions.
 ## Mechanical check
 
 The enforced gate is `just lint-comment-hygiene` — Detector 1 (anchored
-citations + gate narration), Detector 2 (the bare-token census ratchet), and
-Detector 3 (the citation census ratchet over the `TODO-<hex>` / `TODO(<word>)` /
-`Epic <token>` / `slice <token>` / `Phase <letter><digit>` / `pre-`/`post-epic`
-shapes the first two cannot see). See [gate ratchets](gates.md) for the
-censuses, the waiver file, and the entry recipe. The optional grep below is a quick manual check for the worst
-offender (tracker IDs):
+citations, gate narration, and retirement/incident narration: a retired-artifact
+name, a label kept "for grep", an incident ordinal), Detector 2 (the bare-token
+census ratchet), and Detector 3 (the citation census ratchet over the
+`TODO-<hex>` / `TODO(<word>)` / `Epic <token>` / `slice <token>` /
+`Phase <letter><digit>` / `pre-`/`post-epic` shapes the first two cannot see).
+See [gate ratchets](gates.md) for the censuses, the waiver file, and the entry
+recipe.
+
+The **counterfactual-prose gap**: Detector 1 does not match `pre-fix` /
+`post-fix` / `used to <verb>` prose, which the rules above ban but which still
+stands in the history-anchor comments of several simulation, RPC and solver
+tests (the shape names the behaviour a parity anchor pins, so each site wants a
+rewrite, not a deletion). Adding the alternation now would fail the gate on
+every grandfathered site, so it lands with the sweep that empties them —
+Detector 1's `narr` alternation is where it belongs.
+
+The optional grep below is a quick manual check for the worst offender
+(tracker IDs):
 
 ```bash
 git grep -nE '\berg(o)?[ :]*[A-Z0-9]{6}\b|-- .*\b[A-Z0-9]{6}\b' -- src rust/crates tests

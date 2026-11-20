@@ -639,10 +639,11 @@ impl ReorgJournal<V3BlockDelta> {
     /// **No-op branch** (newest delta's block strictly before the target):
     /// returns `scalar_priors: None` + empty `tick_priors` + the newest
     /// block — the caller applies nothing and the current landed-at state
-    /// survives. This mirrors the V2 path's `*_after` return (line 317-323).
+    /// survives. The full-state delta families (V2, Curve, Balancer) express
+    /// the same fact by returning the newest delta's `landed()` projection.
     /// Returning the newest delta's own `scalar_priors`/`tick_priors` here
-    /// would describe the PRE-newest state and cause the caller to silently
-    /// roll back a delta that landed before the reorg target (the pre-fix bug).
+    /// would describe the state before that delta and make the caller silently
+    /// roll back a delta that landed before the reorg target.
     ///
     /// Returns `V3RestoreResult` carrying the scalar before-values,
     /// per-tick priors, and the block number.
@@ -665,12 +666,10 @@ impl ReorgJournal<V3BlockDelta> {
         // (`v3_restore_before_block`) skips both the scalar write-back and the
         // tick reverse-apply, leaving the current mutable state untouched.
         //
-        // Pre-fix this returned `newest.scalar_priors` / `newest.tick_priors` —
-        // the PRE-newest-delta state — and the caller reverse-applied them,
-        // silently rolling back a delta that landed BEFORE the reorg target.
-        // Mirrors the V2 bug fixed at line 317-323 (which returns the newest
-        // delta's `*_after` i.e. the current state). For V3/v4 the journal holds
-        // no "after" snapshot, so the no-op is expressed as "nothing to apply".
+        // A V3/v4 delta carries no "after" snapshot, so "nothing to apply" IS
+        // how this path expresses the current state; the newest delta's own
+        // priors describe the state BEFORE that delta and would roll a landed
+        // delta back.
         if newest_block < block {
             return V3RestoreResult {
                 scalar_priors: None,
@@ -1487,7 +1486,8 @@ mod v3_delta_priors_tests {
             tick_before: 0,
         };
         // second Swap at block B records the post-first-Swap scalars as its
-        // "before" — the pre-fix corruption source.
+        // "before"; coalescing keeps the FIRST delta's priors, so these never
+        // become the rolled-back row.
         let post_first = ScalarPriors {
             sqrt_price_x96_before: U256::from(200u64),
             liquidity_before: 20,

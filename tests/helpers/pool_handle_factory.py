@@ -57,11 +57,17 @@ def make_v2_handle(
     reserve1: int = 2_000_000_000,
     update_block: int = 100,
 ) -> Pool:
-    """Register a V2-style pool (0.3% fee both sides, ``uniswap-v2``)."""
+    """Register a V2-style pool (0.3% fee both sides, ``uniswap-v2``).
+
+    Registration goes through the production ``register_v2_pool`` door, so the
+    identity completes core-side exactly as a discovery build's does: a shipped
+    factory's measured CREATE2 identity is verified against ``address``, and an
+    unshipped one stores the admitted assumed-mainnet default.
+    """
     bot = bot if bot is not None else Bot(1)
     return _handle(
         bot,
-        bot.register_v2_pool_test_only(
+        bot.register_v2_pool(
             address=address,
             token0=TOKEN0,
             token1=TOKEN1,

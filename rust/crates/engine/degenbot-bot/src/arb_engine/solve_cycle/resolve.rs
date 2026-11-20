@@ -17,8 +17,7 @@ use hashbrown::{HashMap, HashSet};
 use std::sync::PoisonError;
 
 // ---------------------------------------------------------------------------
-// statics/fns from the retired grab file, each
-// moved beside its sole production consumer (or its near consumers).
+// The chunked-resolve statics, each beside its sole production consumer.
 // ---------------------------------------------------------------------------
 /// chunked parallel resolve of the affected paths (sharded hop
 /// cache preserves cross-path hit reuse). Default ON; set

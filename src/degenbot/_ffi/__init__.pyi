@@ -1618,27 +1618,6 @@ class Bot:
 
         Returns the auto-assigned pool ID.
         """
-    def register_v2_pool_test_only(
-        self,
-        /,
-        address: str,
-        token0: str,
-        token1: str,
-        reserve0: Any,
-        reserve1: Any,
-        gamma_numer0: SupportsIndex,
-        fee_denom0: SupportsIndex,
-        gamma_numer1: SupportsIndex,
-        fee_denom1: SupportsIndex,
-        factory: str,
-        update_block: SupportsIndex,
-        variant: str,
-        stable_swap: bool,
-    ) -> int:
-        """
-        Prototype test-only V2 registration that bypasses CREATE2 verification.
-        Wire to a new method on Python so tests can build a synthetic V2 pool.
-        """
     def register_v3_pool(
         self,
         /,

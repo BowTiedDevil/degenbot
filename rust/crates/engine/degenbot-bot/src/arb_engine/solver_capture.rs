@@ -1,11 +1,9 @@
-//! Heavy-path capture diagnostics (from the retired grab-file dissolution,
-//!): the one-shot capture of heavy solver inputs
-//! so the offline replay harnesses can be optimized against real captured
-//! pool state without a full bot run.
+//! Heavy-path capture diagnostics: the one-shot capture of heavy solver
+//! inputs so the offline replay harnesses can be optimized against real
+//! captured pool state without a full bot run.
 //!
-//! Extracted from the retired grab file so the diagnostic corpus stops
-//! riding the hot solve-path file: its ~500 lines (writer + variants + tests)
-//! churn independently of the lane walk.
+//! The writer, its variants and their tests churn independently of the lane
+//! walk, so they live outside the hot solve-path file.
 use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 use ::degenbot_pools::{DegeneratePathEvent, DegeneratePathSink};
 

@@ -1,16 +1,10 @@
-//! Executor A/B probe fixtures : the harness support the
-//! fleet parity/identity fixtures and the workload-partition binning
-//! property draw on (the heavy-concentrated-liquidity capture-corpus loader, the shared
-//! solve-cycle fixture, and the production LPT bin packer).
+//! Executor probe fixtures: the harness support the fleet parity/identity
+//! fixtures and the workload-partition binning property draw on — the heavy
+//! concentrated-liquidity capture-corpus loader, the shared solve-cycle
+//! fixture, and the production LPT bin packer.
 //!
-//! Extracted from the retired grab file so the fixtures live in the module tree (test-only) rather than
-//! inside the twin-collapse residue.
-// Fixture + harness support for the fleet probe surface (LW-T9: the
-// legacy-stance A/B probe arms are DELETED with the stance — the fleet
-// is one executor, so there is nothing to A/B). What remains: the heavy-concentrated-liquidity
-// capture-corpus loader, the production cost proxy's bin packer and the
-// shared-cycle fixture used by the fleet parity/identity fixtures.
-// Fixture parse replicates rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs.
+//! The corpus parse replicates
+//! `rust/tools/solver-lab/src/bin/rayon_scale_probe/main.rs`.
 use super::BotState;
 use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
