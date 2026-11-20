@@ -15,23 +15,25 @@
 use degenbot_workers::dispatcher::BootError;
 use parking_lot::{Condvar, Mutex};
 use std::time::Duration;
-/// The typed terminal record for a Faulted intake (spike S2):
-/// the host drained held work because the lane-death latch is sticky, so no
-/// later admit can ever respect it. `held` is the number of queued/backlogged
-/// units resolved by the drain — they ran ZERO times (resolution != execution),
-/// so at-most-once holds.
+/// The typed terminal CAUSE of a faulted intake: the lane-death latch is
+/// sticky, so no later admit can ever respect held work and every parked
+/// receipt resolves terminally instead of waiting for a delivery that cannot
+/// come.
+///
+/// The watch owns the cause only. What each host resolved under the latch —
+/// including a unit that arrives after the first drain — is that host's own
+/// durable resolution state (`seat_host::pump::FaultResolution`), never a
+/// first-wins total that would hide a later drain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntakeFault {
     /// The typed cause (today always `"lane-death"`).
     pub cause: &'static str,
-    /// The held units resolved by the fault (never executed).
-    pub held: usize,
 }
-/// The S2 fault watch: the bot-side seam the crawl window observes. The host
-/// `set`s it on entering Faulted (first-wins — a second lane death for the
-/// same latch is idempotent); every waiting receipt resolves terminally
-/// instead of parking. This is the ONLY cross-crate surface the S2 seam adds
-/// (the `FleetIntake` port itself is unchanged).
+/// The fault watch: the bot-side seam the crawl window observes. The host
+/// `set`s the cause when it takes its latch (first-wins — a second lane death
+/// is idempotent); every waiting receipt resolves terminally instead of
+/// parking. Per-host drain counts are reported by the hosts themselves, so
+/// this record never has to be rewritten.
 #[derive(Debug, Default)]
 pub struct IntakeFaultWatch {
     state: Mutex<Option<IntakeFault>>,

@@ -5,7 +5,7 @@
 //! `impl_seat_hosted!` per-role surface.
 
 use super::admission::{intake_backstop, intake_no_progress_ticks, GrantContract, NoProgressGuard};
-use super::pump::{HostDiscipline, HostMsg, HostPump, SeatSink};
+use super::pump::{FaultResolution, HostDiscipline, HostMsg, HostPump, SeatSink};
 use crate::arb_engine::boot_stamp::BootRole;
 use crate::arb_engine::fleet_intake::InnerWork;
 use crate::arb_engine::fleet_wake;
@@ -501,8 +501,8 @@ pub(crate) struct HostLoop<'a> {
     pub(crate) mirror: Option<&'a AtomicUsize>,
     /// The per-host abort wording owner.
     pub(crate) discipline: &'a dyn HostDiscipline,
-    /// The S2 fault watch (`None` on hosts whose receipts are not
-    /// pyo3-owned — they never enter Faulted).
+    /// The fault watch (`None` on hosts whose receipts are not pyo3-owned —
+    /// such a host never latches a fault).
     pub(crate) fault: Option<&'a crate::arb_engine::fleet_intake::IntakeFaultWatch>,
 }
 /// The ONE host dispatch loop (ADR-079 D2): build the unified [`HostPump`]
@@ -521,6 +521,7 @@ pub(crate) fn host_loop(rx: mpsc::Receiver<HostMsg>, mut host: FleetHost, fold: 
     } = fold;
     let mut backlog = VecDeque::new();
     let mut no_progress = NoProgressGuard::new(intake_no_progress_ticks());
+    let mut resolution = FaultResolution::new(fault.is_some());
     HostPump {
         host: &mut host,
         backlog: &mut backlog,
@@ -532,6 +533,7 @@ pub(crate) fn host_loop(rx: mpsc::Receiver<HostMsg>, mut host: FleetHost, fold: 
         backstop: intake_backstop(),
         no_progress: &mut no_progress,
         fault,
+        resolution: &mut resolution,
         #[cfg(test)]
         ticks: None,
     }

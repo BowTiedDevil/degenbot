@@ -5,6 +5,32 @@ Ratified in a two-peer workshop (`peer_a` glm-5.3, `peer_b` kimi-k3, both FINAL
 ACCEPT), stress-tested by an adversarial review session across the task chain,
 and mechanized as properties in `PPIJJO`.
 
+> **Amendment (2026-11-20): the state model is one derived projection plus a
+> separate per-host fault resolution.** D5's "Progress FSM: `Idle` / `Backed` /
+> `Faulted` / `Closed`" is three *derived projections* of what the host's own
+> queues hold: `Active` (admitted work — the bounded role queue is non-empty, or
+> a seat of the hosted role is leased/running), `Idle` (nothing held), and
+> `Backed` (the unbounded backlog holds work, which outranks the other two
+> because the backlog drains first). None of them is stored, and a sticky fault
+> is not one of them.
+>
+> D6's lane-death terminal is a separate, durable, per-host `FaultResolution`
+> (`Unwatched`, `Clear`, `Latched { resolved }`). It takes the latch once,
+> resolves the backlog and the role queue, and reports every drain that resolved
+> units: a cumulative per-host total alongside the loud line. A unit that
+> arrives after the first drain is therefore resolved *and* counted instead of
+> being cleared behind an already-published cause, and a repeat drain with
+> nothing held changes nothing (the latch and the cause are first-wins). The
+> `IntakeFaultWatch` owns the *cause* only — `IntakeFault { cause }`, first-wins
+> — so per-host drain counts never enter the shared record. A host with no fault
+> watch can never latch (`Unwatched` is structural, and the fault gate reads the
+> watch), which keeps `sim`/`solve` unfaultable. Resolving under the latch
+> returns before the no-progress guard, so a faulted host never accrues toward
+> K.
+>
+> The decision text below is the accepted design record; read D5 and D6 against
+> this amendment.
+
 ## Context
 
 The second live settlement-bot run deadlocked its registration crawl at
@@ -80,8 +106,8 @@ gauge: a held backlog is visible and must be driven to zero by the backstop.
 - A stuck intake with capacity is loud within K ticks rather than silent.
 - A dead lane resolves every waiting receipt terminally (typed error) and
   latches sticky until a fresh process — no parked driver, no silent loss.
-- Hosts that persist no pyo3-owned receipts (`sim`/`solve`) never enter
-  `Faulted`; held work there is not applicable.
+- Hosts that persist no pyo3-owned receipts (`sim`/`solve`) never latch a
+  fault (they carry no fault watch); held work there is not applicable.
 
 ## Alternatives considered (rejected)
 
@@ -103,8 +129,11 @@ gauge: a held backlog is visible and must be driven to zero by the backstop.
 
 ## References
 
-- `rust/crates/engine/degenbot-bot/src/arb_engine/seat_host.rs` — `HostPump`
-  (`run`/`apply_host_msg`/`pump`), backlog, wake discipline, properties.
+- `rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/pump.rs` —
+  `HostPump` (`run`/`apply_host_msg`/`pump`), backlog, wake discipline, the
+  per-host fault resolution, properties.
+- `rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/admission.rs` —
+  the pure admission predicate over `(queue_len, queue_cap, posture_admits)`.
 - `rust/crates/engine/degenbot-workers/src/posture.rs` — `PostureOwner`/
   `PostureWatch`, `LaneDeath` latch, feeder-site contract.
 - `rust/crates/engine/degenbot-workers/src/dispatcher.rs` — `FleetHost`,

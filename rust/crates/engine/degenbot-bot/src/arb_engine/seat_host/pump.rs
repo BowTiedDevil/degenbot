@@ -9,6 +9,7 @@ use super::admission::{
 use degenbot_core::op_error;
 use degenbot_workers::dispatcher::{EnqueueError, FleetHost, Grant, GrantKind, Unit};
 use degenbot_workers::role::WorkerRole;
+use degenbot_workers::slot::SlotState;
 use std::collections::VecDeque;
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
@@ -30,23 +31,108 @@ pub(crate) enum HostMsg {
     /// coalesced edge is benign. It can only cause an earlier wake.
     PostureEdge,
 }
-/// The host intake's progress vocabulary. `Idle`/`Backed` are live in this
-/// refactor (the backlog drain loop keys on `Backed`); `Faulted`/`Closed`
-/// are introduced by the tasks whose transitions make them reachable (the
-/// no-progress loud-fail and the lane-death fault), so no unconstructed
-/// variant ships here.
+/// What the host's own queues hold — a PROJECTION recomputed from the live
+/// host on every call, never stored:
+///
+/// - [`ProgressState::Backed`]: the unbounded backlog holds work. It outranks
+///   the other two: the backlog drain runs FIRST, so a backed host is never
+///   reported by the bounded queue behind it.
+/// - [`ProgressState::Active`]: work is in flight — the bounded role queue
+///   holds admitted units, or a seat of the hosted role is leased/running.
+/// - [`ProgressState::Idle`]: nothing held anywhere.
+///
+/// A sticky fault is NOT a posture here. It is this host's durable
+/// [`FaultResolution`], so a latched host still reports what its queues hold
+/// and the two facts can never fight over one enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProgressState {
-    /// The backlog is empty — nothing held.
+    /// A unit is queued for dispatch or running on a seat of the hosted role.
+    Active,
+    /// Nothing held: an empty backlog, an empty role queue, no seat of the
+    /// hosted role in flight.
     Idle,
     /// The backlog is non-empty — held units await admission.
     Backed,
-    /// The sticky lane-death latch is held (FF-T4): no admit can ever arrive,
-    /// so held work is resolved terminally instead of parked. Keyed on the
-    /// TYPED latch only — a long recoverable cordon stays `Backed`. Sticky:
-    /// once the latch is set there is no edge out (a fresh process only).
-    Faulted,
 }
+/// The typed OUTCOME of one fault drain on this host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FaultDrain {
+    /// Units THIS drain resolved — they ran zero times: resolution is not
+    /// execution, so a held unit runs at most once and here not at all.
+    pub(crate) resolved: usize,
+    /// Units this host has resolved since the latch was taken.
+    pub(crate) total: usize,
+}
+/// The per-host fault-RESOLUTION state: the durable fact a first-wins global
+/// cause cannot carry. [`ProgressState`] answers what the host is doing right
+/// now; this answers what a sticky fault has already resolved HERE, so a unit
+/// that arrives after the first drain is counted and reported instead of
+/// vanishing behind an already-published cause.
+///
+/// Sticky by construction: `Latched` has no edge out, mirroring the latch it
+/// follows (only a fresh process clears it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FaultResolution {
+    /// No fault watch: this host owns no intake receipt to resolve, so held
+    /// work follows the lane-death flows instead of resolving here. Such a
+    /// host can never latch — the faulted posture requires a watch.
+    Unwatched,
+    /// Watched, no lane death seen: nothing resolved.
+    Clear,
+    /// Watched and latched: `resolved` is this host's running total.
+    Latched { resolved: usize },
+}
+impl FaultResolution {
+    /// The state a host boots in. `watched` is whether the host was handed a
+    /// fault watch — the process-global cause lives there, never here.
+    pub(crate) const fn new(watched: bool) -> Self {
+        if watched {
+            Self::Clear
+        } else {
+            Self::Unwatched
+        }
+    }
+    /// Whether a sticky fault is latched on this host.
+    pub(crate) const fn latched(&self) -> bool {
+        matches!(self, Self::Latched { .. })
+    }
+    /// The units this host has resolved under the latch.
+    #[cfg(test)]
+    pub(crate) const fn resolved(&self) -> usize {
+        match self {
+            Self::Latched { resolved } => *resolved,
+            Self::Unwatched | Self::Clear => 0,
+        }
+    }
+    /// Take the latch. Answers `true` on the FIRST entry only — the one time
+    /// the cause is published — so a double lane-death delivery is idempotent.
+    /// `Unwatched` never latches.
+    fn latch(&mut self) -> bool {
+        match self {
+            Self::Unwatched | Self::Latched { .. } => false,
+            Self::Clear => {
+                *self = Self::Latched { resolved: 0 };
+                true
+            }
+        }
+    }
+    /// Account one drain's resolution, or `None` when nothing is latched.
+    fn drain(&mut self, resolved: usize) -> Option<FaultDrain> {
+        match self {
+            Self::Latched { resolved: total } => {
+                *total += resolved;
+                Some(FaultDrain {
+                    resolved,
+                    total: *total,
+                })
+            }
+            Self::Unwatched | Self::Clear => None,
+        }
+    }
+}
+/// The cause a fault watch publishes: the sticky lane-death latch, the only
+/// fault the fleet intake can latch.
+const FAULT_CAUSE: &str = "lane-death";
 /// The seat-model split of the unified host-message triple. The
 /// triple (admission, backlog drain, grant loop) is ONE shape; routing a
 /// GRANTED unit to its seat stays per host kind — the pooled `WorkQueue`
@@ -160,12 +246,15 @@ pub(crate) struct HostPump<'a> {
     /// passes trip the loud fail). Borrowed so it persists across every
     /// pump pass of one host thread.
     pub(crate) no_progress: &'a mut NoProgressGuard,
-    /// The S2 fault watch: set on entering Faulted so every
-    /// parked intake receipt resolves terminally. `None` on hosts whose
-    /// receipts are not pyo3-owned (sim/solve): `progress()` requires a
-    /// watch, so they NEVER enter Faulted — held work there follows the
-    /// pre-existing lane-death flows (S2 scope cut: registration intake).
+    /// The fault watch: the host publishes its CAUSE here (first-wins) so
+    /// every parked intake receipt resolves terminally. `None` on hosts
+    /// whose receipts are not pyo3-owned (sim/solve): such a host owns
+    /// nothing to resolve, so it never latches and its held work follows the
+    /// lane-death flows.
     pub(crate) fault: Option<&'a crate::arb_engine::fleet_intake::IntakeFaultWatch>,
+    /// The per-host fault resolution (see [`FaultResolution`]) — the durable
+    /// half, borrowed so it survives every pump pass of one host thread.
+    pub(crate) resolution: &'a mut FaultResolution,
     /// Test seam (T2): counts timeout-driven backstop pumps so the tick rate
     /// can be asserted bounded. Absent from production builds.
     #[cfg(test)]
@@ -181,22 +270,34 @@ impl HostPump<'_> {
             posture_admits: self.host.posture_admits_role(self.role),
         }
     }
-    /// The intake progress state (backlog emptiness today; the fault and
-    /// closed arms land with the transitions that make them reachable).
+    /// The work-posture projection (see [`ProgressState`]) — pure, and
+    /// read live on every call so no caller can hold a stale copy.
     fn progress(&self) -> ProgressState {
-        // Faulted is a PURE function of the sticky typed latch:
-        // no separate flag, so double lane-death delivery is idempotent by
-        // construction and no elapsed-time heuristic can reach it. Gated on
-        // a fault watch: only receipt-owning hosts Fault — a SHARED process
-        // posture owner's sticky latch must never fault a host with no
-        // receipts (a cross-test contamination class).
-        if self.fault.is_some() && self.host.lane_death_held() {
-            ProgressState::Faulted
-        } else if self.backlog.is_empty() {
-            ProgressState::Idle
-        } else {
+        if !self.backlog.is_empty() {
             ProgressState::Backed
+        } else if self.host.queue_len(self.role) > 0 || self.has_in_flight() {
+            ProgressState::Active
+        } else {
+            ProgressState::Idle
         }
+    }
+    /// Whether a seat of the hosted role holds a unit: `Leased`/`Running`
+    /// only. A `Pinned` slot is a warm lease held across cycles (the Solver
+    /// pin), not work, so it never makes a host `Active`.
+    fn has_in_flight(&self) -> bool {
+        self.host.slot_states().iter().any(|(_, state)| {
+            matches!(state, SlotState::Leased { .. } | SlotState::Running { .. })
+                && state.role() == Some(self.role)
+        })
+    }
+    /// Whether the host must resolve held work instead of admitting it: the
+    /// sticky lane-death latch is held AND this host owns a fault watch.
+    /// The watch condition is load-bearing — every host consults the same
+    /// process posture owner, so a sticky latch there must never fault a
+    /// host with no receipts to resolve (sim/solve share it with the
+    /// registration intake).
+    fn faulted(&self) -> bool {
+        self.fault.is_some() && self.host.lane_death_held()
     }
     /// Publish the live backlog depth to the `degenbot_fleet_intake_backlog`
     /// gauge. Called at every pump exit and after a fault drain,
@@ -207,29 +308,49 @@ impl HostPump<'_> {
             depth: self.backlog.len() as u64,
         });
     }
-    /// The Faulted arm: drain the backlog AND the role queue and
-    /// report the held count to the S2 fault watch. Granted in-flight units
-    /// are untouched (they complete naturally). A held unit runs ZERO times
-    /// here — resolution != execution, so at-most-once holds. Idempotent:
-    /// the watch is first-wins, the drains are clears, and a repeat pass is
-    /// a no-op once both are empty.
+    /// The faulted arm: take the latch (publishing the watch's cause ONCE),
+    /// drain the backlog AND the role queue, and report what THIS drain
+    /// resolved on this host.
+    ///
+    /// Every pass reports, so a unit that arrives after the first drain is
+    /// counted and voiced instead of being cleared behind an
+    /// already-published cause. A repeat pass with nothing held resolves
+    /// zero and changes nothing — the latch and the cause are first-wins.
+    ///
+    /// Granted in-flight units are untouched (they complete naturally). A
+    /// held unit runs ZERO times here: resolution is not execution, so holds
+    /// stay at-most-once.
     fn resolve_fault(&mut self) {
+        // An unwatched host owns nothing to resolve (`FaultResolution::Unwatched`
+        // never latches, and the pump gates on the same watch presence), so
+        // held work must never be cleared through here.
+        let Some(fault) = self.fault else {
+            return;
+        };
+        let first = self.resolution.latch();
+        // A state that did not take the latch has nothing to report: clearing
+        // held work here would resolve it unaccounted, so it stays held.
+        if !self.resolution.latched() {
+            return;
+        }
         let held = self.backlog.len() + self.host.queue_len(self.role);
         self.backlog.clear();
         let _ = self.host.drain_role_queue(self.role);
         self.publish_backlog();
-        if let Some(fault) = self.fault {
-            if fault.snapshot().is_none() {
-                fault.set(crate::arb_engine::fleet_intake::IntakeFault {
-                    cause: "lane-death",
-                    held,
-                });
-                op_error!(domain = solver, role = ?self.role,
-                    held,
-                    "lane-death latch held — Faulted: {held} queued/backlogged unit(s) resolved terminally (never executed), in-flight units complete naturally"
-                );
-            }
+        if first {
+            fault.set(crate::arb_engine::fleet_intake::IntakeFault { cause: FAULT_CAUSE });
         }
+        let Some(FaultDrain { resolved, total }) = self.resolution.drain(held) else {
+            return;
+        };
+        if !first && resolved == 0 {
+            return;
+        }
+        op_error!(domain = solver, role = ?self.role,
+            resolved,
+            total,
+            "lane-death latch held — {resolved} queued/backlogged unit(s) resolved terminally (never executed), {total} resolved on this host; in-flight units complete naturally"
+        );
     }
     /// The ONE dispatch loop (design doc §4): recv → apply → pump. Exits
     /// when the submission channel closes (all executor handles dropped —
@@ -345,10 +466,11 @@ impl HostPump<'_> {
     /// grant time — the seat-model delivery IS the claim — and completion
     /// arrives via [`HostMsg::SeatDone`].
     pub(crate) fn pump(&mut self) {
-        // Faulted FIRST: the sticky lane-death latch means no
-        // admit can ever arrive, so held work is resolved terminally (and
-        // this returns before the T4 guard, which must never accrue here).
-        if self.progress() == ProgressState::Faulted {
+        // The faulted posture FIRST: the sticky lane-death latch means no
+        // admit can ever arrive, so held work is resolved terminally. This
+        // returns BEFORE the no-progress guard — resolving under the latch is
+        // not a stalled pass, so a faulted host never accrues toward K.
+        if self.faulted() {
             self.resolve_fault();
             return;
         }
@@ -446,9 +568,9 @@ mod tests {
     // mailbox routing, arena ids) normalized away by a recording sink.
     // -----------------------------------------------------------------------
     use super::{
-        admission, intake_no_progress_ticks, Admission, AdmissionInputs, GrantContract,
-        HostDiscipline, HostMsg, HostPump, NoProgressGuard, NoProgressStep, ProgressState,
-        SeatSink,
+        admission, intake_no_progress_ticks, Admission, AdmissionInputs, FaultResolution,
+        GrantContract, HostDiscipline, HostMsg, HostPump, NoProgressGuard, NoProgressStep,
+        ProgressState, SeatSink,
     };
     use crate::arb_engine::fleet_intake::IntakeFault;
     use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
@@ -612,9 +734,13 @@ mod tests {
         /// T4: the persistent no-progress guard (a real drive reuses ONE
         /// guard across passes, mirroring production).
         guard: NoProgressGuard,
-        /// T6: the S2 fault watch this driven host reports to (leaked to
-        /// 'static — hermetic per test).
-        fault: &'static crate::arb_engine::fleet_intake::IntakeFaultWatch,
+        /// The fault watch this driven host publishes its cause to (leaked
+        /// to 'static — hermetic per test); `None` for the unwatched
+        /// sim/solve shape, which can never latch a fault.
+        fault: Option<&'static crate::arb_engine::fleet_intake::IntakeFaultWatch>,
+        /// The host's durable fault resolution — the value one real host
+        /// thread holds across every pump pass.
+        resolution: FaultResolution,
         /// T2: the recv-timeout backstop used by a real-thread drive.
         backstop: Duration,
     }
@@ -623,6 +749,19 @@ mod tests {
             Self::boot_with(kind, hermetic_owner())
         }
         fn boot_with(kind: HostKind, owner: &'static PostureOwner) -> Self {
+            Self::boot_inner(kind, owner, true)
+        }
+        /// The unwatched shape (sim/solve): no fault watch, so no latch.
+        fn boot_unwatched(kind: HostKind, owner: &'static PostureOwner) -> Self {
+            Self::boot_inner(kind, owner, false)
+        }
+        /// A fresh watch leaked to 'static (hermetic per test).
+        fn leaked_watch() -> &'static crate::arb_engine::fleet_intake::IntakeFaultWatch {
+            std::boxed::Box::leak(std::boxed::Box::new(
+                crate::arb_engine::fleet_intake::IntakeFaultWatch::new(),
+            ))
+        }
+        fn boot_inner(kind: HostKind, owner: &'static PostureOwner, watched: bool) -> Self {
             let host = FleetHost::boot(hermetic_fleet_boot(owner)).expect("hermetic fleet boot");
             let recorder = Recorder::new();
             let mirror = match kind {
@@ -645,9 +784,8 @@ mod tests {
                 in_flight: VecDeque::new(),
                 unit_seq: 0,
                 guard: NoProgressGuard::new(intake_no_progress_ticks()),
-                fault: std::boxed::Box::leak(std::boxed::Box::new(
-                    crate::arb_engine::fleet_intake::IntakeFaultWatch::new(),
-                )),
+                fault: watched.then(Self::leaked_watch),
+                resolution: FaultResolution::new(watched),
                 backstop: Duration::from_millis(50),
             }
         }
@@ -694,7 +832,8 @@ mod tests {
                 discipline: &self.discipline,
                 backstop: self.backstop,
                 no_progress: &mut self.guard,
-                fault: Some(self.fault),
+                fault: self.fault,
+                resolution: &mut self.resolution,
                 #[cfg(test)]
                 ticks: None,
             }
@@ -775,6 +914,19 @@ mod tests {
                     Outcome::ForeignGrant(_) | Outcome::NoProgressAbort => None,
                 })
                 .collect()
+        }
+        /// The cause this host published, if any.
+        fn fault(&self) -> Option<IntakeFault> {
+            self.fault
+                .and_then(crate::arb_engine::fleet_intake::IntakeFaultWatch::snapshot)
+        }
+        /// The units this host has resolved under the sticky latch.
+        fn resolved(&self) -> usize {
+            self.resolution.resolved()
+        }
+        /// Whether this host holds the fault latch.
+        fn latched(&self) -> bool {
+            self.resolution.latched()
         }
     }
     /// THE cross-host property: drive IDENTICAL unit sequences
@@ -1189,27 +1341,26 @@ mod tests {
             "WaitCap spills the overflow to the backlog (never dropped)"
         );
     }
-    /// T1 transition coverage: an admitted `Enqueue` in `Idle` leaves the host
-    /// `Idle` (the unit is granted to a running slot, the backlog stays
-    /// empty), and the matching `SeatDone` is likewise an `Idle` self-loop —
-    /// the "self-transitions are covered" requirement for the two states
-    /// live in this task.
+    /// The projection follows the host's own work: an admitted `Enqueue`
+    /// grants straight to a seat, so the host reports `Active` (a unit is
+    /// in flight, the backlog stays empty) until its `SeatDone` returns the
+    /// seat and the host to `Idle`.
     #[test]
-    fn idle_enqueue_and_seatdone_are_self_transitions() {
+    fn projection_follows_admitted_work_from_idle_through_active() {
         let mut driven = DrivenHost::boot(HostKind::Pooled);
         assert_eq!(driven.pump_handle().progress(), ProgressState::Idle);
         let unit = driven.next_unit();
         driven.apply_and_pump(HostMsg::Enqueue(unit));
         assert_eq!(
             driven.pump_handle().progress(),
-            ProgressState::Idle,
-            "an admitted Enqueue grants straight to a slot — Idle self-loop"
+            ProgressState::Active,
+            "the granted unit is in flight on a seat — the host is not idle"
         );
         driven.complete_oldest_in_flight();
         assert_eq!(
             driven.pump_handle().progress(),
             ProgressState::Idle,
-            "a SeatDone on an empty backlog is an Idle self-loop"
+            "the completion returns the seat and leaves nothing held"
         );
     }
     /// T1 transition coverage, closed (adversarial-review finding): the two
@@ -1255,6 +1406,11 @@ mod tests {
             n += 1;
             assert!(n <= 4 * cap + 2, "the role queue never saturated");
         }
+        assert_eq!(
+            capped.pump_handle().progress(),
+            ProgressState::Active,
+            "a saturated role queue with an empty backlog is Active, not Idle"
+        );
         for _ in 0..2 {
             let unit = capped.next_unit();
             capped.apply_and_pump(HostMsg::Enqueue(unit));
@@ -1323,6 +1479,7 @@ mod tests {
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     fault: None,
+                    resolution: &mut FaultResolution::new(false),
                     ticks: None,
                 }
                 .run(rx);
@@ -1404,6 +1561,7 @@ mod tests {
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     fault: None,
+                    resolution: &mut FaultResolution::new(false),
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -1522,6 +1680,7 @@ mod tests {
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     fault: None,
+                    resolution: &mut FaultResolution::new(false),
                     ticks: Some(&ticks_in),
                 }
                 .run(rx);
@@ -1565,6 +1724,7 @@ mod tests {
                     backstop,
                     no_progress: &mut NoProgressGuard::new(intake_no_progress_ticks()),
                     fault: None,
+                    resolution: &mut FaultResolution::new(false),
                     ticks: None,
                 }
                 .run(rx);
@@ -1874,25 +2034,22 @@ mod tests {
             3,
             "parked under the recoverable cordon"
         );
-        assert_eq!(
-            driven.fault.snapshot(),
-            None,
-            "no fault while merely cordoned"
-        );
+        assert_eq!(driven.fault(), None, "no fault while merely cordoned");
         force_lane_death(owner);
         driven.pump_handle().pump();
-        assert_eq!(
-            driven.pump_handle().progress(),
-            super::ProgressState::Faulted
-        );
+        assert!(driven.latched(), "the sticky latch faults the watched host");
         assert!(driven.backlog.is_empty(), "the held backlog is resolved");
         assert_eq!(
-            driven.fault.snapshot(),
+            driven.fault(),
             Some(IntakeFault {
-                cause: "lane-death",
-                held: 3
+                cause: "lane-death"
             }),
-            "every held unit is accounted to the typed terminal record"
+            "the watch carries the cause"
+        );
+        assert_eq!(
+            driven.resolved(),
+            3,
+            "every held unit is accounted on this host's own resolution"
         );
         assert!(driven.seated_units().is_empty(), "held units never ran");
     }
@@ -1914,7 +2071,7 @@ mod tests {
                 super::ProgressState::Backed,
                 "a recoverable cordon stays Backed"
             );
-            assert_eq!(driven.fault.snapshot(), None, "no fault from elapsed time");
+            assert_eq!(driven.fault(), None, "no fault from elapsed time");
         }
         assert_eq!(
             driven.backlog.len(),
@@ -1935,11 +2092,8 @@ mod tests {
         }
         force_lane_death(owner);
         driven.pump_handle().pump();
-        let first = driven
-            .fault
-            .snapshot()
-            .expect("the first fault is recorded");
-        assert_eq!(first.held, 2);
+        let first = driven.fault().expect("the first fault is recorded");
+        assert_eq!(driven.resolved(), 2, "the drain is counted on the host");
         // A second delivery of the SAME lane death is Held, and re-pumping a
         // Faulted host must not overwrite the first record.
         assert_eq!(
@@ -1947,7 +2101,8 @@ mod tests {
             degenbot_workers::posture::PostureChange::Held
         );
         driven.pump_handle().pump();
-        assert_eq!(driven.fault.snapshot(), Some(first), "first-wins");
+        assert_eq!(driven.fault(), Some(first), "first-wins");
+        assert_eq!(driven.resolved(), 2, "the repeat resolves nothing");
         assert!(driven.backlog.is_empty());
     }
     /// T6: in-flight granted units are NOT cancelled — they complete naturally
@@ -1962,13 +2117,13 @@ mod tests {
         force_lane_death(owner);
         driven.pump_handle().pump();
         assert_eq!(
-            driven.fault.snapshot(),
+            driven.fault(),
             Some(IntakeFault {
-                cause: "lane-death",
-                held: 0
+                cause: "lane-death"
             }),
-            "the granted unit is not held work"
+            "the cause is published even with nothing held"
         );
+        assert_eq!(driven.resolved(), 0, "the granted unit is not held work");
         driven.complete_oldest_in_flight();
         assert_eq!(driven.seated_units(), vec![1], "completed exactly once");
     }
@@ -1980,8 +2135,7 @@ mod tests {
         force_lane_death(owner);
         driven.pump_handle().pump();
         let first = driven
-            .fault
-            .snapshot()
+            .fault()
             .expect("the fault is recorded even with zero held");
         let late = driven.next_unit();
         driven.apply_and_pump(HostMsg::Enqueue(late));
@@ -1991,12 +2145,162 @@ mod tests {
         );
         assert!(
             driven.seated_units().is_empty(),
-            "a Faulted host never runs new work"
+            "a latched host never runs new work"
         );
         assert_eq!(
-            driven.fault.snapshot(),
+            driven.resolved(),
+            1,
+            "the late unit is counted on this host, not cleared silently"
+        );
+        assert_eq!(
+            driven.fault(),
             Some(first),
-            "the record is first-wins"
+            "the published cause is first-wins"
+        );
+    }
+    /// A unit that arrives AFTER the first fault drain is resolved AND
+    /// counted on this host's own resolution. The watch carries the cause —
+    /// never the per-host drain report — so a latched host must keep
+    /// reporting what it resolves instead of clearing silently behind an
+    /// already-published cause.
+    #[test]
+    fn late_units_after_the_first_fault_drain_are_resolved_and_counted() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..2 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        assert_eq!(
+            driven.resolved(),
+            2,
+            "the first drain resolves the held work"
+        );
+        assert!(driven.latched());
+        for want in 3..=4 {
+            let late = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(late));
+            assert_eq!(
+                driven.resolved(),
+                want,
+                "the late unit is resolved and counted, never cleared silently"
+            );
+            assert!(driven.backlog.is_empty(), "a late unit is never held");
+            assert_eq!(
+                driven.host.queue_len(driven.role()),
+                0,
+                "a late unit is never queued for dispatch"
+            );
+            assert_eq!(
+                driven.guard.consecutive(),
+                0,
+                "a resolving pass is not a stalled pass"
+            );
+        }
+        assert!(
+            driven.seated_units().is_empty(),
+            "a latched host runs nothing"
+        );
+        assert_eq!(
+            driven.fault(),
+            Some(IntakeFault {
+                cause: "lane-death"
+            }),
+            "the cause is published once, whatever the drain counts"
+        );
+    }
+    /// Repeat drains with nothing held are no-ops: the latch is sticky, the
+    /// cause is first-wins, the resolved total cannot grow, and a resolving
+    /// pass never trips the no-progress guard.
+    #[test]
+    fn repeat_empty_fault_drains_are_harmless() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        assert_eq!(
+            driven.resolved(),
+            1,
+            "the first drain resolves the held unit"
+        );
+        for _ in 0..(driven.guard.limit() * 2) {
+            driven.pump_handle().pump();
+            assert_eq!(driven.resolved(), 1, "an empty drain resolves nothing");
+            assert!(driven.latched(), "the latch has no edge out");
+            assert_eq!(
+                driven.guard.consecutive(),
+                0,
+                "resolving held work is progress, not a stall"
+            );
+            assert!(driven.backlog.is_empty());
+        }
+        assert_eq!(
+            driven.fault(),
+            Some(IntakeFault {
+                cause: "lane-death"
+            }),
+            "the cause is unchanged"
+        );
+    }
+    /// A host without a fault watch can never latch (the sim/solve shape:
+    /// it shares a process posture owner and owns no intake receipt to
+    /// resolve), so its held work stays held — a sticky latch elsewhere must
+    /// not resolve work on this host.
+    #[test]
+    fn unwatched_host_never_latches_a_fault() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_unwatched(HostKind::Pooled, owner);
+        force_cordoned(owner);
+        for _ in 0..2 {
+            let unit = driven.next_unit();
+            driven.apply_and_pump(HostMsg::Enqueue(unit));
+        }
+        force_lane_death(owner);
+        for _ in 0..(driven.guard.limit() * 2) {
+            driven.pump_handle().pump();
+            assert!(!driven.latched(), "no watch, no latch");
+            assert_eq!(driven.resolved(), 0, "an unwatched host resolves nothing");
+            assert_eq!(
+                driven.pump_handle().progress(),
+                ProgressState::Backed,
+                "held work stays held on a host that cannot fault"
+            );
+        }
+        assert_eq!(driven.fault(), None, "nothing was published to a watch");
+        assert_eq!(
+            driven.backlog.len(),
+            2,
+            "a latch that never happened resolves no held unit"
+        );
+    }
+    /// The projection has no fault arm: a latched host reports what its own
+    /// queues hold, and the latch is the separate durable resolution.
+    #[test]
+    fn the_projection_reports_held_work_not_the_fault() {
+        let owner = hermetic_owner();
+        let mut driven = DrivenHost::boot_with(HostKind::Pooled, owner);
+        let unit = driven.next_unit();
+        driven.apply_and_pump(HostMsg::Enqueue(unit));
+        assert_eq!(driven.pump_handle().progress(), ProgressState::Active);
+        force_lane_death(owner);
+        driven.pump_handle().pump();
+        assert!(driven.latched(), "the latch is held");
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Active,
+            "the granted unit is still in flight — the latch is not a posture"
+        );
+        driven.complete_oldest_in_flight();
+        assert_eq!(
+            driven.pump_handle().progress(),
+            ProgressState::Idle,
+            "an empty latched host is Idle, not a fourth posture"
         );
     }
     // ── T7: mechanized safety, liveness, reachability ────────────
@@ -2197,13 +2501,16 @@ mod tests {
                 }
                 let held = !driven.backlog.is_empty();
                 let progress = driven.pump_handle().progress();
-                assert_ne!(
-                    progress,
-                    ProgressState::Faulted,
+                assert!(
+                    !driven.latched(),
                     "no lane death was recorded (backlog={backlog}, cordon={cordon})"
                 );
                 if !held {
-                    assert_eq!(progress, ProgressState::Idle, "empty backlog is Idle");
+                    assert_ne!(
+                        progress,
+                        ProgressState::Backed,
+                        "an empty backlog is never Backed (Active while a unit is in flight)"
+                    );
                     continue;
                 }
                 assert_eq!(progress, ProgressState::Backed, "a held backlog is Backed");

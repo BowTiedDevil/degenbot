@@ -76,7 +76,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [041](ADR-041-block-epoch-pipeline.md) | The block-epoch pipeline — one stage machine over a cheap-read data plane | implemented |
 | [042](ADR-042-role-switching-worker-fleet.md) | One role-switching worker fleet; one fractional-quota reading (floor on both sizing sides) | proposed (sign-off satisfied; fleet-core may begin) |
 | [043](ADR-043-observability-standard.md) | The observability standard | accepted |
-| [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge | accepted |
+| [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge | accepted (state model refined: derived progress projections + a separate per-host fault resolution) |
 | [045](ADR-045-solve-cycle-extraction.md) | The solve cycle as a deep module | accepted |
 | [046](ADR-046-stage-handlers-pump-control-split.md) | StageHandlers / PumpControl split | accepted |
 | [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus | accepted (D4 reaffirmed and enforced by ADR-087) |
