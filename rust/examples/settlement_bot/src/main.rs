@@ -939,7 +939,7 @@ fn run() -> Result<(), String> {
             std::sync::Arc::new(io),
             std::sync::Arc::clone(driver.stages()),
             std::sync::Arc::clone(driver.verify()),
-            std::sync::Arc::new(degenbot::bot::crawl::CrawlLedger::new()),
+            driver.verify().ledger(),
             std::sync::Arc::new(degenbot::bot::crawl::BuildFlights::new()),
             std::sync::Arc::new(degenbot::bot::crawl::AdmissionSettings {
                 route: live::construction_route(&discovered),

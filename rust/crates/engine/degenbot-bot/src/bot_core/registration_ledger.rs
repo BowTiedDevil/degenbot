@@ -1,26 +1,46 @@
 //! The registration outcome ledger — the ONE owner of the registration
-//! outcome vocabulary and its negative memos.
+//! outcome vocabulary and the standings it settles.
 //!
 //! A registration unit ends in exactly one of a small set of outcomes, and
 //! the deployment layer needs that set closed: it feeds bounded metric tags,
-//! skip counters, and per-pool negative memoization. Keeping the vocabulary
+//! skip counters, and per-pool/per-path standings. Keeping the vocabulary
 //! in one owner is what makes it checkable — the tag set is pinned by a test
 //! here, and every consumer (the pure-Rust driver, the Python registration
 //! pipeline) reads these same values rather than re-declaring its own.
 //!
-//! # The four memos
+//! # One key, one standing
 //!
-//! - **registered paths** — hop signatures already answered by a completed
-//!   registration (the dup fast-path in front of verify).
-//! - **verified pools** — pools whose verify lifecycle COMPLETED (a pool
-//!   fact, for the pipeline's own lifetime).
-//! - **unregistrable pools** — STABLE typed build refusals (a pool fact: no
-//!   candidate path through that pool can register).
-//! - **rejected paths** — deterministic policy/predicate denies, per hop
-//!   signature.
+//! Everything a registration settles about a key answers the same question —
+//! "what is settled about this pool / this path?" — so the ledger stores ONE
+//! [`PoolStanding`] per pool identity and ONE [`PathStanding`] per hop
+//! signature. Contradictions are unrepresentable rather than policed: a pool
+//! is [`PoolStanding::Verified`] or [`PoolStanding::Unregistrable`], a path is
+//! [`PathStanding::Registered`] or [`PathStanding::Rejected`], never both.
 //!
-//! TRANSIENT build/register failures are deliberately never memoized — a
+//! A settle answers [`StandingDisposition::Settled`], an idempotent
+//! [`StandingDisposition::AlreadySettled`] when the SAME kind of standing
+//! already governs (a repeated stable refusal keeps the first refusal's
+//! record), or a typed [`PoolStandingConflict`] / [`PathStandingConflict`] when
+//! the other kind does. A conflict changes nothing: two contradictory facts are
+//! not the store's to arbitrate.
+//!
+//! The caller owns the resolution, and only EVIDENCE outranks a settled
+//! standing: a completed verify lifecycle runs over a registered pool, so it
+//! retracts a settled stable refusal
+//! ([`RegistrationLedger::supersede_pool`]); the engine's path registry holds
+//! the signature, so a completed registration retracts a settled policy deny
+//! ([`RegistrationLedger::supersede_path`]). Each retraction is reported where
+//! it happens, so a reversal is never silent.
+//!
+//! TRANSIENT build/register failures are deliberately never settled — a
 //! raced build or an RPC blip must stay retryable.
+//!
+//! # One store, shared
+//!
+//! The standings live behind one [`RegistrationLedgerHandle`], so the verify
+//! lifecycle's completed-pool fact and crawl admission's refusals and dedup are
+//! one truth: a pool verified by one capability is observed as verified by the
+//! other, and no second table can contradict it.
 //!
 //! # Why the taxonomy is a type, not a string
 //!
@@ -29,8 +49,10 @@
 //! dynamic fee) carry their own counters and do not add to the generic skip
 //! counter, which is what `counts_as_skip` records.
 
-use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
@@ -1008,55 +1030,6 @@ impl PathAdmission {
     }
 }
 
-/// One negative-memo container.
-///
-/// The four registration memos differ only in their key and payload, so the
-/// lookup/insert/count rule lives here once instead of four times, and
-/// [`Memo::insert_once`] is the one place the *first answer wins* discipline
-/// (a stable refusal outranks a later transient one) is expressed.
-///
-/// Ordered (not hashed) storage is deliberate: the pipeline report folds these
-/// in iteration order, and a hash order would make it nondeterministic.
-#[derive(Debug)]
-struct Memo<K, V = ()>(BTreeMap<K, V>);
-
-impl<K: Ord, V> Default for Memo<K, V> {
-    fn default() -> Self {
-        Self(BTreeMap::new())
-    }
-}
-
-impl<K: Ord, V> Memo<K, V> {
-    fn contains<Q>(&self, key: &Q) -> bool
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        self.0.contains_key(key)
-    }
-
-    fn get<Q>(&self, key: &Q) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
-        self.0.get(key)
-    }
-
-    fn insert(&mut self, key: K, value: V) {
-        self.0.insert(key, value);
-    }
-
-    /// Record only when absent — the first answer wins.
-    fn insert_once(&mut self, key: K, value: V) {
-        self.0.entry(key).or_insert(value);
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
 /// The identity a pool memo keys on — known BEFORE any build.
 ///
 /// A contract-address family keys on its address; a V4 pool on its on-chain
@@ -1158,13 +1131,145 @@ pub fn tick_assembly_failure(err: &TickMapAssemblyError) -> BuildFailure {
     }
 }
 
-/// The four registration memos plus the typed build-refusal classification.
+/// The ONE standing a pool identity holds.
+///
+/// A completed verify lifecycle and a stable build refusal answer the same
+/// question about a pool, so they are variants of one value: a pool is either
+/// verified or unregistrable, and the store cannot hold both.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PoolStanding {
+    /// The verify lifecycle COMPLETED: the pool is verified.
+    Verified,
+    /// A STABLE typed build refusal: no candidate path through this pool can
+    /// register.
+    Unregistrable(UnregistrableRecord),
+}
+
+impl PoolStanding {
+    /// The bounded tag of this standing.
+    #[must_use]
+    pub const fn tag(&self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Unregistrable(_) => "unregistrable",
+        }
+    }
+
+    /// Whether both standings answer the same question with the same kind of
+    /// fact — a repeat, never a contradiction.
+    const fn same_kind_as(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Verified, Self::Verified) | (Self::Unregistrable(_), Self::Unregistrable(_))
+        )
+    }
+}
+
+/// The ONE standing a hop signature holds.
+///
+/// A completed registration and a deterministic policy deny answer the same
+/// question about a path, so they are variants of one value: a signature is
+/// either registered (the dup fast-path) or rejected, and the store cannot
+/// hold both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathStanding {
+    /// A completed registration (engine-created or engine-dedup'd).
+    Registered,
+    /// A deterministic policy/predicate deny.
+    Rejected,
+}
+
+impl PathStanding {
+    /// The bounded tag of this standing.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::Registered => "registered",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    /// Whether both standings answer the same question with the same kind of
+    /// fact — a repeat, never a contradiction.
+    const fn same_kind_as(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Registered, Self::Registered) | (Self::Rejected, Self::Rejected)
+        )
+    }
+}
+
+/// What a settle did to the store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StandingDisposition {
+    /// The key held no standing: the attempted standing now governs it.
+    Settled,
+    /// The key already held a standing of the SAME kind: the first record
+    /// stands and nothing changed.
+    AlreadySettled,
+}
+
+/// A DIFFERENT pool standing already governs the key.
+///
+/// The verified fact and a stable refusal are contradictory answers about one
+/// pool, and only the caller can know which one is the truth: the store refuses
+/// the settle, keeps the settled standing, and answers both. Same-kind repeats
+/// are [`StandingDisposition::AlreadySettled`], never conflicts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolStandingConflict {
+    /// The pool identity both answers concern.
+    pub key: PreBuildIdentity,
+    /// The standing already settled, and still in force.
+    pub settled: PoolStanding,
+    /// The standing the caller tried to settle.
+    pub attempted: PoolStanding,
+}
+
+/// A DIFFERENT path standing already governs the key (the rule is
+/// [`PoolStandingConflict`]'s).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathStandingConflict {
+    /// The hop signature both answers concern.
+    pub hop_sig: HopSignature,
+    /// The standing already settled, and still in force.
+    pub settled: PathStanding,
+    /// The standing the caller tried to settle.
+    pub attempted: PathStanding,
+}
+
+impl std::fmt::Display for PoolStandingConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pool {} is {}; {} was refused",
+            self.key,
+            self.settled.tag(),
+            self.attempted.tag()
+        )
+    }
+}
+
+impl std::fmt::Display for PathStandingConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "path {:?} is {}; {} was refused",
+            self.hop_sig,
+            self.settled.tag(),
+            self.attempted.tag()
+        )
+    }
+}
+
+/// The registration standings plus the typed build-refusal classification.
+///
+/// Ordered (not hashed) storage is deliberate: a diagnostic that walks the
+/// standings renders in key order, so the same history reads the same way on
+/// every run.
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
-    registered_paths: Memo<HopSignature>,
-    verified_pools: Memo<PreBuildIdentity>,
-    unregistrable_pools: Memo<PreBuildIdentity, UnregistrableRecord>,
-    rejected_paths: Memo<HopSignature>,
+    pools: BTreeMap<PreBuildIdentity, PoolStanding>,
+    paths: BTreeMap<HopSignature, PathStanding>,
 }
 
 impl RegistrationLedger {
@@ -1250,33 +1355,89 @@ impl RegistrationLedger {
         }
     }
 
-    /// Whether this exact hop signature already completed registration.
+    // ── pool standings ──
+
+    /// The settled standing of one pool identity, or `None` while nothing is
+    /// settled.
     #[must_use]
-    pub fn path_registered(&self, hop_sig: &[(u64, bool)]) -> bool {
-        self.registered_paths.contains(hop_sig)
+    pub fn pool_standing(&self, key: &PreBuildIdentity) -> Option<&PoolStanding> {
+        self.pools.get(key)
     }
 
-    /// Record a completed registration (engine-created or engine-dedup'd).
-    pub fn memoize_registered_path(&mut self, hop_sig: HopSignature) {
-        self.registered_paths.insert(hop_sig, ());
+    /// Settle one pool's standing.
+    ///
+    /// An empty key takes the standing, the same KIND already in force is an
+    /// idempotent no-op (the first record stands, so a second stable refusal
+    /// never rewrites the first), and the other kind is a
+    /// [`PoolStandingConflict`] that changes nothing. The caller resolves a
+    /// conflict with evidence ([`Self::supersede_pool`]) or reports it.
+    ///
+    /// # Errors
+    /// The [`PoolStandingConflict`] naming both standings when the key is
+    /// already settled by the other kind of fact.
+    pub fn settle_pool(
+        &mut self,
+        key: PreBuildIdentity,
+        standing: PoolStanding,
+    ) -> Result<StandingDisposition, Box<PoolStandingConflict>> {
+        match self.pools.get(&key) {
+            None => {
+                self.pools.insert(key, standing);
+                Ok(StandingDisposition::Settled)
+            }
+            Some(settled) if settled.same_kind_as(&standing) => {
+                Ok(StandingDisposition::AlreadySettled)
+            }
+            Some(settled) => Err(Box::new(PoolStandingConflict {
+                key,
+                settled: settled.clone(),
+                attempted: standing,
+            })),
+        }
+    }
+
+    /// Record a later, externally-established fact over a settled standing,
+    /// answering the standing it displaced (`None` when the key was empty).
+    ///
+    /// This is the caller's half of a [`PoolStandingConflict`]: the store cannot
+    /// choose between two contradictory facts, but a completed verify lifecycle
+    /// over a registered pool IS the evidence that a stable refusal was wrong.
+    /// The caller names that evidence where it retracts it, so the reversal is
+    /// operator-visible rather than silent.
+    pub fn supersede_pool(
+        &mut self,
+        key: PreBuildIdentity,
+        standing: PoolStanding,
+    ) -> Option<PoolStanding> {
+        self.pools.insert(key, standing)
     }
 
     /// Whether this pool's verify lifecycle already completed.
     #[must_use]
     pub fn pool_verified(&self, key: &PreBuildIdentity) -> bool {
-        self.verified_pools.contains(key)
+        self.pool_standing(key) == Some(&PoolStanding::Verified)
     }
 
     /// Record a COMPLETED verify lifecycle (a pool fact).
-    pub fn memoize_verified_pool(&mut self, key: PreBuildIdentity) {
-        self.verified_pools.insert(key, ());
+    ///
+    /// # Errors
+    /// The [`PoolStandingConflict`] when a stable refusal is settled for this
+    /// pool instead.
+    pub fn memoize_verified_pool(
+        &mut self,
+        key: PreBuildIdentity,
+    ) -> Result<StandingDisposition, Box<PoolStandingConflict>> {
+        self.settle_pool(key, PoolStanding::Verified)
     }
 
-    /// How many pools have a completed verify-lifecycle fact (test/diagnostic
-    /// witness).
+    /// How many pools hold a completed verify-lifecycle standing
+    /// (test/diagnostic witness).
     #[must_use]
     pub fn verified_pool_count(&self) -> usize {
-        self.verified_pools.len()
+        self.pools
+            .values()
+            .filter(|standing| **standing == PoolStanding::Verified)
+            .count()
     }
 
     /// The memoized stable refusal for a pool key, or `None`.
@@ -1285,37 +1446,118 @@ impl RegistrationLedger {
         &self,
         key: Option<&PreBuildIdentity>,
     ) -> Option<&UnregistrableRecord> {
-        key.and_then(|key| self.unregistrable_pools.get(key))
+        key.and_then(|key| match self.pools.get(key) {
+            Some(PoolStanding::Unregistrable(record)) => Some(record),
+            _ => None,
+        })
     }
 
-    /// Record a STABLE build refusal (`setdefault` — the first tag wins, so a
-    /// later transient answer cannot overwrite the pool fact).
+    /// Record a STABLE build refusal.
+    ///
+    /// A repeated refusal is idempotent — the first refusal's record stays, so a
+    /// later, differently-tagged refusal cannot rewrite the pool fact.
+    ///
+    /// # Errors
+    /// The [`PoolStandingConflict`] when the pool is settled [`Verified`].
+    ///
+    /// [`Verified`]: PoolStanding::Verified
     pub fn memoize_unregistrable(
         &mut self,
-        key: Option<PreBuildIdentity>,
+        key: PreBuildIdentity,
         outcome: RegistrationOutcome,
         counts_as_skip: bool,
-    ) {
-        if let Some(key) = key {
-            self.unregistrable_pools.insert_once(
-                key,
-                UnregistrableRecord {
-                    outcome,
-                    counts_as_skip,
-                },
-            );
+    ) -> Result<StandingDisposition, Box<PoolStandingConflict>> {
+        self.settle_pool(
+            key,
+            PoolStanding::Unregistrable(UnregistrableRecord {
+                outcome,
+                counts_as_skip,
+            }),
+        )
+    }
+
+    // ── path standings ──
+
+    /// The settled standing of one hop signature, or `None` while nothing is
+    /// settled.
+    #[must_use]
+    pub fn path_standing(&self, hop_sig: &[(u64, bool)]) -> Option<PathStanding> {
+        self.paths.get(hop_sig).copied()
+    }
+
+    /// Settle one path's standing (see [`Self::settle_pool`] for the rule).
+    ///
+    /// # Errors
+    /// The [`PathStandingConflict`] naming both standings when the key is
+    /// already settled by the other kind of fact.
+    pub fn settle_path(
+        &mut self,
+        hop_sig: HopSignature,
+        standing: PathStanding,
+    ) -> Result<StandingDisposition, Box<PathStandingConflict>> {
+        match self.paths.get(&hop_sig) {
+            None => {
+                self.paths.insert(hop_sig, standing);
+                Ok(StandingDisposition::Settled)
+            }
+            Some(settled) if settled.same_kind_as(standing) => {
+                Ok(StandingDisposition::AlreadySettled)
+            }
+            Some(settled) => Err(Box::new(PathStandingConflict {
+                hop_sig,
+                settled: *settled,
+                attempted: standing,
+            })),
         }
+    }
+
+    /// Record a later, externally-established fact over a settled path standing,
+    /// answering the standing it displaced (`None` when the key was empty).
+    ///
+    /// The engine's path registry is the stronger fact: a signature it holds is
+    /// registered whatever a policy deny settled first, and the caller reports
+    /// the retraction where it happens.
+    pub fn supersede_path(
+        &mut self,
+        hop_sig: HopSignature,
+        standing: PathStanding,
+    ) -> Option<PathStanding> {
+        self.paths.insert(hop_sig, standing)
+    }
+
+    /// Whether this exact hop signature already completed registration.
+    #[must_use]
+    pub fn path_registered(&self, hop_sig: &[(u64, bool)]) -> bool {
+        self.path_standing(hop_sig) == Some(PathStanding::Registered)
+    }
+
+    /// Record a completed registration (engine-created or engine-dedup'd).
+    ///
+    /// # Errors
+    /// The [`PathStandingConflict`] when a deterministic deny is settled for this
+    /// signature instead.
+    pub fn memoize_registered_path(
+        &mut self,
+        hop_sig: HopSignature,
+    ) -> Result<StandingDisposition, Box<PathStandingConflict>> {
+        self.settle_path(hop_sig, PathStanding::Registered)
     }
 
     /// Whether this hop signature already hit a deterministic deny.
     #[must_use]
     pub fn path_rejected(&self, hop_sig: &[(u64, bool)]) -> bool {
-        self.rejected_paths.contains(hop_sig)
+        self.path_standing(hop_sig) == Some(PathStanding::Rejected)
     }
 
     /// Record a deterministic policy/predicate deny for a hop signature.
-    pub fn memoize_rejected_path(&mut self, hop_sig: HopSignature) {
-        self.rejected_paths.insert(hop_sig, ());
+    ///
+    /// # Errors
+    /// The [`PathStandingConflict`] when the signature is settled `Registered`.
+    pub fn memoize_rejected_path(
+        &mut self,
+        hop_sig: HopSignature,
+    ) -> Result<StandingDisposition, Box<PathStandingConflict>> {
+        self.settle_path(hop_sig, PathStanding::Rejected)
     }
 
     // ── the eligibility gate ──
@@ -1333,16 +1575,18 @@ impl RegistrationLedger {
     /// data (the pre-filter is policy and stays with the strategy — the
     /// ledger is handed the verdict, never a callback).
     ///
-    /// The pass, in order: direction agreement → the rejected-path memo →
-    /// the policy verdict → the registered-path dup fast-path. A policy deny
-    /// is deterministic per hop signature — the pre-filter is a pure policy
-    /// over the path's composition — so it enters the rejected-path memo and
-    /// is answered as [`PathAdmission::PolicyDenied`].
+    /// The pass, in order: direction agreement → the path's settled standing
+    /// → the policy verdict. A policy deny is deterministic per hop signature
+    /// — the pre-filter is a pure policy over the path's composition — so it
+    /// settles the signature as [`PathStanding::Rejected`] and is answered as
+    /// [`PathAdmission::PolicyDenied`]; a signature whose standing is already
+    /// [`PathStanding::Registered`] answers the dup fast-path instead, so the
+    /// deny can never contradict a completed registration.
     ///
     /// A driver reads the rejected-path memo itself ([`Self::path_rejected`])
     /// before running its pre-filter — a memoized deny must never re-run the
-    /// predicate — so a memo hit at THIS ask answers the seat race where
-    /// another unit memoized the signature between that read and here.
+    /// predicate — so a standing hit at THIS ask answers the seat race where
+    /// another unit settled the signature between that read and here.
     pub fn admit_path_with_policy(
         &mut self,
         hop_pool_ids: &[u64],
@@ -1365,17 +1609,62 @@ impl RegistrationLedger {
             .copied()
             .zip(directions.iter().copied())
             .collect();
-        if self.path_rejected(&hop_sig) {
-            return PathAdmission::RejectedPathMemo;
+        if let Some(standing) = self.path_standing(&hop_sig) {
+            return match standing {
+                PathStanding::Rejected => PathAdmission::RejectedPathMemo,
+                PathStanding::Registered => PathAdmission::AlreadyRegistered,
+            };
         }
         if policy == PolicyVerdict::Denied {
-            self.memoize_rejected_path(hop_sig);
-            return PathAdmission::PolicyDenied;
-        }
-        if self.path_registered(&hop_sig) {
-            return PathAdmission::AlreadyRegistered;
+            // An unsettled signature is the only one that reaches here (the
+            // standing check above answers every settled one), so the deny
+            // settles. A standing that appeared anyway still answers itself
+            // rather than being overwritten.
+            return match self.settle_path(hop_sig, PathStanding::Rejected) {
+                Ok(_) => PathAdmission::PolicyDenied,
+                Err(conflict) => match conflict.settled {
+                    PathStanding::Registered => PathAdmission::AlreadyRegistered,
+                    PathStanding::Rejected => PathAdmission::RejectedPathMemo,
+                },
+            };
         }
         PathAdmission::Admitted { hop_sig }
+    }
+}
+
+/// The process-wide owner of the registration standings.
+///
+/// The standings are one store behind one lock, and every capability that
+/// settles a fact holds a clone of this handle: the verify lifecycle records
+/// completed pools in it, and crawl admission reads its refusals, its path
+/// dedup, and its path denies from it. One store is what makes "verified" and
+/// "unregistrable" (or "registered" and "rejected") answers about the same key
+/// instead of two tables that can disagree.
+///
+/// Every [`Self::with`] scope is synchronous. The guard never crosses an
+/// `await`, so the async verify lifecycle records its fact after its work
+/// rather than holding the store across it, and no caller takes the store
+/// while holding the state lock the lifecycle needs.
+#[derive(Clone, Debug, Default)]
+pub struct RegistrationLedgerHandle {
+    ledger: Arc<Mutex<RegistrationLedger>>,
+}
+
+impl RegistrationLedgerHandle {
+    /// A handle on an empty store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Run `f` against the standings under the store's lock.
+    ///
+    /// `f` must not await: the guard is the store's only lock, and a caller
+    /// that parked inside this scope would hold every other capability out of
+    /// the standings.
+    pub fn with<R>(&self, f: impl FnOnce(&mut RegistrationLedger) -> R) -> R {
+        let mut ledger = self.ledger.lock();
+        f(&mut ledger)
     }
 }
 
@@ -1384,7 +1673,7 @@ impl RegistrationLedger {
 // The per-path unit outcome, its summary counters, and the fold that relates
 // them — the contract the pure-Rust driver and the Python registration
 // pipeline both construct and assert against, beside the vocabulary and
-// memos above.
+// standings above.
 
 /// The reason label one unit outcome records in the report's outcome
 /// breakdown.
@@ -1789,30 +2078,47 @@ mod tests {
     }
 
     #[test]
-    fn memos_roundtrip_and_first_refusal_wins() {
+    fn standings_roundtrip_and_first_refusal_wins() {
         let mut ledger = RegistrationLedger::new();
         assert!(!ledger.path_registered(&[(1, true)]));
-        ledger.memoize_registered_path(vec![(1, true)]);
+        assert_eq!(
+            ledger.memoize_registered_path(vec![(1, true)]),
+            Ok(StandingDisposition::Settled)
+        );
         assert!(ledger.path_registered(&[(1, true)]));
         assert!(
             !ledger.path_registered(&[(1, false)]),
             "orientation is part of the signature"
         );
 
-        let key = PreBuildIdentity::Address(alloy::primitives::Address::from([0x01u8; 20]));
-        assert!(!ledger.pool_verified(&key));
-        ledger.memoize_verified_pool(key);
-        assert!(ledger.pool_verified(&key));
+        let verified = PreBuildIdentity::Address(alloy::primitives::Address::from([0x01u8; 20]));
+        assert!(!ledger.pool_verified(&verified));
+        assert_eq!(
+            ledger.memoize_verified_pool(verified),
+            Ok(StandingDisposition::Settled)
+        );
+        assert!(ledger.pool_verified(&verified));
 
-        ledger.memoize_unregistrable(Some(key), RegistrationOutcome::BuildV3Refused, true);
-        ledger.memoize_unregistrable(Some(key), RegistrationOutcome::V4HookRejected, false);
-        let record = ledger.unregistrable_record(Some(&key)).unwrap();
+        let refused = PreBuildIdentity::Address(alloy::primitives::Address::from([0x05u8; 20]));
+        assert_eq!(
+            ledger.memoize_unregistrable(refused, RegistrationOutcome::BuildV3Refused, true),
+            Ok(StandingDisposition::Settled)
+        );
+        assert_eq!(
+            ledger.memoize_unregistrable(refused, RegistrationOutcome::V4HookRejected, false),
+            Ok(StandingDisposition::AlreadySettled),
+            "a repeated refusal keeps the first record"
+        );
+        let record = ledger.unregistrable_record(Some(&refused)).unwrap();
         assert_eq!(record.outcome, RegistrationOutcome::BuildV3Refused);
         assert!(record.counts_as_skip);
         assert!(ledger.unregistrable_record(None).is_none());
 
         assert!(!ledger.path_rejected(&[(2, false)]));
-        ledger.memoize_rejected_path(vec![(2, false)]);
+        assert_eq!(
+            ledger.memoize_rejected_path(vec![(2, false)]),
+            Ok(StandingDisposition::Settled)
+        );
         assert!(ledger.path_rejected(&[(2, false)]));
     }
 
@@ -1900,7 +2206,10 @@ mod tests {
                 hop_sig: vec![(4, true)]
             }
         );
-        ledger.memoize_registered_path(vec![(4, true)]);
+        assert_eq!(
+            ledger.memoize_registered_path(vec![(4, true)]),
+            Ok(StandingDisposition::Settled)
+        );
         assert_eq!(
             ledger.admit_path_with_policy(&[4], None, Some(&[true]), PolicyVerdict::Admitted),
             PathAdmission::AlreadyRegistered
@@ -3241,6 +3550,171 @@ mod tests {
             assert_tags(&kind, Some(family), RegistrationPhase::Register);
         }
     }
+}
+
+/// A pool identity holds ONE settled answer: the completed verify fact and a
+/// stable refusal are contradictory answers, so the second is refused as a
+/// typed conflict instead of overwriting the first.
+#[test]
+fn a_pool_identity_holds_one_standing() {
+    let mut ledger = RegistrationLedger::new();
+    let key = PreBuildIdentity::Address(alloy::primitives::Address::from([0x02u8; 20]));
+    let refusal = UnregistrableRecord {
+        outcome: RegistrationOutcome::BuildV3Refused,
+        counts_as_skip: true,
+    };
+
+    assert!(ledger.pool_standing(&key).is_none());
+    assert_eq!(
+        ledger.memoize_verified_pool(key),
+        Ok(StandingDisposition::Settled)
+    );
+    assert_eq!(
+        ledger.memoize_verified_pool(key),
+        Ok(StandingDisposition::AlreadySettled),
+        "a repeated verified settle is idempotent"
+    );
+
+    // The settled verify fact refuses the refusal, and nothing changes.
+    assert_eq!(
+        ledger.memoize_unregistrable(key, RegistrationOutcome::BuildV3Refused, true),
+        Err(Box::new(PoolStandingConflict {
+            key,
+            settled: PoolStanding::Verified,
+            attempted: PoolStanding::Unregistrable(refusal.clone()),
+        })),
+        "a verified pool refuses an unregistrable standing"
+    );
+    assert_eq!(
+        ledger.pool_standing(&key),
+        Some(&PoolStanding::Verified),
+        "a conflict leaves the settled standing in force"
+    );
+    assert!(ledger.pool_verified(&key));
+    assert_eq!(ledger.unregistrable_record(Some(&key)), None);
+    assert_eq!(ledger.verified_pool_count(), 1);
+
+    // A refusal settles first under the same rule, and a repeated refusal keeps
+    // the FIRST record.
+    let refused = PreBuildIdentity::Address(alloy::primitives::Address::from([0x03u8; 20]));
+    assert_eq!(
+        ledger.memoize_unregistrable(refused, RegistrationOutcome::BuildV3Refused, true),
+        Ok(StandingDisposition::Settled)
+    );
+    assert_eq!(
+        ledger.memoize_unregistrable(refused, RegistrationOutcome::V4HookRejected, false),
+        Ok(StandingDisposition::AlreadySettled),
+        "a second refusal is idempotent"
+    );
+    assert_eq!(ledger.unregistrable_record(Some(&refused)), Some(&refusal));
+    assert_eq!(
+        ledger.memoize_verified_pool(refused),
+        Err(Box::new(PoolStandingConflict {
+            key: refused,
+            settled: PoolStanding::Unregistrable(refusal.clone()),
+            attempted: PoolStanding::Verified,
+        })),
+        "a settled refusal refuses the verify fact"
+    );
+    assert!(!ledger.pool_verified(&refused));
+    assert_eq!(ledger.verified_pool_count(), 1);
+
+    // Only evidence retracts it: the completed lifecycle's proof that the pool
+    // registered answers the standing it displaced.
+    assert_eq!(
+        ledger.supersede_pool(refused, PoolStanding::Verified),
+        Some(PoolStanding::Unregistrable(refusal))
+    );
+    assert!(ledger.pool_verified(&refused));
+    assert_eq!(ledger.unregistrable_record(Some(&refused)), None);
+    assert_eq!(ledger.verified_pool_count(), 2);
+}
+
+/// A hop signature holds ONE settled answer: the gate answers the standing
+/// already in force, and a direct cross-kind settle is a typed conflict.
+#[test]
+fn a_hop_signature_holds_one_standing() {
+    let mut ledger = RegistrationLedger::new();
+    let registered_first = vec![(7u64, true)];
+
+    assert!(ledger.path_standing(&registered_first).is_none());
+    assert_eq!(
+        ledger.memoize_registered_path(registered_first.clone()),
+        Ok(StandingDisposition::Settled)
+    );
+    assert_eq!(
+        ledger.memoize_registered_path(registered_first.clone()),
+        Ok(StandingDisposition::AlreadySettled),
+        "a repeated registration settle is idempotent"
+    );
+
+    // A deny arriving on a registered signature answers the dup fast-path and
+    // is never settled by the gate.
+    assert_eq!(
+        ledger.admit_path_with_policy(&[7], None, Some(&[true]), PolicyVerdict::Denied),
+        PathAdmission::AlreadyRegistered,
+        "a registered signature is never also rejected"
+    );
+    assert!(!ledger.path_rejected(&registered_first));
+    assert_eq!(
+        ledger.path_standing(&registered_first),
+        Some(PathStanding::Registered)
+    );
+    assert_eq!(
+        ledger.memoize_rejected_path(registered_first.clone()),
+        Err(Box::new(PathStandingConflict {
+            hop_sig: registered_first.clone(),
+            settled: PathStanding::Registered,
+            attempted: PathStanding::Rejected,
+        })),
+        "a direct deny settle on a registered signature is a typed conflict"
+    );
+
+    // A deny settles first, and the engine's registry outranks it: the
+    // registration settle conflicts until the caller retracts the deny.
+    let rejected_first = vec![(8u64, false)];
+    assert_eq!(
+        ledger.memoize_rejected_path(rejected_first.clone()),
+        Ok(StandingDisposition::Settled)
+    );
+    assert_eq!(
+        ledger.admit_path_with_policy(&[8], None, Some(&[false]), PolicyVerdict::Admitted),
+        PathAdmission::RejectedPathMemo
+    );
+    assert_eq!(
+        ledger.memoize_registered_path(rejected_first.clone()),
+        Err(Box::new(PathStandingConflict {
+            hop_sig: rejected_first.clone(),
+            settled: PathStanding::Rejected,
+            attempted: PathStanding::Registered,
+        }))
+    );
+    assert_eq!(
+        ledger.supersede_path(rejected_first.clone(), PathStanding::Registered),
+        Some(PathStanding::Rejected)
+    );
+    assert!(ledger.path_registered(&rejected_first));
+    assert_eq!(
+        ledger.admit_path_with_policy(&[8], None, Some(&[false]), PolicyVerdict::Admitted),
+        PathAdmission::AlreadyRegistered,
+        "the retracted deny is the dup fast-path's signature now"
+    );
+}
+
+/// The handle is the store's sharing seam: every clone observes one ledger,
+/// so two capabilities cannot hold two truths.
+#[test]
+fn the_ledger_handle_shares_one_store() {
+    let handle = RegistrationLedgerHandle::new();
+    let same_store = handle.clone();
+    let key = PreBuildIdentity::Address(alloy::primitives::Address::from([0x04u8; 20]));
+
+    assert_eq!(
+        same_store.with(|ledger| ledger.memoize_verified_pool(key)),
+        Ok(StandingDisposition::Settled)
+    );
+    assert!(handle.with(|ledger| ledger.pool_verified(&key)));
+    assert_eq!(handle.with(|ledger| ledger.verified_pool_count()), 1);
 }
 
 // ── The fold reports the registration-skip fact ────────────────────────────

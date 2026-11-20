@@ -28,7 +28,7 @@ use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::{BotState, PoolLookup};
 
-use super::registration_ledger::{PreBuildIdentity, RefusalKind};
+use super::registration_ledger::{PreBuildIdentity, RefusalKind, RegistrationLedgerHandle};
 use super::registration_lifecycle::LifecycleOutcome;
 use super::verification_retry::{retry_verification_call, RetryPolicy};
 use super::verify_claims::PoolVerifications;
@@ -60,13 +60,14 @@ impl Default for VerifyLifecycleConfig {
 }
 
 /// The one owner of the verify lifecycle's policy: the claim window, the
-/// durable verified-pool fact, and the bounded retry.
+/// durable verified-pool standing it settles in the shared store, and the
+/// bounded retry.
 pub struct VerifyLifecycle {
     /// The shared state owner the machine runs over.
     core: Arc<StateLock<BotState>>,
     /// The construction values (see [`VerifyLifecycleConfig`]).
     config: Mutex<VerifyLifecycleConfig>,
-    /// The at-most-once claim window plus the durable verified-pool fact.
+    /// The at-most-once claim window plus the completed-lifecycle standing.
     verifications: PoolVerifications<RefusalKind>,
     /// Test-only scripted attempt outcomes: each attempt pops one, and an empty
     /// script runs the real lifecycle.
@@ -75,16 +76,29 @@ pub struct VerifyLifecycle {
 }
 
 impl VerifyLifecycle {
-    /// A lifecycle over the shared state owner.
+    /// A lifecycle over the shared state owner and the shared standings store.
     #[must_use]
-    pub fn new(core: Arc<StateLock<BotState>>, config: VerifyLifecycleConfig) -> Self {
+    pub fn new(
+        core: Arc<StateLock<BotState>>,
+        config: VerifyLifecycleConfig,
+        ledgers: RegistrationLedgerHandle,
+    ) -> Self {
         Self {
             core,
             config: Mutex::new(config),
-            verifications: PoolVerifications::new(),
+            verifications: PoolVerifications::new(ledgers),
             #[cfg(test)]
             script: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The standings store this lifecycle settles completed pools in.
+    ///
+    /// Admission holds the same handle, so the pool a verify completed is the
+    /// pool admission observes as verified.
+    #[must_use]
+    pub fn ledger(&self) -> RegistrationLedgerHandle {
+        self.verifications.ledger()
     }
 
     /// Install the construction values — the one configuration door.
@@ -267,7 +281,9 @@ fn claim_key(key: PoolLookup) -> PreBuildIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::registration_ledger::{RegistrationPhase, VerifyOrigin};
+    use crate::bot_core::registration_ledger::{
+        PoolStanding, RegistrationOutcome, RegistrationPhase, StandingDisposition, VerifyOrigin,
+    };
     use alloy::primitives::{U128, U256};
     use degenbot_pools::{
         PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey,
@@ -284,6 +300,7 @@ mod tests {
                 state_view: None,
                 retry: policy(3),
             },
+            RegistrationLedgerHandle::new(),
         )
     }
 
@@ -512,6 +529,7 @@ mod tests {
                 state_view: None,
                 retry: policy(1),
             },
+            RegistrationLedgerHandle::new(),
         );
         let address = Address::from([0x15u8; 20]);
         register_v3(&lifecycle.core, address, PoolTickCoverage::Sparse);
@@ -588,5 +606,84 @@ mod tests {
             .await
             .expect("V4 lifecycle");
         assert_eq!(lifecycle.verified_pool_count(), 2);
+    }
+
+    /// The completed-lifecycle standing lands in the store injected at
+    /// construction: the admission that shares the handle reads the same fact.
+    #[tokio::test]
+    async fn the_lifecycle_settles_its_fact_in_the_injected_store() {
+        let ledgers = RegistrationLedgerHandle::new();
+        let lifecycle = VerifyLifecycle::new(
+            Arc::new(StateLock::new(BotState::new())),
+            VerifyLifecycleConfig {
+                provider: None,
+                state_view: None,
+                retry: policy(3),
+            },
+            ledgers.clone(),
+        );
+        let address = Address::from([0x19u8; 20]);
+        register_v3(&lifecycle.core, address, PoolTickCoverage::Sparse);
+
+        lifecycle
+            .run(PoolLookup::from_address(address), Some(SNAPSHOT))
+            .await
+            .expect("a sparse pool verifies without a provider");
+
+        assert_eq!(
+            ledgers.with(|ledger| ledger
+                .pool_standing(&PreBuildIdentity::Address(address))
+                .cloned()),
+            Some(PoolStanding::Verified),
+            "the injected store holds the standing"
+        );
+        assert_eq!(
+            lifecycle
+                .ledger()
+                .with(|ledger| ledger.verified_pool_count()),
+            1,
+        );
+    }
+
+    /// A settled stable refusal for a pool the registry does hold is stale: the
+    /// lifecycle completes over the registered pool, the store refuses the
+    /// cross-kind settle, and the lifecycle's evidence retracts the refusal.
+    #[tokio::test]
+    async fn a_completed_lifecycle_retracts_a_stale_refusal() {
+        let ledgers = RegistrationLedgerHandle::new();
+        let lifecycle = VerifyLifecycle::new(
+            Arc::new(StateLock::new(BotState::new())),
+            VerifyLifecycleConfig {
+                provider: None,
+                state_view: None,
+                retry: policy(3),
+            },
+            ledgers.clone(),
+        );
+        let address = Address::from([0x1au8; 20]);
+        register_v3(&lifecycle.core, address, PoolTickCoverage::Sparse);
+        let key = PreBuildIdentity::Address(address);
+        assert_eq!(
+            ledgers.with(|ledger| ledger.memoize_unregistrable(
+                key,
+                RegistrationOutcome::V4HookRejected,
+                false
+            )),
+            Ok(StandingDisposition::Settled)
+        );
+
+        let outcome = lifecycle
+            .run(PoolLookup::from_address(address), Some(SNAPSHOT))
+            .await
+            .expect("a registered sparse pool verifies without a provider");
+        assert_eq!(outcome, LifecycleOutcome::Completed);
+        assert!(
+            ledgers.with(|ledger| ledger.pool_verified(&key)),
+            "the completed lifecycle settles Verified over the stale refusal"
+        );
+        assert!(
+            ledgers.with(|ledger| ledger.unregistrable_record(Some(&key)).is_none()),
+            "the stale refusal is retracted"
+        );
     }
 }

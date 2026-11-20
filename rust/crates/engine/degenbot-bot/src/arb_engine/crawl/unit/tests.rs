@@ -30,7 +30,7 @@ use hashbrown::HashMap;
 
 use super::{run_crawl_unit, CrawlUnit, CrawlUnitHost};
 use crate::arb_engine::crawl::admission::{
-    AdmissionSettings, CrawlAbort, CrawlLedger, DiscoveredHop, RegistrationAdmission,
+    AdmissionSettings, CrawlAbort, DiscoveredHop, RegistrationAdmission,
 };
 use crate::arb_engine::crawl::flights::CrawlFlights;
 use crate::arb_engine::crawl::policy::{CrawlPathPolicy, TokenFilter};
@@ -38,7 +38,8 @@ use crate::arb_engine::crawl::receipt::{CrawlReceipt, UnitStage};
 use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::{ConstructionIo, DbConstruction, NoDb, RpcConstruction};
 use crate::bot_core::registration_ledger::{
-    PipelineReport, PreBuildIdentity, RegistrationOutcome, RegistrationUnitOutcome,
+    PipelineReport, PoolStanding, PreBuildIdentity, RegistrationLedgerHandle, RegistrationOutcome,
+    RegistrationUnitOutcome, StandingDisposition,
 };
 use crate::bot_core::verification_retry::RetryPolicy;
 use crate::bot_core::{Bot, ConstructionRefusal, ConstructionRoute, VerifyLifecycle};
@@ -412,7 +413,8 @@ struct Harness {
     /// The pose-independent verify home the admission asks, held directly.
     verify: Arc<VerifyLifecycle>,
     io: Arc<ConstructionIo>,
-    ledger: Arc<CrawlLedger>,
+    /// The shared standings store the verify home and the admission settle in.
+    ledger: RegistrationLedgerHandle,
     flights: Arc<CrawlFlights>,
     admission: RegistrationAdmission,
 }
@@ -434,6 +436,10 @@ impl Harness {
         let io = Arc::new(ConstructionIo::new(db, Arc::new(rpc)));
         let bot = Arc::new(Bot::new(CHAIN_ID));
         let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
+        // The fixture's ONE registration store: the verify home settles its
+        // standings there and the admission reads them, exactly as the driver
+        // composes them.
+        let ledger = RegistrationLedgerHandle::new();
         // The verify home walks no retry sleeps in the suite: one attempt, no
         // delay, no jitter.
         let verify = Arc::new(VerifyLifecycle::new(
@@ -448,15 +454,15 @@ impl Harness {
                     jitter: 0.0,
                 },
             },
+            ledger.clone(),
         ));
-        let ledger = Arc::new(CrawlLedger::new());
         let flights = Arc::new(CrawlFlights::new());
         let admission = RegistrationAdmission::new(
             Arc::clone(&bot),
             Arc::clone(&io),
             Arc::clone(&stages),
             Arc::clone(&verify),
-            Arc::clone(&ledger),
+            ledger.clone(),
             Arc::clone(&flights),
             Arc::new(settings),
         );
@@ -622,10 +628,15 @@ async fn a_memoized_build_refusal_answers_before_any_build() {
     let harness = Harness::new(cycle_rpc());
     // A pool fact: the V2 hop's stable refusal is already recorded.
     harness.ledger.with(|ledger| {
-        ledger.memoize_unregistrable(
-            v2_hop().pre_build_identity(),
-            RegistrationOutcome::BuildV3Refused,
-            true,
+        assert_eq!(
+            ledger.memoize_unregistrable(
+                v2_hop()
+                    .pre_build_identity()
+                    .expect("a V2 hop carries its address"),
+                RegistrationOutcome::BuildV3Refused,
+                true,
+            ),
+            Ok(StandingDisposition::Settled)
         );
     });
     let receipt = harness.run(&cycle_unit(0)).await.unwrap();
@@ -1308,6 +1319,78 @@ async fn the_verify_fact_is_joined_across_the_two_adapters() {
         2,
         "two distinct cycles registered"
     );
+}
+
+/// Verification and admission settle in ONE store: the completed lifecycle is a
+/// `Verified` pool standing the admission's own ledger handle reads, so a
+/// re-sighted candidate sees the same fact and no second table can contradict
+/// it.
+#[tokio::test]
+async fn verification_and_admission_settle_one_ledger() {
+    let harness = Harness::new(cycle_rpc());
+    harness.run_direct(&cycle_unit(0)).await.unwrap();
+
+    let key = PreBuildIdentity::Address(V3_POOL);
+    assert_eq!(
+        harness
+            .ledger
+            .with(|ledger| ledger.pool_standing(&key).cloned()),
+        Some(PoolStanding::Verified),
+        "the admission reads the verify home's standing from its own ledger"
+    );
+    assert!(
+        harness
+            .verify()
+            .ledger()
+            .with(|ledger| ledger.pool_verified(&key)),
+        "the verify home hands back the same store"
+    );
+    assert!(
+        harness
+            .ledger
+            .with(|ledger| ledger.unregistrable_record(Some(&key)).is_none()),
+        "a verified pool holds no refusal standing"
+    );
+}
+
+/// A verified pool is a REGISTERED pool, so its construction is
+/// get-or-register and can never refuse stably. The regression pins the
+/// admission's order: re-offering a built-and-verified hop reaches the cohort
+/// again and answers the dup fast-path, so the build stage's
+/// verified-vs-refusal conflict stays unreachable and its abort arm is a
+/// corruption tripwire rather than a path a candidate can take.
+#[tokio::test]
+async fn a_registered_verified_pool_is_never_memoized_unregistrable() {
+    let harness = Harness::new(cycle_rpc());
+    harness.run(&cycle_unit(0)).await.unwrap();
+    let verified = PreBuildIdentity::Address(V3_POOL);
+    assert_eq!(
+        harness
+            .ledger
+            .with(|ledger| ledger.pool_standing(&verified).cloned()),
+        Some(PoolStanding::Verified)
+    );
+
+    let again = harness.run(&cycle_unit(1)).await.unwrap();
+    assert_eq!(
+        again.outcome,
+        RegistrationUnitOutcome::Registered {
+            created: false,
+            v4_hops: 0
+        },
+        "the re-offer is the engine's dup, never a build refusal"
+    );
+    for hop in [v2_hop(), v3_hop()] {
+        let key = hop
+            .pre_build_identity()
+            .expect("a V2/V3 hop carries its address");
+        assert!(
+            harness
+                .ledger
+                .with(|ledger| ledger.unregistrable_record(Some(&key)).is_none()),
+            "a registered pool acquires no refusal standing"
+        );
+    }
 }
 
 /// A fatal verify failure is the loud arm: the admission stops rather than

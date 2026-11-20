@@ -50,8 +50,12 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
+use degenbot_core::op_warn;
+
 use super::registration_lifecycle::LifecycleOutcome;
-use crate::bot_core::registration_ledger::{PreBuildIdentity, RegistrationLedger};
+use crate::bot_core::registration_ledger::{
+    PoolStanding, PreBuildIdentity, RegistrationLedgerHandle,
+};
 
 /// The shared claim table, held behind an `Arc` so a leader guard can evict
 /// its own entry without borrowing the table's owner.
@@ -249,52 +253,68 @@ impl<T: Clone + Send + Sync + 'static, E: Clone + Send + Sync + 'static> VerifyC
 }
 
 /// The per-pool registration-verify entry: the live-window claim policy
-/// ([`VerifyClaims`]) plus the durable **verified pool** fact the registration
-/// ledger owns.
+/// ([`VerifyClaims`]) plus the durable **verified pool** standing it settles in
+/// the shared registration store.
 ///
 /// The claim alone dedups callers that overlap in time, then releases its
 /// window on settlement — by design, so a failure stays retriable and a
 /// cancelled leader cannot strand a peer. A registration path can therefore
 /// reach the same pool's lifecycle again in a later window. This owner is what
 /// makes that a no-op once a lifecycle has COMPLETED, without teaching the
-/// claim table to hold a settled success: a success records a pool fact in the
-/// ledger, a failure or an abandoned window records nothing.
+/// claim table to hold a settled success: a success settles the pool's
+/// [`PoolStanding::Verified`](crate::bot_core::PoolStanding) in the shared
+/// store, a failure or an abandoned window settles nothing.
 ///
-/// The key is the caller's identity string (for the driver, the family-scoped
-/// claim key). A fact is key-scoped, never address-scoped, so two families at
-/// one address and two `(PoolManager, pool_id)` pools under one manager are
+/// The key is the caller's typed pool identity, whose wire form names the claim
+/// window. A fact is key-scoped, never address-scoped, so two families at one
+/// address and two `(PoolManager, pool_id)` pools under one manager are
 /// independent entries.
 #[derive(Debug)]
 pub struct PoolVerifications<E> {
     claims: VerifyClaims<LifecycleOutcome, E>,
-    ledger: Mutex<RegistrationLedger>,
-}
-
-impl<E: Clone + Send + Sync + 'static> Default for PoolVerifications<E> {
-    fn default() -> Self {
-        Self {
-            claims: VerifyClaims::new(),
-            ledger: Mutex::new(RegistrationLedger::new()),
-        }
-    }
+    ledgers: RegistrationLedgerHandle,
 }
 
 impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
-    /// An empty per-pool verification owner.
+    /// The per-pool verification owner over the shared standings store.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(ledgers: RegistrationLedgerHandle) -> Self {
+        Self {
+            claims: VerifyClaims::new(),
+            ledgers,
+        }
+    }
+
+    /// The standings store this owner records completed lifecycles in.
+    #[must_use]
+    pub fn ledger(&self) -> RegistrationLedgerHandle {
+        self.ledgers.clone()
     }
 
     /// Whether this pool's verify lifecycle already COMPLETED.
     #[must_use]
     pub fn is_verified(&self, key: &PreBuildIdentity) -> bool {
-        self.ledger.lock().pool_verified(key)
+        self.ledgers.with(|ledger| ledger.pool_verified(key))
     }
 
-    /// Record a completed verify lifecycle (a pool fact).
-    pub fn mark_verified(&self, key: PreBuildIdentity) {
-        self.ledger.lock().memoize_verified_pool(key);
+    /// Record a completed verify lifecycle (a pool fact), answering the standing
+    /// it retracted.
+    ///
+    /// A completed lifecycle runs only over a REGISTERED pool, so a settled
+    /// stable refusal for the same identity is stale: the store refuses the
+    /// `Verified` settle with a [`PoolStandingConflict`], and the lifecycle's
+    /// evidence retracts the refusal. The displaced standing rides back to the
+    /// caller, which reports the reversal.
+    ///
+    /// [`PoolStandingConflict`]: crate::bot_core::PoolStandingConflict
+    #[must_use]
+    pub fn mark_verified(&self, key: PreBuildIdentity) -> Option<PoolStanding> {
+        self.ledgers.with(
+            |ledger| match ledger.settle_pool(key, PoolStanding::Verified) {
+                Ok(_) => None,
+                Err(_conflict) => ledger.supersede_pool(key, PoolStanding::Verified),
+            },
+        )
     }
 
     /// Run `run` for `key` at most once per live claim window, and never once
@@ -328,7 +348,14 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
         // deferred drain and an unverified no-op both still owe their
         // verification, so they record nothing and stay retriable.
         if matches!(outcome, Ok(settled) if settled.records_verified_fact()) {
-            self.mark_verified(*key);
+            if let Some(displaced) = self.mark_verified(*key) {
+                op_warn!(
+                    domain = state,
+                    pool = %key,
+                    displaced = ?displaced,
+                    "a completed verify lifecycle retracts a settled pool refusal: the pool is registered, so the negative memo was stale"
+                );
+            }
         }
         outcome
     }
@@ -343,7 +370,7 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
     /// (test/diagnostic witness).
     #[must_use]
     pub fn verified_pool_count(&self) -> usize {
-        self.ledger.lock().verified_pool_count()
+        self.ledgers.with(|ledger| ledger.verified_pool_count())
     }
 }
 
@@ -351,6 +378,9 @@ impl<E: Clone + Send + Sync + 'static> PoolVerifications<E> {
 #[expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
 mod tests {
     use super::*;
+    use crate::bot_core::registration_ledger::{
+        PoolStandingConflict, RegistrationOutcome, StandingDisposition, UnregistrableRecord,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -592,7 +622,8 @@ mod tests {
     /// the work, while the live window is still released.
     #[tokio::test]
     async fn pool_verifications_skip_a_completed_lifecycle() {
-        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let verifications =
+            PoolVerifications::<FakeVerifyError>::new(RegistrationLedgerHandle::new());
         let runs = Arc::new(AtomicUsize::new(0));
 
         let first = verifications
@@ -631,7 +662,8 @@ mod tests {
     /// become verified.
     #[tokio::test]
     async fn pool_verifications_deferred_lifecycle_records_no_fact_and_stays_retriable() {
-        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let verifications =
+            PoolVerifications::<FakeVerifyError>::new(RegistrationLedgerHandle::new());
         let runs = Arc::new(AtomicUsize::new(0));
 
         let first = verifications
@@ -686,7 +718,8 @@ mod tests {
     /// verification can never be memoized as an established one.
     #[tokio::test]
     async fn pool_verifications_not_owed_lifecycle_records_no_fact_and_stays_retriable() {
-        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let verifications =
+            PoolVerifications::<FakeVerifyError>::new(RegistrationLedgerHandle::new());
         let runs = Arc::new(AtomicUsize::new(0));
 
         let first = verifications
@@ -728,7 +761,8 @@ mod tests {
     /// succeeds then becomes durable.
     #[tokio::test]
     async fn pool_verifications_failure_is_retriable_and_records_no_fact() {
-        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let verifications =
+            PoolVerifications::<FakeVerifyError>::new(RegistrationLedgerHandle::new());
 
         let first = verifications
             .run_exclusive(&v3_key(0xde), || async {
@@ -754,7 +788,9 @@ mod tests {
     /// weaken the at-most-once-per-window policy.
     #[tokio::test]
     async fn pool_verifications_concurrent_peers_share_one_run() {
-        let verifications = Arc::new(PoolVerifications::<FakeVerifyError>::new());
+        let verifications = Arc::new(PoolVerifications::<FakeVerifyError>::new(
+            RegistrationLedgerHandle::new(),
+        ));
         let runs = Arc::new(AtomicUsize::new(0));
         let barrier = Arc::new(tokio::sync::Barrier::new(8));
 
@@ -791,7 +827,8 @@ mod tests {
     /// holds one pool, whatever its family) or the V4 pool id.
     #[tokio::test]
     async fn pool_verifications_facts_are_key_scoped_not_address_scoped() {
-        let verifications = PoolVerifications::<FakeVerifyError>::new();
+        let verifications =
+            PoolVerifications::<FakeVerifyError>::new(RegistrationLedgerHandle::new());
 
         verifications
             .run_exclusive(&v3_key(0xab), || async { COMPLETED })
@@ -817,6 +854,108 @@ mod tests {
         assert!(
             !verifications.is_verified(&PreBuildIdentity::V4([0x02u8; 32])),
             "one PoolManager hosts many independently-verified pools"
+        );
+    }
+
+    /// The completed-lifecycle fact is settled in the ONE store the caller
+    /// injected: another capability holding the same handle observes the pool as
+    /// verified, so the store — not this owner — is the truth.
+    #[tokio::test]
+    async fn a_completed_lifecycle_settles_the_shared_store() {
+        let ledgers = RegistrationLedgerHandle::new();
+        let verifications = PoolVerifications::<FakeVerifyError>::new(ledgers.clone());
+
+        verifications
+            .run_exclusive(&v3_key(0xba), || async { COMPLETED })
+            .await
+            .unwrap();
+
+        assert!(
+            ledgers.with(|ledger| ledger.pool_verified(&v3_key(0xba))),
+            "the injected store holds the completed-lifecycle standing"
+        );
+        assert_eq!(ledgers.with(|ledger| ledger.verified_pool_count()), 1);
+        assert!(
+            ledgers.with(|ledger| ledger.unregistrable_record(Some(&v3_key(0xba))).is_none()),
+            "a verified pool holds no refusal standing"
+        );
+        assert_eq!(
+            verifications
+                .ledger()
+                .with(|ledger| ledger.verified_pool_count()),
+            1,
+            "the owner hands back the same store"
+        );
+    }
+
+    /// A settled stable refusal is a stale fact once the pool's lifecycle
+    /// completes: the store refuses the cross-kind settle, and the lifecycle's
+    /// evidence retracts the refusal. Without the retraction the pool would read
+    /// as unverified forever and re-run its lifecycle on every call.
+    #[tokio::test]
+    async fn a_completed_lifecycle_retracts_a_stale_refusal() {
+        let ledgers = RegistrationLedgerHandle::new();
+        let key = v3_key(0xbc);
+        let refusal = UnregistrableRecord {
+            outcome: RegistrationOutcome::BuildV3Refused,
+            counts_as_skip: true,
+        };
+        assert_eq!(
+            ledgers.with(|ledger| ledger.memoize_unregistrable(
+                key,
+                RegistrationOutcome::BuildV3Refused,
+                true
+            )),
+            Ok(StandingDisposition::Settled)
+        );
+        assert_eq!(
+            ledgers.with(|ledger| ledger.memoize_verified_pool(key)),
+            Err(Box::new(PoolStandingConflict {
+                key,
+                settled: PoolStanding::Unregistrable(refusal.clone()),
+                attempted: PoolStanding::Verified,
+            })),
+            "the store refuses the cross-kind settle"
+        );
+
+        let verifications = PoolVerifications::<FakeVerifyError>::new(ledgers.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let outcome = verifications
+            .run_exclusive(&key, || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    COMPLETED
+                }
+            })
+            .await;
+        assert_eq!(outcome, Ok(LifecycleOutcome::Completed));
+        assert!(
+            ledgers.with(|ledger| ledger.pool_verified(&key)),
+            "the completed lifecycle's evidence settles Verified"
+        );
+        assert!(
+            ledgers.with(|ledger| ledger.unregistrable_record(Some(&key)).is_none()),
+            "the stale refusal is retracted"
+        );
+        assert_eq!(ledgers.with(|ledger| ledger.verified_pool_count()), 1);
+
+        // The retraction is what makes the fact durable: a later call spends no
+        // work instead of repeating the lifecycle forever.
+        verifications
+            .run_exclusive(&key, || {
+                let runs = Arc::clone(&runs);
+                async move {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    COMPLETED
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            1,
+            "the verified fact stops the re-run"
         );
     }
 }

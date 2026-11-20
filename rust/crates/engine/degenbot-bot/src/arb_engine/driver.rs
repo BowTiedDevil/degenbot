@@ -64,7 +64,7 @@ use degenbot_substrate::BotState;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-use crate::arb_engine::crawl::admission::{CrawlLedger, RegistrationAdmission};
+use crate::arb_engine::crawl::admission::RegistrationAdmission;
 use crate::arb_engine::crawl::controller::{
     CrawlConfig, CrawlConfigError, CrawlController, CrawlHandle, CrawlHost, SnapshotArm,
 };
@@ -82,7 +82,7 @@ use crate::arb_engine::EngineStages;
 use crate::bot_core::block_pump::{BlockPump, LivenessPhase, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
-use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
+use crate::bot_core::{Bot, PumpControl, RegistrationLedgerHandle, StageHandlers, VerifyLifecycle};
 use crate::strategy_host::{ChannelRegistration, HostHub};
 #[cfg(any(test, feature = "test-fixtures"))]
 use degenbot_ingestion::IngestEvent as WsEvent;
@@ -635,6 +635,10 @@ impl EngineDriver {
 
         let verify_core = stages.core();
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
+        // The session's ONE registration store: the verify home settles its
+        // completed pools in it from construction, so every crawl composed
+        // below shares the same facts.
+        let ledgers = RegistrationLedgerHandle::new();
         Self {
             bot,
             stages,
@@ -645,6 +649,7 @@ impl EngineDriver {
             verify: Arc::new(VerifyLifecycle::new(
                 verify_core,
                 VerifyLifecycleConfig::default(),
+                ledgers,
             )),
             hub,
             head_source,
@@ -1268,7 +1273,7 @@ impl EngineDriver {
             io,
             Arc::clone(&self.stages),
             Arc::clone(&self.verify),
-            Arc::new(CrawlLedger::new()),
+            self.verify().ledger(),
             Arc::new(CrawlFlights::new()),
             Arc::new(config.admission_settings()),
         ));
@@ -1883,7 +1888,7 @@ mod tests {
             io,
             Arc::clone(driver.stages()),
             Arc::clone(driver.verify()),
-            Arc::new(CrawlLedger::new()),
+            driver.verify().ledger(),
             Arc::new(CrawlFlights::new()),
             Arc::new(config.admission_settings()),
         ));

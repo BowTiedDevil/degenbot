@@ -34,7 +34,7 @@ use super::{
     CrawlHandle, CrawlHost, CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture,
     CrawlUnitSeat, RunPhase, SeatHold, SnapshotArm,
 };
-use crate::arb_engine::crawl::admission::{CrawlLedger, DiscoveredHop, RegistrationAdmission};
+use crate::arb_engine::crawl::admission::{DiscoveredHop, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
     CrawlDiscoveryError, DiscoveredPath, DiscoverySource, Edition,
 };
@@ -533,7 +533,7 @@ fn harness_with_arm(
         io,
         Arc::clone(driver.stages()),
         Arc::clone(driver.verify()),
-        Arc::new(CrawlLedger::new()),
+        driver.verify().ledger(),
         Arc::new(CrawlFlights::new()),
         Arc::new(config.admission_settings()),
     ));

@@ -620,7 +620,7 @@ gate-checked claims rather than this ADR's word alone.
 |---|---|---|---|
 | Driver seam | `degenbot_bot::arb_engine` | `EngineDriver`, `DriverError`, `PhaseError`, `PumpPhase`, `PumpEvent`, `PumpDecline` | yes |
 | Verify lifecycle | `degenbot_bot::bot_core` | `run_verify_lifecycle`, `run_registration_lifecycle`, `PoolVerifications`, `VerifyClaims`, `RefusalKind` | yes |
-| Registration admission | `degenbot_bot::bot_core` + `degenbot_bot::arb_engine::crawl` | `RegistrationLedger`, `PathAdmission`, `CrawlPathPolicy`, `CrawlLedger`, `BuildFlights` | yes |
+| Registration admission | `degenbot_bot::bot_core` + `degenbot_bot::arb_engine::crawl` | `RegistrationLedger`, `RegistrationLedgerHandle`, `PathAdmission`, `CrawlPathPolicy`, `BuildFlights` | yes |
 
 Three capabilities were recorded here without catalog rows while their homes did
 not exist yet. All three have landed, so they are gate-checked catalog rows

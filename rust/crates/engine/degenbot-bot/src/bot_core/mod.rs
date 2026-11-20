@@ -101,10 +101,11 @@ pub use degenbot_ingestion::RELEVANT_TOPICS;
 pub use pump_control::PumpControl;
 pub use registration_ledger::{
     BuildFailure, BuildRefusal, HopSignature, IdentityMismatchShape, LifecyclePrecondition,
-    OutcomeLabel, PathAdmission, PipelineReport, PolicyVerdict, PreBuildIdentity, RefusalKind,
-    RegisterRefusal, RegistrationLedger, RegistrationOutcome, RegistrationPhase,
-    RegistrationUnitOutcome, SnapshotLoadReason, UnregistrableRecord, UnsupportedSubject,
-    VerifyOrigin, REFUSAL_KIND_TAGS, REGISTRATION_OUTCOMES,
+    OutcomeLabel, PathAdmission, PathStanding, PipelineReport, PolicyVerdict, PoolStanding,
+    PreBuildIdentity, RefusalKind, RegisterRefusal, RegistrationLedger, RegistrationLedgerHandle,
+    RegistrationOutcome, RegistrationPhase, RegistrationUnitOutcome, SnapshotLoadReason,
+    UnregistrableRecord, UnsupportedSubject, VerifyOrigin, REFUSAL_KIND_TAGS,
+    REGISTRATION_OUTCOMES,
 };
 pub use registration_lifecycle::{
     run_registration_lifecycle, run_verify_lifecycle, LifecycleOutcome,

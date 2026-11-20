@@ -313,7 +313,7 @@ pub mod fleet_intake {
 /// [`EngineDriver::begin_crawl`]: crate::arb_engine::EngineDriver::begin_crawl
 pub mod crawl {
     pub use crate::arb_engine::crawl::admission::{
-        AdmissionSettings, CrawlAbort, CrawlLedger, DiscoveredHop, RegistrationAdmission,
+        AdmissionSettings, CrawlAbort, DiscoveredHop, RegistrationAdmission,
     };
     pub use crate::arb_engine::crawl::controller::{
         CrawlConfig, CrawlConfigError, CrawlController, CrawlRequestError, RunOutcome, SeatHold,

@@ -74,8 +74,9 @@ use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::{
-    BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PolicyVerdict, PreBuildIdentity,
-    RefusalKind, RegistrationLedger, RegistrationOutcome, RegistrationUnitOutcome,
+    BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PathStanding, PolicyVerdict,
+    PreBuildIdentity, RefusalKind, RegistrationLedger, RegistrationLedgerHandle,
+    RegistrationOutcome, RegistrationUnitOutcome,
 };
 use crate::bot_core::VerifyLifecycle;
 use crate::bot_core::{
@@ -183,34 +184,6 @@ impl DiscoveredHop {
     }
 }
 
-// ── the shared memo store ──────────────────────────────────────────────────
-
-/// The admission's shared negative-memo store: the core [`RegistrationLedger`]
-/// behind a lock, so candidates on concurrent seats share ONE set of pool facts.
-///
-/// The Python pipeline shares its ledger across seat threads under the GIL; the
-/// core has no GIL, so the lock is explicit — and [`CrawlLedger::with`] keeps
-/// the guard inside the call, so a guard never crosses an `await` and a
-/// candidate's future stays `Send`.
-#[derive(Debug, Default)]
-pub struct CrawlLedger {
-    ledger: parking_lot::Mutex<RegistrationLedger>,
-}
-
-impl CrawlLedger {
-    /// An empty ledger.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Run `f` against the ledger under its lock. `f` must not await.
-    pub fn with<R>(&self, f: impl FnOnce(&mut RegistrationLedger) -> R) -> R {
-        let mut ledger = self.ledger.lock();
-        f(&mut ledger)
-    }
-}
-
 // ── the admission-wide values a candidate reads ────────────────────────────
 
 /// The admission-wide policy values: everything the shell resolves ONCE at
@@ -302,8 +275,8 @@ pub struct RegistrationAdmission {
     stages: Arc<EngineStages>,
     /// The pose-independent verify lifecycle (claim window + retry + fact).
     verify: Arc<VerifyLifecycle>,
-    /// The shared negative memos.
-    ledger: Arc<CrawlLedger>,
+    /// The shared registration standings (verify facts, refusals, path dedup).
+    ledger: RegistrationLedgerHandle,
     /// The in-flight build table.
     flights: Arc<CrawlFlights>,
     /// The admission-wide policy values.
@@ -318,7 +291,7 @@ impl RegistrationAdmission {
         io: Arc<ConstructionIo>,
         stages: Arc<EngineStages>,
         verify: Arc<VerifyLifecycle>,
-        ledger: Arc<CrawlLedger>,
+        ledger: RegistrationLedgerHandle,
         flights: Arc<CrawlFlights>,
         settings: Arc<AdmissionSettings>,
     ) -> Self {
@@ -345,9 +318,9 @@ impl RegistrationAdmission {
         &self.verify
     }
 
-    /// The shared negative memos.
+    /// The shared registration standings.
     #[must_use]
-    pub fn ledger(&self) -> &Arc<CrawlLedger> {
+    pub fn ledger(&self) -> &RegistrationLedgerHandle {
         &self.ledger
     }
 
@@ -489,14 +462,27 @@ impl RegistrationAdmission {
                             // A stable refusal is a POOL fact: memoize the hop's
                             // identity so a later candidate through it spends
                             // nothing. A transient failure is never memoized.
-                            let key = hop.pre_build_identity();
-                            self.ledger.with(|ledger| {
-                                ledger.memoize_unregistrable(
-                                    key,
-                                    refusal.outcome.clone(),
-                                    refusal.counts_as_skip,
-                                );
-                            });
+                            if let Some(key) = hop.pre_build_identity() {
+                                let settled = self.ledger.with(|ledger| {
+                                    ledger.memoize_unregistrable(
+                                        key,
+                                        refusal.outcome.clone(),
+                                        refusal.counts_as_skip,
+                                    )
+                                });
+                                if let Err(conflict) = settled {
+                                    // A verified pool is a REGISTERED pool, so
+                                    // its construction is get-or-register and
+                                    // cannot refuse stably: a settled verified
+                                    // standing here is state corruption, which a
+                                    // counted skip must never paper over.
+                                    return Err(CrawlAbort::Invariant {
+                                        detail: format!(
+                                            "registration standing conflict: {conflict}"
+                                        ),
+                                    });
+                                }
+                            }
                         }
                         return Ok(Some(run.clock.answer(
                             seq,
@@ -693,8 +679,24 @@ impl RegistrationAdmission {
                 // Only a completed registration enters the memo: stable
                 // negatives entered theirs at their own sites, and a failed
                 // verify stays retriable.
-                self.ledger
-                    .with(|ledger| ledger.memoize_registered_path(hop_sig.clone()));
+                let displaced = self.ledger.with(|ledger| {
+                    match ledger.memoize_registered_path(hop_sig.clone()) {
+                        Ok(_) => None,
+                        // The engine's registry holds the path whatever a deny
+                        // settled first, so the deny is the stale fact.
+                        Err(_deny) => {
+                            ledger.supersede_path(hop_sig.clone(), PathStanding::Registered)
+                        }
+                    }
+                });
+                if let Some(displaced) = displaced {
+                    op_warn!(
+                        domain = state,
+                        path = ?hop_sig,
+                        displaced = ?displaced,
+                        "a completed registration retracts a settled path deny: the engine holds the path, so the deny was stale"
+                    );
+                }
                 run.clock.answer(
                     seq,
                     RegistrationUnitOutcome::Registered {
