@@ -270,7 +270,7 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
 ///
 /// Contract: the settle/inactivity window is a pinned, resettable `Sleep`
 /// owned across loop iterations (`run_loop.rs`), re-armed only when the
-/// `(publish_pending, window)` tuple changes or a stream EVENT is consumed.
+/// `(publish_armed, window)` tuple changes or a stream EVENT is consumed.
 /// The retired per-iteration `timeout(wait_timeout, combined.next())` was
 /// DROPPED whenever the watchdog arm won the select, so a tick cadence
 /// shorter than the window restarted the countdown and pushed the settle

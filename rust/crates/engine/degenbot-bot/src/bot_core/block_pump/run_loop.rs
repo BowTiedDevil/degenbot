@@ -32,14 +32,14 @@ impl Drop for PumpExitGuard {
 }
 
 /// The pump's ONE point of truth for the current settle/inactivity window:
-/// `(publish_pending, window)`. While a publish is pending the window is the
-/// FSM's settle window (fixed mode = the debounce history; adaptive = the
-/// estimator's current W); otherwise the long inactivity backfill window. The
-/// tuple doubles as the pinned settle timer's re-arm key, because the window
-/// is DYNAMIC: it must be recomputed whenever the FSM's publish arm or its W
-/// changes, not merely when a select arm switches.
+/// `(publish_armed, window)`. While the open block holds a publish arm the
+/// window is the FSM's settle window (fixed mode = the debounce history;
+/// adaptive = the estimator's current W); otherwise the long inactivity
+/// backfill window. The tuple doubles as the pinned settle timer's re-arm key,
+/// because the window is DYNAMIC: it must be recomputed whenever the FSM's
+/// publish arm or its W changes, not merely when a select arm switches.
 fn settle_window_state(fsm: &StageMachine) -> (bool, Duration) {
-    if fsm.publish_pending() {
+    if fsm.publish_armed() {
         (true, Duration::from_millis(fsm.settle_window_ms()))
     } else {
         (false, Duration::from_secs(BACKFILL_TIMEOUT_SECS))
@@ -266,12 +266,13 @@ impl BlockPump {
         // to Python. This ensures one dispatch per burst of logs rather than
         // one per individual log.
         // ADR-008 D2: solver-release gate (see the flush in the Err + Ok(None) arms
-        // below). `publish_pending` is armed when a forward log applies; the
-        // flush fires `on_send` (gated on `consume_quiesced`) at a settle
-        // point — a `DEBOUNCE_MS` window with no new event (coalescing a
-        // same-block burst into one publish at the tail) OR stream exhaustion.
-        // Replaces the wall-clock `DEBOUNCE_MS` send timer: publication is
-        // gated on the truth condition (all dispatched logs applied).
+        // below). A forward log's apply arms its block's publish cycle; the
+        // flush fires `on_send` (gated on the quiesce point's single
+        // `take_publish`) at a settle point — a `DEBOUNCE_MS` window with no
+        // new event (coalescing a same-block burst into one publish at the
+        // tail) OR stream exhaustion. Replaces the wall-clock `DEBOUNCE_MS`
+        // send timer: publication is gated on the truth condition (all
+        // dispatched logs applied).
 
         // FSM recovery state: `recovery_anchor` is the highest block an
         // authoritative (eth_getLogs) catch-up has OWNEed — either a live-loop
@@ -370,7 +371,7 @@ impl BlockPump {
         // outside the loop (no per-iteration allocation); `Sleep::reset`
         // requires the future pinned and takes a NEW deadline (resetting an
         // already-elapsed sleep is legal). `armed_window` is the last
-        // `(publish_pending, window)` the timer was armed for; `None` forces a
+        // `(publish_armed, window)` the timer was armed for; `None` forces a
         // re-arm (initial state, and after every select resolution).
         let mut armed_window: Option<(bool, Duration)> = None;
         let mut settle_sleep = Box::pin(tokio::time::sleep_until(tokio::time::Instant::now()));
@@ -462,14 +463,14 @@ impl BlockPump {
             // must not fire while buffered WS events are still unprocessed —
             // a loop-head solve racing a still-queued swap log is that stall.
 
-            // ADR-008 D2: solver-release gate. `fsm.publish_pending` is set when a forward
-            // log applies (block becomes quiesced). The flush below fires
-            // the Published-edge `on_publish` (gated on `consume_quiesced`) only at a
-            // settle point — a timeout with no new event (coalescing a
-            // same-block burst into one publish at the tail) OR stream
-            // exhaustion. This replaces the wall-clock `DEBOUNCE_MS` send
-            // timer: publication is gated on the truth condition (all
-            // dispatched logs applied), not schedule.
+            // ADR-008 D2: solver-release gate. A forward log's apply arms the
+            // open block's publish cycle. The flush below fires the
+            // Published-edge `on_publish` (through the settle point's single
+            // `take_publish`) only at a settle point — a timeout with no new
+            // event (coalescing a same-block burst into one publish at the
+            // tail) OR stream exhaustion. This replaces the wall-clock
+            // `DEBOUNCE_MS` send timer: publication is gated on the truth
+            // condition (all dispatched logs applied), not schedule.
 
             // Arrival beat: cheap, first, and BEFORE any work that can block.
             // The independent clock's evidence that this loop is still the
@@ -506,7 +507,7 @@ impl BlockPump {
             // settle window while a publish is pending (fixed mode = the
             // debounce history; adaptive = the estimator's current W), else the
             // long inactivity backfill window. The timer is re-armed ONLY when
-            // the window changes semantically: the `(publish_pending, window)`
+            // the window changes semantically: the `(publish_armed, window)`
             // tuple differs from the last armed one, or a stream event is
             // consumed below (the burst is still in flight, so the window
             // restarts by design — the retired per-iteration `timeout(..)`
@@ -1464,8 +1465,8 @@ impl BlockPump {
                     // records the clock's received/applied edges and arms the
                     // quiesce-gated publish (ADR-008 D2).
                     // One fact — a forward log applied to engine state — feeds
-                    // two consumers (the pairing pin): the FSM
-                    // quiesce arm (`on_log_applied` -> publish_pending) and
+                    // two consumers (the pairing pin): the FSM's quiesce cycle
+                    // (`on_log_applied` -> the block's `PublishPhase::Armed`) and
                     // the engine's `has_logs_this_block` (finalize
                     // bookkeeping). Coordinated here, once; do not
                     // split or drop either write.

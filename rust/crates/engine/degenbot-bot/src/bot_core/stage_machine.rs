@@ -9,8 +9,10 @@
 //!   `latest_header`/`open_block`/`in_reorg` fields below ARE that machine
 //!   (the standalone `BlockClock` type is gone — hard cutover, Q6).
 //! - `PumpFSM` (ADR-028) — the per-event decision producer. Folded: the
-//!   remaining decision state below (publish arm, recovery anchor, rewind
-//!   generation, watchdog anchors, WS-completeness tracker, metadata map).
+//!   remaining decision state below (recovery anchor, rewind generation,
+//!   watchdog anchors, WS-completeness tracker, metadata map); the publish
+//!   arm is not machine-level state — it belongs to the block whose logs
+//!   armed it ([`PublishPhase`]).
 //! - The quiesce / debounce / early-slice gates, the header-staleness +
 //!   logs-silence watchdogs, the backfill trigger, the tombstone /
 //!   WS-completeness verify, and the `Rewind` handling (epoch `seq` bump +
@@ -32,7 +34,7 @@
 //! | stage-table row | machine event that advances it |
 //! |---|---|
 //! | Streaming | every log `on_log`/`on_log_applied` accepts (the only writer window) |
-//! | Quiesced (`StreamingComplete`) | `consume_quiesced` / the settle classification |
+//! | Quiesced (`StreamingComplete`) | `take_publish` at a quiesce point / the settle classification |
 //! | Published | a `StageDecision::Publish` emitted by `on_settle`/`on_stream_end` |
 //! | Finalized | the tombstone finalize window |
 //! | `Rewind` | the `rewind_seq` bump in `on_log`'s reorg classification |
@@ -56,15 +58,55 @@ pub enum BlockState {
     Observed,
     /// At least one log received for this block; more may come.
     /// `in_flight` = logs received but not yet fully applied to pool state
-    /// (decremented by the pump as logs dispatch); the `LogsQuiesced`
-    /// predicate is true when it first reaches 0.
-    LogsArriving { in_flight: u32, ever_quiesced: bool },
+    /// (decremented by the pump as logs dispatch); `publish` = the block's
+    /// quiesce cycle ([`PublishPhase`]). The `LogsQuiesced` predicate is true
+    /// while an untaken arm meets a drained `in_flight`.
+    LogsArriving {
+        in_flight: u32,
+        publish: PublishPhase,
+    },
     /// Tombstone — N proven closed by the first `removed: false` log for N+1.
     LogsApplied,
     /// Verify sealed. The only state that satisfies `cursor()`.
     Drained,
     /// A `removed: true` log arrived after the block was tombstoned → reorg.
     Tainted,
+}
+
+/// What a quiesce point did with the open block's publish cycle. Reported to
+/// the caller because the two quiesce points diverge on the inactivity
+/// fallback and on the stage row, not on the publication decision itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuiescePoint {
+    /// No untaken arm: the settle point was an inactivity window, not a
+    /// publication.
+    Unarmed,
+    /// The arm was taken, but the block was still dispatching a log, so the
+    /// cycle spent its arm without a `Publish`.
+    Spent,
+    /// The arm was taken and the cycle's single `Publish` was emitted for this
+    /// block.
+    Published(u64),
+}
+
+/// The publication phase of one block's quiesce cycle (I5: exactly one
+/// `Publish` per cycle).
+///
+/// The cycle belongs to the block, not to the machine: a block's applied log
+/// arms it, one quiesce point ([`StageMachine::on_settle`] or
+/// [`StageMachine::on_stream_end`]) takes it and publishes that block once,
+/// and a straggler log's own apply arms a fresh cycle. Tombstoning the block
+/// (`LogsApplied`) or tainting it in a rewind (`Tainted`) leaves the only
+/// state that can publish, so reorg and tombstone invalidation needs no
+/// separate disarm to stay in sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishPhase {
+    /// No applied log awaits publication: the block is fresh, or its cycle's
+    /// one `Publish` was already taken.
+    Idle,
+    /// An applied log armed the cycle: the next quiesce point publishes this
+    /// block exactly once.
+    Armed,
 }
 
 /// Decision returned by [`StageMachine::observe_header`] telling the pump what
@@ -195,10 +237,11 @@ pub enum CompletenessDecision {
 /// about which effect happens when; all time is injected (`now_ms`), all I/O
 /// is returned as [`StageDecision`] / handled by the driver.
 ///
-/// The four bools are the folded machines' irreducible flag sub-state
-/// (first-header, publish arm, silence alarm, reorg window); encoding
-/// them into a bitmask would only obscure the stage-table reading.
-#[expect(clippy::struct_excessive_bools)]
+/// The three bools are the folded machines' irreducible flag sub-state
+/// (first header, silence alarm, reorg window); encoding them into a bitmask
+/// would only obscure the stage-table reading. The publish arm is deliberately
+/// NOT one of them — it is per block ([`PublishPhase`]), so it cannot outlive
+/// or contradict the block state that owns it.
 pub struct StageMachine {
     /// The last block the pump's cursor has reached.
     current_block: u64,
@@ -206,8 +249,6 @@ pub struct StageMachine {
     current_metadata: BlockMetadata,
     /// Whether we're before the first header after a resume/backfill.
     first_header: bool,
-    /// Whether a quiesce-gated publish is armed (a forward log applied).
-    publish_pending: bool,
     /// the highest block an authoritative catch-up has owned, with
     /// the rewind generation the ownership was established in (the
     /// recovery anchor is an `Epoch`, not a bare block).
@@ -259,7 +300,6 @@ impl StageMachine {
             current_block,
             current_metadata: BlockMetadata::default(),
             first_header: true,
-            publish_pending: false,
             recovery_anchor: Epoch::at(0),
             rewind_seq: 0,
             block_metadata: HashMap::new(),
@@ -289,10 +329,31 @@ impl StageMachine {
         self.current_metadata
     }
 
-    /// Whether a quiesce-gated publish is armed (read accessor).
+    /// Whether the open block holds an untaken publish arm — the driver's
+    /// settle-window selector: armed → the FSM's settle window, idle → the
+    /// long inactivity window. There is no machine-wide arm to consult: an arm
+    /// with no open block is unrepresentable.
     #[must_use]
-    pub fn publish_pending(&self) -> bool {
-        self.publish_pending
+    pub fn publish_armed(&self) -> bool {
+        self.latest_observed()
+            .is_some_and(|open| self.publish_phase(open) == PublishPhase::Armed)
+    }
+
+    /// The publish phase of `block`. `Idle` for any block that is not in its
+    /// log window — absent, tombstoned, or reorg-tainted — because none of them
+    /// owns a cycle to publish.
+    fn publish_phase(&self, block: u64) -> PublishPhase {
+        if self.in_reorg {
+            // An open reorg window invalidates every arm at once: state on both
+            // sides of the fork is being unwound, so nothing armed before the
+            // window may publish. The fresh epoch arms its own cycle on the
+            // first log applied after the window closes.
+            return PublishPhase::Idle;
+        }
+        match self.blocks.get(&block) {
+            Some(BlockState::LogsArriving { publish, .. }) => *publish,
+            _ => PublishPhase::Idle,
+        }
     }
 
     /// The FSM's CURRENT epoch: the cursor block in the current rewind
@@ -400,35 +461,39 @@ impl StageMachine {
 
     /// The per-event decision + state transition for a relevant WS log whose
     /// `removed` flag has NOT passed the single-writer / boundary drops. Owns
-    /// the ADC-008 clock transition, the reorg-entry/close cursor moves, the
-    /// tombstone advance, and the publish disarm on reorg — returning the
-    /// `LogDecision` so the driver knows which I/O effects to run (apply the
-    /// log, reach for the reorg coordinator, finalize a tombstoned block,
-    /// or shut down on a late forward). Reorg/panic paths deliberately do NOT
-    /// arm the publish.
+    /// the ADC-008 clock transition, the reorg-entry/close cursor moves, and
+    /// the tombstone advance — returning the `LogDecision` so the driver knows
+    /// which I/O effects to run (apply the log, reach for the reorg
+    /// coordinator, finalize a tombstoned block, or drop a late forward).
+    /// Reorg paths deliberately do NOT arm a publish.
+    ///
+    /// Publish-cycle invalidation needs no write here: the arm lives on the
+    /// block's own `LogsArriving` phase, so a tombstone (`LogsApplied`), a
+    /// rewind taint (`Tainted`), or an open reorg window leaves the only state
+    /// that can publish — there is no second flag left to disarm and drift.
     pub fn on_log(&mut self, block: u64, removed: bool) -> LogDecision {
         let decision = self.observe_log(block, removed);
         match decision {
             LogDecision::EnterReorg(reorg_block) => {
-                // A reorg invalidates any publish armed from pre-reorg state —
-                // AND rewinds the machine: the rewind generation bumps so every
-                // context minted pre-reorg is stale. The stage row
-                // resets — the fresh epoch restarts the cycle at Streaming.
-                self.publish_pending = false;
+                // The rewind generation bumps so every context minted
+                // pre-reorg is stale (the open window also voids every arm);
+                // the stage row resets — the fresh epoch restarts the cycle at
+                // Streaming.
                 self.rewind(reorg_block);
                 self.stage_in_cycle = None;
             }
-            LogDecision::ContinueReorg => {
-                // A reorg invalidates any publish armed from pre-reorg state.
-                self.publish_pending = false;
-            }
+            // No transition, and none is wanted. A continued reorg keeps the
+            // open window (entry voided every arm; the close taints the
+            // unwound segment), and a late forward is a benign late admission:
+            // its block is tombstoned and stays so, leaving publication state,
+            // the arm, and the cutoff untouched (I4/I5/I7). The pump owns the
+            // late drop + count.
+            LogDecision::ContinueReorg | LogDecision::LateForward(_) => {}
             LogDecision::CloseReorg { new_head } => {
-                self.publish_pending = false;
                 self.current_block = new_head;
                 self.stage_in_cycle = None;
             }
             LogDecision::TombstonePrevious(prev) => {
-                self.publish_pending = false;
                 self.advance_to_drained(prev);
                 self.stage_in_cycle = Some(Stage::Finalize); // tombstone finalize window (Finalized row)
                 if block > self.current_block {
@@ -440,26 +505,19 @@ impl StageMachine {
                     self.current_block = block;
                 }
             }
-            LogDecision::LateForward(_) => {
-                // Benign late admission: no FSM transition — the
-                // block is tombstoned and stays so; publication state,
-                // publish arm, and cutoff are all left untouched (I4/I5/I7).
-                // The pump owns the drop + count.
-            }
         }
         decision
     }
 
     /// Mark a forward/tombstone log as applied to engine state (call AFTER the
-    /// driver ran `dispatch_log`). Arms the quiesce-gated publish and records
-    /// the clock's received/applied edges (ADR-008).
+    /// driver ran `dispatch_log`). Records the clock's received/applied edges
+    /// (ADR-008); the apply itself arms the block's quiesce cycle.
     pub fn on_log_applied(&mut self, block: u64) {
         self.log_received(block);
         self.log_applied(block);
-        self.publish_pending = true;
         // The applied log quiesces the open block's window: the Quiesced
-        // (streaming-complete) row is now the epoch's stage (bookkeeping —
-        // the publish gate remains `consume_quiesced`'s to consume).
+        // (streaming-complete) row is now the epoch's stage (bookkeeping — the
+        // cycle's arm is the block's own `PublishPhase`).
         self.stage_in_cycle = Some(Stage::StreamingComplete);
     }
 
@@ -608,47 +666,62 @@ impl StageMachine {
         }
     }
 
+    /// A quiesce point — the settle window elapsing ([`Self::on_settle`]) and
+    /// the stream ending ([`Self::on_stream_end`]) both come through here, so
+    /// I5's one publish has one site: take the open block's arm and, when it
+    /// was quiesced at the moment of the take, emit the cycle's `Publish`.
+    ///
+    /// Stage-row bookkeeping stays with the caller ([`QuiescePoint`] tells it
+    /// what happened): the row is telemetry, and the two quiesce points have
+    /// always differed there.
+    fn take_quiesce_publish(&mut self, decisions: &mut Vec<StageDecision>) -> QuiescePoint {
+        let Some(open) = self.latest_observed() else {
+            return QuiescePoint::Unarmed;
+        };
+        if self.publish_phase(open) != PublishPhase::Armed {
+            return QuiescePoint::Unarmed;
+        }
+        if !self.take_publish(open) {
+            return QuiescePoint::Spent;
+        }
+        decisions.push(StageDecision::Publish {
+            open,
+            metadata: self.current_metadata,
+        });
+        QuiescePoint::Published(open)
+    }
+
     /// The settle-point decision (no new event in the window): the quiesce-
-    /// gated publish (ADR-008 D2) when armed, else the inactivity backfill.
+    /// gated publish (ADR-008 D2) when the open block holds an arm, else the
+    /// 60s inactivity backfill.
     pub fn on_settle(&mut self) -> Vec<StageDecision> {
         let mut decisions = Vec::new();
-        if self.publish_pending {
-            if let Some(open) = self.latest_observed() {
-                if self.consume_quiesced(open) {
-                    decisions.push(StageDecision::Publish {
-                        open,
-                        metadata: self.current_metadata,
-                    });
-                    // The Published row: the quiesce cycle's one publish (I5).
-                    self.stage_in_cycle = Some(Stage::Publish);
-                }
+        match self.take_quiesce_publish(&mut decisions) {
+            QuiescePoint::Unarmed => {
+                // 60s inactivity — the driver resolves the range and backfills.
+                decisions.push(StageDecision::Backfill {
+                    from: self.current_block + 1,
+                    to: None,
+                });
             }
-            self.publish_pending = false;
-        } else {
-            // 60s inactivity — the driver resolves the range and backfills.
-            decisions.push(StageDecision::Backfill {
-                from: self.current_block + 1,
-                to: None,
-            });
+            QuiescePoint::Published(_) => {
+                // The Published row: the quiesce cycle's one publish (I5).
+                self.stage_in_cycle = Some(Stage::Publish);
+            }
+            // The arm was spent mid-dispatch: neither a publish nor the
+            // inactivity backfill — the burst is still draining.
+            QuiescePoint::Spent => {}
         }
         decisions
     }
 
-    /// The stream-exhaustion (final settle) decision: flush any pending
-    /// quiesce-gated publish, then stop.
+    /// The stream-exhaustion (final settle) decision: the same quiesce point as
+    /// [`on_settle`](Self::on_settle), then stop — an idle stream end emits the
+    /// stop alone, because there is no window left to backfill behind. The
+    /// stage row is left as the epoch last staged it: the loop ends here.
     pub fn on_stream_end(&mut self) -> Vec<StageDecision> {
         let mut decisions = Vec::new();
-        if self.publish_pending {
-            if let Some(open) = self.latest_observed() {
-                if self.consume_quiesced(open) {
-                    decisions.push(StageDecision::Publish {
-                        open,
-                        metadata: self.current_metadata,
-                    });
-                }
-            }
-            self.publish_pending = false;
-        }
+        let _ = self.take_quiesce_publish(&mut decisions);
         decisions.push(StageDecision::Stop);
         decisions
     }
@@ -735,10 +808,10 @@ mod block_clock_contract {
         let d = fsm.on_log(101, false);
         assert!(matches!(d, LogDecision::DispatchForward));
         assert_eq!(fsm.current_block(), 101);
-        assert!(!fsm.publish_pending());
-        // The driver applies the log, then arms the quiesce-gated publish.
+        assert!(!fsm.publish_armed());
+        // The driver applies the log, which arms the block's quiesce cycle.
         fsm.on_log_applied(101);
-        assert!(fsm.publish_pending());
+        assert!(fsm.publish_armed());
     }
 
     #[test]
@@ -752,7 +825,7 @@ mod block_clock_contract {
         assert!(matches!(d, LogDecision::TombstonePrevious(100)));
         assert_eq!(fsm.current_block(), 101);
         fsm.on_log_applied(101);
-        assert!(fsm.publish_pending());
+        assert!(fsm.publish_armed());
     }
 
     #[test]
@@ -761,11 +834,12 @@ mod block_clock_contract {
         // Arm a publish from a forward apply.
         fsm.on_log(101, false);
         fsm.on_log_applied(101);
-        assert!(fsm.publish_pending());
-        // A removed log reorgs the open block and disarms the stale publish.
+        assert!(fsm.publish_armed());
+        // A removed log opens the reorg window, which voids every pre-reorg
+        // arm (state on both sides of the fork is being unwound).
         let d = fsm.on_log(101, true);
         assert!(matches!(d, LogDecision::EnterReorg(_)));
-        assert!(!fsm.publish_pending());
+        assert!(!fsm.publish_armed());
     }
 
     #[test]
@@ -930,47 +1004,45 @@ mod block_clock_contract {
                 to: None
             }
         ));
-        // A forward log arms a pending publish + makes the block observable: a
-        // settle emits the quiesce-gated Publish and clears the arm.
+        // A forward log arms the block's cycle + makes it observable: a settle
+        // emits the quiesce-gated Publish and consumes the arm.
         let mut fsm = StageMachine::new(200, 0);
-        fsm.observe_log(201, false);
-        fsm.log_received(201);
-        fsm.log_applied(201);
-        fsm.publish_pending = true;
+        fsm.on_log(201, false);
+        fsm.on_log_applied(201);
         let d = fsm.on_settle();
         assert!(d
             .iter()
             .any(|x| matches!(x, StageDecision::Publish { open: 201, .. })));
-        assert!(!fsm.publish_pending);
+        assert!(!fsm.publish_armed());
     }
 
     #[test]
     fn quiesce_gate_emits_exactly_one_publish_never_premature() {
-        // Premature: a log is armed but still in-flight (received, not yet
-        // applied) — the block is NOT quiesced, so a settle must NOT publish.
-        // The arm is still cleared (the burst is still draining).
+        // Premature: the cycle is armed but a log is still in-flight (received,
+        // not yet applied) — the block is NOT quiesced, so a settle must NOT
+        // publish, and the settle spends the arm (the burst is still draining).
         let mut fsm = StageMachine::new(200, 0);
-        fsm.observe_log(201, false);
-        fsm.log_received(201); // in_flight = 1, never quiesced
-        fsm.publish_pending = true;
+        fsm.on_log(201, false);
+        fsm.on_log_applied(201); // arms the cycle
+        fsm.log_received(201); // in_flight = 1 → not quiesced
         let d = fsm.on_settle();
         assert!(
             d.iter()
                 .all(|x| !matches!(x, StageDecision::Publish { .. })),
             "premature publish before the block quiesces: {d:?}"
         );
+        assert!(!fsm.publish_armed(), "the settle spent the arm");
         assert!(
-            !fsm.publish_pending,
-            "arm cleared even when not yet quiesced"
+            !fsm.logs_quiesced(201),
+            "an in-flight log leaves the block unquiesced"
         );
 
-        // Quiesced: the applied log flips `ever_quiesced`. A settle emits
-        // EXACTLY one Publish for the block, never a second.
+        // Quiesced: every log applied. A settle emits EXACTLY one Publish for
+        // the block, never a second.
         let mut fsm = StageMachine::new(200, 0);
-        fsm.observe_log(201, false);
-        fsm.log_received(201);
-        fsm.log_applied(201); // in_flight = 0 → quiesced
-        fsm.publish_pending = true;
+        fsm.on_log(201, false);
+        fsm.on_log_applied(201); // in_flight = 0 → armed + quiesced
+        assert!(fsm.logs_quiesced(201));
         let d = fsm.on_settle();
         let publishes = d
             .iter()
@@ -993,8 +1065,12 @@ mod block_clock_contract {
     #[test]
     fn stream_end_flushes_then_stops() {
         let mut fsm = StageMachine::new(300, 0);
-        fsm.publish_pending = true;
+        fsm.on_log(301, false);
+        fsm.on_log_applied(301);
         let d = fsm.on_stream_end();
+        assert!(d
+            .iter()
+            .any(|x| matches!(x, StageDecision::Publish { open: 301, .. })));
         assert!(d.last().is_some_and(StageDecision::stops));
     }
 }
@@ -1026,6 +1102,245 @@ fn drain_decision_anchor_follows_log_driven_block_not_racing_header() {
     };
     assert_eq!(block, 102);
 }
+
+// ======================================================================
+// The per-block quiesce cycle (I5: exactly one `Publish` per cycle)
+// ======================================================================
+
+/// The publication behavior the driver depends on, pinned at its two entry
+/// points ([`StageMachine::on_settle`] and [`StageMachine::on_stream_end`])
+/// without reaching into the machine's interior: which block publishes, when
+/// a publish is withheld, and what a spent cycle leaves behind.
+#[cfg(test)]
+mod publish_cycle_contract {
+    use super::*;
+
+    fn publishes(decisions: &[StageDecision]) -> Vec<u64> {
+        decisions
+            .iter()
+            .filter_map(|d| match d {
+                StageDecision::Publish { open, .. } => Some(*open),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn backfills(decisions: &[StageDecision]) -> usize {
+        decisions
+            .iter()
+            .filter(|d| matches!(d, StageDecision::Backfill { .. }))
+            .count()
+    }
+
+    /// A forward log for `block` arrives and is applied to engine state — the
+    /// production driver's order within one loop iteration.
+    fn apply_forward_log(fsm: &mut StageMachine, block: u64) {
+        let verdict = fsm.on_log(block, false);
+        assert!(
+            matches!(
+                verdict,
+                LogDecision::DispatchForward | LogDecision::TombstonePrevious(_)
+            ),
+            "unexpected verdict for a forward log on {block}: {verdict:?}"
+        );
+        fsm.on_log_applied(block);
+    }
+
+    #[test]
+    fn one_publish_per_quiesce_cycle_at_the_settle_point() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+
+        let decisions = fsm.on_settle();
+        assert_eq!(
+            publishes(&decisions),
+            vec![201],
+            "the settled cycle publishes its open block once: {decisions:?}"
+        );
+
+        // The cycle is spent: a second settle point with no new log is the
+        // inactivity path, never a second publish of the same cycle.
+        let decisions = fsm.on_settle();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "no second publish for a spent cycle: {decisions:?}"
+        );
+        assert_eq!(
+            backfills(&decisions),
+            1,
+            "the spent cycle hands the settle point to the inactivity backfill: {decisions:?}"
+        );
+    }
+
+    #[test]
+    fn straggler_log_re_arms_the_cycle_for_a_second_publish() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+        assert_eq!(publishes(&fsm.on_settle()), vec![201]);
+
+        // A straggler for the same block lands after the cycle's publish: it
+        // opens a fresh cycle, so the next settle publishes the block again.
+        apply_forward_log(&mut fsm, 201);
+        assert_eq!(
+            publishes(&fsm.on_settle()),
+            vec![201],
+            "an applied straggler settles a fresh cycle"
+        );
+    }
+
+    #[test]
+    fn no_publish_while_a_log_is_in_flight_and_the_settle_spends_the_arm() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+
+        // A second log for the same block is received but not yet applied: the
+        // block is NOT quiesced, so the settle point must not publish.
+        fsm.log_received(201);
+        let decisions = fsm.on_settle();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "publish before quiescence: {decisions:?}"
+        );
+
+        // A settle point spends the cycle's arm instead of holding it: the
+        // next settle (no new applied log) is the inactivity path, so a
+        // mid-dispatch settle can never park a publish behind that window.
+        let decisions = fsm.on_settle();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "a spent arm cannot publish later: {decisions:?}"
+        );
+        assert_eq!(backfills(&decisions), 1);
+    }
+
+    #[test]
+    fn tombstone_supersedes_the_open_blocks_cycle() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+
+        // The first forward log for 202 tombstones 201. The tombstone's
+        // finalize is 201's terminal publish, so its armed quiesce cycle must
+        // never fire afterwards.
+        assert!(matches!(
+            fsm.on_log(202, false),
+            LogDecision::TombstonePrevious(201)
+        ));
+        let decisions = fsm.on_settle();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "the tombstoned block's cycle must not publish: {decisions:?}"
+        );
+        assert_eq!(backfills(&decisions), 1);
+
+        // 202's own applied log opens the fresh cycle.
+        fsm.on_log_applied(202);
+        assert_eq!(publishes(&fsm.on_settle()), vec![202]);
+    }
+
+    #[test]
+    fn reorg_rewind_invalidates_the_open_blocks_cycle() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+
+        assert!(matches!(
+            fsm.on_log(201, true),
+            LogDecision::EnterReorg(201)
+        ));
+        let decisions = fsm.on_settle();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "pre-rewind state must not publish: {decisions:?}"
+        );
+
+        // The window closes on the first forward log; its apply opens the
+        // fresh epoch's cycle.
+        assert!(matches!(
+            fsm.on_log(202, false),
+            LogDecision::CloseReorg { new_head: 202 }
+        ));
+        fsm.on_log_applied(202);
+        assert_eq!(publishes(&fsm.on_settle()), vec![202]);
+    }
+
+    #[test]
+    fn stream_end_takes_the_same_cycle_the_settle_point_would_have() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+        let decisions = fsm.on_stream_end();
+        assert_eq!(
+            publishes(&decisions),
+            vec![201],
+            "stream end flushes the armed cycle: {decisions:?}"
+        );
+        assert!(decisions.last().is_some_and(StageDecision::stops));
+
+        // Nothing armed: stream end stops without a publish and WITHOUT the
+        // inactivity backfill — there is no window left to wait for.
+        let mut fsm = StageMachine::new(200, 0);
+        let decisions = fsm.on_stream_end();
+        assert!(publishes(&decisions).is_empty());
+        assert_eq!(backfills(&decisions), 0);
+        assert!(
+            matches!(decisions.as_slice(), [only] if only.stops()),
+            "an unarmed stream end emits the stop alone: {decisions:?}"
+        );
+    }
+
+    #[test]
+    fn an_applied_log_arms_the_next_cycle_by_itself() {
+        // The arm is a consequence of the apply, not a second write somebody
+        // could forget: a log applied after the settle already spent the cycle
+        // publishes at the next quiesce point.
+        let mut fsm = StageMachine::new(200, 0);
+        fsm.on_log(201, false);
+        fsm.log_received(201);
+        assert!(publishes(&fsm.on_settle()).is_empty(), "still in flight");
+        fsm.log_applied(201);
+        assert_eq!(
+            publishes(&fsm.on_settle()),
+            vec![201],
+            "the apply itself arms the next cycle"
+        );
+    }
+
+    #[test]
+    fn stream_end_publishes_without_stamping_the_published_row() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+        assert_eq!(
+            fsm.stage(),
+            Some(Stage::StreamingComplete),
+            "the applied log stages the Quiesced row"
+        );
+
+        let decisions = fsm.on_stream_end();
+        assert_eq!(
+            publishes(&decisions),
+            vec![201],
+            "stream end flushes the armed cycle: {decisions:?}"
+        );
+        assert_eq!(
+            fsm.stage(),
+            Some(Stage::StreamingComplete),
+            "the stream-end quiesce point leaves the stage row untouched"
+        );
+        assert!(decisions.last().is_some_and(StageDecision::stops));
+    }
+
+    #[test]
+    fn stream_end_does_not_publish_a_block_still_in_flight() {
+        let mut fsm = StageMachine::new(200, 0);
+        apply_forward_log(&mut fsm, 201);
+        fsm.log_received(201);
+        let decisions = fsm.on_stream_end();
+        assert!(
+            publishes(&decisions).is_empty(),
+            "stream end publishes no non-quiesced block: {decisions:?}"
+        );
+        assert!(decisions.last().is_some_and(StageDecision::stops));
+    }
+}
+
 impl StageMachine {
     /// The deepest `Drained` block, or `None` if no block has reached
     /// `Drained` yet. A header alone can never advance this (ADR-008 D1).
@@ -1166,32 +1481,27 @@ impl StageMachine {
         }
     }
 
-    /// Mark a block's log as fully applied (decrement in-flight counter).
-    /// Called by the pump after `dispatch_log` completes for `block`.
-    /// When the in-flight counter first reaches 0, `logs_quiesced(block)`
-    /// becomes true (the solver-release gate — ADR-008 D2).
+    /// Mark a block's log as fully applied (decrement the in-flight counter)
+    /// and arm its quiesce cycle. Called by the pump after `dispatch_log`
+    /// completes for `block`. Every applied log arms the cycle, so a straggler
+    /// landing after the cycle's one `Publish` opens the next one.
     pub fn log_applied(&mut self, block: u64) {
-        if let Some(BlockState::LogsArriving {
-            in_flight,
-            ever_quiesced,
-        }) = self.blocks.get_mut(&block)
-        {
+        if let Some(BlockState::LogsArriving { in_flight, publish }) = self.blocks.get_mut(&block) {
             if *in_flight > 0 {
                 *in_flight -= 1;
             }
-            if *in_flight == 0 {
-                *ever_quiesced = true;
-            }
+            *publish = PublishPhase::Armed;
         }
     }
 
     /// The `LogsQuiesced` predicate (ADR-008 D2): true when every log the WS
-    /// has given us for `block` has been fully applied to pool state. This
-    /// requires BOTH that at least one log-received→applied cycle completed
-    /// (`ever_quiesced`) AND that no log is currently being dispatched
-    /// (`in_flight == 0`). A block that merely entered `LogsArriving` (a
-    /// tombstone-triggering log observed but not yet dispatched) is NOT
-    /// quiesced. Used as the solver-release gate; NOT a state transition.
+    /// has given us for `block` has been fully applied to pool state AND the
+    /// block still holds an untaken publish arm. This requires BOTH that some
+    /// log's apply armed the cycle (`PublishPhase::Armed`) AND that no log is
+    /// currently being dispatched (`in_flight == 0`). A block that merely
+    /// entered `LogsArriving` (a tombstone-triggering log observed but not yet
+    /// dispatched) is NOT quiesced, and neither is one whose cycle already
+    /// published. Used as the solver-release gate; NOT a state transition.
     #[must_use]
     pub fn logs_quiesced(&self, block: u64) -> bool {
         matches!(
@@ -1199,32 +1509,29 @@ impl StageMachine {
             Some(
                 BlockState::LogsArriving {
                     in_flight: 0,
-                    ever_quiesced: true
+                    publish: PublishPhase::Armed
                 } | BlockState::LogsApplied
                     | BlockState::Drained
             )
         )
     }
 
-    /// Consume the quiesce signal for `block` (the solver-release gate —
-    /// ADR-008 D2). Returns `true` if the block was quiesced AND the signal
-    /// hadn't been consumed since the last `log_received` (so the pump
-    /// publishes exactly once per quiesce cycle). Resets `ever_quiesced`;
-    /// a straggler log (`log_received` → `in_flight > 0` → `log_applied` →
-    /// `in_flight == 0`) re-arms it for the next publish.
+    /// Take `block`'s publish arm — the quiesce cycle's publication decision
+    /// and I5's single authority: one taken arm publishes at most once, and a
+    /// straggler log's apply arms the next cycle.
     ///
-    /// On `LogsApplied`/`Drained` blocks (already tombstoned) this returns
-    /// `false`: the tombstone-driven finalize is the terminal publish, not
-    /// the quiesce gate.
-    pub fn consume_quiesced(&mut self, block: u64) -> bool {
-        if let Some(BlockState::LogsArriving {
-            in_flight: 0,
-            ever_quiesced,
-        }) = self.blocks.get_mut(&block)
-        {
-            let was_quiesced = *ever_quiesced;
-            *ever_quiesced = false;
-            was_quiesced
+    /// The arm is spent (`Armed → Idle`) either way; the return value says
+    /// whether the cycle is publishable NOW. A block still dispatching a log
+    /// (`in_flight > 0`) is not quiesced, so a take that races an in-flight log
+    /// publishes nothing — the driver never settles mid-dispatch, and that
+    /// log's own apply arms the next cycle. Blocks at or past their tombstone
+    /// (`LogsApplied`/`Drained`) own no arm: the tombstone's finalize is their
+    /// terminal publish, never the quiesce gate.
+    fn take_publish(&mut self, block: u64) -> bool {
+        if let Some(BlockState::LogsArriving { in_flight, publish }) = self.blocks.get_mut(&block) {
+            let was_armed = *publish == PublishPhase::Armed;
+            *publish = PublishPhase::Idle;
+            was_armed && *in_flight == 0
         } else {
             false
         }
@@ -1274,7 +1581,7 @@ impl StageMachine {
         if matches!(entry, BlockState::Observed) {
             *entry = BlockState::LogsArriving {
                 in_flight: 0,
-                ever_quiesced: false,
+                publish: PublishPhase::Idle,
             };
         }
     }
@@ -1685,7 +1992,7 @@ mod tests {
             machine.state_of(100),
             Some(BlockState::LogsArriving {
                 in_flight: 1,
-                ever_quiesced: false
+                publish: PublishPhase::Idle
             })
         );
         assert!(!machine.logs_quiesced(100), "in-flight log → not quiesced");
@@ -1745,9 +2052,10 @@ mod tests {
         machine.advance_to_drained(101);
         assert_eq!(machine.cursor(), Some(101));
 
-        // Arm a pending publish so we can pin that the late log leaves it
-        // untouched (I5).
-        machine.publish_pending = true;
+        // Arm a cycle on the open block so we can pin that the late log leaves
+        // it untouched (I5).
+        machine.log_received(102);
+        machine.log_applied(102);
 
         // A forward log for 100 now arrives — late forward on a Drained
         // block: benign late admission, NOT a fatal signal.
@@ -1762,8 +2070,8 @@ mod tests {
             "the tombstoned block stays tombstoned — late log cannot reopen it (I4)"
         );
         assert!(
-            machine.publish_pending,
-            "the late log must not arm or disarm the pending publish (I5)"
+            machine.publish_armed(),
+            "the late log must not arm or disarm the open block's cycle (I5)"
         );
     }
 
@@ -1833,36 +2141,33 @@ mod tests {
         assert!(machine.logs_quiesced(100), "straggler applied → re-quiesce");
     }
 
-    /// `consume_quiesced` is the solver-release gate (ADR-008 D2): it returns
+    /// `take_publish` is the solver-release gate (ADR-008 D2): it returns
     /// `true` ONCE per quiesce cycle, then `false` until a new log re-arms it.
     /// This is what lets the pump publish exactly once per burst (not once
     /// per log), and again after a straggler settles.
     #[test]
-    fn consume_quiesced_publishes_once_per_cycle_and_re_arms_on_straggler() {
+    fn take_publish_consumes_the_cycle_once_and_re_arms_on_a_straggler() {
         let mut machine = StageMachine::new(0, 0);
         machine.observe_header(100);
         machine.observe_log(100, false);
         machine.log_received(100);
         machine.log_applied(100);
 
-        // First consume → true (publish). Second consume (no new log) → false.
-        assert!(machine.consume_quiesced(100), "first quiesce publishes");
-        assert!(!machine.consume_quiesced(100), "no new log → no re-publish");
+        // First take → true (publish). Second take (no new log) → false.
+        assert!(machine.take_publish(100), "first quiesce publishes");
+        assert!(!machine.take_publish(100), "no new log → no re-publish");
 
-        // Straggler log re-arms the gate.
+        // Straggler log re-arms the cycle.
         machine.observe_log(100, false);
         machine.log_received(100);
-        assert!(
-            !machine.consume_quiesced(100),
-            "in-flight log → not quiesced"
-        );
+        assert!(!machine.take_publish(100), "in-flight log → not quiesced");
         machine.log_applied(100);
 
         assert!(
-            machine.consume_quiesced(100),
+            machine.take_publish(100),
             "straggler settled → publish again"
         );
-        assert!(!machine.consume_quiesced(100), "second consume dry");
+        assert!(!machine.take_publish(100), "second take dry");
     }
 }
 

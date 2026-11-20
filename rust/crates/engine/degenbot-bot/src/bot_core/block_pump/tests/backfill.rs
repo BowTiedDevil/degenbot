@@ -8,7 +8,7 @@ use degenbot_core::fee::fee_ratio;
 // quiesced (all dispatched logs fully applied), and coalesce a burst of
 // same-block logs into ONE publish at the burst tail (not once per log).
 // Re-arm on straggler is covered at the clock level by
-// `consume_quiesced_publishes_once_per_cycle_and_re_arms_on_straggler`.
+// `take_publish_consumes_the_cycle_once_and_re_arms_on_a_straggler`.
 // -----------------------------------------------------------------
 
 /// 3 same-block logs in a tight burst → exactly ONE `on_send`, fired at
