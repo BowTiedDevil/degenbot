@@ -30,9 +30,9 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, Notify};
 
 use super::{
-    transition, CrawlAbort, CrawlConfig, CrawlConfigError, CrawlController, CrawlEvent,
+    sweep_halt, transition, CrawlAbort, CrawlConfig, CrawlConfigError, CrawlController, CrawlEvent,
     CrawlHandle, CrawlHost, CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture,
-    CrawlUnitSeat, RunPhase, SeatHold, SnapshotArm,
+    CrawlUnitSeat, RunPhase, SeatHold, SnapshotArm, SweepEnd, SweepHalt,
 };
 use crate::arb_engine::crawl::admission::{DiscoveredHop, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
@@ -800,6 +800,68 @@ fn the_latch_sets_only_under_a_live_pipeline_and_rearms_only_on_an_edition_chang
     }
 }
 
+// ── the sweep's end ─────────────────────────────────────────────────────────
+
+#[test]
+fn the_halt_predicate_names_every_pose_that_ends_a_sweep() {
+    let running = CrawlState::Running {
+        last_complete: None,
+    };
+    // Nothing latched, nothing aborted: the sweep keeps pulling.
+    for pose in [CrawlState::Idle, running] {
+        assert_eq!(
+            sweep_halt(running, pose, false),
+            None,
+            "{pose} halts nothing"
+        );
+    }
+    // The cap's TIMING is the rule: one already latched when the sweep began is
+    // the operator's own one-shot over a full registry.
+    assert_eq!(
+        sweep_halt(running, CrawlState::Capped, false),
+        Some(SweepHalt::CapOnset)
+    );
+    assert_eq!(
+        sweep_halt(CrawlState::Capped, CrawlState::Capped, false),
+        None,
+        "a sweep that began post-cap is the operator's one-shot"
+    );
+    // A stop ends submission whether or not the run future has resolved yet.
+    for pose in [CrawlState::Stopping, CrawlState::Stopped] {
+        assert_eq!(sweep_halt(running, pose, false), Some(SweepHalt::Stop));
+    }
+    // A fatal abort outranks every pose: the drain still completes, and the run
+    // answers with the abort.
+    for pose in [
+        CrawlState::Idle,
+        running,
+        CrawlState::Capped,
+        CrawlState::Stopping,
+        CrawlState::Stopped,
+    ] {
+        assert_eq!(
+            sweep_halt(CrawlState::Capped, pose, true),
+            Some(SweepHalt::Abort),
+            "an abort halts from {pose}"
+        );
+    }
+}
+
+#[test]
+fn only_a_natural_exhaustion_latches_the_edition() {
+    assert!(SweepEnd::Exhausted.latches());
+    assert!(
+        !SweepEnd::Truncated.latches(),
+        "a truncated sweep never read the graph's end"
+    );
+    for halt in [SweepHalt::CapOnset, SweepHalt::Stop, SweepHalt::Abort] {
+        assert!(
+            !SweepEnd::Halted(halt).latches(),
+            "a sweep halted by {halt:?} leaves the latch armed"
+        );
+    }
+}
+
 // ── the loop ────────────────────────────────────────────────────────────────
 
 /// The window fills by SUBMISSION, and every landed receipt folds once, in
@@ -1003,6 +1065,29 @@ async fn a_bound_truncated_sweep_does_not_latch() {
     );
 }
 
+/// A bound that happens to equal the candidates left is still a TRUNCATION: the
+/// sweep spent its budget before it could ask the source for more, so it never
+/// learned the graph was covered and never latches.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bound_equal_to_the_candidates_left_is_a_truncation() {
+    let fixture = fixture(
+        FakeRpc::new(),
+        skip_graph(3),
+        config(4, 4),
+        TokioSeat::new(Duration::ZERO, None),
+    );
+    assert_eq!(
+        fixture.controller.trigger_discovery(Some(6)).await.unwrap(),
+        6,
+        "three parallel pools admit six ordered cycles"
+    );
+    assert_eq!(
+        fixture.controller.last_complete(),
+        None,
+        "truncation and exhaustion are exclusive: a spent bound never reports the graph's end"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failing_edition_probe_never_latches() {
     let fixture = fixture(
@@ -1088,6 +1173,69 @@ async fn the_cap_latch_halts_submission_and_the_window_still_drains() {
             CrawlStateError::EventOutOfOrder { .. }
         ))
     ));
+}
+
+/// A cap that latches *during* a sweep ends it before the rest of the batch in
+/// hand is submitted, and it latches nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cap_onset_ends_the_sweep_before_the_batch_is_spent() {
+    let holder: Arc<OnceLock<Arc<CrawlController>>> = Arc::new(OnceLock::new());
+    let trigger = Arc::clone(&holder);
+    let seat = TokioSeat::new(
+        Duration::from_millis(1),
+        Some(Arc::new(move |ordinal: usize, _metrics: &Metrics| {
+            if ordinal == 1 {
+                if let Some(controller) = trigger.get() {
+                    controller.fold(&cap_receipt());
+                }
+            }
+        })),
+    );
+    // A batch of four behind a one-unit window, so only the cap can end this
+    // sweep early: every further dispatch is a candidate the cap never halted.
+    let fixture = fixture(FakeRpc::new(), skip_graph(6), config(1, 4), seat);
+    assert!(holder.set(Arc::clone(&fixture.controller)).is_ok());
+
+    fixture.controller.run().await.unwrap();
+
+    assert_eq!(
+        fixture.seat.metrics().dispatched.load(Ordering::SeqCst),
+        1,
+        "the rest of the pulled batch is never submitted"
+    );
+    assert_eq!(fixture.controller.state(), CrawlState::Capped);
+    assert_eq!(
+        fixture.controller.last_complete(),
+        None,
+        "a cap-halted sweep never latches: it never saw the graph's end"
+    );
+}
+
+/// The cap's TIMING is the rule: one already latched when the sweep began is the
+/// operator's own one-shot over a full registry (its units answer the cheap cap
+/// skip), so the sweep runs to its end — and still latches nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_existing_cap_admits_the_operator_sweep_and_latches_nothing() {
+    let fixture = fixture(
+        FakeRpc::new(),
+        skip_graph(3),
+        config(4, 4),
+        TokioSeat::new(Duration::ZERO, None),
+    );
+    fixture.controller.fold(&cap_receipt());
+    assert_eq!(fixture.controller.state(), CrawlState::Capped);
+
+    assert_eq!(
+        fixture.controller.trigger_discovery(None).await.unwrap(),
+        6,
+        "a sweep that began post-cap folds every cap skip instead of halting"
+    );
+    assert_eq!(fixture.controller.state(), CrawlState::Capped);
+    assert_eq!(
+        fixture.controller.last_complete(),
+        None,
+        "the cap closes the latch: a full registry re-offers answered candidates only"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1181,6 +1329,55 @@ async fn a_fatal_unit_aborts_the_crawl_loudly_after_the_drain() {
     assert!(!fixture.controller.state().is_stopped());
     assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
     assert!(fixture.controller.receipts_ended());
+}
+
+/// A fatal receipt ends the sweep at the loop's HEAD: no further candidate is
+/// pulled, so the abort spends no submission sequence on a unit it will never
+/// submit.
+///
+/// The sequence is the observable: pulling a candidate is the only thing that
+/// consumes one, and the operator surface reads the next one back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fatal_unit_ends_the_sweep_at_the_loop_head() {
+    let fixture = fixture(
+        abort_rpc(),
+        abort_graph(),
+        config(1, 1),
+        TokioSeat::new(Duration::ZERO, None),
+    );
+    assert!(matches!(
+        fixture.controller.run().await,
+        Err(CrawlRequestError::Abort(_))
+    ));
+    fixture.seat.metrics().wait_quiesced().await;
+    assert_eq!(
+        fixture.seat.metrics().dispatched.load(Ordering::SeqCst),
+        1,
+        "nothing is submitted after the fatal receipt"
+    );
+
+    // An abort is a resolution, not a stop, so the operator surface outlives it:
+    // its first sequence is the second, because the abort spent exactly one.
+    let error = fixture
+        .controller
+        .enqueue_path(
+            DiscoveredPath {
+                hops: vec![DiscoveredHop::V4 {
+                    pool_manager: V4_PM,
+                    pool_hash: None,
+                }],
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    match error {
+        CrawlRequestError::RegistrationNotCompleted { sequence, .. } => assert_eq!(
+            sequence, 2,
+            "the halted sweep pulled no candidate past the abort"
+        ),
+        other => panic!("expected the enqueued unit's own outcome, got {other:?}"),
+    }
 }
 
 // ── the window's completion clause ──────────────────────────────────

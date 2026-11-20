@@ -68,6 +68,10 @@
 //! Python loop's shape with the crossings removed — the counters, the stage
 //! profile and the cap latch are engine state now.
 //!
+//! A sweep ends as ONE [`SweepEnd`] — exhausted, truncated by the operator's
+//! bound, or halted by a pose — and [`sweep_halt`] is the loop's only halt
+//! predicate. Only a natural exhaustion latches the edition.
+//!
 //! The window PACES; it does not cap. The admission edge
 //! (`Fold::inflight() >= window`) sits after the submit, and a receipt that
 //! lands behind an older sibling waits in the buffer until the FIFO front
@@ -421,6 +425,91 @@ pub fn transition(state: CrawlState, event: CrawlEvent) -> Result<CrawlState, Cr
         // still be working from.
         (S::Idle | S::Running { .. } | S::Capped, E::CapReached) => Ok(S::Capped),
     }
+}
+
+// ── the sweep's own machine ─────────────────────────────────────────────────
+
+/// How a sweep ENDED — the loop's one termination state.
+///
+/// The three ends are exclusive by construction: a sweep that spends its bound
+/// never asks the source for the next candidate, and a halted one stops before it
+/// pulls. That exclusivity is the completion rule's whole content — only
+/// [`SweepEnd::Exhausted`] saw the graph's end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepEnd {
+    /// The source yielded nothing further: the sweep covered the whole graph.
+    Exhausted,
+    /// The operator's bound stopped it with candidates still unread.
+    Truncated,
+    /// A pose forbade the next batch; [`SweepHalt`] names which.
+    Halted(SweepHalt),
+}
+
+impl SweepEnd {
+    /// Whether this end latches the sweep-completion edition.
+    ///
+    /// Only a natural, uncapped exhaustion covered the structure a later sweep
+    /// would read, so only it says the next sweep over the same edition could
+    /// re-offer nothing but candidates this pipeline already answered. A
+    /// truncated sweep never read the rest of the graph, and a halted one was cut
+    /// short by a pose: both leave the latch armed.
+    #[must_use]
+    pub const fn latches(self) -> bool {
+        matches!(self, Self::Exhausted)
+    }
+}
+
+/// What halted a sweep before its next batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepHalt {
+    /// The registry cap latched *during* this sweep; discovery is over.
+    CapOnset,
+    /// A stop is latched: no new unit enters, and the window drains.
+    Stop,
+    /// A submitted unit aborted loudly; the window still drains, and the run
+    /// answers with the abort.
+    Abort,
+}
+
+/// The ONE halt predicate: whether the sweep must stop before its next batch, and
+/// why.
+///
+/// `started` is the pose the sweep began from and `current` the pose now, because
+/// the cap's TIMING is the rule: one already latched when the sweep began is the
+/// operator's own one-shot over a full registry, whose units answer the cheap cap
+/// skip, so the sweep runs to its end. A cap that latches *during* the sweep ends
+/// it.
+///
+/// The other two halts are unconditional. A stop ends submission whether or not
+/// the run future has resolved yet (the window drains either way), and a fatal
+/// abort outranks every pose: the drain completes and the run returns the abort.
+#[must_use]
+pub fn sweep_halt(started: CrawlState, current: CrawlState, aborted: bool) -> Option<SweepHalt> {
+    if aborted {
+        return Some(SweepHalt::Abort);
+    }
+    match current {
+        CrawlState::Stopping | CrawlState::Stopped => Some(SweepHalt::Stop),
+        CrawlState::Capped if !matches!(started, CrawlState::Capped) => Some(SweepHalt::CapOnset),
+        CrawlState::Idle | CrawlState::Running { .. } | CrawlState::Capped => None,
+    }
+}
+
+/// One discovery turn: the candidates a pull produced, or the end it reached.
+enum Turn {
+    /// The turn's first candidate and the rest of it (`0..discovery_batch_size`
+    /// more). The first is carried apart so the loop always has a unit to submit
+    /// once a pull succeeded.
+    Pulled {
+        /// The candidate to submit now.
+        first: CrawlUnit,
+        /// The turn's remaining candidates, in sweep order.
+        rest: Vec<CrawlUnit>,
+    },
+    /// The operator's bound is spent.
+    Truncated,
+    /// The source yielded nothing further.
+    Exhausted,
 }
 
 // ── the configuration ───────────────────────────────────────────────────────
@@ -1231,9 +1320,9 @@ impl CrawlController {
     /// The crawl: one discovery sweep, windowed submission, FIFO fold.
     ///
     /// Returns when every submitted unit has resolved (the completion clause) —
-    /// on natural completion, on the cap latch, or on a stop. A fatal receipt
-    /// aborts loudly: the loop stops submitting, the outstanding units finish,
-    /// and the abort is the return value.
+    /// on natural completion, on the operator's bound, on the cap latch, or on a
+    /// stop. A fatal receipt aborts loudly: the loop stops submitting, the
+    /// outstanding units finish, and the abort is the return value.
     ///
     /// The CONTROLLER never spawns this future (see the module docs): the driver
     /// spawns it and keeps the `JoinHandle`. Whoever holds it gets the resolution
@@ -1427,9 +1516,52 @@ impl CrawlController {
             .map_err(CrawlRequestError::Discovery)
     }
 
-    /// The windowed submission loop: discovery pulls, the FIFO reaper folds, the
-    /// cap latch and a stop both stop new work, and the window drains before the
-    /// call returns.
+    /// Pull one discovery turn: up to `discovery_batch_size` candidates, pulled
+    /// between two reaps so a fast sweep cannot park a full window of unreaped
+    /// receipts (the Python reaper's own discipline).
+    ///
+    /// The bound is spent BEFORE a candidate is pulled, so a truncated sweep never
+    /// reads past the operator's limit. A source that ends mid-turn answers the
+    /// prefix it did yield and `None` from then on (exhaustion is sticky), so the
+    /// turn after the prefix reports the source's end.
+    fn pull_turn(
+        &self,
+        sweep: &mut DiscoverySweep,
+        batch: usize,
+        bound: Option<usize>,
+        submitted: usize,
+    ) -> Result<Turn, CrawlRequestError> {
+        let want = bound.map_or(batch, |limit| batch.min(limit.saturating_sub(submitted)));
+        if want == 0 {
+            return Ok(Turn::Truncated);
+        }
+        let mut units: Vec<CrawlUnit> = Vec::with_capacity(want);
+        for _ in 0..want {
+            let Some(path) = sweep.next_path()? else {
+                break;
+            };
+            units.push(CrawlUnit {
+                seq: self.next_seq(),
+                hops: path.hops,
+                directions: None,
+            });
+        }
+        let mut pulled = units.into_iter();
+        match pulled.next() {
+            Some(first) => Ok(Turn::Pulled {
+                first,
+                rest: pulled.collect(),
+            }),
+            // `want` is at least one, so an empty turn means the first pull
+            // answered `None`: there is nothing left to sweep.
+            None => Ok(Turn::Exhausted),
+        }
+    }
+
+    /// The windowed submission loop: discovery pulls a turn, the FIFO reaper
+    /// folds, [`sweep_halt`] ends the sweep, and the window drains before the call
+    /// returns. Only a [`SweepEnd::Exhausted`] end whose probe answers latches the
+    /// edition.
     async fn drive(&self, bound: Option<usize>, window: usize) -> Result<usize, CrawlRequestError> {
         // One sweep at a time: the FIFO window is per-call, so two interleaved
         // sweeps would each hold a partial view of the submission order.
@@ -1438,74 +1570,49 @@ impl CrawlController {
             .try_lock()
             .map_err(|_| CrawlStateError::SweepInFlight)?;
 
-        // Capture the pose BEFORE the sweep: "the cap fired during THIS call" is
-        // the only cap that halts a sweep (a sweep that began post-cap folds the
-        // cheap cap skips, as the Python operator surface does).
-        let started_capped = matches!(self.state(), CrawlState::Capped);
+        // The pose this sweep began from: a cap already latched here is the
+        // operator's one-shot over a full registry, never a halt.
+        let started = self.state();
         let mut sweep = self.prepare_sweep().await?;
 
         let (tx, rx) = mpsc::unbounded_channel();
         let mut fold = Fold::new(self, rx);
-        let mut submitted = 0usize;
-        let mut truncated = false;
-        let mut exhausted = false;
         let batch = self.config.discovery_batch_size;
+        let mut turn: VecDeque<CrawlUnit> = VecDeque::new();
+        let mut submitted = 0usize;
 
-        'sweep: loop {
-            if self.sweep_halted(started_capped) {
-                break;
+        let end = 'sweep: loop {
+            // The loop's ONE halt point, at the head of every iteration: it asks
+            // both "may another batch be pulled?" and "may another unit of the
+            // batch in hand be submitted?". The reap comes first, so a receipt
+            // folded since the last submit is read before the question — a fatal
+            // unit ends the sweep before another candidate is pulled.
+            fold.reap();
+            if let Some(halt) = sweep_halt(started, self.state(), fold.aborted()) {
+                break 'sweep SweepEnd::Halted(halt);
             }
-            if let Some(limit) = bound {
-                if submitted >= limit {
-                    truncated = true;
-                    break;
-                }
-            }
-
-            // One discovery turn: at most `discovery_batch_size` candidates,
-            // pulled between two reaps so a fast sweep cannot park a full window
-            // of unreaped receipts (the Python reaper's own discipline).
-            let mut turn: Vec<CrawlUnit> = Vec::with_capacity(batch);
-            for _ in 0..batch {
-                if let Some(limit) = bound {
-                    if submitted + turn.len() >= limit {
-                        truncated = true;
-                        break;
+            let unit = if let Some(unit) = turn.pop_front() {
+                unit
+            } else {
+                match self.pull_turn(&mut sweep, batch, bound, submitted)? {
+                    Turn::Pulled { first, rest } => {
+                        turn.extend(rest);
+                        first
                     }
+                    Turn::Truncated => break 'sweep SweepEnd::Truncated,
+                    Turn::Exhausted => break 'sweep SweepEnd::Exhausted,
                 }
-                let Some(path) = sweep.next_path()? else {
-                    exhausted = true;
-                    break;
-                };
-                turn.push(CrawlUnit {
-                    seq: self.next_seq(),
-                    hops: path.hops,
-                    directions: None,
-                });
+            };
+            // The window records the submission BEFORE the seat can deliver (an
+            // inline seat resolves the unit inside `submit`).
+            let seq = unit.seq;
+            self.submit(unit, &tx)?;
+            fold.record(seq);
+            submitted += 1;
+            if fold.inflight() >= window {
+                fold.resolve_oldest().await?;
             }
-            if turn.is_empty() {
-                break;
-            }
-
-            for unit in turn {
-                fold.reap();
-                if fold.fatal.is_some() || self.sweep_halted(started_capped) {
-                    break 'sweep;
-                }
-                // The window records the submission BEFORE the seat can
-                // deliver (an inline seat resolves the unit inside `submit`).
-                let seq = unit.seq;
-                self.submit(unit, &tx)?;
-                fold.record(seq);
-                submitted += 1;
-                if fold.inflight() >= window {
-                    fold.resolve_oldest().await?;
-                }
-            }
-            if truncated || exhausted {
-                break;
-            }
-        }
+        };
 
         // The drive's own sender goes BEFORE the drain: a unit's own drop is
         // then the channel's end, so a seat that never ran a future (a lane
@@ -1522,11 +1629,12 @@ impl CrawlController {
         if let Some(abort) = fold.take_fatal() {
             return Err(CrawlRequestError::Abort(abort));
         }
-        let natural = exhausted && !truncated && !self.sweep_halted(started_capped);
-        if natural {
-            // The latch sets only on a natural, uncapped completion, and only
-            // when the probe answers: a failed probe never latches, so the next
-            // trigger sweeps instead of vetoing.
+        if end.latches() {
+            // The probe decides only whether the edition is READABLE — a failed
+            // probe never latches, so the next trigger sweeps instead of vetoing
+            // — while the transition table decides legality: a capped crawl
+            // refuses the latch, because a full registry keeps refusing and could
+            // only re-offer paths this pipeline already answered.
             if let Ok(edition) = self.source.edition() {
                 let _ = self.advance(CrawlEvent::SweepLatched { edition });
             }
@@ -1583,21 +1691,6 @@ impl CrawlController {
         let next = transition(*state, event)?;
         *state = next;
         Ok(next)
-    }
-
-    /// Whether this sweep must stop submitting.
-    ///
-    /// A stop always halts the sweep. The cap halts only when it fired *during*
-    /// this call: a sweep that began post-cap is the operator's own one-shot and
-    /// folds the cheap cap skips instead of returning early.
-    fn sweep_halted(&self, started_capped: bool) -> bool {
-        match self.state() {
-            // A latched stop halts submission immediately, whether or not the
-            // run future has resolved yet.
-            CrawlState::Stopping | CrawlState::Stopped => true,
-            CrawlState::Capped => !started_capped,
-            CrawlState::Idle | CrawlState::Running { .. } => false,
-        }
     }
 
     // ── the run lease and its resolution ────────────────────────────────────
@@ -1751,6 +1844,11 @@ impl<'a> Fold<'a> {
     /// Take the loud abort, if one fired.
     fn take_fatal(&mut self) -> Option<CrawlAbort> {
         self.fatal.take()
+    }
+
+    /// Whether a submitted unit has aborted loudly — the sweep's halt input.
+    fn aborted(&self) -> bool {
+        self.fatal.is_some()
     }
 
     /// Fold everything that has already landed, without awaiting.
