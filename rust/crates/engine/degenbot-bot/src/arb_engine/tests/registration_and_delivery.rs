@@ -371,8 +371,10 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
     .unwrap();
     match &engine.cycle.path_status[&path_id] {
         PathSolveStatus::Invalid { responsible } => {
-            assert_eq!(responsible.len(), 1);
-            assert!(responsible.contains(&(HopType::V3, empty_v3)));
+            assert_eq!(
+                responsible.pools().collect::<Vec<_>>(),
+                vec![(HopType::V3, empty_v3)]
+            );
         }
         other => panic!("expected Invalid, got {other:?}"),
     }
@@ -399,8 +401,10 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
     );
     match &engine.cycle.path_status[&path_id] {
         PathSolveStatus::Invalid { responsible } => {
-            assert_eq!(responsible.len(), 1);
-            assert!(responsible.contains(&(HopType::V3, empty_v3)));
+            assert_eq!(
+                responsible.pools().collect::<Vec<_>>(),
+                vec![(HopType::V3, empty_v3)]
+            );
         }
         other => panic!("expected still Invalid, got {other:?}"),
     }
@@ -424,6 +428,126 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
         "dirtying the path's own responsible pool must re-derive (re-check) it"
     );
 }
+
+/// The pools a path's eligibility row blames, for the tests that pin the blame
+/// set of an `Invalid` row.
+fn blamed_pools(row: &crate::arb_engine::path_lifecycle::PathSolveStatus) -> Vec<(HopType, u64)> {
+    use crate::arb_engine::path_lifecycle::PathSolveStatus;
+    match row {
+        PathSolveStatus::Invalid { responsible } => responsible.pools().collect(),
+        other => panic!("expected Invalid, got {other:?}"),
+    }
+}
+/// The deferral arm skips the resolve the dirty scan just activated: the empty
+/// V3 — the path's ONLY responsible pool — dirtied, and the future-price gate
+/// then deferred the path. The re-recorded key returns on the next cycle and
+/// must still re-derive; an activation a cycle owes cannot be lost with it.
+#[test]
+fn deferred_cycle_keeps_the_cleared_path_retryable() {
+    use crate::arb_engine::solve_cycle::CycleArm;
+
+    let mut engine = ArbitrageEngine::new();
+    let empty_v3 = engine.register_v3_pool(&RegisterV3PoolParams {
+        address: Address::from([0x57u8; 20]),
+        token0: Address::from([0u8; 20]),
+        token1: Address::from([1u8; 20]),
+        fee: 3000,
+        tick_spacing: 60,
+        sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+        liquidity: 0,
+        tick: 0,
+        tick_data: HashMap::new(),
+        update_block: 0,
+        tick_data_block: None,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
+        fetcher: None,
+        ..Default::default()
+    });
+    let v2 = engine.register_v2_pool(
+        Address::from([0x58u8; 20]),
+        usdc(1_000_000),
+        weth(500),
+        GAMMA_03,
+        FEE_DENOM_03,
+    );
+    let path_id = register_path(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: empty_v3,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: v2,
+                zero_for_one: true,
+            },
+        ],
+    )
+    .unwrap();
+
+    let own_pool_dirty = crate::arb_engine::tests::test_keys::affected_keys(
+        &HashSet::new(),
+        &HashSet::from([empty_v3]),
+        &HashSet::new(),
+    );
+
+    // Cycle 1: the empty V3 dirties while the deferral override suppresses the
+    // path's resolve.
+    engine.cycle.force_deferred = Some(HashSet::from([path_id]));
+    engine.cycle.path_resolved.clear();
+    let deferred = engine.cycle.run_epoch(
+        crate::arb_engine::test_harness::cycle_ticket(&own_pool_dirty),
+        6,
+        &BlockMetadata::default(),
+        &engine.registry,
+        &mut engine.delivery,
+    );
+    assert!(
+        matches!(
+            deferred.arm,
+            CycleArm::Dissolved {
+                invalid: 0,
+                deferred_future_price: 1
+            }
+        ),
+        "the deferral owns this cycle: {:?}",
+        deferred.arm
+    );
+    assert!(
+        !engine.cycle.path_resolved.contains_key(&path_id),
+        "a deferred path is never re-derived"
+    );
+
+    // Cycle 2: the re-recorded key returns and the owed resolve runs.
+    engine.cycle.force_deferred = None;
+    let recheck = engine.cycle.run_epoch(
+        crate::arb_engine::test_harness::cycle_ticket(&own_pool_dirty),
+        7,
+        &BlockMetadata::default(),
+        &engine.registry,
+        &mut engine.delivery,
+    );
+    assert!(
+        engine.cycle.path_resolved.contains_key(&path_id),
+        "the deferred resolve must run on the next cycle"
+    );
+    assert_eq!(
+        blamed_pools(&engine.cycle.path_status[&path_id]),
+        vec![(HopType::V3, empty_v3)]
+    );
+    assert!(
+        matches!(
+            recheck.arm,
+            CycleArm::Dissolved {
+                invalid: 1,
+                deferred_future_price: 0
+            }
+        ),
+        "the staging gate tallies the row it refused: {:?}",
+        recheck.arm
+    );
+}
+
 #[test]
 fn register_path_after_start_succeeds() {
     let mut engine = ArbitrageEngine::new();

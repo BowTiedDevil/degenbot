@@ -15,6 +15,7 @@ use crate::arb_engine::fleet_solve_executor::SOLVE_BIN_KEY_BASE;
 use crate::arb_engine::lane_walk::{
     drive_lane_walk, LaneArmPolicy, LaneWalkBinPlan, WalkSubmitCtx,
 };
+use crate::arb_engine::path_lifecycle::PathSolveStatus;
 use crate::arb_engine::solver_capture::{gate_capture_from_cfg, CaptureVariant, HeavyPathCapture};
 use crate::arb_engine::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
@@ -211,11 +212,19 @@ pub(super) fn solve_epoch(
     let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = solve_path_ids
         .iter()
         .filter_map(|&pid| {
-            let resolved = ctx.path_resolved.get(&pid)?;
-            if !resolved.valid {
-                invalid_count += 1;
-                return None;
+            // The eligibility row is the ONE staging authority; the resolved
+            // snapshot is only the payload the worker solves from.
+            match ctx.path_status.get(&pid) {
+                Some(PathSolveStatus::Solvable) => {}
+                Some(PathSolveStatus::Invalid { .. }) => {
+                    invalid_count += 1;
+                    return None;
+                }
+                // Owing a resolve (or holding no row at all) means this cycle
+                // produced no snapshot to solve.
+                Some(PathSolveStatus::Unresolved) | None => return None,
             }
+            let resolved = ctx.path_resolved.get(&pid)?;
             // A path whose `max_update_block` is AHEAD of the drain
             // `block_number` is LIVE head state (the pools advanced by
             // backfill), not poison — it is correctly re-anchored at

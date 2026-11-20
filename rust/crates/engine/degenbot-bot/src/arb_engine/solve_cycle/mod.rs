@@ -1167,7 +1167,11 @@ impl SolveCycle {
         let to_solve: Vec<(u64, std::sync::Arc<ResolvedMixedPath>)> = self
             .path_resolved
             .iter()
-            .filter(|(_, r)| r.valid)
+            .filter(|(pid, _)| {
+                self.path_status
+                    .get(*pid)
+                    .is_some_and(PathSolveStatus::is_solvable)
+            })
             .map(|(&pid, r)| (pid, std::sync::Arc::clone(r)))
             .collect();
         // LPT-pre-balanced partition. The cold start has the
@@ -1409,16 +1413,14 @@ impl SolveCycle {
             signature: sig,
             pool_refs,
         });
-        // Store the resolve snapshot + drive the state machine. Arc-shared:
-        // the solve dispatch stages Arc clones (f701ccd3 staging fix).
-        let path_valid = resolved.valid;
+        // Store the resolve snapshot and the eligibility row it produced.
+        // Arc-shared: the solve dispatch stages Arc clones.
+        let status = PathSolveStatus::resolved(&deficits);
+        let solvable = status.is_solvable();
         let resolved_arc = std::sync::Arc::new(resolved);
         self.path_resolved
             .insert(path_id, std::sync::Arc::clone(&resolved_arc));
-        self.path_status
-            .entry(path_id)
-            .or_default()
-            .set_resolved(&deficits);
+        self.path_status.insert(path_id, status);
         // DEBUG-gated: one line per path registration
         // was ~48% of a 10G run log (new pools/hop-combos register constantly
         // on a live run). The registration itself stays fully observable via
@@ -1428,7 +1430,7 @@ impl SolveCycle {
         diag!(domain = path, path_id = path_id,
             hops.count = hop_descs.len(),
             hops = %hop_descs.join(" -> "),
-            valid = path_valid,
+            solvable,
             "registered"
         );
         Ok(Registration {
@@ -1492,9 +1494,13 @@ impl SolveCycle {
             return Ok(registration);
         }
         let path_id = registration.path_id;
-        // Eagerly solve the newly registered path.
+        // Eagerly solve the newly registered path when its row says it may.
+        let solvable = self
+            .path_status
+            .get(&path_id)
+            .is_some_and(PathSolveStatus::is_solvable);
         if let Some(resolved) = registration.resolved.as_ref() {
-            if resolved.valid {
+            if solvable {
                 if let Some(solve_result) = ::degenbot_pools::solve::solve_path(
                     resolved,
                     &::degenbot_pools::GateDeps::offline(),
@@ -1538,11 +1544,10 @@ impl SolveCycle {
                 );
                 self.path_resolved
                     .insert(path_id, std::sync::Arc::new(resolved));
-                // cold-start full sweep also refreshes the state machine.
+                // The cold-start full sweep writes the same row the dirty
+                // scan reads.
                 self.path_status
-                    .entry(path_id)
-                    .or_default()
-                    .set_resolved(&deficits);
+                    .insert(path_id, PathSolveStatus::resolved(&deficits));
             }
         }
         // Solve all paths

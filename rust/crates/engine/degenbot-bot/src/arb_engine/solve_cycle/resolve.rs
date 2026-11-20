@@ -8,6 +8,7 @@
 //! the spine and the later solve/deliver phases read.
 
 use super::EpochContext;
+use crate::arb_engine::path_lifecycle::{DirtyVerdict, PathSolveStatus};
 use crate::bot_core::solve_anchor::SolveAnchor;
 use ::degenbot_pools::solve::ResolvedMixedPath;
 use degenbot_core::{diag, op_error};
@@ -43,11 +44,11 @@ pub(super) fn scan_dirty_status(
 ) -> HashSet<u64> {
     // Collect affected path IDs from the reverse index
     let mut affected_path_ids: HashSet<u64> = HashSet::new();
-    // the state machine decides which touched paths actually need a
+    // the eligibility row decides which touched paths actually need a
     // (re)resolve. Solvable/Unresolved re-check on any hop dirty; an Invalid
-    // path re-checks ONLY when a responsible pool goes dirty AND the
-    // container empties (last faulty pool cleared). Unrelated co-hop dirt
-    // leaves an Invalid path untouched — no 100k-path re-resolve churn.
+    // path re-checks ONLY when a responsible pool goes dirty AND the blame set
+    // empties (last faulty pool cleared). Unrelated co-hop dirt leaves an
+    // Invalid path untouched — no 100k-path re-resolve churn.
     hotpath::measure_block!("arb_solve.dirty_status_scan", {
         // the affected keys ARE the delta's taken (HopType,
         // pool_id) reverse-index keys — one loop, no per-family intake.
@@ -59,6 +60,7 @@ pub(super) fn scan_dirty_status(
                         .entry(path_id)
                         .or_default()
                         .on_pool_dirty(key.path_index_key())
+                        == DirtyVerdict::NeedsResolve
                     {
                         affected_path_ids.insert(path_id);
                     }
@@ -331,9 +333,7 @@ pub(super) fn resolve_epoch(
                 }
                 for (path_id, deficits) in status {
                     ctx.path_status
-                        .entry(path_id)
-                        .or_default()
-                        .set_resolved(&deficits);
+                        .insert(path_id, PathSolveStatus::resolved(&deficits));
                 }
                 for (reason, count) in chunk_invalid {
                     *invalid_reasons.entry(reason).or_insert(0u64) += count;
