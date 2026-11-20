@@ -75,11 +75,7 @@ fn inspect_path_returns_hop_details() {
     )
     .unwrap();
     // Inspect the path
-    let path = engine
-        .registry
-        .path_pools
-        .get(&path_id)
-        .expect("path should exist");
+    let path = engine.registry.get(path_id).expect("path should exist");
     assert_eq!(path.pools.len(), 3);
     // Verify hop types
     assert!(matches!(path.pools[0].hop_type, HopType::V2));
@@ -108,7 +104,7 @@ fn inspect_path_returns_hop_details() {
     assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
     drop(core);
     // Inspect non-existent path
-    assert!(!engine.registry.path_pools.contains_key(&99999));
+    assert!(engine.registry.get(99_999).is_none());
 }
 #[test]
 #[expect(clippy::too_many_lines)]

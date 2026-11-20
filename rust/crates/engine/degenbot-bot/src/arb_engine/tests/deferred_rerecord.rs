@@ -18,8 +18,8 @@ fn kjwik5_affected_keys(pool_ids: &[u64]) -> Vec<degenbot_pools::AffectedKey> {
 }
 fn kjwik5_path_keys(engine: &ArbitrageEngine, path_id: u64) -> Vec<degenbot_pools::AffectedKey> {
     engine
-        .path_pools()
-        .get(&path_id)
+        .registry
+        .get(path_id)
         .expect("registered path")
         .pools
         .iter()

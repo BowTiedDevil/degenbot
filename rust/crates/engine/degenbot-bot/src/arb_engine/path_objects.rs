@@ -23,6 +23,13 @@
 //!
 //! Lock order is engine-then-core, the order the engine already documents:
 //! this adapter takes the engine mutex, then reads the core.
+//!
+//! # An object names a path the engine holds
+//!
+//! The registry mints a session object only for an id it currently holds, so a
+//! route the engine has deregistered has no object: the adapter answers
+//! [`ObjectRefusal::UnknownPathIdentity`] rather than handing out an identity
+//! for a path the solve cycle cannot reach.
 
 use std::sync::Arc;
 
@@ -66,7 +73,7 @@ impl PathObjectAdapter for EnginePathObjects {
         // a different thing than a solved one.
         let path_id =
             register_path(&mut engine, pool_hops).map_err(|error| refusal(error, hops))?;
-        Ok(engine.registry.canonical_path(chain_id, path_id, hops))
+        canonical_path(&mut engine, chain_id, path_id, hops)
     }
 
     fn resolve_path(
@@ -84,12 +91,27 @@ impl PathObjectAdapter for EnginePathObjects {
             .registry
             .lookup(&signature)
             .ok_or_else(|| ObjectRefusal::UnknownPathIdentity { hops: hops.clone() })?;
-        Ok(engine.registry.canonical_path(chain_id, path_id, hops))
+        canonical_path(&mut engine, chain_id, path_id, hops)
     }
 
     fn path_count(&self) -> usize {
         self.engine.lock().registry.len()
     }
+}
+
+/// The session's object for a path id the engine holds, or the refusal that
+/// says the engine has no such path. One statement of the refusal, so both
+/// adapter arms answer an unheld id the same way.
+fn canonical_path(
+    engine: &mut ArbitrageEngine,
+    chain_id: u64,
+    path_id: u64,
+    hops: &PathIdentity,
+) -> Result<Arc<PathObject>, ObjectRefusal> {
+    engine
+        .registry
+        .canonical_path(chain_id, path_id, hops)
+        .ok_or_else(|| ObjectRefusal::UnknownPathIdentity { hops: hops.clone() })
 }
 
 /// The engine's pool hops for a session hop signature — the join from

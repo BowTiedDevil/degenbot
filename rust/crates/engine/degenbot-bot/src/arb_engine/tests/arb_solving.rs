@@ -736,7 +736,7 @@ fn v4_int128_overflow_path_rejected() {
         let core = engine
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-        for (&path_id, path) in &engine.registry.path_pools {
+        for (&path_id, path) in engine.registry.iter() {
             let mut resolved = ResolvedMixedPath::default();
             let _ = degenbot_substrate::resolve::resolve_hops(
                 &core,

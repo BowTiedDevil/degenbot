@@ -57,7 +57,7 @@ use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::{BlockScope, SolveCycle};
 use crate::telemetry::BlockLineage;
-use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
+use ::degenbot_pools::solve::SolvePathResult;
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 #[cfg(test)]
@@ -337,8 +337,9 @@ pub(crate) struct ArbitrageEngine {
     /// paths, the `pool_to_paths` reverse index, signature dedup, the path-id
     /// allocator, the registered-path cap, and the dedup counter. Hot solves
     /// read it through a shared `&PathRegistry`; only registration takes
-    /// `&mut`. The invariant "`path_pools` is consistent with `pool_to_paths`"
-    /// is internal to [`PathRegistry::commit`] / [`PathRegistry::remove`].
+    /// `&mut`. The invariant "the registered path entry is consistent with
+    /// `pool_to_paths`" is internal to [`PathRegistry::commit`] /
+    /// [`PathRegistry::remove`].
     pub(crate) registry: PathRegistry,
     /// ADR-045: the solve cycle's owned state — the resolve
     /// companions, the cycle-transient stash, the solve output, the admissions
@@ -545,15 +546,6 @@ impl ArbitrageEngine {
     #[must_use]
     pub fn core(&self) -> &Arc<StateLock<BotState>> {
         &self.core
-    }
-    /// Immutable read of the registered path→pool map.
-    ///
-    /// Read-only: `path_pools` must stay consistent with the `pool_to_paths`
-    /// reverse index, which only the engine's internal register/deregister
-    /// paths maintain — so no mutable accessor is exposed.
-    #[must_use]
-    pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
-        self.registry.path_pools()
     }
     // Production code never registers pools via the engine — pool construction
     // is a `BotState` concern, and the engine discovers pools at `register_path`

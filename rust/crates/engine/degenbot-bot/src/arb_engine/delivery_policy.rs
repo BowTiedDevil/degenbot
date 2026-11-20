@@ -428,19 +428,19 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
 }
 /// De-register a path from the engine (machine-direct free-function route).
 ///
-/// Removes the path from the solve state (`path_pools`, `pool_to_paths`
-/// reverse index, `path_resolved`, `results`, `pending_new_paths`) and hands
-/// the delivery bookkeeping (`delivered` / `deregistered`) to the
-/// [`DeliveryPolicy`]. The path's pools are **not** removed from the
-/// sub-engines — other paths may still reference them.
+/// Removes the path from the solve state (its registry entry, the
+/// `pool_to_paths` reverse index, `path_resolved`, `results`,
+/// `pending_new_paths`) and hands the delivery bookkeeping (`delivered` /
+/// `deregistered`) to the [`DeliveryPolicy`]. The path's pools are **not**
+/// removed from the sub-engines — other paths may still reference them.
 ///
 /// The de-registered path ID is recorded and included in the next batch's
 /// `removed` field.
 ///
 /// Returns `true` if the path existed and was removed.
 pub(crate) fn deregister_path(engine: &mut ArbitrageEngine, path_id: u64) -> bool {
-    // Remove from the registry: drops the path, prunes the reverse index,
-    // and clears the dedup signature.
+    // Remove from the registry: drops the entry, prunes the reverse rows it
+    // emptied, and clears the dedup signature.
     let removed = engine.registry.remove(path_id);
     let existed = removed.is_some();
     // The path-deregistration coupling (resolve companions,

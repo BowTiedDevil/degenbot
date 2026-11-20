@@ -1191,7 +1191,7 @@ impl SolveCycle {
         let memo = std::sync::Arc::clone(self.scope.walk_memo());
         let walk_telemetry = std::sync::Arc::clone(self.scope.walk_telemetry());
         let prefix_store_out = std::sync::Arc::clone(self.scope.prefix_cache());
-        let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools().clone();
+        let path_pools: HashMap<u64, std::sync::Arc<MixedPath>> = registry.path_pools_snapshot();
         let core = std::sync::Arc::clone(&self.core);
         let results_block = self.cursor.coordinates().results_block;
         let runtime_cfg = self.runtime_cfg;

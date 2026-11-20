@@ -333,9 +333,9 @@ impl EngineStages {
     pub fn path_pool_refs(&self, path_id: u64) -> Option<Vec<MixedPoolRef>> {
         self.engine
             .lock()
-            .path_pools()
-            .get(&path_id)
-            .map(|p| p.pools.clone())
+            .registry
+            .get(path_id)
+            .map(|path| path.pools.clone())
     }
 
     /// Read the last solved results + block.
