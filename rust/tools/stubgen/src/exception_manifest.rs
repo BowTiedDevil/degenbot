@@ -392,6 +392,30 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     },
     ExceptionIsland {
         python_module: "degenbot._ffi",
+        rust_path: "fork",
+        name: "AnvilSpawnError",
+        attributes: &[],
+        base: "RuntimeError",
+        message: "The node program could not run at all — fix the program or the environment.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "fork",
+        name: "AnvilChildExitError",
+        attributes: &[],
+        base: "RuntimeError",
+        message: "The node exited before reporting readiness — its own reason is on stderr.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "fork",
+        name: "AnvilSpawnTimeoutError",
+        attributes: &[],
+        base: "RuntimeError",
+        message: "The readiness deadline expired with the node still alive.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
         rust_path: "bot::pool",
         name: "SwapRefused",
         attributes: &[

@@ -87,6 +87,21 @@ from .db import ExchangeRow, LiquidityPoolRow
 from .dex_identity import DexIdentity
 from .simulation import SimulateContext
 
+class AnvilChildExitError(RuntimeError):
+    """
+    The node exited before reporting readiness — its own reason is on stderr.
+    """
+
+class AnvilSpawnError(RuntimeError):
+    """
+    The node program could not run at all — fix the program or the environment.
+    """
+
+class AnvilSpawnTimeoutError(RuntimeError):
+    """
+    The readiness deadline expired with the node still alive.
+    """
+
 class BootRefused(RuntimeError):
     """
     The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint.
@@ -5315,6 +5330,9 @@ def to_checksum_address(address: Any) -> str:
 def __getattr__(name: str) -> Incomplete: ...
 
 __all__ = [
+    "AnvilChildExitError",
+    "AnvilSpawnError",
+    "AnvilSpawnTimeoutError",
     "ArbitrageEngine",
     "BalanceVectorView",
     "BalancerStableView",
