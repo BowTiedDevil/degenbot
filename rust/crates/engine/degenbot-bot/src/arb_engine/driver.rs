@@ -85,16 +85,9 @@ use crate::bot_core::block_pump::{BlockPump, LivenessPhase, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
 use crate::bot_core::{Bot, PumpControl, RegistrationLedgerHandle, StageHandlers, VerifyLifecycle};
-use crate::strategy_host::{ChannelRegistration, HostHub};
+use crate::strategy_host::HostHub;
 #[cfg(any(test, feature = "test-fixtures"))]
 use degenbot_ingestion::IngestEvent as WsEvent;
-
-/// Hub registration name for the session's ONE ordered event source.
-///
-/// A named source channel ([`degenbot_eventhub::NamedSender`]) rather than a
-/// pending-ring payload: `SessionEvent` is an engine-owned downstream type the
-/// hub vocabulary deliberately does not name.
-pub const SESSION_EVENT_CHANNEL_NAME: &str = "engine_session_event";
 
 /// How long [`EngineDriver::close`] waits for each loop to exit
 /// **cooperatively** before escalating to `abort()`.
@@ -117,31 +110,34 @@ fn pump_stop_grace_ms() -> u64 {
     u64::try_from(PUMP_STOP_GRACE.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The engine's named source-channel producers, minted together.
+/// The engine's session-event ends: the ONE ordered producer and the ONE
+/// consumer hand-off.
 ///
-/// A hub owns one channel per name; the engine registers its ordered
-/// `SessionEvent` source and its block-clock observer tap once on the hub it is
-/// attaching to, and keeps the producer ends here until the driver installs
-/// them. The consumer ends stay hub-held for the once-only hand-offs.
+/// The pair is minted here rather than on the hub: `SessionEvent` is an
+/// engine-owned downstream type the hub vocabulary deliberately does not name,
+/// so the engine owns its stream outright. Assembly attaches the producer to
+/// the stage surface and files the hand-off in the driver, so production exists
+/// before any consumer can claim and the claim cannot outlive its driver.
 pub struct EngineChannelHandles {
     session: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    consumer: EventHandoff,
+}
+
+impl Default for EngineChannelHandles {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EngineChannelHandles {
-    /// The engine's declaration of its named source channels.
-    ///
-    /// The engine reaches the hub the same way every strategy does: it declares
-    /// the names it will mint and the closure that mints them, and the host
-    /// validates the declaration before the hub is shared (see
-    /// [`ChannelRegistration`]).
+    /// Mint the session's one ordered stream and its one consumer hand-off.
     #[must_use]
-    pub fn registration() -> ChannelRegistration<Self> {
-        ChannelRegistration::new(vec![SESSION_EVENT_CHANNEL_NAME], |hub: &mut Hub| {
-            let session = hub
-                .add_named_unbounded_source::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
-                .into_inner();
-            Self { session }
-        })
+    pub fn new() -> Self {
+        let (session, rx) = tokio::sync::mpsc::unbounded_channel();
+        Self {
+            session,
+            consumer: EventHandoff::new(SessionStream::new(rx), ConsumerClaim::mint()),
+        }
     }
 }
 
@@ -541,8 +537,12 @@ pub struct EngineDriver {
     /// The cooperative shutdown flag shared with the pump.
     shutdown: Arc<AtomicBool>,
     /// The session: the pose, the payloads it owns, the crawl's teardown pair,
-    /// the completion broadcast, and the consumer claim. ONE owner.
+    /// and the completion broadcast. ONE owner.
     session: Arc<PumpSession>,
+    /// The session's ONE consumer hand-off, taken by
+    /// [`Self::claim_consumer`] exactly once. Filed at assembly so the stream
+    /// closes with the driver that produced it.
+    consumer: Mutex<Option<EventHandoff>>,
     /// The pump-completion receiver. Cloned per `wait_pump_finished` waiter; a
     /// clone created before OR after completion still resolves.
     pump_finished_rx: watch::Receiver<bool>,
@@ -628,9 +628,9 @@ impl EngineDriver {
     }
 
     /// Adapter adoption: the caller already built the stage seam (the `PyO3`
-    /// wrapper path). The driver mints a private hub through the engine's own
-    /// channel registration, CLAIMS that hub's head source, and composes; a
-    /// host-minted hub uses [`Self::from_stages_with_hub`].
+    /// wrapper path). The driver mints a private hub, CLAIMS that hub's head
+    /// source, mints its session-event pair, and composes; a host-minted hub
+    /// uses [`Self::from_stages_with_hub`].
     ///
     /// # Panics
     ///
@@ -640,9 +640,8 @@ impl EngineDriver {
     /// violated, not a recoverable construction failure.
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
-        let mut hub = Hub::new();
-        let channels = EngineChannelHandles::registration().register_on(&mut hub);
-        let hub = Arc::new(hub);
+        let channels = EngineChannelHandles::new();
+        let hub = Arc::new(Hub::new());
         #[expect(
             clippy::expect_used,
             reason = "a fresh private hub's head source is unclaimed by construction; the claim can only fail if this constructor claimed twice"
@@ -657,10 +656,8 @@ impl EngineDriver {
     /// Adapter adoption against a host-minted hub.
     ///
     /// `attached` is the pair `StrategyHost::mint` produces: the shared hub and
-    /// the engine's named source channels its declaration minted on it (for the
-    /// engine, [`EngineChannelHandles::registration`]). A named channel is keyed
-    /// by name per hub, so a hub backs at most one engine driver — a second
-    /// `claim_consumer` returns `None`.
+    /// the engine's [`EngineChannelHandles`]. One driver per hub: a hub backs at
+    /// most one engine session, and that session's one hand-off is the driver's.
     ///
     /// `head_source` is the hub's claimed head publisher when this driver's pump
     /// owns the clock (the session boot claims it and routes it here); `None`
@@ -678,8 +675,8 @@ impl EngineDriver {
         Self::assemble(bot, stages, hub, channels, head_source)
     }
 
-    /// Compose a driver over an already-bound hub, channel producers, and
-    /// claimed head publisher.
+    /// Compose a driver over an already-bound hub, its session-event ends, and
+    /// the claimed head publisher.
     fn assemble(
         bot: Arc<Bot>,
         stages: Arc<EngineStages>,
@@ -687,9 +684,11 @@ impl EngineDriver {
         channels: EngineChannelHandles,
         head_source: Option<HeadSender>,
     ) -> Self {
+        let EngineChannelHandles { session, consumer } = channels;
+
         // The session's ordered source: ONE producer end for both arms, attached
         // before any caller can claim the consumer end.
-        if let Err(e) = stages.attach_session_events(channels.session) {
+        if let Err(e) = stages.attach_session_events(session) {
             op_error!(
                 domain = pump,
                 %e,
@@ -714,6 +713,7 @@ impl EngineDriver {
             reorg_coordinator,
             shutdown: Arc::new(AtomicBool::new(false)),
             session,
+            consumer: Mutex::new(Some(consumer)),
             pump_finished_rx,
             verify: Arc::new(VerifyLifecycle::new(
                 verify_core,
@@ -872,27 +872,10 @@ impl EngineDriver {
     /// happened: the first consumer's stream must not be stranded with a second
     /// producer unaware of it.
     pub fn claim_consumer(&self) -> Result<EventHandoff, ClaimRefusal> {
-        if !self.session.claim() {
-            return Err(ClaimRefusal::AlreadyClaimed);
-        }
-        match self
-            .hub
-            .take_named_receiver::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
-        {
-            Ok(Some(rx)) => Ok(EventHandoff::new(
-                SessionStream::new(rx.into_inner()),
-                ConsumerClaim::mint(),
-            )),
-            Ok(None) => Err(ClaimRefusal::AlreadyClaimed),
-            Err(e) => {
-                op_error!(
-                    domain = pump,
-                    %e,
-                    "EngineDriver: the session event channel is missing from the hub"
-                );
-                Err(ClaimRefusal::AlreadyClaimed)
-            }
-        }
+        self.consumer
+            .lock()
+            .take()
+            .ok_or(ClaimRefusal::AlreadyClaimed)
     }
 
     /// Open the WS subscriptions and observe the first complete block `W`:
@@ -1622,12 +1605,13 @@ mod tests {
     use crate::arb_engine::crawl::controller::{CrawlState, CrawlUnitFuture, CrawlUnitSeat};
     use crate::arb_engine::crawl::discovery::{CrawlDiscoveryError, DiscoverySource, Edition};
     use crate::arb_engine::crawl::policy::CrawlPathPolicy;
+    use crate::arb_engine::BlockNotification;
     use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
     use crate::bot_core::verification_retry::RetryPolicy;
     use crate::bot_core::ConstructionRoute;
     use alloy::primitives::{address, Bytes, U256};
+    use degenbot_core::channel_lifecycle::ChannelPhase;
     use degenbot_db::PathGraphData;
-    use degenbot_eventhub::OverflowPolicy;
     use degenbot_pathfinding::PoolKind;
     use futures_util::StreamExt;
     use hashbrown::{HashMap, HashSet};
@@ -1653,22 +1637,6 @@ mod tests {
     }
 
     #[test]
-    fn the_driver_hub_carries_the_ordered_source() {
-        let driver = driver_for_test();
-        assert_eq!(
-            driver.hub().named_policy(SESSION_EVENT_CHANNEL_NAME),
-            Some(OverflowPolicy::UnboundedFlagged {
-                name: SESSION_EVENT_CHANNEL_NAME
-            })
-        );
-        assert_eq!(
-            driver.hub().unbounded_flagged_count(),
-            1,
-            "the session's ordered stream is the deliberate unbounded audit posture"
-        );
-    }
-
-    #[test]
     fn a_host_minted_hub_wires_one_driver() {
         use crate::connector_index::V2ConnectorIndex;
         use crate::strategy_host::StrategyHost;
@@ -1678,9 +1646,8 @@ mod tests {
         let (host, attached) = StrategyHost::mint(
             Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
             Arc::new(NonceAuthority::new(7)),
-            EngineChannelHandles::registration(),
-        )
-        .expect("the engine declares one channel");
+            EngineChannelHandles::new(),
+        );
 
         let bot = Arc::new(Bot::new(1));
         let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
@@ -1691,13 +1658,6 @@ mod tests {
             Arc::ptr_eq(host.hub(), driver.hub()),
             "the driver attached to the host-minted hub, not a private one"
         );
-        let name = SESSION_EVENT_CHANNEL_NAME;
-        assert_eq!(
-            host.hub().named_policy(name),
-            Some(OverflowPolicy::UnboundedFlagged { name }),
-            "the host-minted hub carries {name}"
-        );
-
         // The stream the driver hands out must have the stages' live producer
         // behind it: an orphaned stream (its sender dropped) resolves `recv`
         // immediately, while a wired one stays pending until `close` closes it.
@@ -1759,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn close_closes_the_session_stream_exactly_once() {
+    fn the_driver_stream_closes_with_its_driver() {
         let driver = driver_for_test();
         let (mut stream, _claim) = driver.claim_consumer().expect("the hand-off").split();
         runtime().block_on(driver.close());
@@ -1767,6 +1727,69 @@ mod tests {
         assert!(
             runtime().block_on(async { stream.recv().await }).is_none(),
             "a second read stays ended"
+        );
+    }
+
+    fn block(number: u64) -> SessionEvent {
+        SessionEvent::Block(BlockNotification {
+            number,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        })
+    }
+
+    fn next_block(stream: &mut SessionStream) -> Option<u64> {
+        runtime()
+            .block_on(async { stream.recv().await })
+            .map(|event| match event {
+                SessionEvent::Block(notification) => notification.number,
+                SessionEvent::Batch(_) => panic!("the header edge publishes only Block arms"),
+            })
+    }
+
+    /// The producer is attached at assembly, so a claimed stream always has the
+    /// engine's one ordered source behind it: nothing is claimable from a
+    /// session whose production does not exist yet.
+    #[test]
+    fn the_session_producer_is_attached_before_the_consumer_can_run() {
+        let driver = driver_for_test();
+        assert_eq!(
+            driver.stages().session_event_source().phase(),
+            ChannelPhase::Open,
+            "the engine's producer is attached before any claim"
+        );
+        driver.stages().session_event_source().send(block(12));
+        let (mut stream, _claim) = driver.claim_consumer().expect("the hand-off").split();
+        assert_eq!(
+            next_block(&mut stream),
+            Some(12),
+            "the event produced before the claim is on the claimed stream"
+        );
+        runtime().block_on(driver.close());
+    }
+
+    /// A refused second hand-off is a refusal only: the first consumer's stream
+    /// keeps its live producer and still ends with the driver.
+    #[test]
+    fn a_refused_second_handoff_leaves_the_first_stream_usable() {
+        let driver = driver_for_test();
+        let (mut stream, _claim) = driver.claim_consumer().expect("the first hand-off").split();
+        assert!(matches!(
+            driver.claim_consumer(),
+            Err(ClaimRefusal::AlreadyClaimed)
+        ));
+        driver.stages().session_event_source().send(block(21));
+        assert_eq!(
+            next_block(&mut stream),
+            Some(21),
+            "the refused claim leaves the first stream's producer wired"
+        );
+        runtime().block_on(driver.close());
+        assert!(
+            next_block(&mut stream).is_none(),
+            "the first stream still closes with its driver"
         );
     }
 

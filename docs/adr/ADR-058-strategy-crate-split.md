@@ -109,17 +109,23 @@ factory over the session driver it mints and `start_driving` boots it like any
 other driver. The loop adds no second pump and no second head source, and the
 arm's start/stop/halt are the host FSM's (ADR-057 D2); parameterizing the pump's
 stage payloads per family stays ADR-018's on-demand work.
-- **Common pre-share channel registration.** `EngineChannelHandles::registration()`
-  declares the engine's named channels as a `ChannelRegistration`, and
-  `StrategyHost::mint` validates that declaration — a duplicate name is a typed
-  refusal taken before the hub exists — then hands the exclusive `&mut Hub` to
-  every strategy's registration. Settlement is no longer the sole registrar:
-  a named channel is `&mut self`, so each strategy declares its set while the
-  hub is still unshared.
-- **Head-source ownership.** The session hub's one head source belongs to the
-  engine's block pump, whose accepted-header edge registers it and publishes
-  every accepted header; the hosted head edge, the drivers, and the per-head
-  reconciliation all consume that one source, guarded on hosted activity.
+- **Common pre-share channel registration — superseded (2026-11-20).** This
+  entry described `EngineChannelHandles::registration()` declaring the engine's
+  named channels as a `ChannelRegistration`, which `StrategyHost::mint`
+  validated before handing the exclusive `&mut Hub` to every strategy's
+  registration. The hub has no named channels, so there is no pre-share window
+  and no declaration to validate: `mint` pairs a fresh hub with a
+  caller-supplied attachment, and the engine's session-event ends are minted by
+  the engine
+  ([ADR-104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) D3).
+  Settlement remains not-a-registrar for the simpler reason that no strategy
+  registers channels at all.
+- **Head-source ownership.** The session hub's one head source is claimed once
+  at boot and the claimed publisher is routed to exactly one owner: the
+  host-side watch/poller when the boot declares one, otherwise the engine block
+  pump's accepted-header edge. The hosted head edge, the drivers, and the
+  per-head reconciliation consume that one clock, guarded on hosted activity
+  ([ADR-104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) D2).
 
 ### D6 — Seam learnings from the exercise
 

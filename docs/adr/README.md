@@ -133,6 +133,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [101](ADR-101-immutable-typed-executor-release-packages.md) | Immutable typed executor release packages | accepted (implemented) |
 | [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier, with generated wiring | accepted (implemented for hook wiring; doc table and parity manifest pending) |
 | [103](ADR-103-fork-spawn-failure-vocabulary.md) | The fork spawn-failure vocabulary — cause-named at the seam, typed across the FFI, retried only by typed cause | accepted (implemented) |
+| [104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) | Typed event-hub intake — a permanent head claim, an engine-owned session stream, and no named-channel seam | accepted (implemented) |
 
 ## Historical — provenance only
 

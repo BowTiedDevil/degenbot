@@ -667,7 +667,6 @@ struct PumpState {
     pose: PumpPose,
     crawl: Option<CrawlTeardown>,
     completion: Option<watch::Sender<bool>>,
-    claimed: bool,
     in_flight: usize,
     wake: Arc<Notify>,
 }
@@ -679,7 +678,6 @@ impl PumpSession {
                 pose: PumpPose::default(),
                 crawl: None,
                 completion: Some(completion),
-                claimed: false,
                 in_flight: 0,
                 wake: Arc::new(Notify::new()),
             }),
@@ -694,22 +692,6 @@ impl PumpSession {
     /// The crawl's narrowed teardown edge, when the session owns one.
     pub(crate) fn crawl_edge(&self) -> Option<CrawlHandle> {
         self.inner.lock().crawl.as_ref().map(|c| c.handle.clone())
-    }
-
-    /// Take the consumer claim — once per session.
-    ///
-    /// # Errors
-    ///
-    /// The caller's `ClaimRefusal::AlreadyClaimed` when a hand-off already
-    /// happened; this door answers `false` so the refusal stays the driver's
-    /// vocabulary.
-    pub(crate) fn claim(&self) -> bool {
-        let mut state = self.inner.lock();
-        if state.claimed {
-            return false;
-        }
-        state.claimed = true;
-        true
     }
 
     /// Hand the completion broadcast to the live loop that is about to run.
@@ -1445,13 +1427,6 @@ mod tests {
             P::Detached,
             "a refused take writes nothing"
         );
-    }
-
-    #[test]
-    fn the_claim_is_once_only() {
-        let session = session();
-        assert!(session.claim());
-        assert!(!session.claim(), "a second hand-off is refused");
     }
 
     #[test]

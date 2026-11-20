@@ -568,9 +568,6 @@ pub enum HostError {
         /// The refused attach's typed reason.
         decline: SpawnDecline,
     },
-    /// `mint` refused a strategy's channel declaration.
-    #[error(transparent)]
-    ChannelRegistration(ChannelRegistrationError),
 }
 
 /// The typed fate of one submission, addressed to the strategy that owns it.
@@ -707,97 +704,10 @@ pub struct StrategyHost {
     head_sinks: parking_lot::Mutex<IndexMap<StrategyId, UnboundedSender<HeadNotice>>>,
 }
 
-/// A strategy's pre-share channel declaration: the engine-owned channel names
-/// it mints, and the closure that mints them.
+/// The host's fresh hub paired with the caller's attachment.
 ///
-/// A named channel is minted through `&mut Hub`, so every strategy's channel
-/// set must be declared while the hub is still exclusively owned. This value is
-/// that declaration, and [`StrategyHost::mint`] is the one path that honors it:
-/// the host validates the names, then hands the exclusive `&mut Hub` to the
-/// closure exactly once. The declared list is the host's only view of what the
-/// closure mints, so a declaration and its closure are one statement and must
-/// agree.
-///
-/// Two strategies compose theirs with [`Self::and`] and mint through that same
-/// path.
-pub struct ChannelRegistration<T> {
-    names: Vec<&'static str>,
-    produce: Box<dyn FnOnce(&mut Hub) -> T>,
-}
-
-impl<T: 'static> ChannelRegistration<T> {
-    /// Declare the named channels `produce` mints, in the order it mints them.
-    #[must_use]
-    pub fn new(names: Vec<&'static str>, produce: impl FnOnce(&mut Hub) -> T + 'static) -> Self {
-        Self {
-            names,
-            produce: Box::new(produce),
-        }
-    }
-
-    /// The channel names this registration declares.
-    #[must_use]
-    pub fn names(&self) -> &[&'static str] {
-        &self.names
-    }
-
-    /// Compose two strategies' declarations into one registration.
-    ///
-    /// The composed closure mints the left set and then the right one, and
-    /// returns both handle sets, so two strategies share the hub's one
-    /// pre-share window and reach it through one host path.
-    #[must_use]
-    pub fn and<U: 'static>(self, other: ChannelRegistration<U>) -> ChannelRegistration<(T, U)> {
-        let mut names = self.names;
-        names.extend(other.names);
-        let left = self.produce;
-        let right = other.produce;
-        ChannelRegistration {
-            names,
-            produce: Box::new(move |hub: &mut Hub| (left(hub), right(hub))),
-        }
-    }
-
-    /// Mint the declared channels on `hub` and return the producer handles.
-    ///
-    /// Consuming `self` pairs the hub's one exclusive window with the one
-    /// closure that fills it.
-    pub fn register_on(self, hub: &mut Hub) -> T {
-        (self.produce)(hub)
-    }
-
-    /// The duplicate-name check, taken before any channel is minted.
-    fn validate(&self) -> Result<(), ChannelRegistrationError> {
-        let mut seen = std::collections::HashSet::with_capacity(self.names.len());
-        for &name in &self.names {
-            if !seen.insert(name) {
-                return Err(ChannelRegistrationError::DuplicateName { name });
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Why a channel declaration was refused before the host minted the hub.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ChannelRegistrationError {
-    /// One registration declared the same named channel twice. A hub holds one
-    /// channel per name, so the second mint would replace the first and leave
-    /// the strategy holding a producer no receiver is wired to.
-    #[error("named channel `{name}` is declared twice in one registration")]
-    DuplicateName {
-        /// The name the declaration repeats.
-        name: &'static str,
-    },
-}
-
-/// A host-minted hub paired with the source-channel handles registered during
-/// its exclusive construction window.
-///
-/// [`StrategyHost::mint`] builds the pair together from a
-/// [`ChannelRegistration`], whose declared names the host validates before the
-/// hub is shared; the driver consumes both, so the hub and its channels travel
-/// as one value.
+/// [`StrategyHost::mint`] builds the pair together, so the hub a driver sees and
+/// the value it was minted with travel as one value and cannot be mis-paired.
 pub struct HostHub<T> {
     hub: Arc<Hub>,
     attachment: T,
@@ -810,7 +720,7 @@ impl<T> HostHub<T> {
         &self.hub
     }
 
-    /// Split the pair into its hub and the caller's registered handles.
+    /// Split the pair into its hub and the caller's attachment.
     #[must_use]
     pub fn into_parts(self) -> (Arc<Hub>, T) {
         (self.hub, self.attachment)
@@ -832,36 +742,23 @@ impl StrategyHost {
         }
     }
 
-    /// Mint the process hub through a strategy's channel declaration, then own
-    /// it.
+    /// Mint the process hub and pair it with the caller's attachment.
     ///
-    /// Named source channels are minted through `&mut Hub`, so registration
-    /// must finish before the hub is shared; this constructor is the host-owned
-    /// window that provides the exclusive `&mut`. A strategy declares its
-    /// channels in one [`ChannelRegistration`] — the names it will mint and the
-    /// closure that mints them — so this one path serves every strategy, and
-    /// the declaration is validated before the hub exists: a duplicate name is
-    /// refused with no channel minted and no partially registered hub
-    /// reachable. The returned [`HostHub`] carries the hub and the declared
-    /// handles as one pair, so a driver consumes them together.
-    ///
-    /// # Errors
-    ///
-    /// [`ChannelRegistrationError::DuplicateName`] when the declaration names
-    /// one channel twice.
-    pub fn mint<T: 'static>(
+    /// Infallible: the hub is fresh and the attachment is a value the caller
+    /// already owns, so there is no declaration to validate and no partially
+    /// registered hub to reach. The returned [`HostHub`] carries the hub and the
+    /// attachment as one pair, so a driver consumes them together.
+    #[must_use]
+    pub fn mint<T>(
         registry: Arc<RouteRegistry>,
         nonce: Arc<NonceAuthority>,
-        registration: ChannelRegistration<T>,
-    ) -> Result<(Self, HostHub<T>), ChannelRegistrationError> {
-        registration.validate()?;
-        let mut hub = Hub::new();
-        let attachment = registration.register_on(&mut hub);
-        let hub = Arc::new(hub);
-        Ok((
+        attachment: T,
+    ) -> (Self, HostHub<T>) {
+        let hub = Arc::new(Hub::new());
+        (
             Self::new(Arc::clone(&hub), registry, nonce),
             HostHub { hub, attachment },
-        ))
+        )
     }
 
     /// The host's shared event hub.
@@ -2240,138 +2137,6 @@ mod tests {
         assert!(
             backrun_rx.try_recv().is_err(),
             "the other strategy receives nothing"
-        );
-    }
-
-    /// The channels a `mint` declares are the channels the host's hub carries:
-    /// the declaration is the registration contract, not a caller's unchecked
-    /// promise.
-    #[test]
-    fn mint_registers_the_declared_channels_on_the_host_hub() {
-        use crate::arb_engine::{EngineChannelHandles, SESSION_EVENT_CHANNEL_NAME};
-        use degenbot_eventhub::OverflowPolicy;
-
-        let (host, _handles) = StrategyHost::mint(
-            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-            Arc::new(NonceAuthority::new(7)),
-            EngineChannelHandles::registration(),
-        )
-        .expect("the engine's declaration names its one channel");
-
-        assert_eq!(
-            host.hub().unbounded_flagged_count(),
-            1,
-            "the engine's session stream is the hub's one named channel"
-        );
-        assert_eq!(
-            host.hub().named_policy(SESSION_EVENT_CHANNEL_NAME),
-            Some(OverflowPolicy::UnboundedFlagged {
-                name: SESSION_EVENT_CHANNEL_NAME
-            }),
-            "the host hub carries the channel the declaration named"
-        );
-    }
-
-    /// Two strategies declare disjoint channels, compose the declarations, and
-    /// mint through the one host path: each receives the producer end of its
-    /// own channel on the shared hub.
-    #[test]
-    fn two_strategies_register_disjoint_channels_through_one_host_path() {
-        const LEFT: &str = "registration_left";
-        const RIGHT: &str = "registration_right";
-
-        let left = ChannelRegistration::new(vec![LEFT], |hub: &mut Hub| {
-            hub.add_named_unbounded_source::<u32>(LEFT).into_inner()
-        });
-        let right = ChannelRegistration::new(vec![RIGHT], |hub: &mut Hub| {
-            hub.add_named_unbounded_source::<u64>(RIGHT).into_inner()
-        });
-        let composed = left.and(right);
-        assert_eq!(
-            composed.names(),
-            &[LEFT, RIGHT],
-            "the names compose in order"
-        );
-
-        let (host, attached) = StrategyHost::mint(
-            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-            Arc::new(NonceAuthority::new(7)),
-            composed,
-        )
-        .expect("disjoint names are admitted");
-
-        let (hub, (left_tx, right_tx)) = attached.into_parts();
-        assert!(
-            Arc::ptr_eq(&hub, host.hub()),
-            "both strategies minted on the host's hub"
-        );
-
-        let mut left_rx = hub
-            .take_named_receiver::<u32>(LEFT)
-            .expect("left is registered")
-            .expect("left hand-off");
-        let mut right_rx = hub
-            .take_named_receiver::<u64>(RIGHT)
-            .expect("right is registered")
-            .expect("right hand-off");
-        left_tx.send(11).expect("left send");
-        right_tx.send(22).expect("right send");
-        assert_eq!(left_rx.try_recv(), Ok(11), "the left producer is wired");
-        assert_eq!(right_rx.try_recv(), Ok(22), "the right producer is wired");
-    }
-
-    /// A declaration that names one channel twice is refused before any channel
-    /// is minted: no hub exists, so the closure cannot run and no partial
-    /// registration escapes the host.
-    #[test]
-    fn a_duplicate_declaration_is_refused_before_any_channel_is_minted() {
-        const TWICE: &str = "registration_twice";
-        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let closure_ran = Arc::clone(&ran);
-
-        let outcome = StrategyHost::mint(
-            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-            Arc::new(NonceAuthority::new(7)),
-            ChannelRegistration::new(vec![TWICE, TWICE], move |hub: &mut Hub| {
-                closure_ran.store(true, std::sync::atomic::Ordering::SeqCst);
-                hub.add_named_unbounded_source::<u8>(TWICE).into_inner()
-            }),
-        );
-
-        assert_eq!(
-            outcome.err(),
-            Some(ChannelRegistrationError::DuplicateName { name: TWICE }),
-            "the declaration itself is refused"
-        );
-        assert!(
-            !ran.load(std::sync::atomic::Ordering::SeqCst),
-            "the refusal lands before the closure mints anything"
-        );
-    }
-
-    /// Composition is not an escape hatch: two strategies that name one channel
-    /// are refused as the single registration they composed.
-    #[test]
-    fn a_composed_registration_cannot_name_one_channel_twice() {
-        const SHARED: &str = "registration_shared";
-
-        let left = ChannelRegistration::new(vec![SHARED], |hub: &mut Hub| {
-            hub.add_named_unbounded_source::<u32>(SHARED).into_inner()
-        });
-        let right = ChannelRegistration::new(vec![SHARED], |hub: &mut Hub| {
-            hub.add_named_unbounded_source::<u32>(SHARED).into_inner()
-        });
-
-        let outcome = StrategyHost::mint(
-            Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
-            Arc::new(NonceAuthority::new(7)),
-            left.and(right),
-        );
-
-        assert_eq!(
-            outcome.err(),
-            Some(ChannelRegistrationError::DuplicateName { name: SHARED }),
-            "the composed declaration is refused as one registration"
         );
     }
 

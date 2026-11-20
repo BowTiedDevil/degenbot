@@ -117,14 +117,21 @@ run such a driver; the payload generalization is not pulled by a sample of one,
 so it stays on-demand.
 
 **Phase B landed (2026-09-19):** `degenbot-eventhub` owns per-process intake
-fan-out with declared overflow policies (`OverflowPolicy`); the backrun feed
-ring and head watch subscribe through it (B1/B2), both engine→driver channels
-are hub-registered `UnboundedFlagged` sources with observable depth via
-`Hub::named_pending` (B3), the gated serving seam was retired (B4, ADR-056),
-and the boot-snapshot `RouteRegistry` answers pool membership for strategies
-(B5). A second pending transaction strategy now implements
-`PendingTxReaction` and subscribes; no intake wiring. The Phase C runtime host
-now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
+fan-out; the backrun feed ring and head watch subscribe through it (B1/B2), the
+gated serving seam was retired (B4, ADR-056), and the boot-snapshot
+`RouteRegistry` answers pool membership for strategies (B5). A second pending
+transaction strategy now implements `PendingTxReaction` and subscribes; no
+intake wiring. The Phase C runtime host now lands on top of it
+([ADR-057](adr/ADR-057-strategy-host.md)).
+
+**B3 rewritten (2026-11-20):** the engine→driver channels are no longer
+hub-registered named sources. The hub is typed intake — one
+`PendingTxPublisher`/`PendingTxView` ring per `PendingTxSource` at a
+`NonZeroUsize` capacity, one permanent `claim_head_source`, infallible
+`subscribe_head`, and no overflow-policy vocabulary — and the session's one
+ordered `SessionEvent` stream is engine-owned, handed out exactly once with its
+`ConsumerClaim`
+([ADR-104](adr/ADR-104-typed-eventhub-intake-and-engine-session-stream.md)).
 
 ## Where the seams are (exact owners)
 

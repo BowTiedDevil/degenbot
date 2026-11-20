@@ -17,19 +17,6 @@
 //! | **simulator** | the engine's block simulation |
 //! | **submission** | the revert-protecting relay fan-out |
 //!
-//! # Special-case ledger
-//!
-//! Every place settlement remains special, each with why it stays:
-//!
-//! - **Channel registration moved to the shared pre-share phase.**
-//!   `EngineChannelHandles::registration()` declares the engine's named
-//!   channels, and `StrategyHost::mint` validates that declaration before it
-//!   hands the exclusive `&mut Hub` to any strategy's registration, so the
-//!   engine's channels register before the hub is shared. Why: named channels
-//!   are `&mut self`; nothing can mint them after sharing, and every strategy
-//!   needs the same window, so the settlement arm holds no registrar of its
-//!   own.
-//!
 use degenbot_config::BotConfig;
 
 use crate::strategy_plane::{Strategy, StrategyName};

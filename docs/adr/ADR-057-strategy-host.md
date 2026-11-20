@@ -22,6 +22,15 @@
 > renamed for what it is (`backrun`, `connector_index`, hosted `Backrun*`
 > types). The ADR text below is the historical record of what landed; read
 > "standalone sidecar" mentions against that retirement.
+>
+> **Amendment (2026-11-20): D3's pre-share channel registration is
+> superseded.** The hub has no named channels, so nothing is minted through an
+> exclusive `&mut Hub` window any more: `StrategyHost::mint` is the infallible
+> pairing of a fresh hub with a caller-supplied attachment (see
+> [ADR-104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) D3/D7).
+> What D3 bought and keeps is the bound pair — a driver cannot attach to a hub
+> it was not minted with.
+
 ADR-055 D5's scheduled Phase C, the Phase B substrate (ADR-056 and the
 hub/registry slices), and the executed design
 `.scratch/strategy-arch-survey/phase-c-design.md`. The crate sources remain the

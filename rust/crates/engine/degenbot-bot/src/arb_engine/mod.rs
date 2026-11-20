@@ -213,7 +213,6 @@ pub use diagnostic::{
 pub use driver::{
     BackfillGap, ConnectRefusal, Connected, CrawlBoot, CrawlRefusal, DriverError,
     EngineChannelHandles, EngineDriver, PhaseError, SubscribeRefusal, TeardownReport,
-    SESSION_EVENT_CHANNEL_NAME,
 };
 pub use engine_stages::EngineStages;
 pub use fleet_status::{

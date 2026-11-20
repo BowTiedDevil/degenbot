@@ -1620,9 +1620,12 @@ bare "driver" where a strategy loop, the Python cockpit, or the settlement arm i
 **Session event stream**:
 The single ordered data-plane drain of one engine session: `Block(N)` precedes every
 `Batch(N)`, zero or more batches may follow, and natural end is delivered exactly once.
-It carries engine products, not **Pipeline census** events or a rewind fact.
-_Avoid_: parallel block and result clocks; treating batch metadata as the epoch marker;
-folding telemetry into the stream.
+The engine owns it outright: `EngineChannelHandles` mints the one `mpsc` pair and the
+**Consumer claim**, the **Driver seam** files the hand-off, and `claim_consumer` yields it
+once, so the stream is not a hub channel and carries no registration name. It carries
+engine products, not **Pipeline census** events or a rewind fact.
+_Avoid_: a hub-registered or named session channel; parallel block and result clocks;
+treating batch metadata as the epoch marker; folding telemetry into the stream.
 
 **Consumer claim**:
 The non-cloneable proof that a session's event consumer was attached before `run`;

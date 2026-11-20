@@ -254,10 +254,9 @@ impl EngineSession {
     ///
     /// # Errors
     ///
-    /// [`SessionBootError::Host`] when the host refuses the engine's channel
-    /// declaration, a registration, or an attachment (two facet rows, or an arm
-    /// under an unregistered id), and [`SessionBootError::Hosted`] when the
-    /// hosted sources cannot be minted.
+    /// [`SessionBootError::Host`] when the host refuses a registration or an
+    /// attachment (two facet rows, or an arm under an unregistered id), and
+    /// [`SessionBootError::Hosted`] when the hosted sources cannot be minted.
     ///
     /// # Panics
     ///
@@ -279,12 +278,9 @@ impl EngineSession {
             state_root,
         } = construction;
 
-        // Mint: the engine's channel declaration is validated and its named
-        // channels are registered inside the exclusive construction window, and
-        // the host owns the hub afterwards.
-        let (host, attached) =
-            StrategyHost::mint(registry, nonce, EngineChannelHandles::registration())
-                .map_err(HostError::ChannelRegistration)?;
+        // Mint: the host owns a fresh hub paired with the engine's session-event
+        // ends, which the driver installs at assembly.
+        let (host, attached) = StrategyHost::mint(registry, nonce, EngineChannelHandles::new());
         let host = Arc::new(Mutex::new(host));
 
         // Claim the session hub's one head source on the freshly minted hub,

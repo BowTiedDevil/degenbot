@@ -138,7 +138,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
   <text class="d" x="745" y="306" text-anchor="middle" font-weight="600">Consumers drain typed events</text>
   <text class="s" x="745" y="323" text-anchor="middle">PendingTx per source kind · head clock</text>
   <text class="s" x="745" y="339" text-anchor="middle">one non-Clone view per ring</text>
-  <text class="s" x="745" y="358" text-anchor="middle">Hub::named_pending(name) = live queue depth</text>
+  <text class="s" x="745" y="358" text-anchor="middle">session stream is engine-owned, claimed once</text>
 
   <!-- ROUTE REGISTRY -->
   <rect class="b" x="600" y="470" width="290" height="130" fill="#eef9e9" rx="8"/>
@@ -233,7 +233,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
   <tr><th>Seam</th><th>Lifestyle type</th><th>Where</th><th>Hook for a strategy</th></tr>
   <tr><td>Intake vocabulary</td><td><code>PendingTx</code> + <code>PendingTxSource</code></td><td><code>degenbot-eventhub/src/event.rs</code></td><td>drain your own source kind's ring (or the head clock); never own a transport</td></tr>
   <tr><td>Overflow discipline</td><td><code>NonZeroUsize</code> ring capacity</td><td><code>degenbot-eventhub/src/pending.rs</code></td><td>bounded drop-oldest per source kind; one non-Clone view drains it; zero capacity is unrepresentable</td></tr>
-  <tr><td>Named sink channels</td><td><code>NamedSender/NamedReceiver</code></td><td><code>degenbot-eventhub/src/named.rs</code></td><td>engine-shaped payloads (ResultBatch etc.) without inventing vocabulary; depth readable via <code>Hub::named_pending</code></td></tr>
+  <tr><td>Session event stream</td><td><code>EngineChannelHandles</code> → <code>EventHandoff</code></td><td><code>degenbot-bot/src/arb_engine/session_events.rs</code></td><td>engine-owned ordered stream, not a hub channel: <code>claim_consumer</code> hands out the stream plus its non-Clone <code>ConsumerClaim</code> exactly once, and the stream closes with its driver</td></tr>
   <tr><td>Head clock</td><td><code>HeadSender/HeadSubscription</code></td><td><code>degenbot-eventhub/src/head.rs</code></td><td>one permanent claim (<code>claim_head_source</code>) + infallible <code>subscribe_head</code>; latest head + staleness; the 200ms poll fallback stays hosted-side</td></tr>
   <tr><td>World snapshot</td><td><code>RouteRegistry</code></td><td><code>degenbot-bot/src/bot_core/route_registry.rs</code></td><td>frozen at registration: connector index, decoder mirror, membership</td></tr>
   <tr><td>Pool-membership oracle</td><td><code>SimAnchorOracle</code></td><td><code>degenbot-bot/src/bot_core/sim_anchor.rs</code></td><td>engine answers from driver snapshots; backrun lane answers from the registry</td></tr>
@@ -248,7 +248,7 @@ Deeper record: ADR-054/055/056/057, <code>docs/architecture/strategy-seams.md</c
 <p class="sub">One process, many drivers, one operator account. The host owns the shared services; each driver attaches. ADR-057, <code>rust/crates/engine/degenbot-bot/src/strategy_host.rs</code>.</p>
 <table>
   <tr><th>Component</th><th>Owner</th><th>Driver-facing contract</th></tr>
-  <tr><td>Event hub</td><td>host (<code>StrategyHost::mint</code> → <code>HostHub&lt;T&gt;</code>)</td><td>engine named channels are registered before the hub is shared; drivers subscribe by class. One driver per hub.</td></tr>
+  <tr><td>Event hub</td><td>host (<code>StrategyHost::mint</code> → <code>HostHub&lt;T&gt;</code>)</td><td>a fresh hub paired with the caller's attachment: typed pending rings, one permanent head claim, no named channels. One driver per hub.</td></tr>
   <tr><td><code>RouteRegistry</code></td><td>host</td><td>boot snapshot loaned read-only by handle.</td></tr>
   <tr><td><code>NonceAuthority</code></td><td>host</td><td>sign-time lease of the lowest free nonce, contiguous above the confirmed chain nonce; typed declines, never a panic.</td></tr>
   <tr><td>Driver FSM / tombstones</td><td>host</td><td><code>Registered → Enabled → Running → {Halted, Disabled}</code>; terminal states never restart.</td></tr>

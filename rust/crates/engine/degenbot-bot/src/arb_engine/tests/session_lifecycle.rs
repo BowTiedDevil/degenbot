@@ -167,7 +167,7 @@ fn pose_and_pose_owned_data_cannot_disagree() {
 // ── invariant: one claim, one run ──────────────────────────────────────────
 
 #[test]
-fn claim_consumer_is_once_only_and_mints_a_non_cloneable_claim() {
+fn consumer_hand_off_is_claimed_exactly_once() {
     let driver = driver();
     let handoff = driver.claim_consumer().expect("the first hand-off");
     assert!(

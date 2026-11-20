@@ -37,13 +37,9 @@
 pub mod event;
 pub mod head;
 pub mod hub;
-pub mod named;
 pub mod pending;
-pub mod policy;
 
 pub use event::{PendingTx, PendingTxSource};
 pub use head::{Head, HeadMetadata, HeadSender, HeadSubscription};
-pub use hub::{AlreadyClaimed, Hub};
-pub use named::{NamedReceiver, NamedSender};
+pub use hub::{AlreadyClaimed, Hub, HubError};
 pub use pending::{detached_pending_ring, PendingTxPublisher, PendingTxView};
-pub use policy::{HubError, OverflowPolicy};
