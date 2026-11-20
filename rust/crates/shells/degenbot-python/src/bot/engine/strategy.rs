@@ -664,7 +664,7 @@ mod tests {
     #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
     use super::*;
-    use degenbot_bot::strategy_host::DriverPose;
+    use degenbot_bot::strategy_host::{DriverPose, SpawnDecline};
     use degenbot_substrate::driver_spawn::DriverExit;
 
     /// Point the boot's database layer at an absent path, so the engine boot
@@ -706,6 +706,11 @@ mod tests {
     /// The engine's start flow boots a driver that registered a factory and
     /// folds its terminal exit into the FSM, so a self-halt is a queryable
     /// tombstone carried by `strategies()`.
+    ///
+    /// The probe driver is registered on the booted host: every facet the boot
+    /// admits already owns the factory its record promises, and a second attach
+    /// is a typed refusal, so a fixture that wants to control an exit owns its
+    /// own record.
     #[test]
     fn the_start_flow_boots_a_registered_factory_and_folds_its_exit() {
         hermetic_db_layer();
@@ -714,8 +719,7 @@ mod tests {
             let engine = PyArbEngine::new(py, None).expect("boot the engine");
             // A spawn factory is attached for a facet the boot HOSTS an arm
             // for: this settlement-only boot hosts no backrun arm, so neither
-            // lane carries one. The attach below supplies the factory this
-            // test's start flow boots.
+            // lane carries one.
             assert!(
                 !engine
                     .session
@@ -724,8 +728,24 @@ mod tests {
                     .has_spawn(&StrategyId::new("mevblocker_backrun")),
                 "an unhosted backrun arm attaches no spawn factory"
             );
-            let id = StrategyId::new("settlement");
-            engine.enable_strategy(py, "settlement").expect("enable");
+            let settlement = StrategyId::new("settlement");
+            let id = StrategyId::new("probe_driver");
+            {
+                let mut host = engine.session.host().lock();
+                host.register(id.clone(), FacetStatus::Configured)
+                    .expect("register the probe driver");
+                assert_eq!(
+                    host.attach_spawn(
+                        &settlement,
+                        Box::new(|_lane| Box::pin(async { DriverExit::Stopped })),
+                    ),
+                    Err(HostError::Spawn {
+                        id: settlement.clone(),
+                        decline: SpawnDecline::AlreadyAttached,
+                    }),
+                    "the boot's own factory is never replaced"
+                );
+            }
 
             let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<DriverExit>();
             engine
@@ -739,10 +759,18 @@ mod tests {
                     }),
                 )
                 .expect("attach spawn");
+            engine.enable_strategy(py, "probe_driver").expect("enable");
 
             let started = engine.session.start_drivers().expect("start driving");
             assert_eq!(started, 1, "the enabled driver with a factory starts");
-            assert_eq!(engine.strategies(py)[0].1, "running");
+            assert_eq!(
+                engine
+                    .strategies(py)
+                    .into_iter()
+                    .find(|(name, _, _)| name == "probe_driver")
+                    .map(|(_, state, _)| state),
+                Some("running".to_string())
+            );
 
             exit_tx
                 .send(DriverExit::Halted("lane-local violation".to_string()))
@@ -751,7 +779,7 @@ mod tests {
             let record = degenbot_core::runtime::get_runtime().block_on(async {
                 for _ in 0..1_000 {
                     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-                    let record = engine.session.host().lock().record(&id).cloned();
+                    let record = engine.session.host().lock().record(&id);
                     if record
                         .as_ref()
                         .is_some_and(|record| record.state() == DriverPose::Halted)
@@ -764,12 +792,20 @@ mod tests {
             let record = record.expect("the driver exit folds into the FSM");
             assert_eq!(record.halt_detail(), Some("lane-local violation"));
             assert_eq!(
-                engine.strategies(py)[0],
-                (
-                    "settlement".to_string(),
+                engine
+                    .strategies(py)
+                    .into_iter()
+                    .find(|(name, _, _)| name == "probe_driver"),
+                Some((
+                    "probe_driver".to_string(),
                     "halted".to_string(),
                     Some("lane-local violation".to_string())
-                )
+                ))
+            );
+            assert_eq!(
+                engine.session.host().lock().state_of(&settlement),
+                Some(DriverPose::Registered),
+                "the probe's start leaves the boot's own facet untouched"
             );
         });
     }
@@ -799,7 +835,7 @@ mod tests {
 
             let record = degenbot_core::runtime::get_runtime().block_on(async {
                 for _ in 0..1_000 {
-                    let record = engine.session.host().lock().record(&id).cloned();
+                    let record = engine.session.host().lock().record(&id);
                     if record
                         .as_ref()
                         .is_some_and(|record| record.state() == DriverPose::Halted)

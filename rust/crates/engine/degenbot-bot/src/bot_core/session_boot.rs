@@ -515,7 +515,7 @@ mod tests {
     fn await_tombstone(session: &EngineSession, id: &StrategyId) -> String {
         degenbot_core::runtime::get_runtime().block_on(async {
             for _ in 0..1_000 {
-                let record = session.host().lock().record(id).cloned();
+                let record = session.host().lock().record(id);
                 if let Some(detail) = record.as_ref().and_then(|record| record.halt_detail()) {
                     return detail.to_string();
                 }
