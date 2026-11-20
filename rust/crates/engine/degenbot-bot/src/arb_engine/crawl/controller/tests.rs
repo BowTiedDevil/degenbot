@@ -17,7 +17,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{address, Address, Bytes, U256};
@@ -32,7 +32,9 @@ use tokio::sync::{mpsc, Notify};
 use super::{
     sweep_halt, transition, CrawlAbort, CrawlConfig, CrawlConfigError, CrawlController, CrawlEvent,
     CrawlHandle, CrawlHost, CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture,
-    CrawlUnitSeat, RunPhase, SeatHold, SnapshotArm, SweepEnd, SweepHalt,
+    CrawlUnitSeat, OutcomeMissing, RunFacts, RunFactsWrite, RunOutcome, SeatHold, SnapshotArm,
+    SweepEnd, SweepHalt, WaitClock, WaitClocks, WaitEdge, WaitExpiry, WaitFailure, WindowWait,
+    HOLD_RECHECK,
 };
 use crate::arb_engine::crawl::admission::{DiscoveredHop, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
@@ -562,6 +564,14 @@ fn fixture(
     }
 }
 
+/// The run's facts after a run that RETURNED: the answer it recorded.
+fn resolved(controller: &CrawlController) -> RunOutcome {
+    match controller.run_facts() {
+        RunFacts::Resolved(outcome) => outcome,
+        other => panic!("a run that returned records its answer; got {other:?}"),
+    }
+}
+
 /// Drain the receipt stream's closed tail.
 fn receipts(rx: &mut mpsc::UnboundedReceiver<CrawlReceipt>) -> Vec<CrawlReceipt> {
     let mut out = Vec::new();
@@ -960,7 +970,10 @@ async fn a_parked_window_takes_on_exactly_the_window_and_names_every_submission(
         2,
         "the second submission filled the window; a third would be one past it"
     );
-    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        matches!(resolved(&controller), RunOutcome::Failed(_)),
+        "a window that never delivered is the run's own answer, not a resolution without one"
+    );
     assert!(
         controller.receipts_ended(),
         "the consumer's stream ends with the run, however the run ended"
@@ -1153,7 +1166,7 @@ async fn the_cap_latch_halts_submission_and_the_window_still_drains() {
         CrawlState::Capped,
         "the cap receipt latches the crawl, and the run's end never un-latches it"
     );
-    assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+    assert_eq!(resolved(&fixture.controller), RunOutcome::Completed);
     assert!(fixture.controller.receipts_ended());
     let dispatched = fixture.seat.metrics().dispatched.load(Ordering::SeqCst);
     assert_eq!(
@@ -1241,9 +1254,9 @@ async fn a_pre_existing_cap_admits_the_operator_sweep_and_latches_nothing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_stop_during_the_crawl_latches_stopping_and_drains() {
     let holder: Arc<OnceLock<Arc<CrawlController>>> = Arc::new(OnceLock::new());
-    // The pose, the join, and the stream, as they stood the instant the stop
+    // The pose, the facts, and the stream, as they stood the instant the stop
     // latched from a live run.
-    let observed: Arc<Mutex<Option<(CrawlState, RunPhase, bool)>>> = Arc::new(Mutex::new(None));
+    let observed: Arc<Mutex<Option<(CrawlState, RunFacts, bool)>>> = Arc::new(Mutex::new(None));
     let trigger = Arc::clone(&holder);
     let seen = Arc::clone(&observed);
     let seat = TokioSeat::new(
@@ -1254,7 +1267,7 @@ async fn a_stop_during_the_crawl_latches_stopping_and_drains() {
                     controller.stop();
                     *seen.lock() = Some((
                         controller.state(),
-                        controller.run_phase(),
+                        controller.run_facts(),
                         controller.receipts_ended(),
                     ));
                 }
@@ -1268,7 +1281,7 @@ async fn a_stop_during_the_crawl_latches_stopping_and_drains() {
 
     assert_eq!(
         observed.lock().take(),
-        Some((CrawlState::Stopping, RunPhase::Live, false)),
+        Some((CrawlState::Stopping, RunFacts::Live, false)),
         "a stop against a live run latches `Stopping` and leaves the stream open, so no receipt is truncated"
     );
     assert_eq!(
@@ -1276,7 +1289,11 @@ async fn a_stop_during_the_crawl_latches_stopping_and_drains() {
         CrawlState::Stopped,
         "the run future's resolution finished the stop — nothing else can"
     );
-    assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+    assert_eq!(
+        resolved(&fixture.controller),
+        RunOutcome::Completed,
+        "the stop ended submission, and the drained run still returned its own answer"
+    );
     assert_eq!(
         fixture.seat.metrics().dispatched.load(Ordering::SeqCst),
         2,
@@ -1327,7 +1344,10 @@ async fn a_fatal_unit_aborts_the_crawl_loudly_after_the_drain() {
     // A fatal abort is a resolution, not a stop: the pose keeps what it had,
     // the join latches, and the stream still ends exactly once.
     assert!(!fixture.controller.state().is_stopped());
-    assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+    assert!(
+        matches!(resolved(&fixture.controller), RunOutcome::Aborted(_)),
+        "the loud abort IS the run's answer"
+    );
     assert!(fixture.controller.receipts_ended());
 }
 
@@ -1423,7 +1443,10 @@ async fn a_unit_dropped_by_its_seat_ends_the_run_loudly() {
         }
         other => panic!("expected the loud lost-unit error, got {other:?}"),
     }
-    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        matches!(resolved(&controller), RunOutcome::Failed(_)),
+        "the lost unit is named in the run's answer"
+    );
     assert!(
         controller.receipts_ended(),
         "the consumer's stream ends with the run, however the run ended"
@@ -1479,7 +1502,10 @@ async fn a_parked_unit_is_named_at_the_idle_deadline() {
         1,
         "the unit really was held alive, not dropped"
     );
-    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        matches!(resolved(&controller), RunOutcome::Failed(_)),
+        "the parked unit is named in the run's answer"
+    );
     assert!(
         controller.receipts_ended(),
         "the consumer's stream ends with the run"
@@ -1614,7 +1640,7 @@ async fn a_held_window_outlives_the_park_deadline_and_delivers_on_the_lift() {
         0,
         "every unit resolved"
     );
-    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert_eq!(resolved(&controller), RunOutcome::Completed);
     assert!(controller.receipts_ended());
 }
 
@@ -1660,7 +1686,10 @@ async fn a_hold_that_never_lifts_is_named_at_the_hold_budget() {
         2,
         "the units were HELD — queued at the seat, never dropped"
     );
-    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        matches!(resolved(&controller), RunOutcome::Failed(_)),
+        "a cordon that outlasted its budget is the run's answer, never silence"
+    );
     assert!(
         controller.receipts_ended(),
         "the consumer's stream ends with the run, however the run ended"
@@ -1872,6 +1901,15 @@ async fn a_stop_with_no_live_run_ends_the_stream_immediately() {
         "the stop applied the resolution edge: no run can ever reach it"
     );
     assert!(fixture.controller.is_finished());
+    assert_eq!(
+        fixture.controller.run_facts(),
+        RunFacts::EndedWithoutRun,
+        "nothing resolved, and the fact says why: there was no run to resolve"
+    );
+    assert!(
+        fixture.controller.run_outcome().is_none(),
+        "a stop is not an answer the run never gave"
+    );
     assert!(fixture.controller.receipts_ended());
 
     // A run offered to it refuses with the typed terminal error, not a panic.
@@ -1896,9 +1934,9 @@ async fn a_second_run_while_one_is_live_is_refused() {
     first.unwrap();
     assert!(
         matches!(second, Err(CrawlRequestError::RunInFlight)),
-        "one run at a time: the window is per-run and the join fact has one writer"
+        "one run at a time: the window is per-run and the lease has one holder"
     );
-    assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+    assert_eq!(resolved(&fixture.controller), RunOutcome::Completed);
 }
 
 /// A seat that panics instead of running its unit — the run future's panic path.
@@ -1931,9 +1969,9 @@ async fn a_panicking_run_still_ends_the_receipt_stream() {
         "a panicking run ends the stream exactly once"
     );
     assert_eq!(
-        controller.run_phase(),
-        RunPhase::Finished,
-        "the join fact is the resolution, not the return value"
+        controller.run_facts(),
+        RunFacts::EndedWithoutOutcome(OutcomeMissing::Panicked),
+        "a run that never returned records no answer, and the panic is the reason"
     );
     assert_eq!(
         controller.state(),
@@ -2101,4 +2139,337 @@ async fn the_snapshot_handle_is_acquired_per_unit_and_dropped_when_the_run_ends(
         units + bound,
         "every post-close unit resolved and folded — without the DB seed"
     );
+}
+
+// ── the window's wait ──────────────────────────────────────────────────────
+
+/// The two clocks a test's wait is bounded by: a silence deadline a test can
+/// reach, and a hold budget several times its length, so one continuous hold
+/// spans many silence deadlines.
+fn wait_clocks() -> WaitClocks {
+    WaitClocks {
+        idle: Duration::from_millis(40),
+        hold: Duration::from_millis(400),
+    }
+}
+
+#[test]
+fn a_silent_step_measures_the_idle_deadline_and_a_hold_onset_announces_itself_once() {
+    let clocks = wait_clocks();
+    let now = Instant::now();
+
+    // Silence, and the seat answers silence: the idle deadline is the whole step.
+    let silent = WindowWait::Silent.observe(None, clocks, now).unwrap();
+    assert_eq!(silent.pose, WindowWait::Silent);
+    assert_eq!(silent.clock, WaitClock::Silence);
+    assert_eq!(silent.bound, clocks.idle);
+    assert_eq!(silent.edge, WaitEdge::Steady);
+
+    // A hold onsets: the step measures the HOLD instead, and the onset is the one
+    // announcement this continuous hold gets.
+    let onset = WindowWait::Silent
+        .observe(Some(SeatHold::Posture), clocks, now)
+        .unwrap();
+    let held = WindowWait::Held { since: now };
+    assert_eq!(onset.pose, held, "the hold's own clock starts at the onset");
+    assert_eq!(onset.clock, WaitClock::Hold);
+    assert_eq!(
+        onset.bound,
+        clocks.hold.min(HOLD_RECHECK),
+        "a held step rechecks once per HOLD_RECHECK, never once per nanosecond"
+    );
+    assert_eq!(onset.edge, WaitEdge::HoldOnset(SeatHold::Posture));
+
+    // The same hold, seen again: steady — so the hold is announced once per
+    // CONTINUOUS hold however many rechecks it takes.
+    let later = now + Duration::from_millis(120);
+    let steady = held
+        .observe(Some(SeatHold::Posture), clocks, later)
+        .unwrap();
+    assert_eq!(steady.pose, held, "the budget's clock does not restart");
+    assert_eq!(steady.edge, WaitEdge::Steady, "a recheck is not a new hold");
+    assert_eq!(
+        steady.bound,
+        clocks
+            .hold
+            .saturating_sub(Duration::from_millis(120))
+            .min(HOLD_RECHECK),
+        "the step waits what is left of the budget"
+    );
+
+    // The lift: silence is measured again, and the edge says so.
+    let lifted = held.observe(None, clocks, later).unwrap();
+    assert_eq!(lifted.pose, WindowWait::Silent);
+    assert_eq!(lifted.clock, WaitClock::Silence);
+    assert_eq!(lifted.bound, clocks.idle);
+    assert_eq!(lifted.edge, WaitEdge::HoldLifted);
+
+    // A later hold is a NEW continuous hold, and announces itself.
+    let again = WindowWait::Silent
+        .observe(Some(SeatHold::Posture), clocks, later)
+        .unwrap();
+    assert_eq!(again.edge, WaitEdge::HoldOnset(SeatHold::Posture));
+}
+
+#[test]
+fn a_hold_that_outlasts_its_budget_is_named_at_the_budget() {
+    let clocks = wait_clocks();
+    let now = Instant::now();
+    let named = WindowWait::Held { since: now }
+        .observe(Some(SeatHold::Posture), clocks, now + clocks.hold)
+        .unwrap_err();
+    match named {
+        WaitFailure::Held { held, hold } => {
+            assert_eq!(hold, SeatHold::Posture, "the seat's own reason");
+            assert_eq!(held, clocks.hold, "the budget is the bound that named it");
+        }
+        WaitFailure::Stalled { waited } => {
+            panic!("a cordon is not a park: {waited:?} of silence was named instead");
+        }
+    }
+}
+
+#[test]
+fn an_expiry_is_silence_only_when_the_step_measured_it() {
+    let clocks = wait_clocks();
+    let now = Instant::now();
+
+    // A silent step that expires with nothing holding the seat: the park, and the
+    // idle deadline is the bound that named it.
+    let silent = WindowWait::Silent.observe(None, clocks, now).unwrap();
+    assert_eq!(silent.expired(None), WaitExpiry::Stalled);
+    assert_eq!(
+        silent.expired(Some(SeatHold::Posture)),
+        WaitExpiry::Wait,
+        "a cordon that onsets during a silent step is an onset, never a park"
+    );
+
+    // A step that measured the HOLD never names a park: not while the hold is up,
+    // and not at its lift either — silence is re-measured by the NEXT step, under
+    // the idle deadline.
+    let held = WindowWait::Silent
+        .observe(Some(SeatHold::Posture), clocks, now)
+        .unwrap();
+    assert_eq!(held.expired(Some(SeatHold::Posture)), WaitExpiry::Wait);
+    assert_eq!(
+        held.expired(None),
+        WaitExpiry::Wait,
+        "a lift is not silence"
+    );
+}
+
+// ── the run's facts ────────────────────────────────────────────────────────
+
+#[test]
+fn the_run_lease_is_the_facts_own_and_a_second_end_is_told_what_stands() {
+    // The lease is free, taken once, and no run has ended until one does.
+    let mut facts = RunFacts::default();
+    assert_eq!(facts, RunFacts::NotStarted);
+    assert!(
+        !facts.has_ended(),
+        "a wait for the first run must keep waiting"
+    );
+    assert!(facts.arm(), "the first arm takes the lease");
+    assert_eq!(facts, RunFacts::Live);
+    assert!(!facts.arm(), "a live run holds the lease");
+    assert!(!facts.has_ended(), "a live run has not ended");
+    assert_eq!(facts, RunFacts::Live);
+
+    // The first terminal fact IS the fact.
+    let first = facts.record(RunFacts::Resolved(RunOutcome::Completed));
+    assert_eq!(first, RunFactsWrite::Recorded);
+    assert!(facts.has_ended());
+    assert_eq!(facts.outcome(), Some(&RunOutcome::Completed));
+
+    // A second end is not silently dropped: it is told the fact that stands.
+    assert_eq!(
+        facts.record(RunFacts::EndedWithoutRun),
+        RunFactsWrite::Retained(RunFacts::Resolved(RunOutcome::Completed)),
+        "the first end is the end"
+    );
+    assert_eq!(facts.outcome(), Some(&RunOutcome::Completed));
+
+    // A stop with no run to resolve is its own fact: nothing resolved, and the
+    // fact says why rather than claiming a run ended.
+    let mut stopped = RunFacts::default();
+    assert_eq!(
+        stopped.record(RunFacts::EndedWithoutRun),
+        RunFactsWrite::Recorded
+    );
+    assert!(stopped.has_ended());
+    assert_eq!(stopped.outcome(), None, "a stop gave no answer");
+    assert_eq!(stopped.missing(), None, "and nothing was lost either");
+
+    // A run that ended unanswered says which way it was lost, and a new run may
+    // arm once it has.
+    for reason in [OutcomeMissing::Panicked, OutcomeMissing::Cancelled] {
+        let mut lost = RunFacts::Live;
+        assert_eq!(
+            lost.record(RunFacts::EndedWithoutOutcome(reason)),
+            RunFactsWrite::Recorded
+        );
+        assert_eq!(lost.missing(), Some(reason));
+        assert_eq!(lost.outcome(), None);
+        assert!(lost.has_ended());
+        assert!(lost.arm(), "the lease is free again once the run has ended");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stop_after_the_run_ended_keeps_the_runs_own_answer() {
+    let fixture = fixture(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(2, 2),
+        TokioSeat::new(Duration::ZERO, None),
+    );
+    fixture.controller.run().await.unwrap();
+    assert_eq!(
+        fixture.controller.run_facts(),
+        RunFacts::Resolved(RunOutcome::Completed)
+    );
+
+    // The stop has no run to resolve, so it must not re-author the answer: a
+    // second resolution is retained, and the first fact stands.
+    fixture.controller.stop();
+    assert_eq!(
+        fixture.controller.run_facts(),
+        RunFacts::Resolved(RunOutcome::Completed),
+        "a second resolution is told what stands"
+    );
+    assert_eq!(fixture.controller.state(), CrawlState::Stopped);
+    assert!(fixture.controller.receipts_ended());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_run_ends_without_an_outcome_and_says_it_was_cancelled() {
+    // A cancelled run never returns, so the guard's drop is the only edge that can
+    // end the stream and record a fact — and the fact has to say "cancelled"
+    // instead of claiming a resolution the run never made.
+    let seat = Arc::new(ParkingSeat::default());
+    let (controller, _source, mut rx) =
+        harness(FakeRpc::new(), skip_graph(2), config(1, 1), seat.clone());
+    controller.set_unit_idle_deadline_for_test(Duration::from_secs(30));
+
+    let runner = Arc::clone(&controller);
+    let run = tokio::spawn(async move { runner.run().await });
+    while seat.parked.lock().is_empty() {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(
+        controller.run_facts(),
+        RunFacts::Live,
+        "the run is in flight"
+    );
+
+    run.abort();
+    let joined = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("a cancelled run resolves its own task");
+    assert!(joined.expect_err("the task never returned").is_cancelled());
+
+    assert_eq!(
+        controller.run_facts(),
+        RunFacts::EndedWithoutOutcome(OutcomeMissing::Cancelled),
+        "the run never answered, and the fact names why"
+    );
+    assert!(
+        controller.receipts_ended(),
+        "an ended fact always arrives with a closed stream"
+    );
+    assert!(
+        rx.recv().await.is_none(),
+        "the consumer observes end-of-stream instead of a park"
+    );
+}
+
+// ── the held window's announcement ─────────────────────────────────────────
+
+/// A capture layer for the crawl's own WARN lines — the hold's announcement is
+/// observable text, so the once-per-hold claim is counted rather than described.
+#[derive(Clone, Default)]
+struct WarnCapture {
+    messages: Arc<Mutex<Vec<String>>>,
+}
+
+impl WarnCapture {
+    fn messages(&self) -> Vec<String> {
+        self.messages.lock().clone()
+    }
+
+    fn count(&self, needle: &str) -> usize {
+        self.messages()
+            .iter()
+            .filter(|message| message.contains(needle))
+            .count()
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarnCapture {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        if *event.metadata().level() != tracing::Level::WARN {
+            return;
+        }
+        let mut visitor = degenbot_core::log_capture::MessageVisitor::default();
+        event.record(&mut visitor);
+        if let Some(message) = visitor.into_message() {
+            self.messages.lock().push(message);
+        }
+    }
+}
+
+/// One continuous hold is one announcement, however many rechecks it spans.
+///
+/// The wait crosses at least one whole [`HOLD_RECHECK`] step while the SAME hold
+/// stays up (the lift lands one recheck plus a margin later), so a warning emitted
+/// per recheck — or per expiry — would be counted here rather than argued about.
+/// The silence deadline is a fraction of the hold, so a wait that charged the
+/// cordon to it would name a park long before the lift.
+#[tokio::test(flavor = "current_thread")]
+async fn a_continuous_hold_is_announced_once_however_many_rechecks_it_takes() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let capture = WarnCapture::default();
+    let subscriber = tracing_subscriber::registry().with(capture.clone());
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let seat = HoldingSeat::new();
+    let (controller, _source, mut rx) = harness(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(2, 1),
+        Arc::clone(&seat) as Arc<dyn CrawlUnitSeat>,
+    );
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(40));
+    controller.set_held_window_budget_for_test(Duration::from_secs(10));
+
+    let lifter = Arc::clone(&seat);
+    tokio::spawn(async move {
+        tokio::time::sleep(HOLD_RECHECK + Duration::from_millis(200)).await;
+        lifter.lift();
+    });
+
+    let run = tokio::time::timeout(FIXTURE_GUARD, controller.run())
+        .await
+        .expect("a held window that lifts resolves the run");
+    run.expect("the held window's units ran on the lift");
+
+    assert_eq!(
+        controller.summary().report.units_folded,
+        2,
+        "every held unit ran on the lift and folded exactly once"
+    );
+    assert_eq!(
+        capture.count("window is HELD"),
+        1,
+        "one continuous hold is announced once: {:?}",
+        capture.messages()
+    );
+    assert_eq!(receipts(&mut rx).len(), 2);
+    assert_eq!(resolved(&controller), RunOutcome::Completed);
+    assert!(controller.receipts_ended());
 }

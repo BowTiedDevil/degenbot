@@ -39,8 +39,9 @@
 //!
 //! - the POSE ([`CrawlController::state`], a [`CrawlState`]) answers "what may
 //!   enter?", and
-//! - the JOIN ([`CrawlController::is_finished`], a [`RunPhase`]) answers "would a
-//!   join block?", whose only writer is the run future itself.
+//! - the FACTS ([`CrawlController::run_facts`], a [`RunFacts`]) answer "would a
+//!   join block, and how did the run end?" — written only by the run's lease and
+//!   its resolution guard, never by a caller.
 //!
 //! # Who spawns the run
 //!
@@ -120,7 +121,7 @@ use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use degenbot_core::channel_lifecycle::{ChannelDecline, ChannelPhase, DeliveryChannel};
-use degenbot_core::op_warn;
+use degenbot_core::{diag, op_warn};
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pathfinding::PoolKind;
 use degenbot_substrate::session_registry::TokenIdentity;
@@ -986,23 +987,171 @@ pub enum CrawlRequestError {
 
 // ── the run's own machine ───────────────────────────────────────────────────
 
-/// Where the RUN FUTURE is — the join fact, on its own axis.
+/// The RUN's facts — the join, the answer, and the reason an answer is missing,
+/// in ONE value.
 ///
 /// Deliberately not derived from [`CrawlState`]: a capped crawl is not finished
 /// (its run may still be draining the window), and a stop only makes a crawl
-/// finishable. [`Self::Finished`] is written by the run future's resolution
-/// guard (or by a `stop` that proves no run can ever resolve), so the answer is
-/// "would a join block?" and nothing else.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RunPhase {
-    /// No run has been spawned on this controller.
+/// finishable. The arms split what a phase beside an optional outcome could not
+/// say:
+///
+/// - [`Self::NotStarted`] — the run lease is free and nothing has ended: a run
+///   may still arm, so a wait for one must not read this as an end.
+/// - [`Self::Live`] — a run future holds the lease: a join would block, and a
+///   second run is refused.
+/// - [`Self::Resolved`] — the run RETURNED and recorded how it ended.
+/// - [`Self::EndedWithoutRun`] — a stop ended the lifecycle with no run to
+///   resolve.
+/// - [`Self::EndedWithoutOutcome`] — the run future ended without recording: a
+///   panic unwind or a dropped (cancelled) task.
+///
+/// The phase-plus-outcome pair read all three ends as "finished, no outcome", so
+/// a consumer woken by end-of-stream could not tell a stopped crawl from a lost
+/// run. Here each end is its own arm and [`Self::has_ended`] is the
+/// join-and-stream question.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RunFacts {
+    /// No run has been spawned and none has ended: the run lease is free.
     #[default]
     NotStarted,
-    /// A run future is live; a join would block.
+    /// A run future is live on this controller.
     Live,
-    /// The last run future resolved (or a stop proved none can). Nothing is
-    /// live.
-    Finished,
+    /// The last run future resolved, and this is how.
+    Resolved(RunOutcome),
+    /// A stop ended the run lifecycle with no run to resolve: nothing was live,
+    /// so nothing could ever answer.
+    EndedWithoutRun,
+    /// The run future ended without recording an outcome.
+    EndedWithoutOutcome(OutcomeMissing),
+}
+
+/// Why a run future ended without recording an outcome.
+///
+/// Both arms are the resolution guard's reading of its own drop — never a
+/// caller's claim: a run has no other way to end unanswered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutcomeMissing {
+    /// The run future unwound: a panic inside the loop. The driver's
+    /// `JoinHandle` carries the `JoinError` that names it.
+    Panicked,
+    /// The run future was dropped mid-flight: its task was aborted, or the
+    /// runtime shut down under it. Nothing was returned, so nothing is claimed.
+    Cancelled,
+}
+
+impl OutcomeMissing {
+    /// The lower-case name, for logs and error text.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Panicked => "panicked",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl RunFacts {
+    /// Whether a run future is live: the one pose a join would block in.
+    #[must_use]
+    pub const fn is_live(&self) -> bool {
+        matches!(self, Self::Live)
+    }
+
+    /// Whether the run lifecycle has ENDED: no run is live, and none can resolve
+    /// without a new lease.
+    ///
+    /// The join-and-stream question, and the only one [`Self::NotStarted`] is
+    /// excluded from: no run has ended there, so a wait for one must keep
+    /// waiting.
+    #[must_use]
+    pub const fn has_ended(&self) -> bool {
+        matches!(
+            self,
+            Self::Resolved(_) | Self::EndedWithoutRun | Self::EndedWithoutOutcome(_)
+        )
+    }
+
+    /// How the run ended, when it ended with an answer.
+    #[must_use]
+    pub fn outcome(&self) -> Option<&RunOutcome> {
+        match self {
+            Self::Resolved(outcome) => Some(outcome),
+            Self::NotStarted
+            | Self::Live
+            | Self::EndedWithoutRun
+            | Self::EndedWithoutOutcome(_) => None,
+        }
+    }
+
+    /// Why the run ended without an answer, when it ended without one.
+    #[must_use]
+    pub const fn missing(&self) -> Option<OutcomeMissing> {
+        match self {
+            Self::EndedWithoutOutcome(reason) => Some(*reason),
+            Self::NotStarted | Self::Live | Self::Resolved(_) | Self::EndedWithoutRun => None,
+        }
+    }
+
+    /// The stable spelling, for logs and the operator surface.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::NotStarted => "not-started",
+            Self::Live => "live",
+            Self::Resolved(_) => "resolved",
+            Self::EndedWithoutRun => "ended-without-run",
+            Self::EndedWithoutOutcome(_) => "ended-without-outcome",
+        }
+    }
+
+    /// Take the run lease: the lifecycle is open and one run holds it.
+    ///
+    /// Answers `false` when a run already holds it — the one refusal, so the
+    /// one-run-at-a-time rule is the fact's own.
+    fn arm(&mut self) -> bool {
+        if self.is_live() {
+            return false;
+        }
+        *self = Self::Live;
+        true
+    }
+
+    /// Record one terminal fact: the FIRST end of a run is the fact, and a later
+    /// offer is told the one that stands.
+    ///
+    /// The write-once rule is what the resolution edge needs: a stop landing after
+    /// the run resolved, and a second guard, must not re-author the answer.
+    fn record(&mut self, offer: Self) -> RunFactsWrite {
+        if self.has_ended() {
+            return RunFactsWrite::Retained(self.clone());
+        }
+        *self = offer;
+        RunFactsWrite::Recorded
+    }
+}
+
+/// What one offer to the run's facts did — the duplicate policy, typed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunFactsWrite {
+    /// The offer became the run's fact.
+    Recorded,
+    /// The lifecycle had already ended: nothing changed, and this is the fact
+    /// that stands.
+    Retained(RunFacts),
+}
+
+/// Record one end of the crawl's run, reporting a losing offer so a duplicate
+/// resolution is visible rather than silently dropped.
+fn record_run_facts(facts: &mut RunFacts, offer: RunFacts) -> RunFactsWrite {
+    let write = facts.record(offer);
+    if let RunFactsWrite::Retained(held) = &write {
+        diag!(
+            domain = pump,
+            retained = held.name(),
+            "the crawl's run had already ended; the first fact stands"
+        );
+    }
+    write
 }
 
 // ── the controller ──────────────────────────────────────────────────────────
@@ -1015,20 +1164,18 @@ pub struct CrawlController {
     source: Arc<dyn DiscoverySource>,
     seat: Arc<dyn CrawlUnitSeat>,
     state: Mutex<CrawlState>,
-    /// The join fact's own machine. Lock ordering: this is the OUTERMOST lock —
-    /// `state` and `receipts` may be taken while it is held, never the reverse.
-    run_phase: Mutex<RunPhase>,
+    /// The run's facts: the lease, the answer, and the reason an answer is
+    /// missing, as ONE value under ONE lock. Lock ordering: this is the OUTERMOST
+    /// lock — `state` and `receipts` may be taken while it is held, never the
+    /// reverse, which is what makes a terminal fact and a closed stream the same
+    /// observation ([`CrawlController::resolve_run`]).
+    run_facts: Mutex<RunFacts>,
     summary: Mutex<CrawlSummary>,
     receipts: Mutex<DeliveryChannel<CrawlReceipt>>,
     sweep_lease: tokio::sync::Mutex<()>,
     /// Wakes an operator-only run when teardown begins.
     stop_notify: tokio::sync::Notify,
     seq: AtomicU64,
-    /// How the last run future resolved, for a caller that owns the receipt
-    /// stream rather than the `JoinHandle`. Written by [`CrawlController::run`]
-    /// on its own resolution path, before the resolution guard closes the
-    /// stream, so a consumer woken by end-of-stream already sees it.
-    outcome: Mutex<Option<RunOutcome>>,
     /// The window's idle deadline — [`UNIT_IDLE_DEADLINE`] in production.
     ///
     /// A test's seam over the constant. It is a field and not a `cfg(test)`
@@ -1050,8 +1197,9 @@ pub struct CrawlController {
 /// The run future's `Result` is not `Clone` and the driver's `JoinHandle` only
 /// reports panics, so the run leaves its own answer here: the FFI (and any
 /// consumer that owns the stream instead of the join) reads it after
-/// end-of-stream. A panic records nothing — the join error is the driver's to
-/// classify.
+/// end-of-stream. Only a run that RETURNED records one: a panic or a cancellation
+/// ends [`RunFacts::EndedWithoutOutcome`], and the driver's `JoinHandle` carries
+/// the `JoinError` that names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunOutcome {
     /// Every submitted unit resolved and the sweep ended on its own terms.
@@ -1123,13 +1271,12 @@ impl CrawlController {
             source,
             seat,
             state: Mutex::new(CrawlState::Idle),
-            run_phase: Mutex::new(RunPhase::NotStarted),
+            run_facts: Mutex::new(RunFacts::default()),
             summary: Mutex::new(CrawlSummary::default()),
             receipts: Mutex::new(DeliveryChannel::detached()),
             sweep_lease: tokio::sync::Mutex::new(()),
             stop_notify: tokio::sync::Notify::new(),
             seq: AtomicU64::new(0),
-            outcome: Mutex::new(None),
             unit_idle_deadline: Mutex::new(UNIT_IDLE_DEADLINE),
             held_window_budget: Mutex::new(HELD_WINDOW_BUDGET),
         }))
@@ -1169,18 +1316,27 @@ impl CrawlController {
         self.receipts.lock().phase() == ChannelPhase::Closed
     }
 
-    /// The join fact's phase.
+    /// The run's facts: the join, the answer, and the reason an answer is
+    /// missing.
+    ///
+    /// Crate-internal on purpose: [`RunFacts`] is not part of the public `crawl`
+    /// surface ([`RunOutcome`] is, and is what `run_outcome` hands back), so this
+    /// door would name a type a standalone consumer could not spell.
     #[must_use]
-    pub fn run_phase(&self) -> RunPhase {
-        *self.run_phase.lock()
+    pub(crate) fn run_facts(&self) -> RunFacts {
+        self.run_facts.lock().clone()
     }
 
-    /// Whether a join would block: [`RunPhase::Live`] is the only phase that says
-    /// "still running", and the answer is never derived from the crawl's pose (a
+    /// Whether the run lifecycle has ended: [`RunFacts::Live`] is the only pose a
+    /// join blocks in, and the answer is never derived from the crawl's pose (a
     /// `Capped` crawl is not finished; a `Stopping` one is not finished yet).
+    ///
+    /// A reader that sees `true` also sees a closed receipt stream:
+    /// [`CrawlController::resolve_run`] closes the stream and lands the fact under
+    /// this lock, in that order.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.run_phase() == RunPhase::Finished
+        self.run_facts().has_ended()
     }
 
     /// The window's idle deadline (see [`UNIT_IDLE_DEADLINE`]).
@@ -1222,54 +1378,46 @@ impl CrawlController {
     /// So a reported hold re-arms the wait ([`HOLD_RECHECK`]) under its OWN budget
     /// ([`HELD_WINDOW_BUDGET`]) instead of firing the park arm, and the park arm
     /// stays exactly as it was for a seat that reports no hold. The hold is loud
-    /// (one warning per wait), and a hold that outlasts its budget is named
-    /// ([`WaitFailure::Held`]) rather than waited on forever: a run never hangs, and
-    /// never aborts a crawl it did not diagnose.
+    /// (one warning per continuous hold), and a hold that outlasts its budget is
+    /// named ([`WaitFailure::Held`]) rather than waited on forever: a run never
+    /// hangs, and never aborts a crawl it did not diagnose.
+    ///
+    /// The two clocks are [`WindowWait`], not a pair of locals: every observation
+    /// of the seat — at the head of a step and again after its timeout — is one
+    /// transition of that machine, so a hold that onsets or lifts mid-step lands
+    /// in the same table as one seen at the head.
     async fn await_unit(
         &self,
         rx: &mut mpsc::UnboundedReceiver<UnitOutcome>,
     ) -> Result<Option<UnitOutcome>, WaitFailure> {
-        let idle = self.unit_idle_deadline();
-        let budget = self.held_window_budget();
-        let mut holding_since: Option<Instant> = None;
-        let mut announced = false;
+        let clocks = WaitClocks {
+            idle: self.unit_idle_deadline(),
+            hold: self.held_window_budget(),
+        };
+        let mut wait = WindowWait::Silent;
         loop {
-            let (bound, held_now) = if let Some(hold) = self.seat.hold() {
-                let since = *holding_since.get_or_insert_with(Instant::now);
-                let held_for = since.elapsed();
-                if held_for >= budget {
-                    return Err(WaitFailure::Held {
-                        held: held_for,
-                        hold,
-                    });
-                }
-                if !announced {
-                    announced = true;
-                    op_warn!(
-                        domain = pump,
-                        hold = %hold,
-                        budget_ms = millis(budget),
-                        "the crawl's window is HELD, not parked — the seat holds every submitted unit; waiting for the hold to lift"
-                    );
-                }
-                (budget.saturating_sub(held_for).min(HOLD_RECHECK), true)
-            } else {
-                // No hold to re-arm against. A hold that onsets during the wait
-                // is caught at the expiry below, so this arm never charges a
-                // cordon to the deadline.
-                holding_since = None;
-                announced = false;
-                (idle, false)
-            };
-            match tokio::time::timeout(bound, rx.recv()).await {
+            let step = wait.observe(self.seat.hold(), clocks, Instant::now())?;
+            if let WaitEdge::HoldOnset(hold) = step.edge {
+                op_warn!(
+                    domain = pump,
+                    hold = %hold,
+                    budget_ms = millis(clocks.hold),
+                    "the crawl's window is HELD, not parked — the seat holds every submitted unit; waiting for the hold to lift"
+                );
+            }
+            wait = step.pose;
+            match tokio::time::timeout(step.bound, rx.recv()).await {
                 Ok(received) => return Ok(received),
-                Err(_elapsed) => {
-                    // The wait expired. Silence only names a park when the seat
-                    // answers "no hold" at the expiry too.
-                    if !held_now && self.seat.hold().is_none() {
-                        return Err(WaitFailure::Stalled { waited: idle });
+                // The wait expired: silence only names a park when the seat
+                // answers "no hold" at the expiry too.
+                Err(_elapsed) => match step.expired(self.seat.hold()) {
+                    WaitExpiry::Stalled => {
+                        return Err(WaitFailure::Stalled {
+                            waited: clocks.idle,
+                        });
                     }
-                }
+                    WaitExpiry::Wait => {}
+                },
             }
         }
     }
@@ -1304,17 +1452,19 @@ impl CrawlController {
     /// With no live run there is nothing to join, so the stop applies the
     /// resolution edge itself: the stream ends and the pose is terminal.
     pub fn stop(&self) {
-        let mut phase = self.run_phase.lock();
+        let mut facts = self.run_facts.lock();
         // `Stop` never declines, so this always latches.
         let _ = self.advance(CrawlEvent::Stop);
         self.stop_notify.notify_one();
-        if *phase == RunPhase::Live {
+        if facts.is_live() {
             // The run future finishes the teardown when it resolves.
             return;
         }
+        // No run future can resolve here, so the stop IS the resolution edge: the
+        // stream ends, and the fact says why nothing resolved.
         self.receipts.lock().close();
         let _ = self.advance(CrawlEvent::RunFinished);
-        *phase = RunPhase::Finished;
+        record_run_facts(&mut facts, RunFacts::EndedWithoutRun);
     }
 
     /// The crawl: one discovery sweep, windowed submission, FIFO fold.
@@ -1354,7 +1504,7 @@ impl CrawlController {
         startup_discovery: bool,
     ) -> Result<(), CrawlRequestError> {
         self.arm_run()?;
-        let _resolution = RunResolution { controller: self };
+        let mut resolution = RunResolution::new(self);
         let window = self.config.intake_window;
         // The count is the sweep's business; the run's answer is its outcome.
         let result = if startup_discovery {
@@ -1363,10 +1513,10 @@ impl CrawlController {
             self.stop_notify.notified().await;
             Ok(())
         };
-        // Record BEFORE the resolution guard drops: the guard closes the
-        // receipt stream, and a consumer woken by end-of-stream must already be
-        // able to read how the run ended.
-        *self.outcome.lock() = Some(match &result {
+        // Settle BEFORE the guard drops: the guard takes the resolution edge,
+        // and a consumer woken by end-of-stream must already be able to read how
+        // the run ended.
+        resolution.settle(match &result {
             Ok(()) => RunOutcome::Completed,
             Err(CrawlRequestError::Abort(abort)) => RunOutcome::Aborted(abort.to_string()),
             Err(error) => RunOutcome::Failed(error.to_string()),
@@ -1374,11 +1524,12 @@ impl CrawlController {
         result
     }
 
-    /// How the last run resolved; `None` while no run has resolved (or when the
-    /// run future was cancelled or panicked mid-flight).
+    /// How the last run resolved, when it resolved with an answer; `None` while
+    /// no run has, and when one panicked or was cancelled — [`Self::run_facts`]
+    /// names which.
     #[must_use]
     pub fn run_outcome(&self) -> Option<RunOutcome> {
-        self.outcome.lock().clone()
+        self.run_facts().outcome().cloned()
     }
 
     /// Trigger ONE bounded discovery sweep (the operator surface).
@@ -1700,14 +1851,15 @@ impl CrawlController {
     /// (a stop that already latched `Stopping` would otherwise be outrun by a
     /// run arming itself on top of it).
     fn arm_run(&self) -> Result<(), CrawlRequestError> {
-        let mut phase = self.run_phase.lock();
-        if *phase == RunPhase::Live {
+        let mut facts = self.run_facts.lock();
+        if facts.is_live() {
             return Err(CrawlRequestError::RunInFlight);
         }
         // The pose's own refusal (a stopped or capped crawl) comes first: it is
-        // the typed answer the caller expects, and it leaves the phase alone.
+        // the typed answer the caller expects, and it leaves the facts alone.
         self.advance(CrawlEvent::RunRequested)?;
-        *phase = RunPhase::Live;
+        // A run already live was just ruled out, so the lease is free.
+        let _ = facts.arm();
         Ok(())
     }
 
@@ -1716,14 +1868,25 @@ impl CrawlController {
     ///
     /// Called from [`RunResolution`]'s `Drop`, so a normal return, a fatal `Err`,
     /// a panic unwind, and a dropped (cancelled) task all take this same edge —
-    /// end-of-stream can never be missed. Holds the outermost lock throughout, so
-    /// no reader observes a half-torn-down crawl: whoever sees [`RunPhase::Finished`]
-    /// already sees a closed stream.
-    fn resolve_run(&self) {
-        let mut phase = self.run_phase.lock();
+    /// end-of-stream can never be missed, and the fact names which one it was.
+    ///
+    /// Holds the outermost lock throughout, so no reader observes a half-torn-down
+    /// crawl: the stream closes FIRST and the fact lands second, under this lock,
+    /// so whoever sees a terminal fact already sees a closed stream.
+    fn resolve_run(&self, offer: RunFacts) {
+        let mut facts = self.run_facts.lock();
         self.receipts.lock().close();
         let _ = self.advance(CrawlEvent::RunFinished);
-        *phase = RunPhase::Finished;
+        if let Some(reason) = offer.missing() {
+            // A run that never answered is worth a line of its own: the driver's
+            // join names a panic, and a cancellation has no other trace at all.
+            diag!(
+                domain = pump,
+                reason = reason.as_str(),
+                "the crawl's run ended without recording an outcome"
+            );
+        }
+        record_run_facts(&mut facts, offer);
     }
 
     /// The next submission sequence (1-based, monotone for the controller's
@@ -1787,6 +1950,7 @@ fn millis(duration: Duration) -> u64 {
 
 /// Why a window wait was NAMED instead of landing an outcome
 /// ([`CrawlController::await_unit`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WaitFailure {
     /// Live senders, no receipt, no hold at the expiry: the seat parks the unit.
     Stalled {
@@ -1801,6 +1965,166 @@ enum WaitFailure {
         /// The seat's own reason.
         hold: SeatHold,
     },
+}
+
+// ── the window's wait ───────────────────────────────────────────────────────
+
+/// The window's wait: what it is measuring right now.
+///
+/// Two clocks, two questions. [`UNIT_IDLE_DEADLINE`] measures SILENCE — a seat
+/// that parks a unit, a build flight whose leader vanished, a chain read that
+/// never answers. [`HELD_WINDOW_BUDGET`] measures a HOLD — a cordoned posture
+/// queues this role's units and releases the whole backlog on its clean-window
+/// edge, so those units are neither stuck nor lost.
+///
+/// The pose is the whole bookkeeping: a hold that has been seen is [`Self::Held`]
+/// and carries the only datum the hold budget needs (when this CONTINUOUS hold
+/// began), and the hold is announced on the [`WaitEdge::HoldOnset`] edge. That
+/// edge is crossed once per continuous hold by construction — the same hold seen
+/// again is [`WaitEdge::Steady`] — so no separate "already announced" flag can
+/// drift from the pose it describes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowWait {
+    /// No hold is up: the step measures silence.
+    Silent,
+    /// The seat holds every submitted unit: the step measures the hold.
+    Held {
+        /// When this continuous hold was first observed.
+        since: Instant,
+    },
+}
+
+impl WindowWait {
+    /// Fold the seat's answer into the next step.
+    ///
+    /// Total over both poses and both answers, and the whole of the hold's
+    /// bookkeeping: the budget's clock starts on the onset edge, a repeated hold
+    /// is steady (so the hold is announced once), a lift returns to silence, and a
+    /// hold that outlasts the budget is named instead of waited on.
+    ///
+    /// # Errors
+    ///
+    /// [`WaitFailure::Held`] when the continuous hold has outlasted
+    /// [`HELD_WINDOW_BUDGET`].
+    fn observe(
+        self,
+        hold: Option<SeatHold>,
+        clocks: WaitClocks,
+        now: Instant,
+    ) -> Result<WaitStep, WaitFailure> {
+        match (self, hold) {
+            // Silence, and the seat answers silence: the idle deadline is the
+            // whole step.
+            (Self::Silent, None) => Ok(WaitStep {
+                pose: Self::Silent,
+                bound: clocks.idle,
+                clock: WaitClock::Silence,
+                edge: WaitEdge::Steady,
+            }),
+            // A hold just began. Its budget starts HERE, and this is the one
+            // announcement this continuous hold gets.
+            (Self::Silent, Some(hold)) => Ok(WaitStep {
+                pose: Self::Held { since: now },
+                bound: clocks.hold.min(HOLD_RECHECK),
+                clock: WaitClock::Hold,
+                edge: WaitEdge::HoldOnset(hold),
+            }),
+            // The hold lifted: the mask is over and silence is measured again.
+            (Self::Held { .. }, None) => Ok(WaitStep {
+                pose: Self::Silent,
+                bound: clocks.idle,
+                clock: WaitClock::Silence,
+                edge: WaitEdge::HoldLifted,
+            }),
+            // The same hold, still up: no edge, no second announcement, and the
+            // step waits what is left of the budget — [`HOLD_RECHECK`] at a time,
+            // because a seat reports a hold by being asked.
+            (Self::Held { since }, Some(hold)) => {
+                let elapsed = now.saturating_duration_since(since);
+                if elapsed >= clocks.hold {
+                    return Err(WaitFailure::Held {
+                        held: elapsed,
+                        hold,
+                    });
+                }
+                Ok(WaitStep {
+                    pose: Self::Held { since },
+                    bound: clocks.hold.saturating_sub(elapsed).min(HOLD_RECHECK),
+                    clock: WaitClock::Hold,
+                    edge: WaitEdge::Steady,
+                })
+            }
+        }
+    }
+}
+
+/// The two clocks one window wait is bounded by — read once per wait, so a step
+/// transition never takes a lock.
+#[derive(Clone, Copy, Debug)]
+struct WaitClocks {
+    /// How long SILENCE may last before the seat is named a park
+    /// ([`UNIT_IDLE_DEADLINE`]).
+    idle: Duration,
+    /// How long a CONTINUOUS hold may last before the cordon is the report
+    /// ([`HELD_WINDOW_BUDGET`]).
+    hold: Duration,
+}
+
+/// Which clock a step's bound came from — what the step's expiry is read
+/// against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaitClock {
+    /// The idle deadline: the step measured silence.
+    Silence,
+    /// The hold budget: a cordon is up, and nothing is stuck.
+    Hold,
+}
+
+/// The edge one observation of the seat crossed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaitEdge {
+    /// Nothing changed: the same silence, or the same continuous hold.
+    Steady,
+    /// A hold just began — the once-per-continuous-hold announcement.
+    HoldOnset(SeatHold),
+    /// The hold lifted: the silence clock starts over.
+    HoldLifted,
+}
+
+/// One step of the window's wait: the pose to wait in, the bound it waits for,
+/// the clock that bound came from, and the edge its observation crossed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WaitStep {
+    pose: WindowWait,
+    bound: Duration,
+    clock: WaitClock,
+    edge: WaitEdge,
+}
+
+impl WaitStep {
+    /// What this step's timeout means, read against the seat's answer at that
+    /// moment.
+    ///
+    /// An expiry is SILENCE only when the step measured the idle deadline and the
+    /// seat answers no hold now: a step that measured a hold just ended a hold's
+    /// tick, and a hold that onsets during a silent step is caught by the next
+    /// observation as the onset it is — never as a park.
+    const fn expired(self, hold: Option<SeatHold>) -> WaitExpiry {
+        match (self.clock, hold) {
+            (WaitClock::Silence, None) => WaitExpiry::Stalled,
+            (WaitClock::Silence | WaitClock::Hold, _) => WaitExpiry::Wait,
+        }
+    }
+}
+
+/// What a step's timeout means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaitExpiry {
+    /// The step measured silence and nothing holds the seat now: the seat parks
+    /// its units, and the idle deadline is the bound that named it.
+    Stalled,
+    /// Wait again: a hold is up, or one just lifted.
+    Wait,
 }
 
 // ── the FIFO window ─────────────────────────────────────────────────────────
@@ -1947,11 +2271,40 @@ impl<'a> Fold<'a> {
 /// impossible.
 struct RunResolution<'a> {
     controller: &'a CrawlController,
+    /// How the run returned; `None` while it is still running, and after a panic
+    /// or a cancellation.
+    settled: Option<RunOutcome>,
+}
+
+impl<'a> RunResolution<'a> {
+    /// Armed before the run's work starts: from here the guard owns the edge.
+    fn new(controller: &'a CrawlController) -> Self {
+        Self {
+            controller,
+            settled: None,
+        }
+    }
+
+    /// Record how the run is returning. The `Drop` takes the same edge either
+    /// way, and a run that never returns never reaches here.
+    fn settle(&mut self, outcome: RunOutcome) {
+        self.settled = Some(outcome);
+    }
 }
 
 impl Drop for RunResolution<'_> {
     fn drop(&mut self) {
-        self.controller.resolve_run();
+        let offer = match self.settled.take() {
+            Some(outcome) => RunFacts::Resolved(outcome),
+            // The run never settled: an unwind is the panic arm, and a future
+            // dropped outside one was cancelled by whoever owned its task.
+            None => RunFacts::EndedWithoutOutcome(if std::thread::panicking() {
+                OutcomeMissing::Panicked
+            } else {
+                OutcomeMissing::Cancelled
+            }),
+        };
+        self.controller.resolve_run(offer);
     }
 }
 
@@ -1996,10 +2349,11 @@ impl CrawlHandle {
         self.controller.state()
     }
 
-    /// The join fact: whether the run future has resolved.
+    /// The join fact: whether the run lifecycle has ended.
     ///
     /// `false` while a run is live, which is the answer that says "do not park
-    /// here; join the `JoinHandle` you kept, under your grace window".
+    /// here; join the `JoinHandle` you kept, under your grace window" — and also
+    /// `false` before any run armed, because that lifecycle has not ended either.
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.controller.is_finished()

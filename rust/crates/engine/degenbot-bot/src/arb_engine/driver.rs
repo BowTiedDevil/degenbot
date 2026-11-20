@@ -1604,9 +1604,7 @@ fn mock_provider_and_asserter() -> (
 #[expect(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::arb_engine::crawl::controller::{
-        CrawlState, CrawlUnitFuture, CrawlUnitSeat, RunPhase,
-    };
+    use crate::arb_engine::crawl::controller::{CrawlState, CrawlUnitFuture, CrawlUnitSeat};
     use crate::arb_engine::crawl::discovery::{CrawlDiscoveryError, DiscoverySource, Edition};
     use crate::arb_engine::crawl::policy::CrawlPathPolicy;
     use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
@@ -2077,7 +2075,10 @@ mod tests {
             CrawlState::Stopped,
             "the stop latched `Stopping`, and only the run's resolution reached `Stopped`"
         );
-        assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+        assert!(
+            fixture.controller.run_facts().has_ended(),
+            "the run's own resolution landed the fact, not the teardown"
+        );
         assert!(fixture.controller.receipts_ended());
         assert_eq!(
             *fixture.observed.lock(),
