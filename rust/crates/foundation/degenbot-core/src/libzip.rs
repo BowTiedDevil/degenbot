@@ -27,8 +27,8 @@
 
 /// Maximum literals emitted in a single literal-run opcode.
 const MAX_LITERALS: usize = 32;
-/// Match length above which a long-match instruction is emitted (the cap on the
-/// match length encoded in a single short opcode is `MAX_MATCH_LENGTH - 1`).
+/// Match length encoded by one full-length long-match opcode: `9 + opcode_1`
+/// with `opcode_1 = MAX_MATCH_LENGTH - 9`.
 const MAX_MATCH_LENGTH: usize = 262;
 /// Maximum back-reference offset encodable in the 13-bit offset field.
 const MAX_MATCH_OFFSET: usize = 8191;
@@ -199,9 +199,12 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
         // as `distance - 1`. Reconstruct from the post-increment variables.
         let distance_to_last_seen_chunk = input_buffer_offset - match_length - last_seen_offset - 1;
 
-        // Emit LONG MATCH opcodes for each full `MAX_MATCH_LENGTH` chunk.
+        // Emit LONG MATCH opcodes while more than a `MAX_MATCH_LENGTH` chunk
+        // remains, so an exact multiple of `MAX_MATCH_LENGTH` still reaches the
+        // residual branch: `remaining == 0` would emit `(0 << 5) + ...`, whose
+        // top three bits read as a literal run rather than a short match.
         let mut remaining = match_length;
-        while remaining >= MAX_MATCH_LENGTH {
+        while remaining > MAX_MATCH_LENGTH {
             // LONG MATCH instruction — 3 byte opcode
             let opcode_0 = 0b1110_0000_u8 + ((distance_to_last_seen_chunk >> 8) as u8);
             let opcode_1 = (MAX_MATCH_LENGTH - 9) as u8;
@@ -477,6 +480,31 @@ f235905747275746873e2010c02636f6c42012139223c046f73706865410f025468724178205b211
         let compressed = compress(input).unwrap();
         assert_eq!(compressed, expected);
         assert_eq!(decompress(&compressed).unwrap(), input);
+    }
+
+    #[test]
+    fn long_repeated_input_round_trips() {
+        // Repeated input whose `match_length` (input length minus the 9-byte
+        // head/tail reserve) lands on an exact multiple of `MAX_MATCH_LENGTH`,
+        // beside neighbours that do not. The expected bytes are Solady's
+        // `flzCompress` output; the exact multiple leaves a three-byte long
+        // match as the residual.
+        let exact_multiples = [
+            (271, "014141e0ff01044141414141"),
+            (533, "014141e0fd01e0ff01044141414141"),
+            (795, "014141e0fd01e0fd01e0ff01044141414141"),
+        ];
+        for (len, expected) in exact_multiples {
+            let input = vec![0x41_u8; len];
+            let compressed = compress(&input).unwrap();
+            assert_eq!(compressed, hex_to_bytes(expected), "{len} bytes");
+            assert_eq!(decompress(&compressed).unwrap(), input, "{len} bytes");
+        }
+        for len in [524, 600, 800] {
+            let input = vec![0x41_u8; len];
+            let compressed = compress(&input).unwrap();
+            assert_eq!(decompress(&compressed).unwrap(), input, "{len} bytes");
+        }
     }
 
     #[test]
