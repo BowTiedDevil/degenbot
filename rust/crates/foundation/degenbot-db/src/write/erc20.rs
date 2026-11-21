@@ -17,8 +17,8 @@ fn existing_erc20_token(
 impl DegenbotDb {
     conn_writer! {
         /// Get-or-create an `erc20_tokens` row by `(chain, address)`. Port of
-        /// `db_assets.py::get_or_create_erc20_token` (L18–…). On create, inserts
-        /// with caller-supplied metadata (`name` / `symbol` / `decimals`); the
+        /// `db_assets.py::get_or_create_erc20_token`. On create, inserts with
+        /// caller-supplied metadata (`name` / `symbol` / `decimals`); the
         /// Python path RPC-fetches these via `_fetch_erc20_token_metadata` — that
         /// fetch is `stays-python` (the driver computes + passes them in). Pass
         /// `None` for each to leave the column `NULL` (matches the Python

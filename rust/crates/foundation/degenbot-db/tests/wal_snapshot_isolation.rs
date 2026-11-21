@@ -1,14 +1,13 @@
 #![cfg(feature = "writer")]
-//! Regression test for the WAL held-read-tx concurrency model:
+//! Pins the WAL held-read-tx concurrency model:
 //! `SnapshotDb::open` acquires one deferred read transaction at bot startup and
 //! holds it across `build_paths` so every per-pool `fetch_liquidity_map` + the
 //! `fetch_newest_update_block` read share a single DB snapshot, immune to
 //! concurrent `pool_updater` commits.
 //!
-//! This is the behavior the `SnapshotStore` was hand-rolling: a single
-//! consistent DB cut frozen at bot startup that concurrent writer commits
-//! cannot perturb, for the lifetime of `build_paths`. WAL snapshot isolation
-//! replaces the in-memory store with a primitive `SQLite` already provides.
+//! The guarantee under test: a single consistent DB cut frozen at bot startup
+//! that concurrent writer commits cannot perturb, for the lifetime of
+//! `build_paths` — WAL snapshot isolation, a primitive `SQLite` provides.
 //!
 //! Setup mirrors the bot's deployment shape:
 //! - one **reader** connection (the bot's `DegenbotDb`: WAL + `query_only=on`)
@@ -134,7 +133,7 @@ fn held_read_transaction_freezes_view_across_concurrent_writer_commits() {
         .expect("count before");
     assert_eq!(tick_before, 1, "pre-write: one tick row");
 
-    // === the held deferred read tx (Approach 1) ===========================
+    // === the held deferred read tx ======================================
     // `BEGIN DEFERRED` → the snapshot is established at the FIRST read inside.
     let tx = reader
         .transaction_with_behavior(TransactionBehavior::Deferred)
@@ -224,10 +223,10 @@ fn held_read_transaction_freezes_view_across_concurrent_writer_commits() {
     assert_eq!(ticks_after, 2, "post-commit: reader now sees 2 tick rows");
 }
 
-/// Negative control: WITHOUT a held tx (mirroring today's per-call `lock()`
-/// shape where every read is its own auto-commit snapshot), the second read
-/// sees the writer's committed advance. This is the false-verify-failure race
-/// the Store was hand-rolling around — the held-tx test above closes it.
+/// Negative control: WITHOUT a held tx (mirroring the per-call `lock()` shape
+/// where every read is its own auto-commit snapshot), the second read sees the
+/// writer's committed advance — the false-verify-failure race the held-tx test
+/// above closes.
 #[test]
 fn per_call_reads_see_concurrent_writer_advance() {
     let dir = TempDir::new().expect("tmpdir");

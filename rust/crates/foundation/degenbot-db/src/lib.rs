@@ -20,7 +20,7 @@
 //! pending steps, and a DB ahead of the binary refuses with
 //! `DbError::SchemaAhead` — then sets `PRAGMA query_only=on;`: the
 //! load-bearing guarantee that the returned Rust **reader** cannot mutate the
-//! DB (binding #2).
+//! DB (ADR-070 binding #2).
 //!
 //! # The `VARCHAR(78)` ↔ `U256` boundary
 //!

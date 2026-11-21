@@ -1,4 +1,4 @@
-//! Read-only candidate-pool discovery for path enumeration (Gap G2).
+//! Read-only candidate-pool discovery for path enumeration.
 //!
 //! The Python driver's `build_paths.py` (`src/degenbot/runner/build_paths.py`)
 //! discovers its candidate-pool universe from the `SQLAlchemy` ORM and hands
@@ -20,8 +20,7 @@
 //! discipline [`crate::read::fetch_newest_update_block_on_conn`] follows).
 //! [`crate::connection::DegenbotDb::fetch_discovery_rows`] is the
 //! self-locking wrapper and [`crate::snapshot_db::SnapshotDb::fetch_discovery_rows`]
-//! is the frozen-snapshot variant. No writes; the schema stays Rust-DDL-owned
-//! (AGENTS.md 0.7 kill list: the Alembic path is untouched).
+//! is the frozen-snapshot variant. No writes; the schema stays Rust-DDL-owned.
 //!
 //! # Family coverage
 //!

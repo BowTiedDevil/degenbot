@@ -1,5 +1,5 @@
-//! The concurrency PRAGMA prefix every open path asserts before the schema step
-//! (binding #3), hardened against a concurrent fresh-open.
+//! The concurrency PRAGMA prefix every open path asserts before the schema step,
+//! hardened against a concurrent fresh-open.
 //!
 //! The sequence is `busy_timeout=5000; synchronous=NORMAL; journal_mode=WAL;`.
 //! WAL is file-persistent; `busy_timeout`/`synchronous` are per-connection.
@@ -41,7 +41,7 @@ const WAL_RETRY: RetryPolicy = RetryPolicy {
 };
 
 /// Apply the concurrency PRAGMA prefix every open path asserts before the schema
-/// step (binding #3): `busy_timeout` + `synchronous` (per-connection) then
+/// step: `busy_timeout` + `synchronous` (per-connection) then
 /// `journal_mode=WAL` (file-persistent), with the WAL switch retried through
 /// transient fresh-open contention (see the module docs).
 ///

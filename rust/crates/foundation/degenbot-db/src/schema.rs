@@ -15,8 +15,7 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 
 /// The private Rust-owned schema-version stamp, written to
 /// `_degenbot_db_schema_version` on the fresh-standalone, cutover, and heal
-/// paths so Rust-owned schema bumps (post-Alembic-retirement) are tracked
-/// independently of Alembic.
+/// paths so Rust-owned schema bumps are tracked independently of Alembic.
 ///
 /// # Bump ritual (mechanical — three steps, in this order)
 ///

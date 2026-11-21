@@ -8,7 +8,7 @@
 //!
 //! # The write-capable connection (`open_for_writes`)
 //!
-//! binding #2 hard-AC is "every **read** connection opened by
+//! ADR-070 binding #2 is "every **read** connection opened by
 //! degenbot-db MUST set `query_only=on`" — [`DegenbotDb::open`] /
 //! [`DegenbotDb::open_in_memory`] stay read-only. Writers use
 //! [`DegenbotDb::open_for_writes`] / [`DegenbotDb::open_in_memory_for_writes`]:

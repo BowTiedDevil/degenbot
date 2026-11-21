@@ -5,10 +5,10 @@ use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 
 // ── the upsert substrate (`get_or_create_*`) ──────────────────────────────
 
-/// C3.3 (the (C) discount-refresh pass) — the post-apply context the refresh
-/// reads: the GHO debt position's `scaled_balance`/`last_index` (POST-apply —
-/// the `ScaledTokenMint`/`Burn` apply landed them) + the user's `address` +
-/// `stk_aave_balance`. Built by [`DegenbotDb::lookup_debt_position_refresh_context_on_conn`].
+/// The post-apply context the discount refresh reads: the GHO debt position's
+/// `scaled_balance`/`last_index` (POST-apply — the `ScaledTokenMint`/`Burn` apply
+/// landed them) + the user's `address` + `stk_aave_balance`. Built by
+/// [`DegenbotDb::lookup_debt_position_refresh_context_on_conn`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebtPositionRefreshContext {
     /// `aave_v3_users.id` — the SET-stk-aave-balance + the
@@ -310,9 +310,9 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Get-or-create an `aave_v3_collateral_positions` row by `(user_id,
-        /// asset_id)`. Port of `db_positions.py::get_or_create_collateral_position`
-        /// (L51–…). On create, inserts `balance='0'`, `last_index=NULL` (the
-        /// Python `AaveV3CollateralPosition` defaults). Returns the row `id`.
+        /// asset_id)`. Port of `db_positions.py::get_or_create_collateral_position`.
+        /// On create, inserts `balance='0'`, `last_index=NULL` (the Python
+        /// `AaveV3CollateralPosition` defaults). Returns the row `id`.
         ///
         /// # Errors
         ///
@@ -328,8 +328,8 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Get-or-create an `aave_v3_debt_positions` row by `(user_id, asset_id)`.
-        /// Port of `db_positions.py::get_or_create_debt_position` (L73–…). On
-        /// create, inserts `balance='0'`, `last_index=NULL`. Returns the row `id`.
+        /// Port of `db_positions.py::get_or_create_debt_position`. On create,
+        /// inserts `balance='0'`, `last_index=NULL`. Returns the row `id`.
         ///
         /// # Errors
         ///
@@ -343,7 +343,7 @@ impl DegenbotDb {
         }
     }
 
-    // ── ScaledToken position-state mutations (SCALEAPPLY) ────────
+    // ── ScaledToken position-state mutations ─────────────────────
     //
     // The aToken/vToken `Mint`/`Burn`/`BalanceTransfer` events drive the
     // `balance` + `last_index` columns on `aave_v3_collateral_positions` /
@@ -531,7 +531,7 @@ impl DegenbotDb {
     }
 
     /// Read a position's current `balance` + `last_index`. Used by the GHO
-    /// apply dispatch (C3 — `UnifiedGhoProcessor::accrue_debt_on_action` +
+    /// apply dispatch (`UnifiedGhoProcessor::accrue_debt_on_action` +
     /// `get_discounted_balance` need the position's prev balance/index to
     /// compute the discount-scaled amount): the position's stored `balance` and
     /// `last_index`, read in one round-trip.
@@ -574,13 +574,12 @@ impl DegenbotDb {
         Ok((balance, last_index))
     }
 
-    /// C3.3 (the (C) discount-refresh post-apply pass) — fetch a debt
-    /// position's refresh context (`user_id`, `user_address`, `scaled_balance`,
-    /// `last_index`, `stk_aave_balance`) in one joined read. The refresh reads the
-    /// post-apply `balance`/`last_index` (the `ScaledTokenMint`/`Burn` apply
-    /// landed them just before this call). Mirrors Python's
-    /// `_refresh_discount_rate` reading `debt_position.balance` / `.last_index`
-    /// + `user.address` / `.stk_aave_balance`.
+    /// Fetch a debt position's discount-refresh context (`user_id`,
+    /// `user_address`, `scaled_balance`, `last_index`, `stk_aave_balance`) in one
+    /// joined read. The refresh reads the post-apply `balance`/`last_index` (the
+    /// `ScaledTokenMint`/`Burn` apply landed them just before this call). Mirrors
+    /// Python's `_refresh_discount_rate` reading `debt_position.balance` /
+    /// `.last_index` + `user.address` / `.stk_aave_balance`.
     #[expect(clippy::missing_errors_doc)]
     pub fn lookup_debt_position_refresh_context_on_conn(
         conn: &rusqlite::Connection,
@@ -645,7 +644,7 @@ impl DegenbotDb {
     }
 
     /// Reset a debt position's balance to 0 + advance `last_index` (the
-    /// bad-debt liquidation path — C3): zero the balance and advance `last_index`
+    /// bad-debt liquidation path): zero the balance and advance `last_index`
     /// only when the event's index is greater. The
     /// contract burns the ENTIRE remaining debt when a `DeficitCreated`
     /// accompanies a `LiquidationCall`; the delta-based apply may be off by 1

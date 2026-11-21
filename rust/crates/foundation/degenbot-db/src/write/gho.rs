@@ -253,9 +253,9 @@ impl DegenbotDb {
     conn_writer! {
         /// Get-or-create an `aave_gho_tokens` row by `(chain_id, token_address)`.
         /// Port of the GHO-token resolution the parser + apply glue uses to
-        /// resolve the `gho_token_id` parameter the GHO apply fns take (a
-        /// flag #6 follow-up; the apply fns `apply_gho_discount_rate_strategy_updated_on_conn`
-        /// / `apply_gho_discount_token_updated_on_conn` require a pre-resolved
+        /// resolve the `gho_token_id` parameter the GHO apply fns take (the apply
+        /// fns `apply_gho_discount_rate_strategy_updated_on_conn` /
+        /// `apply_gho_discount_token_updated_on_conn` require a pre-resolved
         /// `gho_token_id`).
         ///
         /// On create, inserts a bare row (`token_id` resolved via
@@ -294,12 +294,10 @@ impl DegenbotDb {
         }
     }
 
-    /// C3.3 (the (C) refresh) — SET (not increment) the user's
-    /// `stk_aave_balance` to the `balanceOf` RPC result. Used when
-    /// `stk_aave_balance` is None (the user was never touched by a stkAAVE
-    /// `Staked`/`Transfer` event yet — the 890 None + the 1042 missing —
-    /// `get_or_init_stk_aave_balance`). Mirrors Python's
-    /// `user.stk_aave_balance = balance`.
+    /// SET (not increment) the user's `stk_aave_balance` to the `balanceOf` RPC
+    /// result. Used when `stk_aave_balance` is None (a user never touched by a
+    /// stkAAVE `Staked`/`Transfer` event yet — `get_or_init_stk_aave_balance`).
+    /// Mirrors Python's `user.stk_aave_balance = balance`.
     #[expect(clippy::missing_errors_doc)]
     pub fn set_user_stk_aave_balance_on_conn(
         conn: &rusqlite::Connection,

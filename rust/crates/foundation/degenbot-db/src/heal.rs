@@ -16,8 +16,8 @@
 //! The Alembic migration chain is structurally incoherent — not forward
 //! buildable — so deleting it without a replacement strands every legacy DB
 //! (the rugpull ADR-010 explicitly promised to avoid). `heal` makes the
-//! chain's forward-buildability — and its existence — irrelevant, so the 0.7.0
-//! retirement (deleting `src/degenbot/migrations/`) is **non-breaking**.
+//! chain's forward-buildability — and its existence — irrelevant, which is what
+//! makes its deletion **non-breaking**.
 //! See `docs/adr/ADR-011-auto-healed-alembic-retirement.md`.
 //!
 //! # The 7-step operation (ADR-011 §"The heal operation")
@@ -103,7 +103,7 @@ pub struct HealReport {
 }
 
 /// Disambiguate renamed columns whose old name is absent on the new schema.
-/// Consul**ed** only when a column on the NEW schema has no direct match on
+/// Consulted only when a column on the NEW schema has no direct match on
 /// the OLD and a column on the OLD has no direct match on the NEW (a potential
 /// rename). Three rename migrations (verified by reading the migration source):
 ///
@@ -138,7 +138,7 @@ const RENAME_OVERRIDES: &[(&str, &str, &str)] = &[
 /// [`DbError::Sqlite`] on any I/O / SQL failure (mid-heal failure leaves the
 /// live DB untouched and cleans up the partial temp file).
 pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
-    // ── Step 0: take the heal-swap guard (ADR-070 D8). ───────────────────
+    // ── Preamble: take the heal-swap guard (ADR-070 D8). ─────────────────
     // Serializes the dump-and-restore across processes: a second healer blocks
     // here until the first finishes, then re-inspects the live DB in step 1 and
     // — finding it already swapped to `RustOwned` — returns the no-op report.
@@ -167,7 +167,7 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
             drop(old_conn);
             return Err(DbError::UnrecognizedSchema);
         }
-        // ExpectedAbsent: both non-Rust-owned states heal in place below.
+        // Both non-Rust-owned states heal out-of-place below.
         SchemaState::LegacyAlembic | SchemaState::FreshStandalone { .. } => {}
     }
 
@@ -255,12 +255,11 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
             rows_copied.insert(table.clone(), n);
         }
 
-        // ── Step 5: (removed) — no `sqlite_sequence` reset. The head schema
-        //    uses `INTEGER PRIMARY KEY` (rowid aliasing), never `AUTOINCREMENT`,
-        //    so `sqlite_sequence` never exists; SQLite manages it itself if it
-        //    ever did.
+        // No `sqlite_sequence` reset: the head schema uses `INTEGER PRIMARY KEY`
+        // (rowid aliasing), never `AUTOINCREMENT`, so no sequence table exists
+        // for `SQLite` to manage.
 
-        // ── Step 6: stamp RustOwned directly (drops alembic_version, skips Alembic). ──
+        // ── Step 5: stamp RustOwned directly (drops alembic_version, skips Alembic). ──
         if let Err(e) = run_cutover_on_conn(&new_conn) {
             cleanup_temp(&tmp_path);
             return Err(e);
@@ -269,14 +268,14 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
         rows_copied
     };
 
-    // ── Step 7: verify per-table row counts (old read-only == new). ──────
+    // ── Step 6: verify per-table row counts (old read-only == new). ──────
     // Re-open both read-only for the count comparison (cheap; isolated).
     if let Err(e) = verify_row_counts(old_path, &tmp_path) {
         cleanup_temp(&tmp_path);
         return Err(e);
     }
 
-    // ── Step 8: atomic swap + `.bak` (close handles first — already done). ──
+    // ── Step 7: atomic swap + `.bak` (close handles first — already done). ──
     let bak_path = sibling_with_suffix(old_path, ".bak");
     perform_swap(old_path, &bak_path, &tmp_path)?;
     // The new DB is journal_mode=DELETE (single file); no -wal/-shm to carry.
@@ -342,7 +341,7 @@ impl HealSwapGuard {
     }
 }
 
-/// Step 8: atomically swap the freshly-built temp DB into `old_path`, preserving
+/// Step 7: atomically swap the freshly-built temp DB into `old_path`, preserving
 /// the old DB as `bak_path`. Sibling files → same filesystem → `rename` is
 /// atomic. On any failure the live DB is restored and the partial temp file
 /// is cleaned up. The old DB's `-wal`/`-shm` sidecars (if present) are relocated
@@ -445,7 +444,7 @@ fn cleanup_temp(tmp_path: &Path) {
 
 /// The content tables on the NEW DB's `main` schema, in alphabetical order
 /// (deterministic across runs). Excludes `alembic_version` (created by
-/// `create_new_database`, dropped by `run_cutover_on_conn` in step 6) and the
+/// `create_new_database`, dropped by `run_cutover_on_conn` in step 5) and the
 /// private Rust stamp table (never carries user rows).
 ///
 /// No FK topological sort is required: [`heal_database`] sets

@@ -1,9 +1,9 @@
-//! The word-bitmap VALUE-table retirement migration.
+//! The word-bitmap VALUE-table drop, step 3 of the forward migration chain.
 //!
 //! An OLD database written at the previous Rust schema version (2) still
 //! carries `initialization_maps` / `managed_pool_initialization_maps`, both
 //! POPULATED. Opening it through the new binary must run the forward
-//! migration (step 3 drops the retired tables) and land `RustOwned` at the
+//! migration (step 3 drops the word-value tables) and land `RustOwned` at the
 //! current version WITHOUT a panic/unwrap/expect firing merely because the
 //! old tables exist, and WITHOUT losing data a live path still reads
 //! (`liquidity_positions`).
@@ -29,7 +29,7 @@ use tempfile::TempDir;
 use degenbot_db::schema::{RUST_SCHEMA_VERSION, SCHEMA_VERSION_TABLE};
 use degenbot_db::{DegenbotDb, SchemaState};
 
-/// The retired word-value tables.
+/// The word-value tables the head schema no longer defines.
 const RETIRED: &[&str] = &["initialization_maps", "managed_pool_initialization_maps"];
 
 fn has_table(conn: &Connection, name: &str) -> bool {
@@ -56,8 +56,8 @@ fn stamp(conn: &Connection) -> i64 {
 /// rows, a `liquidity_positions` row (the live data that must survive), and
 /// the schema stamp rolled back to 2.
 fn build_old_db(path: &Path, word_tables: bool) {
-    // 1. Create a current-schema file (the retired tables are no longer in the
-    //    head DDL, so the old DB is reconstructed explicitly below).
+    // 1. Create a current-schema file (the word-value tables are not in the head
+    //    DDL, so the old DB is reconstructed explicitly below).
     let (db, state) = DegenbotDb::open(path).expect("fresh open");
     assert!(matches!(state, SchemaState::FreshStandalone { .. }));
     drop(db);

@@ -41,14 +41,14 @@ impl DegenbotDb {
         Ok(())
     }
 
-    // ── Pool-event direct writers (Option A) ───────────────────
+    // ── Pool-event direct writers ──────────────────────────────
     //
     // The two Aave V3 Pool events that write DB rows directly:
     // `ReserveDataUpdated` (index/rate UPDATE) + `ReserveInitialized`
     // (asset row seed). The other Pool events (Supply/Borrow/Repay/Withdraw/
     // LiquidationCall/MintedToTreasury/DeficitCreated) do NOT write DB rows
-    // directly — they're consumed by the parser (sibling OPERATIONSPARSER) to
-    // GROUP ScaledToken events whose balance mutations live in SCALEAPPLY.
+    // directly — the parser consumes them to GROUP ScaledToken events, whose
+    // balance mutations the scaled-token apply fns own.
 
     conn_writer! {
         /// Apply a `ReserveDataUpdated` event's decoded fields to the
@@ -112,7 +112,7 @@ impl DegenbotDb {
         ///   `v_token_revision`/`price_source` + the zero defaults
         ///   (`liquidity_index='0'`/`liquidity_rate='0'`/`borrow_index='0'`/
         ///   `borrow_rate='0'`, matching the Python `AaveV3Asset` constructor's
-        ///   zero defaults — `event_handlers.py:645-651`).
+        ///   zero defaults).
         /// - **existing** — `UPDATE` `a_token_id`/`a_token_revision`/`v_token_id`/
         ///   `v_token_revision`/`price_source` to the event's current values (a
         ///   reserve can be re-initialized across a Pool revision upgrade; the
@@ -121,9 +121,9 @@ impl DegenbotDb {
         /// The RPC-resolved revisions (`ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()`
         /// via the EIP-1967 implementation slot) + `price_source`
         /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
-        /// takes pre-resolved fields (mirrors design decision #1 — the
-        /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
-        /// asset IS the GHO token is a separate concern, NOT this fn's.
+        /// takes pre-resolved fields (the apply core is pure substrate, no RPC).
+        /// The GHO cross-link setup when the asset IS the GHO token is a
+        /// separate concern, NOT this fn's.
         ///
         /// Returns the asset row `id`.
         ///
@@ -148,10 +148,10 @@ impl DegenbotDb {
         {
             if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {
                 // UPDATE the fields the Python `_process_asset_initialization_event`
-                // mutates on the existing row (event_handlers.py:643-685: the
-                // constructor overwrites a_token_id/a_token_revision/v_token_id/
-                // v_token_revision + the RPC-resolved price_source; the index/rate
-                // fields are left alone on existing rows — they're owned by
+                // mutates on the existing row (the constructor overwrites
+                // a_token_id/a_token_revision/v_token_id/v_token_revision + the
+                // RPC-resolved price_source; the index/rate fields are left alone
+                // on existing rows — they're owned by
                 // `apply_reserve_data_updated_on_conn`).
                 conn.execute(
                     "UPDATE aave_v3_assets SET \
@@ -171,7 +171,7 @@ impl DegenbotDb {
                 return Ok(id);
             }
             // CREATE — matches the Python `AaveV3Asset(...)` constructor's zero
-            // defaults for the index/rate fields (event_handlers.py:645-651).
+            // defaults for the index/rate fields.
             conn.execute(
                 "INSERT INTO aave_v3_assets \
                     (market_id, underlying_asset_id, a_token_id, a_token_revision, \
@@ -208,8 +208,7 @@ impl DegenbotDb {
 
     /// Apply an `Upgraded` event: set the aToken or vToken revision on the
     /// `aave_v3_assets` row + conditionally fire the GHO-discount-deprecation
-    /// side effect. Port of `_process_scaled_token_upgrade_event`
-    /// (event_handlers.py:848-940).
+    /// side effect. Port of `_process_scaled_token_upgrade_event`.
     ///
     /// When `is_a_token` is `true`, updates `a_token_revision`; otherwise
     /// `v_token_revision`. When `deprecated_gho_token_id` is `Some(id)`, also
@@ -278,8 +277,7 @@ impl DegenbotDb {
 
     /// Apply a `PoolUpdated`/`PoolConfiguratorUpdated` event: set the
     /// `aave_v3_contracts` row's `revision` (looked up by `market_id` +
-    /// `contract_name`). Port of `_update_contract_revision`
-    /// (event_handlers.py:944-974).
+    /// `contract_name`). Port of `_update_contract_revision`.
     ///
     /// # Parity gate (`docs/architecture/parity-gate.md`)
     ///
@@ -317,8 +315,8 @@ impl DegenbotDb {
     /// Apply a `PoolDataProviderUpdated(old, new)` event: INSERT the
     /// `POOL_DATA_PROVIDER` contract row when `old_address` is `None` (the event's
     /// `old` is zero), else UPDATE the existing row's `address` (looked up by
-    /// the old address). Port of `_process_pool_data_provider_updated_event`
-    /// (event_handlers.py:1017-1046). Pure substrate — no RPC.
+    /// the old address). Port of `_process_pool_data_provider_updated_event`.
+    /// Pure substrate — no RPC.
     ///
     /// # Errors
     ///
@@ -397,9 +395,8 @@ impl DegenbotDb {
     }
 
     /// Apply an `AddressSet`/`ProxyCreated` event: INSERT a contract row.
-    /// Port of `_process_address_set_event` (event_handlers.py:1048-1078) +
-    /// `_process_proxy_creation_event` (event_handlers.py:977-1008). For
-    /// `AddressSet`, `revision` is `None`; for `ProxyCreated`, `revision` is
+    /// Port of `_process_address_set_event` + `_process_proxy_creation_event`.
+    /// For `AddressSet`, `revision` is `None`; for `ProxyCreated`, `revision` is
     /// the RPC-fetched `POOL_REVISION()`/`CONFIGURATOR_REVISION()`. A plain
     /// INSERT — the Python's `session.add(AaveV3Contract(...))` /
     /// `market.contracts.append(...)` (no upsert; a duplicate would hit the
@@ -428,10 +425,9 @@ impl DegenbotDb {
     /// the contract row ONLY if no row with the same `(market_id, name,
     /// address)` already exists. Returns `true` if a row was inserted, `false`
     /// if a matching row pre-existed (no-op). A pre-existing row's `revision`
-    /// is NOT overwritten (the "Phase-1 wins" semantics — the row from the first
-    /// `ProxyCreated` event is canonical, mirroring the Python
-    /// `_process_proxy_creation_event` which appends unconditionally but is fed
-    /// each `ProxyCreated` exactly once).
+    /// is NOT overwritten (the row from the first `ProxyCreated` event is
+    /// canonical, mirroring the Python `_process_proxy_creation_event`, which
+    /// appends unconditionally but is fed each `ProxyCreated` exactly once).
     ///
     /// # Why this exists (cold-boot)
     ///
@@ -478,8 +474,8 @@ impl DegenbotDb {
     }
 
     /// Resolve the Pool contract revision (the `_get_pool_revision` port).
-    /// DP4: read once per tx at parse-start; mid-tx `PoolUpdated` config
-    /// events are the orchestrator's concern.
+    /// Read once per tx at parse-start; mid-tx `PoolUpdated` config events are
+    /// the orchestrator's concern.
     ///
     /// # Errors
     ///

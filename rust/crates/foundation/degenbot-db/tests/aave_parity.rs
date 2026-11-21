@@ -1,4 +1,4 @@
-//! Cross-implementation Aave V3 read-back parity (binding #4 — HARD gate).
+//! Cross-implementation Aave V3 read-back parity.
 //!
 //! Opens the frozen Rust-owned `fixtures/aave_parity.db` (built by
 //! `fixtures/generate_aave_parity.py`) and asserts the Rust Aave read fns

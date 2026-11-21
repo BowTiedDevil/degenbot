@@ -1,7 +1,6 @@
 //! `liquidity_positions` rows + their V4 managed-pool twins. Each carries the
 //! EVM big-int columns as
-//! [`alloy::primitives::U256`] (decoded from `VARCHAR(78)` decimal strings —
-//! Decision 3).
+//! [`alloy::primitives::U256`] (decoded from `VARCHAR(78)` decimal strings).
 
 use alloy::primitives::U256;
 use rusqlite::Row;

@@ -17,12 +17,11 @@
 //! # What this is (and isn't)
 //!
 //! This is the **liquidity write core**: a pure row→math→row transform over
-//! the DB substrate. RPC event fetch is
-//! Rust-owned (`degenbot-rpc::provider::LogFetcher::fetch_logs_chunked`);
-//! the retired Python fetch path (`provider/log_fetching.py`,
-//! `fetch_logs_retrying*`) is removed. The math itself lives in
-//! [`degenbot-concentrated-liquidity-math`] (sibling task). The standalone-Rust path this enables:
-//! `DB events → compute → verify → persist → upserted DB rows` without Python.
+//! the DB substrate. RPC event fetch is Rust-owned
+//! (`degenbot-rpc::provider::LogFetcher::fetch_logs_chunked`); the math itself
+//! lives in [`degenbot-concentrated-liquidity-math`]. The standalone-Rust path
+//! this enables: `DB events → compute → verify → persist → upserted DB rows`
+//! without Python.
 //!
 //! # Decomposition across V3 + V4
 //!
@@ -2021,8 +2020,7 @@ mod tests {
     }
 
     /// The delta persist leaves the DB in exactly the state the full-map
-    /// persist leaves: identical inputs → identical rows (the strongest
-    /// pin for the replacement's correctness).
+    /// persist leaves: identical inputs → identical rows.
     #[test]
     fn delta_persist_matches_full_persist_state() {
         let (db_full, pool_id_full, addr) = v3_db_with_pool();

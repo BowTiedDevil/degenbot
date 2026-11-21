@@ -299,9 +299,8 @@ fn v4_apply_matches_python_oracle() {
 /// Convert a Uniswap V3 fixture pool to a `PancakeSwap` V3 fork: move the
 /// subclass row from `uniswap_v3_pools` to `pancakeswap_v3_pools` and flip
 /// `pools.kind`. The `liquidity_positions` rows stay (they're keyed by
-/// `pool_id`, kind-agnostic). This isolates the bug: the Rust
-/// updater must resolve the subclass-table at runtime, not hardcode
-/// `uniswap_v3_pools`.
+/// `pool_id`, kind-agnostic). The Rust updater resolves the subclass table at
+/// runtime from `pools.kind`, never a hardcoded `uniswap_v3_pools`.
 fn relabel_pool_as_pancakeswap_v3(conn: &rusqlite::Connection) -> i64 {
     // Read the uniswap_v3_pools row, then replicate it into the
     // pancakeswap_v3_pools table, drop the original, and change pools.kind.
@@ -353,8 +352,8 @@ fn relabel_pool_as_pancakeswap_v3(conn: &rusqlite::Connection) -> i64 {
     pool_id
 }
 
-/// Dump the post-apply marker from the given subclass table (used to verify
-/// the stamp landed on the FORK table, not `uniswap_v3_pools`).
+/// Dump the post-apply marker from the given subclass table (verifies the
+/// stamp landed on the FORK table, not `uniswap_v3_pools`).
 fn dump_marker_from(
     conn: &rusqlite::Connection,
     table: &str,
@@ -372,13 +371,13 @@ fn dump_marker_from(
 
 #[test]
 fn v3_fork_pool_apply_matches_oracle() {
-    // Regression test for the subclass-table bug: the V3 liquidity updater
-    // hardcoded `uniswap_v3_pools` in `fetch_v3_pool_update_state_on_conn` and
-    // `set_v3_liquidity_update_marker_on_conn`, silently no-oping for every
-    // non-Uniswap V3 fork. Re-label the fixture's pool as `pancakeswap_v3`
-    // (same seed, same events, same oracle — only the subclass-table changes)
-    // and assert the apply still writes positions + stamps the marker on the
-    // FORK table.
+    // The V3 liquidity updater resolves the subclass table from `pools.kind` in
+    // both `fetch_v3_pool_update_state_on_conn` and
+    // `set_v3_liquidity_update_marker_on_conn`, so a non-Uniswap V3 fork must
+    // not silently no-op. Re-label the fixture's pool as `pancakeswap_v3` (same
+    // seed, same events, same oracle — only the subclass table changes) and
+    // assert the apply still writes positions + stamps the marker on the FORK
+    // table.
     let tmp = copy_fixture_to_tmp("liquidity_updater_v3_initial.db", "v3fork");
     let (db, state) = DegenbotDb::open_for_writes(&tmp).unwrap();
     assert!(matches!(state, SchemaState::RustOwned { .. }));

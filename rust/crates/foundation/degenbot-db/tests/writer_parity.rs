@@ -10,12 +10,12 @@
 //! `get_or_create_*` upsert helpers) is the source of truth; the per-handler
 //! unit tests in `write/tests.rs` pin each handler's field mapping vs the Python
 //! ORM defaults + the create-vs-mutate trajectory, and this integration test
-//! composes them into a realistic per-block backfill sequence (the "warm/bulk
-//! path") to prove the substrate produces a coherent multi-table DB
-//! state when the handlers fire in event order.
+//! composes them into a realistic per-block backfill sequence to prove the
+//! substrate produces a coherent multi-table DB state when the handlers fire in
+//! event order.
 //!
 //! The cross-DB byte-comparison (Rust-written rows vs a Python-written
-//! `aave_writer_parity.db` fixture) is the sibling Python-side gate; this
+//! `aave_writer_parity.db` fixture) is the Python-side gate; this
 //! Rust test pins the Rust trajectory so that gate has a stable oracle.
 
 #![expect(clippy::unwrap_used)]

@@ -1,6 +1,5 @@
 //! Parity gate (`docs/architecture/parity-gate.md`) for the READ-ONLY
-//! candidate-pool discovery surface
-//! (`degenbot-db::discovery_read`, Gap G2).
+//! candidate-pool discovery surface (`degenbot-db::discovery_read`).
 //!
 //! Opens the frozen Rust-owned `fixtures/parity.db` (chain 8453: one
 //! `uniswap_v3` pool registered under the `aerodrome_v3` exchange + one

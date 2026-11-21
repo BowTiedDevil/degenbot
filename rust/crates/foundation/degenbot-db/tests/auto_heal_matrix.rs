@@ -6,8 +6,9 @@
 //! case states its intent as data.
 //!
 //! 1. **Explicit heal** — the legacy marker is replaced by the Rust stamp
-//!    table, every head table lands, seeded rows survive, retired tables drop,
-//!    and the pre-heal file survives as `.bak` at the released revision.
+//!    table, every head table lands, seeded rows survive, the tables the current
+//!    schema no longer defines drop, and the pre-heal file survives as `.bak` at
+//!    the released revision.
 //! 2. **The default posture** (`open`) — the pre-D1 posture persists:
 //!    `LegacyAlembic`, read-only, no `.bak`, and the file on disk is
 //!    untouched.
@@ -32,7 +33,7 @@ const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/a
 const RUST_STAMP_TABLE: &str = "_degenbot_db_schema_version";
 
 /// Every content table the Rust head schema (`SCHEMA_HEAD`) defines. The
-/// healed DB must carry all of them (the D5 "expected table set present").
+/// healed DB must carry all of them.
 const HEAD_TABLES: &[&str] = &[
     "aave_gho_tokens",
     "aave_v3_asset_configs",
@@ -70,10 +71,9 @@ const HEAD_TABLES: &[&str] = &[
 /// transport is the thing under test, not a column-mapping edge.
 const SEEDED: &[(&str, i64)] = &[("erc20_tokens", 2), ("liquidity_positions", 2)];
 
-/// The word-bitmap value tables retired by the RW3 deletion wave: a pre-existing
-/// fixture still carries them (seeded), and the healed DB must NOT — the head
-/// schema no longer defines them and the out-of-place heal rebuilds to head,
-/// dropping them without a panic.
+/// The word-bitmap value tables a pre-existing fixture still carries (seeded):
+/// the head schema no longer defines them, so the healed DB must NOT have them —
+/// the out-of-place heal rebuilds to head, dropping them without a panic.
 const RETIRED_TABLES: &[&str] = &["initialization_maps", "managed_pool_initialization_maps"];
 
 fn fixture_path(rev: &str) -> PathBuf {
@@ -127,7 +127,7 @@ fn stamped_rev(conn: &Connection) -> String {
         .unwrap()
 }
 
-/// One fixture, both halves of the D5 promise.
+/// One fixture, both halves of the heal-at-open contract.
 fn run_fixture(rev: &str) {
     // ── 1. Explicit heal-at-open (open_with auto_heal = true). ────────────────
     {
@@ -173,9 +173,9 @@ fn run_fixture(rev: &str) {
                 assert_eq!(count(&conn, t), *n, "{rev}: seeded row count for {t}");
             }
 
-            // An old DB still carrying the retired word-value tables heals
-            // cleanly: the tables are gone, and NO panic fired merely because
-            // they existed (the heal copies only head-schema tables).
+            // An old DB still carrying the word-value tables heals cleanly: the
+            // tables are gone, and no panic fires merely because they existed
+            // (the heal copies only head-schema tables).
             for t in RETIRED_TABLES {
                 assert!(
                     !has_table(&conn, t),

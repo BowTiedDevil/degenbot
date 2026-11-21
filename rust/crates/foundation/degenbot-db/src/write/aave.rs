@@ -195,10 +195,10 @@ fn existing_user(
 impl DegenbotDb {
     conn_writer! {
         /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
-        /// category_id)`. Port of `db_market.py::get_or_create_e_mode_category`
-        /// (L37–L67). On create, the row is inserted with the Python ORM defaults
-        /// (`label=""`, `ltv=0`, `liquidation_threshold=0`, `liquidation_bonus=0`).
-        /// Returns the row `id`.
+        /// category_id)`. Port of `db_market.py::get_or_create_e_mode_category`.
+        /// On create, the row is inserted with the Python ORM defaults (`label=""`,
+        /// `ltv=0`, `liquidation_threshold=0`, `liquidation_bonus=0`). Returns the
+        /// row `id`.
         ///
         /// # Errors
         ///
@@ -283,8 +283,8 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Get-or-create an `aave_v3_users` row by `(market_id, address)`. Port of
-        /// `db_users.py::get_or_create_user` (L67–…). On create, the row is
-        /// inserted with the Python ORM defaults (`e_mode=0`, `gho_discount=0`,
+        /// `db_users.py::get_or_create_user`. On create, the row is inserted with
+        /// the Python ORM defaults (`e_mode=0`, `gho_discount=0`,
         /// `stk_aave_balance=NULL`, `isolation_mode_collateral_asset_id=NULL`,
         /// `isolation_mode_debt="0"`).
         ///

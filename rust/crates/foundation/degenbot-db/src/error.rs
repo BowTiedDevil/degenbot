@@ -64,7 +64,7 @@ pub enum DbError {
     #[error("sqlite integrity check failed: {0}")]
     IntegrityCheckFailed(String),
 
-    /// The post-copy row-count verification (ADR-011 step 7) found a mismatch —
+    /// The post-copy row-count verification (ADR-011 step 6) found a mismatch —
     /// the heal refused the swap and left the live DB untouched. `old_count`
     /// is the source row count; `new_count` is the freshly-copied count.
     #[error("heal verification failed for table {table:?}: old={old_count} new={new_count}")]

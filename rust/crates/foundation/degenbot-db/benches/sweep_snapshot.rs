@@ -135,11 +135,10 @@ fn bench_snapshot_sweeps(c: &mut Criterion) {
             ));
         });
     });
-    // The 3-deep all-`None` kind filter this bench used to carry is dropped
-    // along with its paired node_valid_depths table: post-floor (the core
-    // floors the effective min depth at the filter length) it would have
-    // silenced the 2-hop native cycles the bench name advertises. Passing
-    // max_depth alone enumerates exactly the path set today's runs enumerate.
+    // `max_depth` alone is enough: the core floors the effective min depth at
+    // the filter length, so a 3-deep all-`None` kind filter would equal an
+    // absent filter — and would silence the 2-hop native cycles the bench name
+    // advertises.
     g.bench_function("native_min2_emd3", |b| {
         b.iter(|| {
             black_box(sweep_paths(&graph, None, None, native, native, 2, Some(3)));

@@ -16,7 +16,7 @@
 //! # Verdict (ADR-052 D3)
 //!
 //! The default candidate was `rusqlite_migration` 2.6.0 (Apache-2.0, MSRV 1.95
-//! < workspace 1.97, `PRAGMA user_version` stamping). It was **rejected** in
+//! < workspace 1.97, `PRAGMA user_version` stamping). It is **rejected** in
 //! favor of the hand-rolled forward-only loop below. The blockers are recorded
 //! here so nobody re-litigates without an upstream API change:
 //!

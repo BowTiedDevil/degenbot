@@ -94,8 +94,8 @@ pub struct V2PoolRow {
     pub fee_token0: i64,
     pub fee_token1: i64,
     pub fee_denominator: i64,
-    /// Present only for `aerodrome_v2` (migration `723fe25c87b8`); `None` for
-    /// the other V2 variants which have no `stable` column.
+    /// Present only for `aerodrome_v2`; `None` for the other V2 variants which
+    /// have no `stable` column.
     pub stable: Option<bool>,
 }
 

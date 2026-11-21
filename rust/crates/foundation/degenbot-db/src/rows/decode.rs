@@ -1,5 +1,5 @@
 //! Boundary decoders — the `VARCHAR(78)` ↔ `U256` and `VARCHAR(42)` ↔ `Address`
-//! conversions (Decision 3 of the degenbot-db substrate).
+//! conversions.
 //!
 //! Every EVM integer column is stored as a `VARCHAR(78)` decimal string (mirrors
 //! Python's `IntMappedToString` `TypeDecorator`); these helpers parse to

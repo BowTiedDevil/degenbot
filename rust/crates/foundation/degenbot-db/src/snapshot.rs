@@ -153,10 +153,9 @@ impl DegenbotDb {
     /// version (V3: address order; V4: `(pm_address, pool_hash)` order). A
     /// chain with no pools invokes the callback zero times.
     ///
-    /// Used by the core `Bot::load_snapshot_from_db` to feed a
-    /// `SnapshotStore::insert` one pool at a time, mirroring Python's
-    /// `yield_per` streaming shape and avoiding transient ~2× peak RSS
-    /// (the materialized `Vec` + the engine `HashMap` coexisting).
+    /// The callback shape mirrors Python's `yield_per` streaming and avoids
+    /// transient ~2× peak RSS (the materialized `Vec` + the engine `HashMap`
+    /// coexisting).
     ///
     /// # Errors
     ///
@@ -339,8 +338,7 @@ impl DegenbotDb {
         // `pool_managers.address` FK already joined here. Resolving from the DB
         // (not a chunk-local in-memory map) means pools created in any earlier
         // chunk — which have a `pool_hash` row but no liquidity event in the
-        // current chunk — are covered. This was the root cause of the
-        // "v4 full-verify: no PoolManager address for pool_hash" crash.
+        // current chunk — are covered.
         let mut stmt = conn.prepare(
             "SELECT v4.pool_hash, pm.address FROM uniswap_v4_pools v4 \
              JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
@@ -366,8 +364,8 @@ impl DegenbotDb {
 //
 // Extracted so a held-tx connection (see `SnapshotDb`) reuses the SAME SQL as
 // the per-call `DegenbotDb` reads — the tick-map assembly Db arm works against
-// either handle. The held read transaction (`SnapshotDb`)
-// freezes the DB view across `build_paths`, replacing `SnapshotStore`.
+// either handle. The held read transaction (`SnapshotDb`) freezes the DB view
+// across `build_paths`.
 
 /// `fetch_liquidity_map` body taking a borrowed `&Connection` (works on either
 /// a freshly-locked `DegenbotDb` connection or a `SnapshotDb`'s held-tx
@@ -573,8 +571,7 @@ pub fn fetch_liquidity_update_block_v4_on_conn(
 /// The tick-map-DB surface the `assemble_*_tick_map` Db arm reads against.
 /// Implemented by [`DegenbotDb`] (per-call `lock()` — each read its own
 /// snapshot) AND [`crate::snapshot_db::SnapshotDb`] (held read transaction —
-/// every read shares one frozen DB view across `build_paths`, the consistency
-/// replacement for the retired `SnapshotStore`).
+/// every read shares one frozen DB view across `build_paths`).
 ///
 /// `fetch_newest_update_block` is included so the snapshot-seed block `S` can
 /// be read on the SAME held tx as the per-pool data (so `S` matches the data).

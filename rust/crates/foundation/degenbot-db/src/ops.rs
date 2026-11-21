@@ -512,9 +512,9 @@ mod tests {
         );
     }
     /// A Rust-owned DB stamped BEHIND the binary is brought forward under the
-    /// ADR-052 D2 forward version-lock. Regression: `upgrade_database` used to
-    /// report `AlreadyCurrent` for a stale Rust-owned file, silently leaving it
-    /// behind the binary's schema.
+    /// ADR-052 D2 forward version-lock: `upgrade_database` must not report
+    /// `AlreadyCurrent` for a stale Rust-owned file and leave it behind the
+    /// binary's schema.
     #[test]
     fn upgrade_database_migrates_a_stale_rust_owned_db() {
         let dir = tempfile::tempdir().unwrap();

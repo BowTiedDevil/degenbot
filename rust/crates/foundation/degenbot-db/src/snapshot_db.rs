@@ -1,13 +1,11 @@
-//! [`SnapshotDb`] — a held read-transaction handle that replaces [`SnapshotStore`]
-//!.
+//! [`SnapshotDb`] — a held read-transaction handle over one `SQLite` connection.
 //!
 //! `SQLite` WAL is MVCC: a read transaction sees the database as of when its
 //! first read started, and concurrent writer commits (the `pool_updater`
-//! process, on its own connection) do not perturb the reader's view. So the
+//! process, on its own connection) do not perturb the reader's view. The
 //! "freeze the DB cut at bot startup + hand it out across `build_paths`"
-//! guarantee the in-memory [`SnapshotStore`] was hand-rolling is already a
-//! primitive `SQLite` provides — the bot just has to read inside one
-//! transaction.
+//! guarantee is therefore a primitive `SQLite` already provides — the bot just
+//! has to read inside one transaction.
 //!
 //! [`SnapshotDb`] wraps ONE `Mutex<Connection>` with `BEGIN` issued at
 //! [`SnapshotDb::open`] + `COMMIT` at [`SnapshotDb::commit`] (or implicit

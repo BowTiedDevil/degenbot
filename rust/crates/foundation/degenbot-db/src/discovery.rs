@@ -167,10 +167,9 @@ impl DegenbotDb {
     /// The single-transaction-bound variant of [`Self::upsert_v2_pools`]
     /// Accepts a borrowed [`rusqlite::Connection`] (a chunk-loop
     /// `Transaction` derefs to one) so the pool-updater chunk loop can write a
-    /// batch under ONE connection + ONE transaction. Retires the per-row
-    /// `self.lock()` cycle the `&self` path previously needed (the token
-    /// escalate now uses [`Self::get_or_create_erc20_token_on_conn`] on the
-    /// SAME borrowed conn — no re-lock → no `parking_lot` non-reentrant deadlock).
+    /// batch under ONE connection + ONE transaction. The token escalate uses
+    /// [`Self::get_or_create_erc20_token_on_conn`] on the SAME borrowed conn —
+    /// no re-lock → no `parking_lot` non-reentrant deadlock.
     /// # Errors
     ///
     /// Same error conditions as the `&self` wrapper variant.
@@ -462,10 +461,10 @@ impl DegenbotDb {
         Ok(())
     }
 
-    /// The chunk loop's end-of-chunk stamp WITH the restart-invariant guard
-    /// (Perf A): the UPDATE carries the caller's assumed `last_update_block`
-    /// in its WHERE clause, so a stamp whose marker moved between the
-    /// pre-transaction read pass and the chunk transaction changes ZERO rows -
+    /// The chunk loop's end-of-chunk stamp WITH the restart-invariant guard: the
+    /// UPDATE carries the caller's assumed `last_update_block` in its WHERE
+    /// clause, so a stamp whose marker moved between the pre-transaction read pass
+    /// and the chunk transaction changes ZERO rows -
     /// the caller drops the transaction and re-loops (the single-writer bot
     /// cannot have a concurrent stamper, so the check is structural rather
     /// than argued). `assumed = None` guards the never-stamped

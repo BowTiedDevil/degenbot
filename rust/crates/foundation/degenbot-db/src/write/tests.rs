@@ -120,7 +120,7 @@ fn bit_decode_e_mode_zero_maps_to_none() {
     assert_eq!(cfg0.e_mode_category_id, None);
 }
 
-// ── the write-handle (binding #2 read-only gate holds) ──────────────────
+// ── the write-handle (ADR-070 binding #2 read-only gate holds) ──────────
 
 #[test]
 fn open_for_writes_is_write_capable() {
@@ -137,7 +137,7 @@ fn open_for_writes_is_write_capable() {
 
 #[test]
 fn open_read_only_still_blocks_writes() {
-    // binding #2 hard AC: the default read handle stays read-only.
+    // binding #2: the default read handle stays read-only.
     let (db, _state) = DegenbotDb::open_in_memory().unwrap();
     let conn = db.lock();
     let r: rusqlite::Result<usize> = conn.execute("CREATE TABLE x (a INT)", []);
@@ -733,7 +733,7 @@ fn apply_asset_source_updated_sets_price_source() {
     assert_eq!(ps.as_deref(), Some("0xsource"));
 }
 
-// ── the GHO-discount substrate fns (C3) ────────────────────────────
+// ── the GHO-discount substrate fns ────────────────────────────────
 
 /// Seed a debt position with a non-zero balance + `last_index`.
 fn seed_debt_position_with_balance(
@@ -1050,11 +1050,11 @@ fn apply_scaled_burn_exact_match_lands_on_zero() {
     );
 }
 
-// ── ReserveInitialized GHO-vToken-FK link (divergence #8) ────
+// ── ReserveInitialized GHO-vToken-FK link ─────────────────────
 // When the new asset's underlying IS the GHO token, the apply links the
 // GHO token row to the new vToken (`aave_gho_tokens.v_token_id`), mirroring
-// the Python's `_process_reserve_initialized_event` (event_handlers.py:
-// 689-698). `None` for a regular reserve → no link.
+// the Python's `_process_reserve_initialized_event`. `None` for a regular
+// reserve → no link.
 #[test]
 fn apply_reserve_initialized_links_gho_vtoken_fk_when_set() {
     let db = write_db_with_market();

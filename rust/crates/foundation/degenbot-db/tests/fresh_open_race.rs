@@ -1,16 +1,9 @@
-//! Regression: a concurrent fresh-open race on one path.
+//! Pins the three fresh-open races a concurrent open of one path can hit.
 //!
-//! Two (or more) processes/threads racing the fresh-standalone open of the
-//! same not-yet-existing database used to be a coin flip: both classified the
-//! empty file as `FreshStandalone` and both ran the head DDL, and the loser
-//! died with `index ... already exists` because the `CREATE INDEX`
-//! statements lacked `IF NOT EXISTS` (the `CREATE TABLE` statements already
-//! had it). In the wild this bit the xdist pathfinding tier (parallel workers
-//! racing a per-session fresh DB) and the settlement-bot `boot_gate` tests
-//! (worked around there with an explicit `auto_heal = false` open).
-//!
-//! Two further fresh-open races surfaced while hardening this one, and the fix
-//! covers all three:
+//! Two (or more) processes/threads racing the fresh-standalone open of the same
+//! not-yet-existing database both classify the empty file as `FreshStandalone`
+//! and both run the head DDL; without idempotent statements the loser dies with
+//! `index ... already exists`. Each race is closed at the open seam:
 //! 1. the DDL replay (`CREATE [UNIQUE] INDEX IF NOT EXISTS`, statement-form only);
 //! 2. the `PRAGMA journal_mode=WAL` switch, which SQLite's busy handler does
 //!    NOT cover — retried in `pragma::apply_open_pragmas`;

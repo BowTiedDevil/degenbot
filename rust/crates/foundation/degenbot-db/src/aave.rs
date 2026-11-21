@@ -503,7 +503,7 @@ impl DegenbotDb {
     /// `ReserveInitialized` dispatch to resolve the oracle FRESH (the spec's
     /// `oracle_address` is cached once before the loop + can be `None` when the
     /// `PRICE_ORACLE` row is registered mid-loop via a `PriceOracleUpdated`
-    /// event — Fix 1b).
+    /// event, so the per-tx re-resolution must read it here).
     ///
     /// # Errors
     ///
@@ -899,13 +899,13 @@ impl DegenbotDb {
         Ok(out)
     }
 
-    /// Read a user's `gho_discount` by `(market_id, address)` — the path #1
-    /// lookup for the discount pre-pass (`build_discount_snapshot` in
-    /// `degenbot-aave::config_dispatch`). Returns `None` when the user
-    /// doesn't exist (the path #2 RPC trigger). Pure read (does NOT
-    /// create a user — `get_or_create_user_on_conn` is the dispatch path's
-    /// responsibility). The `_on_conn` bound serves the chunk-loop's single
-    /// `Transaction` (the chunk-atomicity invariant).
+    /// Read a user's `gho_discount` by `(market_id, address)` — the lookup the
+    /// discount pre-pass runs (`build_discount_snapshot` in
+    /// `degenbot-aave::config_dispatch`). Returns `None` when the user doesn't
+    /// exist (the RPC-fetch trigger). Pure read (does NOT create a user —
+    /// `get_or_create_user_on_conn` is the dispatch path's responsibility). The
+    /// `_on_conn` bound serves the chunk-loop's single `Transaction` (the
+    /// chunk-atomicity invariant).
     ///
     /// # Errors
     ///
@@ -1142,22 +1142,21 @@ mod tests {
         assert!(db.fetch_aave_gho_asset(2).unwrap().is_none());
     }
 
-    /// Regression for the coldboot GHO-vToken staleness crash (block 17699253).
-    ///
-    /// At coldboot `16591070` the GHO reserve isn't initialized yet →
-    /// `aave_gho_tokens.v_token_id IS NULL` → `fetch_aave_gho_asset_on_conn`
-    /// returns `v_token_address = None`. Mid-drive (`17699249`) a
-    /// `ReserveInitialized` event for GHO links `v_token_id` to the new
-    /// vToken's erc20 row. The orchestrator's per-tx re-resolution
-    /// (`process_chunk_on_conn` step 0) re-calls `fetch_aave_gho_asset_on_conn`
-    /// on the SAME chunk `Transaction`'s `&Connection` and MUST see the
-    /// in-transaction write (read-your-own-writes) — otherwise the subsequent
-    /// GHO borrow's vToken `Mint` classifies as plain `DebtMint` (not
-    /// `GhoDebtMint`) → the borrow matcher finds no `DebtMint` → `NoMatch` crash.
-    ///
-    /// This test pins the substrate seam the fix relies on: a same-
-    /// `Connection` `apply_reserve_initialized_on_conn` write is visible to
+    /// Pins the substrate seam the orchestrator's re-resolution relies on: a
+    /// same-`Connection` `apply_reserve_initialized_on_conn` write is visible to
     /// the next `fetch_aave_gho_asset_on_conn` read.
+    ///
+    /// At coldboot the GHO reserve isn't initialized yet →
+    /// `aave_gho_tokens.v_token_id IS NULL` → `fetch_aave_gho_asset_on_conn`
+    /// returns `v_token_address = None`. Mid-drive a `ReserveInitialized` event
+    /// for GHO links `v_token_id` to the new vToken's erc20 row. The
+    /// orchestrator's per-tx re-resolution (`process_chunk_on_conn` step 0)
+    /// re-calls `fetch_aave_gho_asset_on_conn` on the SAME chunk `Transaction`'s
+    /// `&Connection` and MUST see the in-transaction write
+    /// (read-your-own-writes) — otherwise the subsequent GHO borrow's vToken
+    /// `Mint` classifies as plain `DebtMint` (not `GhoDebtMint`), the borrow
+    /// matcher finds no `DebtMint`, and the parse ends in
+    /// `ParseError::NoMatch`.
     #[test]
     fn fetch_aave_gho_asset_on_conn_sees_intra_tx_v_token_link_write() {
         let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();

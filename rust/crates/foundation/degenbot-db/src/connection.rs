@@ -5,13 +5,13 @@
 //! `clippy::expect_used`/`unwrap_used`). Construct via [`DegenbotDb::open`]
 //! (file) or [`DegenbotDb::open_in_memory`] (tests).
 //!
-//! # Open PRAGMA sequence (binding #2/#3)
+//! # Open PRAGMA sequence
 //!
 //! Every read connection runs, in order:
 //! 1. `PRAGMA busy_timeout=5000;` — per-connection.
 //! 2. `PRAGMA synchronous=NORMAL;` — per-connection.
 //! 3. `PRAGMA journal_mode=WAL;` — file-persistent, idempotent; matches the
-//!    Python open path (Phase 0) so production DBs are WAL-on by the time any
+//!    Python open path so production DBs are WAL-on by the time any
 //!    Rust read touches them. The switch is retried through fresh-open
 //!    contention, which SQLite's busy handler does NOT cover (see
 //!    [`crate::pragma`]).
@@ -25,7 +25,7 @@
 //!    Rust-owned DB behind the binary applies its pending steps at open; a DB
 //!    ahead of the binary refuses with `DbError::SchemaAhead`; a DB at current
 //!    is a no-op.
-//! 5. `PRAGMA query_only=on;` — **HARD AC** (binding #2): once `open()`
+//! 5. `PRAGMA query_only=on;` — ADR-070 binding #2: once `open()`
 //!    returns, every **read** connection is physically incapable of mutating
 //!    the DB.
 //!
@@ -38,15 +38,15 @@
 //!
 //! # Why `query_only` follows the schema step (not precedes it)
 //!
-//! Binding #3 explicitly scopes "before `ensure_schema`" to the three
-//! concurrency PRAGMAs (`WAL/busy_timeout/synchronous`); those run first. The
+//! The "before the schema step" ordering covers the three concurrency PRAGMAs
+//! (`WAL/busy_timeout/synchronous`) and nothing else; those run first. The
 //! `query_only=on` step is set AFTER `ensure_schema_at_open` returns, because
 //! the fresh-standalone branch applies the embedded DDL
 //! (`CREATE TABLE IF NOT EXISTS ...`) and the heal branch reopens a rebuilt
 //! file — writes that `query_only=on` would block.
 //!
 //! `query_only` is applied to the FINAL connection (the one the heal reopened
-//! on the Rust-owned file), so binding #2's hard AC holds in the form that
+//! on the Rust-owned file), so the guarantee holds in the form that
 //! matters: **after `open()` returns, every read connection is read-only.**
 //! The pinned (`auto_heal = false`) `LegacyAlembic` branch writes nothing,
 //! so its practical effect is identical to setting `query_only` first.
@@ -180,7 +180,7 @@ impl DegenbotDb {
         } else {
             Connection::open(path)?
         };
-        // Concurrency PRAGMAs first (binding #3: before ensure_schema). The
+        // Concurrency PRAGMAs first, before `ensure_schema`. The
         // shared helper retries the fresh-file WAL switch, which SQLite's busy
         // handler does NOT cover — the one fresh-open step a `busy_timeout`
         // cannot absorb (see `crate::pragma`).

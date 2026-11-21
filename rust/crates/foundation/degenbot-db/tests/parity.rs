@@ -1,4 +1,4 @@
-//! Cross-implementation parity fixture (binding #4 — HARD gate).
+//! Cross-implementation parity fixture.
 //!
 //! Opens the frozen Rust-owned `fixtures/parity.db` built by
 //! `fixtures/generate_parity.py` through the Rust database write seams and
@@ -258,11 +258,11 @@ fn fetch_all_liquidity_maps_v3_matches_python_oracle() {
 
 /// Order contract: `fetch_all_liquidity_maps` V3 must return pools in
 /// the SQL `ORDER BY p.address` sequence (binary collation on the stored
-/// EIP-55-checksummed strings), NOT a client-side re-sort. The redundancy has
-/// been removed; this test pins the contract so a regression that re-introduces
-/// a `to_checksum(None)` re-sort or a `HashMap` round-trip is caught. With a
-/// single-pool fixture the assertion is trivially satisfied but encodes the
-/// contract for when the fixture grows a multi-pool V3 set.
+/// EIP-55-checksummed strings), NOT a client-side re-sort. This test pins that
+/// contract so a regression that re-introduces a `to_checksum(None)` re-sort or
+/// a `HashMap` round-trip is caught. With a single-pool fixture the assertion is
+/// trivially satisfied but encodes the contract for when the fixture grows a
+/// multi-pool V3 set.
 ///
 /// The link is mechanical: the Rust Vec's checksummed-address sequence is
 /// asserted byte-identical to the raw `parity_expected.json` object's key
@@ -365,8 +365,8 @@ fn fetch_all_liquidity_maps_v4_matches_python_oracle() {
 /// the SQL `ORDER BY pm.address, v4.pool_hash, lp.tick` sequence (the streaming
 /// `current` accumulator relies on this). Pins the Rust Vec's `(pm_address,
 /// pool_hash)` sequence byte-identical to the frozen `parity_expected.json`
-/// array's order — a mechanical link that catches any future client-side
-/// re-sort or `HashMap` round-trip regression. Like the V3 variant, trivially
+/// array's order — a mechanical link that catches any client-side re-sort or
+/// `HashMap` round-trip regression. Like the V3 variant, trivially
 /// satisfied on the single-pool fixture but scales when the fixture grows.
 #[test]
 fn fetch_all_liquidity_maps_v4_sequence_matches_json_array_order() {
@@ -541,7 +541,7 @@ fn fetch_v4_pool_hashes_includes_pool_manager_address_via_fk() {
 
 #[test]
 fn query_only_blocks_writes_on_parity_db() {
-    // Asserts binding #2 in-context: the parity connection is read-only.
+    // Asserts ADR-070 binding #2 in-context: the parity connection is read-only.
     let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
     let conn = db.lock();
     let write: rusqlite::Result<usize> = conn.execute("CREATE TABLE should_fail (a INT)", []);

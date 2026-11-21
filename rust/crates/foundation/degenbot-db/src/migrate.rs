@@ -1,11 +1,11 @@
 //! The schema-gate migration runner.
 //!
-//! The HARD REQUIREMENT (from the binding): open an existing
+//! The requirement: open an existing
 //! Alembic-stamped degenbot `SQLite` DB, read the `alembic_version` table head,
 //! and treat a stamped DB as current WITHOUT re-running DDL or clobbering its
 //! revision. Both [`sqlx::migrate!`] and [`refinery`] fail this — each writes
 //! its own migration-tracking table and would replay DDL against a DB it does
-//! not recognize. This module is the small custom alternative (Decision 2).
+//! not recognize. This module is the small custom alternative.
 //!
 //! Algorithm ([`ensure_schema`]):
 //! 1. If the `alembic_version` table exists the DB is LEGACY (ADR-052 D6: a
