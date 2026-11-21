@@ -1073,16 +1073,16 @@ impl Drop for HostedSources {
 /// Both the connect and the subscribe run on `runtime`, so the alloy pubsub
 /// service and the head watch's driving task land there and are cancelled with
 /// it. The initial work runs in a task on that runtime (a nested `block_on`
-/// would panic off the async caller) and reports back over a oneshot.
+/// would panic off the async caller) spawned through the runtime's tracked
+/// door, so the owner's teardown joins it, and reports back over a oneshot.
 async fn connect_head_watch(
     sender: HeadSender,
     ws_url: &str,
     runtime: &OwnedPubsubRuntime,
 ) -> Option<Arc<dyn Provider<Ethereum>>> {
-    let handle = runtime.handle();
     let ws_url = ws_url.to_string();
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
-    handle.spawn(async move {
+    runtime.spawn(async move {
         let transport = match AlloyProvider::new(&ws_url, DEFAULT_MAX_RETRIES).await {
             Ok(ws_provider) => {
                 let transport = ws_provider.provider_arc();

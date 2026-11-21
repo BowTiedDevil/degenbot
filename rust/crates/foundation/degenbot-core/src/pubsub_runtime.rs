@@ -33,18 +33,19 @@
 //!
 //! # Joining spawned work
 //!
-//! Every future handed to [`OwnedPubsubRuntime::spawn`] is registered as
-//! in-flight work: a guard increments the count on spawn and decrements it when
-//! the task's body ends — on completion OR on cancellation, whichever comes
-//! first — and the last one out notifies the drop. [`Drop`] awaits that edge for
-//! no longer than [`SHUTDOWN_GRACE`], so a task that reacts to the closed
-//! request channel is joined deterministically and one that will not finish is
-//! still cancelled at the bound.
+//! [`OwnedPubsubRuntime::spawn`] is this type's only spawn door: no raw
+//! [`Handle`] escapes it, so an owner cannot spawn onto the dedicated runtime
+//! untracked. Every future handed to it is registered as in-flight work: a
+//! guard increments the count on spawn and decrements it when the task's body
+//! ends — on completion OR on cancellation, whichever comes first — and the
+//! last one out notifies the drop. [`Drop`] awaits that edge for no longer than
+//! [`SHUTDOWN_GRACE`], so a task that reacts to the closed request channel is
+//! joined deterministically and one that will not finish is still cancelled at
+//! the bound.
 //!
-//! The count covers futures handed to this type's spawn entry points. A future
-//! that itself spawns through `tokio::spawn` or `Handle::current()` — as alloy's
-//! pubsub service and the head-watch driver do — is not counted; the runtime
-//! drop is what cancels it.
+//! A future that itself spawns through `tokio::spawn` or `Handle::current()` —
+//! as alloy's pubsub service and the head-watch driver do — is not counted; the
+//! runtime drop is what cancels it.
 //!
 //! # Live-instance census counting
 //!
@@ -212,28 +213,6 @@ impl OwnedPubsubRuntime {
     #[must_use]
     pub fn live_count(resource: &'static str) -> usize {
         live_counts().lock().get(resource).copied().unwrap_or(0)
-    }
-
-    /// A clone of the dedicated runtime's handle, for spawning onto it.
-    ///
-    /// A future spawned through a raw handle is NOT registered as in-flight:
-    /// prefer [`Self::spawn`] whenever the drop should join it.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: the runtime is `None` only after [`Drop`] has taken
-    /// it, at which point no method can be called.
-    #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "the inner runtime is None only after Drop's take; live callers always see Some"
-    )]
-    pub fn handle(&self) -> Handle {
-        self.runtime
-            .as_ref()
-            .expect("owned runtime is taken only in Drop")
-            .handle()
-            .clone()
     }
 
     /// Spawn `future` onto the dedicated runtime, registered as in-flight work
