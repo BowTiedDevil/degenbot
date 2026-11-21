@@ -190,7 +190,7 @@ impl FeeSpec {
     }
 
     /// The legacy `(gamma_numer, denominator)` projection at the Python seam:
-    /// a marker projects as `(0, denominator)`, its historical shape.
+    /// a marker projects as `(0, denominator)`.
     #[must_use]
     pub const fn as_pair(self) -> (u64, u64) {
         match self {
@@ -480,9 +480,7 @@ impl V2FeePair {
 mod tests {
     use super::{fee_ratio, FeeRatio, FeeRatioRefusal, FeeSpec, V2Fee, V2FeePair, V2FeeRefusal};
 
-    /// The 100%-fee hole: a charge that takes the whole input used to be a
-    /// valid `V2Fee` and reached registration as a zero-gamma retained pair.
-    /// Construction is where it now dies.
+    /// A 100% fee prices every swap at zero output; construction refuses it.
     #[test]
     fn v2_fee_refuses_a_total_fee() {
         assert_eq!(V2Fee::new(1_000, 1_000), Err(V2FeeRefusal::TotalFee));
@@ -494,8 +492,8 @@ mod tests {
         assert!(V2Fee::new(999, 1_000).is_ok());
     }
 
-    /// The executor bips are DERIVED from the stored fraction: the value the
-    /// old stored field carried, computed at the boundary instead.
+    /// The executor bips are DERIVED from the stored fraction — the bips
+    /// value, computed at the boundary instead of stored.
     #[test]
     fn executor_bips_are_derived_from_the_fraction() {
         let fee = V2Fee::new(3, 1_000).expect("0.3% fee is valid");

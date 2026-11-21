@@ -17,9 +17,9 @@
 //! discipline as `degenbot_substrate::telemetry_port`. Unlike that port, the
 //! label vocabulary is not merely a documented string convention: the hooks
 //! take the typed [`UpdaterKind`] × [`UpdaterStage`] closed sets, so a stray
-//! label value cannot compile (ADR-043 §9 review, 2026-10-06 telemetry
-//! dispatch approved by the project manager — full citation in
-//! `degenbot-bot`'s `tests/metric_cardinality.rs::ALLOWED_LABELS`).
+//! label value cannot compile (ADR-043 section 9 cardinality review; the full
+//! citation is `degenbot-bot`'s
+//! `tests/metric_cardinality.rs::ALLOWED_LABELS`).
 //! Per-chunk detail (chain, block range, counts) belongs in the
 //! `degenbot.updater.*` TRACE span fields, never in metric labels (the
 //! instruments cardinality law).
@@ -34,7 +34,7 @@
 use std::sync::OnceLock;
 
 /// The emitting updater's identity — the closed value set of the metric
-/// label `updater` (ADR-043 §9 review, 2026-10-06 telemetry dispatch; see
+/// label `updater` (ADR-043 section 9 cardinality review; see
 /// `degenbot-bot`'s `tests/metric_cardinality.rs`). Call sites pass a
 /// variant; the single enum→`&'static str` conversion is the host install's
 /// [`UpdaterKind::label`] call, so a stray value cannot compile.
@@ -58,7 +58,7 @@ impl UpdaterKind {
 }
 
 /// The updater chunk-loop stage — the closed value set of the metric label
-/// `stage` (ADR-043 §9 review, 2026-10-06 telemetry dispatch; see
+/// `stage` (ADR-043 section 9 cardinality review; see
 /// `degenbot-bot`'s `tests/metric_cardinality.rs`). A superset of the four
 /// stages the two emitters report today: `chunk` and `cleanup` are the
 /// reviewed reserve names matching the `degenbot.updater.*` trace-span stage

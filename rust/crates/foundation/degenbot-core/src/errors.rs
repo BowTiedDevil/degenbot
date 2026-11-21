@@ -209,11 +209,10 @@ pub enum ProviderError {
     RpcError { code: i64, message: String },
 
     /// An EVM execution revert reported by the provider (`eth_call`/
-    /// `eth_estimateGas`). Replaces the string-scraping the Python adapter seam
-    /// (`degenbot.provider.alloy_errors`) used to perform: the JSON-RPC error
-    /// code (`-32000` Geth/Alchemy, `-3` Anvil, etc.) is preserved alongside
-    /// the message so the FFI layer can raise the degenbot-owned
-    /// `ContractLogicError` structurally rather than by marker substring.
+    /// `eth_estimateGas`). The JSON-RPC error code (`-32000` Geth/Alchemy,
+    /// `-3` Anvil, etc.) is preserved alongside the message so the FFI layer
+    /// can raise the degenbot-owned `ContractLogicError` structurally rather
+    /// than by marker substring.
     #[error("execution reverted: {message}")]
     ExecutionReverted { code: i64, message: String },
 

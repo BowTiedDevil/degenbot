@@ -19,9 +19,9 @@
 //! # Lesson: distinct thread names
 //!
 //! Two concurrent multi-thread tokio runtimes must never share a thread
-//! name (the incident: both defaulting to `tokio-runtime-worker` made
-//! thread dumps unattributable). Spawn sites name their threads with the
-//! census-declared pattern (e.g. `degenbot-io-rt-{n}`) and REGISTER here.
+//! name: a dump must stay attributable to the runtime that owns the thread.
+//! Spawn sites name their threads with the census-declared pattern (e.g.
+//! `degenbot-io-rt-{n}`) and REGISTER here.
 //! The solve-fleet naming (`degenbot-solve-*`) and the hotpath
 //! profiler-owned `hp-*` threads are untouched by this registry.
 //!
@@ -44,10 +44,12 @@
 //! [`crate::pubsub_runtime::OwnedPubsubRuntime`], which publishes the LIVE
 //! instance count).
 //!
-//! # Future fleet crate
+//! # Fleet roles
 //!
-//! The upcoming `degenbot-workers` fleet (ADR-042) registers ITS worker
-//! slots with role labels through the same [`register`] entry point — the
+//! The `degenbot-workers` fleet (ADR-042) registers ITS worker slots with
+//! role labels through the same [`register`] entry point: its boot census
+//! walks the active `WorkerRole` set and hands each role's resource, kind,
+//! thread name and sizing strings plus the boot plan's binding label. The
 //! registration API is label-driven, not enum-driven, so fleet roles need no
 //! change here.
 
@@ -71,13 +73,14 @@ pub struct WorkerCensusEntry {
     pub thread_name: &'static str,
     /// Sizing rule in words: what derives the count and which override wins.
     pub sizing: &'static str,
-    /// How this row's work binds to host threads (FF-T2, the closed
-    /// vocabulary): `pinned` = dedicated thread(s) owned by the row (the
-    /// fleet's pinned-binding seats; single-purpose infra threads),
-    /// `shared` = threads shared across concerns (the ambient I/O runtime,
-    /// runtime pools), `logical` = a lane/capacity with no thread of its
-    /// own (hoisted capacities, registry probes; the fleet roles become
-    /// logical lanes under the serial binding, FF-T4).
+    /// How this row's work binds to host threads (the closed vocabulary in
+    /// `docs/architecture/worker-fleet.md` section 13): `pinned` = dedicated
+    /// thread(s) owned by the row (the fleet's pinned-binding seats;
+    /// single-purpose infra threads), `shared` = threads shared across
+    /// concerns (the ambient I/O runtime, runtime pools), `logical` = a
+    /// lane/capacity with no thread of its own (hoisted capacities, registry
+    /// probes; the fleet roles become logical lanes under the serial
+    /// binding).
     pub binding: &'static str,
 }
 

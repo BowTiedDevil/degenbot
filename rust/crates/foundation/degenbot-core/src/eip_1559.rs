@@ -1,5 +1,4 @@
-//! EIP-1559 base-fee math (relocated from the retired single-function crate
-//! `degenbot-evm-math`).
+//! EIP-1559 base-fee math.
 //!
 //! The delta formula is the integer form of the example code in the
 //! [EIP-1559] proposal; this module is the canonical Rust implementation of it,
@@ -60,21 +59,16 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 /// no clamp. `min_base_fee` supports non-Ethereum EIP-1559 chains that floor
 /// the base fee (e.g. Linea).
 ///
-/// # Arguments
+/// # Panics
 ///
-/// - `parent_base_fee` — the parent block's base fee (wei).
-/// - `parent_gas_used` — gas consumed by the parent block.
-/// - `parent_gas_limit` — the parent block's gas limit (must be ≥
-///   `elasticity_multiplier` so the target is non-zero; a zero target is a
-///   division-by-zero revert).
-/// - `min_base_fee` — optional floor applied to the result.
-/// - `base_fee_max_change_denominator` — max per-block change denominator
-///   (default 8).
-/// - `elasticity_multiplier` — gas-target divisor (default 2).
+/// Every path below is integer division:
 ///
-/// # Returns
-///
-/// The computed next base fee as a `u128`.
+/// - `elasticity_multiplier == 0` — the gas-target division.
+/// - `parent_gas_limit < elasticity_multiplier` — the target is zero, and the
+///   delta division panics unless `parent_gas_used` is also zero (zero usage
+///   takes the unchanged branch and computes no delta).
+/// - `base_fee_max_change_denominator == 0` — the delta division, on every
+///   branch that computes one.
 ///
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 #[must_use]
@@ -132,12 +126,9 @@ mod tests {
         next_base_fee(bf, gu, gl, None, 8, 2)
     }
 
-    // ---------------------------------------------------------------------------
-    // Parity fixtures recorded from the Python reference implementation while
-    // it existed (the `src/degenbot/calculations/` package is gone). Each row
-    // is (parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
-    //  denom, elasticity) => expected result.
-    // ---------------------------------------------------------------------------
+    // Parity fixtures recorded from the Python reference implementation. Each
+    // row is (parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
+    // denom, elasticity) => expected result.
     #[test]
     fn parity_vs_python_oracle() {
         // (bf, gu, gl, min, d, e, want) — all values as u128 literals.

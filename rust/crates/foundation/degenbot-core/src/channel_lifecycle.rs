@@ -1,8 +1,8 @@
 //! `channel_lifecycle` — the one-way delivery channel's phase.
 //!
-//! One home for the question "where is this one-way channel?", which used to be
-//! answered by `Option<Sender>` presence. An `Option` has **two** `None`s: never
-//! attached, and closed. Those are different facts with different consequences —
+//! One home for the question "where is this one-way channel?". A bare
+//! `Option<Sender>` has **two** `None`s: never attached, and closed. Those are
+//! different facts with different consequences —
 //! a standalone consumer has nothing to end, while a closed channel's receiver
 //! has already observed end-of-stream — and collapsing them is what let a
 //! `set_channel`-after-`close` silently re-open a pipe whose receiver was

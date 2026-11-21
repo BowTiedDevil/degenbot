@@ -1,12 +1,9 @@
-//! Address utility functions.
+//! Address utilities: the EIP-55 checksum and error-typed parse family the
+//! Python shell and the DB seam call.
 //!
-//! Provides functions for Ethereum address manipulation.
-//!
-//! # Architecture
-//!
-//! This module is the single source of truth for address formatting.
-//! All address-to-string conversions should use `address_to_checksum_string()`
-//! or the higher-level `to_checksum_address_*` functions.
+//! Alloy's `to_checksum` stays valid at call sites that only need the alloy
+//! value; these helpers add the `String`-returning checksum form and the
+//! `AddressError`-typed parse.
 
 use crate::errors::AddressError;
 use alloy::primitives::Address;
@@ -24,32 +21,13 @@ use std::str::FromStr;
 /// terminator and is not this constant.
 pub const NATIVE_SENTINEL_ALL_ES: Address = Address::repeat_byte(0xEE);
 
-/// Convert an Alloy `Address` to a checksummed string.
-///
-/// This is the canonical implementation used throughout the codebase.
-/// All address-to-string conversions should use this function.
-///
-/// # Arguments
-///
-/// * `address` - The Alloy Address to format
-///
-/// # Returns
-///
-/// The EIP-55 checksummed address string.
+/// Format an alloy `Address` as an EIP-55 checksummed string.
 #[must_use]
 pub fn address_to_checksum_string(address: &Address) -> String {
     address.to_checksum(None)
 }
 
-/// Internal implementation for checksumming a hex address string.
-///
-/// # Arguments
-///
-/// * `addr_str` - A hex string representing an Ethereum address
-///
-/// # Returns
-///
-/// The checksummed address string
+/// Parse a hex address string and return its EIP-55 checksummed form.
 ///
 /// # Errors
 ///
@@ -78,15 +56,7 @@ pub fn parse_address(s: &str) -> Result<Address, AddressError> {
     Address::from_str(s).map_err(|e| AddressError::InvalidAddress(e.to_string()))
 }
 
-/// Internal implementation for checksumming address bytes.
-///
-/// # Arguments
-///
-/// * `bytes` - A 20-byte slice representing an Ethereum address
-///
-/// # Returns
-///
-/// The checksummed address string
+/// Format 20 address bytes as an EIP-55 checksummed string.
 ///
 /// # Errors
 ///

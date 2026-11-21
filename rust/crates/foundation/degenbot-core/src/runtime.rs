@@ -46,9 +46,7 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 /// Worker-thread sequence for the distinct thread names below. tokio 1.53
 /// spawns every worker through the blocking pool's `spawn_thread`, calling
 /// the `thread_name_fn` closure once per spawned thread — so an internal
-/// counter yields the distinct `degenbot-io-rt-N` names the census declares
-/// (two defaulting `tokio-runtime-worker` pools made thread dumps
-/// unattributable).
+/// counter yields the distinct `degenbot-io-rt-N` names the census declares.
 static IO_RT_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn io_runtime_thread_name() -> String {

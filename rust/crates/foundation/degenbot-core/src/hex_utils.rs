@@ -2,6 +2,9 @@
 //!
 //! These functions have no `PyO3` dependency and can be used from the Rust core
 //! without pulling in Python bindings.
+//!
+//! [`decode_hex`] adds what alloy's decoder rejects: an optional `0x`/`0X`
+//! prefix and odd-length input padded with a leading zero.
 
 /// Error type for hex decoding failures.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -53,9 +56,3 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
         alloy::hex::decode(stripped).map_err(|e| HexError::InvalidHex(e.to_string()))
     }
 }
-
-// NOTE (TD2 / B1): encoding was a hand-wheel on alloy::hex::encode_prefixed;
-// call sites now go through alloy directly. decode_32byte_hex (a length check
-// over hex::decode) had no in-workspace callers and is deleted. What remains
-// is the semantics alloy rejects: optional "0x"/"0X" prefix + odd-length
-// leading-zero padding.

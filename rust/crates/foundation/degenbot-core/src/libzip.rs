@@ -137,7 +137,7 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
     // encoder writing a reference whose `+3` window plus the `+4` tail would
     // read out of bounds).
     while input_buffer_offset < compressible_bytes.saturating_sub(9) {
-        // Inner搜寻: walk forward until the current 3-byte chunk matches a
+        // Inner search: walk forward until the current 3-byte chunk matches a
         // previously-seen chunk (or until we exhaust the compressible region).
         let mut reference_chunk;
         let mut last_seen_offset;

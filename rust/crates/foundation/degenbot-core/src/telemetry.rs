@@ -355,8 +355,8 @@ macro_rules! op_span {
 }
 
 /// Closed list of retired verbosity env names (ADR-043 §5) mapped to the
-/// equivalent domain directive. Detection only — no alias is honored. The
-/// shim is deleted at 0.7 alongside the other gated cleanups.
+/// equivalent domain directive (or, for `DEGENBOT_LOG_FMT`, the
+/// writer-derivation note). Detection only — no alias is honored.
 pub const RETIRED_ENV_NAMES: &[(&str, &str)] = &[
     ("DEGENBOT_VERIFY_DBG", "degenbot::verify=debug"),
     ("DEGENBOT_V2_CALC_TRACE", "degenbot::sim=debug"),
