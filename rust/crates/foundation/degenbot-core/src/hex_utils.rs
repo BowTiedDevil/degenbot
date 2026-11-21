@@ -19,14 +19,6 @@ pub enum HexError {
 ///
 /// Handles odd-length strings by padding with a leading zero.
 ///
-/// # Arguments
-///
-/// * `hex_str` - Hex string, with or without "0x"/"0X" prefix
-///
-/// # Returns
-///
-/// The decoded bytes, or an error if the string is not valid hex.
-///
 /// # Errors
 ///
 /// Returns `HexError::InvalidHex` if the hex string is invalid.

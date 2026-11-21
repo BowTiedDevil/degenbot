@@ -1,5 +1,4 @@
 //! Intrinsic chain facts — the native asset's name, symbol, and decimals per chain.
-
 //!
 //! A chain's native asset has no contract to read `name()` / `symbol()` /
 //! `decimals()` from, so those three facts cannot be discovered: they are

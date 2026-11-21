@@ -4,8 +4,15 @@
 //! `jitter` — consumed by every exponential-backoff wait loop in the tree:
 //!
 //! - `degenbot-rpc`'s per-call RPC retry loop and the WS/IPC connect +
-//!   subscription-watchdog reconnects, and
+//!   subscription-watchdog reconnects,
+//! - `degenbot-db`'s WAL-switch retry on a contended fresh open,
+//! - the engine's verification retry (`degenbot-bot`'s
+//!   `bot_core::verification_retry` and the `verify_lifecycle` that defaults
+//!   to [`RetryPolicy::verification_default`]), and
 //! - the settlement-arbitrage example's verification retry.
+//!
+//! The Python driver mirrors this shape across the FFI seam
+//! (`degenbot-python`'s `config::RetryPolicy`), so the policy shape has one home.
 //!
 //! The retry *classification* (which errors are retryable) is deliberately
 //! NOT unified: each call site keeps its own predicate (`ProviderError::

@@ -32,15 +32,12 @@
 //! constant that bounds concurrent execution — you MUST register it here**
 //! via `worker_census::register`. The census survives unknown-future spawns
 //! only by this documentation; an unregistered thread is invisible to the
-//! gauge, the boot dump, and the /proc comm cross-check. Registered ids
-//! today: `io_runtime_workers`, `cli_sigint_listener`,
-//! `inline_sim_runtime_workers`,
+//! gauge, the boot dump, and the /proc comm cross-check. Registered ids:
+//! `io_runtime_workers`, `cli_sigint_listener`, `inline_sim_runtime_workers`,
 //! `solve_probe_executor`, `fleet_solver_slots`, `fleet_simdriver_slots`,
-//! `fleet_resolve_slots`, `fleet_merge_slots`,
-//! `fleet_pool_state_updater_slots`,
-//! `detached_solve_bins`, `metrics_scrape`,
-//! `rust_log_drainer`, `gil_probe`, `fork_pubsub_workers`,
-//! `hosted_pubsub_workers` (the last two via
+//! `fleet_resolve_slots`, `fleet_merge_slots`, `fleet_pool_state_updater_slots`,
+//! `detached_solve_bins`, `metrics_scrape`, `rust_log_drainer`, `gil_probe`,
+//! `fork_pubsub_workers`, `hosted_pubsub_workers` (the last two via
 //! [`crate::pubsub_runtime::OwnedPubsubRuntime`], which publishes the LIVE
 //! instance count).
 //!
@@ -345,12 +342,11 @@ mod tests {
             parked.wait();
 
             let comm = &THREAD_NAME[..THREAD_NAME.len().min(COMM_MAX)];
-            // Settle-retry: under heavy parallel test load the kernel can
-            // surface newly spawned tasks in /proc readdir with a delay
-            // (observed as 0-2 of 3 barrier-held probes visible on one
-            // pass). The probes cannot exit (second barrier below), so
-            // re-read until the comm histogram exposes the census count;
-            // a genuinely wrong count still fails at the deadline.
+            // Settle-retry: the kernel can surface newly spawned tasks in
+            // /proc readdir with a delay. The probes cannot exit (second
+            // barrier below), so re-read until the comm histogram exposes the
+            // census count; a genuinely wrong count still fails at the
+            // deadline.
             let histogram = loop {
                 let mut h = std::collections::BTreeMap::new();
                 for task in std::fs::read_dir("/proc/self/task")

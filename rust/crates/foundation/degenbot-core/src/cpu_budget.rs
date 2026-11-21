@@ -31,7 +31,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Cpus the cgroup v2 `cpu.max` in `dir` admits: `quota period`, or `None`
+/// Cpus the cgroup v2 `cpu.max` in `dir` admits: `quota/period`, or `None`
 /// when unbounded (`max`) or the file is missing/unreadable. Fractional
 /// ratios floor (a 4.5-core quota admits 4 whole workers; the remainder is
 /// not a schedulable worker), floored at 1.
@@ -60,7 +60,7 @@ pub(crate) fn v1_quota_cpus(dir: &Path) -> Option<u64> {
         .parse()
         .ok()?;
     if quota < 0 {
-        return None; // -1 = unlimited
+        return None;
     }
     #[expect(clippy::cast_sign_loss)] // negative rejected above
     let quota = quota as u64;
@@ -363,7 +363,7 @@ pub(crate) fn parse_cpu_stat(text: &str) -> Option<ThrottleStats> {
         match key {
             "nr_throttled" => stats.nr_throttled = v,
             "throttled_usec" => stats.throttled_usec = v,
-            _ => {} // ExpectedAbsent: cpu.stat carries other fields; only counters here.
+            _ => {} // cpu.stat carries other fields; only counters here.
         }
     }
     // A body with no parseable key-value pairs is not a cpu.stat; a body

@@ -126,9 +126,7 @@ mod tests {
         next_base_fee(bf, gu, gl, None, 8, 2)
     }
 
-    // Parity fixtures recorded from the Python reference implementation. Each
-    // row is (parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
-    // denom, elasticity) => expected result.
+    // Parity fixtures recorded from the Python reference implementation.
     #[test]
     fn parity_vs_python_oracle() {
         // (bf, gu, gl, min, d, e, want) — all values as u128 literals.

@@ -87,15 +87,15 @@ fn get_3_byte_int(bytes: &[u8], pos: usize) -> u32 {
 ///
 /// The reference `hash(x)`: `((2654435769 * x) >> 19) & 8191`.
 ///
+/// Knuth-multiplicative: the mask keeps the 13 bits that also index the hash
+/// table directly, which is what keeps the table compact.
+///
 /// The product `2654435769 * x` reaches ~4.45e16 (beyond `u32`) for large
 /// 24-bit `x`, so the multiply is computed in `u64`. Because the final `& 8191`
 /// only inspects bits 19..=31 of the product, a `u32`-wrapping multiply happens
 /// to yield the same result — `u64` is used for clarity and to match the Python
 /// oracle's arbitrary-precision arithmetic exactly.
 fn hash(x: u32) -> usize {
-    // Knuth-multiplicative hash; masking with `0x1FFF` fits it into the 13-bit
-    // back-reference offset domain (the hash table is indexed directly by the
-    // same 13 bits to keep it compact).
     (((2_654_435_769_u64 * u64::from(x)) >> 19) & 0x1FFF) as usize
 }
 
@@ -204,7 +204,7 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
         while remaining >= MAX_MATCH_LENGTH {
             // LONG MATCH instruction — 3 byte opcode
             let opcode_0 = 0b1110_0000_u8 + ((distance_to_last_seen_chunk >> 8) as u8);
-            let opcode_1 = (MAX_MATCH_LENGTH - 9) as u8; // 253
+            let opcode_1 = (MAX_MATCH_LENGTH - 9) as u8;
             let opcode_2 = (distance_to_last_seen_chunk & 0b000_1111_1111) as u8;
             output_buffer.push(opcode_0);
             output_buffer.push(opcode_1);
@@ -229,7 +229,6 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
             output_buffer.push(opcode_2);
         }
 
-        // Update the hash table with the next two positions.
         hash_table[hash(get_3_byte_int(data, input_buffer_offset))] = input_buffer_offset;
         input_buffer_offset += 1;
         hash_table[hash(get_3_byte_int(data, input_buffer_offset))] = input_buffer_offset;
@@ -263,7 +262,6 @@ fn add_literals(input: &[u8], output: &mut Vec<u8>, mut run_length: usize, mut s
         let number_of_literals = run_length.min(MAX_LITERALS);
         // Encode the run length (0-indexed: `number_of_literals - 1`).
         output.push((number_of_literals - 1) as u8);
-        // Encode the literals
         output.extend_from_slice(&input[start..start + number_of_literals]);
         run_length -= number_of_literals;
         start += number_of_literals;
@@ -335,7 +333,6 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
                 copy_match(&mut output, reference_offset, match_length, index)?;
                 index = opcode_2_index + 1;
             }
-            // Unreachable: `opcode_0 >> 5` is a `u8` in `0..=7`.
             _ => unreachable!("instruction_type is opcode >> 5, which is in 0..=7"),
         }
     }
@@ -347,8 +344,9 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
 /// yielding the LZ77 overlapping back-reference semantics.
 ///
 /// Mirrors the JS `r = o - f - 1; while (l--) ob[o++] = ob[r++]` — the read
-/// pointer advances forward, so a short offset into a long match repeats the
-/// initial referenced bytes (the RLE-like overlap behavior).
+/// pointer advances forward and each byte is read before it is appended, so a
+/// short offset into a long match repeats the initial referenced bytes (the
+/// RLE-like overlap behavior).
 ///
 /// # Errors
 ///
@@ -370,8 +368,6 @@ fn copy_match(
     }
     let mut read_pos = output.len() - 1 - reference_offset;
     for _ in 0..match_length {
-        // Read first, push second: the read may land in bytes that this very
-        // loop is appending (overlapping back-reference → byte-wise RLE).
         let byte = output[read_pos];
         output.push(byte);
         read_pos += 1;
@@ -480,7 +476,6 @@ f235905747275746873e2010c02636f6c42012139223c046f73706865410f025468724178205b211
         );
         let compressed = compress(input).unwrap();
         assert_eq!(compressed, expected);
-        // Round-trip
         assert_eq!(decompress(&compressed).unwrap(), input);
     }
 

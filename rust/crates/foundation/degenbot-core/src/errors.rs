@@ -132,7 +132,6 @@ pub enum AbiDecodeError {
 #[cfg(feature = "pyo3")]
 impl From<AbiDecodeError> for PyErr {
     fn from(err: AbiDecodeError) -> Self {
-        // Preserve error context by forwarding the Display impl
         Self::new::<PyValueError, _>(err.to_string())
     }
 }
@@ -152,7 +151,6 @@ pub enum AddressError {
 #[cfg(feature = "pyo3")]
 impl From<AddressError> for PyErr {
     fn from(err: AddressError) -> Self {
-        // Preserve original error message with full context
         Self::new::<PyValueError, _>(err.to_string())
     }
 }
