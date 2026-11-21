@@ -19,8 +19,7 @@
 //! construction at any granularity:
 //!
 //! 1. [`DegenbotDb::fetch_tokens_with_min_degree`] — the `GROUP BY token
-//!    HAVING count(*) >= degree` candidate-token set (warm path:
-//!    construction-time graph build per arbitrage-session startup).
+//!    HAVING count(*) >= degree` candidate-token set.
 //! 2. [`DegenbotDb::fetch_path_graph_edges`] — ALL chain-filtered edges
 //!    (unfiltered; the caller applies the degree whitelist just like the
 //!    Python `_prepare_graph` does inline).
@@ -100,21 +99,8 @@ pub const fn demangle_v4_pool_id(graph_id: u64) -> u64 {
 /// [`DegenbotDb::fetch_path_graph_edges`] — the standalone-Rust substrate the
 /// `PyO3` seam projects into its typed `PathGraph` value (checksummed address
 /// strings there, `Address` values here).
-///
-/// # Fields
-///
-/// - `edges`: flat `(token0_id, token1_id, pool_id, pool_kind)` tuples. V2/V3
-///   `pool_id`s come from the `pools` table; V4 `pool_id`s come from
-///   `managed_pools.id` (= `uniswap_v4_pools.managed_pool_id`). The V2/V3 ID
-///   space and the V4 ID space are disjoint (separate tables), so a
-///   `pool_kind` discriminant disambiguates V4 from V2/V3.
-/// - `v2v3_addresses`: V2/V3 `pool_id` → on-chain `address` (from `pools`).
-/// - `v4_lookups`: V4 `pool_id` → `(manager_address, pool_hash)` (from the
-///   `uniswap_v4_pools` × `pool_managers` join).
-/// - `pool_id_to_kind`: `pool_id` → `pool_kind` for path reconstruction.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PathGraphData {
-    /// Flat edge tuples for `PathGraph::from_edges`.
     pub edges: Vec<PathEdge>,
     /// V2/V3 `pool_id` → on-chain address.
     pub v2v3_addresses: HashMap<u64, Address>,

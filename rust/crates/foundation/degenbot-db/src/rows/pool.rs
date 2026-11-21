@@ -49,14 +49,8 @@ impl LiquidityPoolRow {
 /// joining the subclass table named by the `kind` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoolKindRow {
-    /// A V2-family pool: `(pool_id, fee_token0, fee_token1, fee_denominator)`
-    /// plus the optional Aerodrome-only `stable` flag.
     V2(V2PoolRow),
-    /// A V3-family pool: fees, `tick_spacing`, and the liquidity-update marker
-    /// (`liquidity_update_block`, `liquidity_update_log_index`).
     V3(V3PoolRow),
-    /// A Uniswap V4 managed pool: pool hash + hooks + currencies + fees +
-    /// `tick_spacing` + the liquidity-update marker.
     V4(V4PoolRow),
     /// A declared-but-unsupported LFJ binned pair: `(pool_id, bin_step)`
     /// (ADR-059 D8). The row type lands with the schema so the persisted
@@ -298,20 +292,18 @@ pub(crate) fn decode_pool_hash(s: &str) -> Result<B256, DbError> {
     Ok(B256::from(arr))
 }
 
-/// `true` if `kind` is an Aerodrome V2 (the only V2 subclass with a `stable`
-/// column).
+/// Whether `kind` names the only V2 subclass whose table carries a `stable`
+/// column.
 #[must_use]
 pub fn is_aerodrome_v2_kind(kind: &str) -> bool {
     matches!(kind, "aerodrome_v2")
 }
 
-/// `true` if `kind` is a V4 discriminator (only `uniswap_v4` today).
-///
-/// Re-exported for convenience from [`crate::schema::table::is_v4_kind`].
+/// Re-exported from [`crate::schema::table::is_v4_kind`] so a row consumer
+/// resolves the discriminator without reaching into `schema`.
 #[must_use]
 pub fn is_v4_kind(kind: &str) -> bool {
     table::is_v4_kind(kind)
 }
 
-/// Convenience: the SELECT list for an Aerodrome V2 row (includes `stable`).
 pub const SELECT_V2_AERODROME: &str = "pool_id, fee_token0, fee_token1, fee_denominator, stable";

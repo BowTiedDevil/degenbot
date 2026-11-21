@@ -1,8 +1,7 @@
-//! Typed row structs — plain `#[derive(Debug, Clone, PartialEq, Eq)]` decoders,
-//! NOT ORM/active-records. Each carries the typed projection of one table's
-//! columns (EVM integers as [`alloy::primitives::U256`], addresses as
-//! [`alloy::primitives::Address`]); a `from_row` impl per type builds the struct
-//! from a [`rusqlite::Row`].
+//! Typed row structs, NOT ORM/active-records. Each carries the typed projection
+//! of one table's columns (EVM integers as [`alloy::primitives::U256`],
+//! addresses as [`alloy::primitives::Address`]); a `from_row` impl per type
+//! builds the struct from a [`rusqlite::Row`].
 //!
 //! See `src/degenbot/database/models/*.py` for the canonical column shapes.
 

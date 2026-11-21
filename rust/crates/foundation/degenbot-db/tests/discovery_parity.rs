@@ -60,7 +60,6 @@ fn upsert_v2_pool_inserts_base_and_subclass_row() {
         .unwrap();
 
     let conn = db.lock();
-    // base pools row
     let (kind, token0_id, token1_id, exchange_id): (String, i64, i64, i64) = conn
         .query_row(
             "SELECT kind, token0_id, token1_id, exchange_id FROM pools WHERE chain = 1",
@@ -70,11 +69,9 @@ fn upsert_v2_pool_inserts_base_and_subclass_row() {
         .unwrap();
     assert_eq!(kind, "uniswap_v2");
     assert_eq!(exchange_id, 1);
-    // tokens were get-or-create'd (ids 1 + 2)
     assert_eq!(token0_id, 1);
     assert_eq!(token1_id, 2);
 
-    // subclass detail row
     let (pool_id, fee_token0, fee_token1, fee_denominator): (i64, i64, i64, i64) = conn
         .query_row(
             "SELECT pool_id, fee_token0, fee_token1, fee_denominator FROM uniswap_v2_pools",

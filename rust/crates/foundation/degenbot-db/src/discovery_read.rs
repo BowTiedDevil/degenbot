@@ -41,25 +41,18 @@ use crate::schema::table::{
     ERC20_TOKENS, EXCHANGES, MANAGED_POOLS, POOL_MANAGERS, UNISWAP_V4_POOLS,
 };
 
-// ── row structs ────────────────────────────────────────────────────────────
-
 /// A discovered V2-family pool (Uniswap / Sushi / Pancake / Camelot /
 /// `SwapBased` / Aerodrome).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryV2Row {
-    /// The base `pools` row.
     pub pool: LiquidityPoolRow,
-    /// The owning `exchanges` row.
     pub exchange: ExchangeRow,
-    /// The `token0` `erc20_tokens` row.
     pub token0: Erc20TokenRow,
-    /// The `token1` `erc20_tokens` row.
     pub token1: Erc20TokenRow,
     /// Fee charged on the `token0` side.
     pub fee_token0: i64,
     /// Fee charged on the `token1` side.
     pub fee_token1: i64,
-    /// The fee denominator.
     pub fee_denominator: i64,
     /// Aerodrome-only stable-pool flag; `None` for the other V2 families
     /// (whose subclass table has no `stable` column).
@@ -69,25 +62,18 @@ pub struct DiscoveryV2Row {
 /// A discovered V3-family pool (Uniswap / Sushi / Pancake / Aerodrome).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryV3Row {
-    /// The base `pools` row.
     pub pool: LiquidityPoolRow,
-    /// The owning `exchanges` row.
     pub exchange: ExchangeRow,
-    /// The `token0` `erc20_tokens` row.
     pub token0: Erc20TokenRow,
-    /// The `token1` `erc20_tokens` row.
     pub token1: Erc20TokenRow,
     /// Fee charged on the `token0` side.
     pub fee_token0: i64,
     /// Fee charged on the `token1` side.
     pub fee_token1: i64,
-    /// The fee denominator.
     pub fee_denominator: i64,
-    /// The V3 tick spacing.
     pub tick_spacing: i64,
     /// Liquidity-update marker block (stamped by the liquidity updater).
     pub liquidity_update_block: Option<i64>,
-    /// Liquidity-update marker log index.
     pub liquidity_update_log_index: Option<i64>,
 }
 
@@ -98,13 +84,12 @@ pub struct DiscoveryV4Row {
     pub managed_pool_id: i64,
     /// The V4 `pool_hash` (`bytes32`) unique pool key.
     pub pool_hash: B256,
-    /// The hooks contract address.
     pub hooks: Address,
     /// The resolving `pool_managers` row (address + `state_view`).
     pub manager: PoolManagerRow,
-    /// The `currency0` `erc20_tokens` row (V4's `token0`).
+    /// The `currency0` token row (V4's `token0`).
     pub token0: Erc20TokenRow,
-    /// The `currency1` `erc20_tokens` row (V4's `token1`).
+    /// The `currency1` token row (V4's `token1`).
     pub token1: Erc20TokenRow,
     /// The owning `exchanges` row (via `pool_managers.exchange_id`).
     pub exchange: ExchangeRow,
@@ -112,24 +97,18 @@ pub struct DiscoveryV4Row {
     pub fee_currency0: i64,
     /// Fee charged on the `currency1` side.
     pub fee_currency1: i64,
-    /// The fee denominator.
     pub fee_denominator: i64,
-    /// The V4 tick spacing.
     pub tick_spacing: i64,
     /// Liquidity-update marker block (stamped by the liquidity updater).
     pub liquidity_update_block: Option<i64>,
-    /// Liquidity-update marker log index.
     pub liquidity_update_log_index: Option<i64>,
 }
 
 /// A discovered candidate pool, one variant per buildable family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiscoveryPoolRow {
-    /// A V2-family pool.
     V2(DiscoveryV2Row),
-    /// A V3-family pool.
     V3(DiscoveryV3Row),
-    /// A Uniswap V4 managed pool.
     V4(DiscoveryV4Row),
 }
 
@@ -146,7 +125,6 @@ impl DiscoveryPoolRow {
         }
     }
 
-    /// The `token0` / `currency0` token row.
     #[must_use]
     pub fn token0(&self) -> &Erc20TokenRow {
         match self {
@@ -156,7 +134,6 @@ impl DiscoveryPoolRow {
         }
     }
 
-    /// The `token1` / `currency1` token row.
     #[must_use]
     pub fn token1(&self) -> &Erc20TokenRow {
         match self {
@@ -166,7 +143,6 @@ impl DiscoveryPoolRow {
         }
     }
 
-    /// The owning exchange row.
     #[must_use]
     pub fn exchange(&self) -> &ExchangeRow {
         match self {
@@ -176,8 +152,6 @@ impl DiscoveryPoolRow {
         }
     }
 }
-
-// ── SELECT construction ────────────────────────────────────────────────────
 
 /// `(kind, subclass table, has_stable_column)` for every V2 species, in
 /// manifest order. Projects [`crate::species`] (ADR-059 D3) so one `UNION ALL`
@@ -275,8 +249,6 @@ fn v4_select() -> String {
          ORDER BY mp.id",
     )
 }
-
-// ── row decoding ───────────────────────────────────────────────────────────
 
 /// Decode the base `pools` row from columns `[0, 7)` of a V2/V3 branch.
 fn decode_pool_base(row: &Row<'_>) -> Result<LiquidityPoolRow, DbError> {
@@ -382,8 +354,6 @@ fn decode_v2_v3_row(row: &Row<'_>) -> Result<DiscoveryPoolRow, DbError> {
         "discovery select returned unrecognized pool kind {kind:?}"
     )))
 }
-
-// ── the read surface ───────────────────────────────────────────────────────
 
 /// Read the canonical discovered V2-family rows for `chain_id` on a borrowed
 /// connection. This is the V2-only half of the manifest-driven discovery

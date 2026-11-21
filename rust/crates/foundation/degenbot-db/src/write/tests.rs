@@ -54,8 +54,6 @@ fn seed_user(db: &DegenbotDb, address: &str) -> i64 {
     conn.last_insert_rowid()
 }
 
-// ── the pure bit-decode (parity gate: vs the recorded fixture rows) ────
-
 #[test]
 fn bit_decode_zero_bitmap_yields_zero_defaults() {
     let cfg = decode_reserve_configuration_bitmap(U256::ZERO);
@@ -143,8 +141,6 @@ fn open_read_only_still_blocks_writes() {
     let r: rusqlite::Result<usize> = conn.execute("CREATE TABLE x (a INT)", []);
     assert!(r.is_err(), "read handle should block writes");
 }
-
-// ── the upsert substrate (get_or_create_*) ────────────────────────────
 
 #[test]
 fn get_or_create_e_mode_category_creates_then_returns_existing() {
@@ -394,8 +390,6 @@ fn get_or_create_collateral_and_debt_positions_create_with_zero_balance() {
     assert_eq!(dbalance, "0");
     assert!(dlast.is_none());
 }
-
-// ── the per-event apply fns ──────────────────────────────────────────
 
 #[test]
 fn apply_collateral_configuration_changed_creates_then_updates() {
@@ -733,8 +727,6 @@ fn apply_asset_source_updated_sets_price_source() {
     assert_eq!(ps.as_deref(), Some("0xsource"));
 }
 
-// ── the GHO-discount substrate fns ────────────────────────────────
-
 /// Seed a debt position with a non-zero balance + `last_index`.
 fn seed_debt_position_with_balance(
     db: &DegenbotDb,
@@ -954,14 +946,8 @@ fn reset_debt_position_missing_row_returns_err() {
 }
 
 // ── Aave V3 `_burnScaled` cap-to-scaledBalance clamp ────────────────
-// On-chain, `_burnScaled` clamps the burn amount to the position's
-// `scaledBalance` before decrementing (the contract NEVER goes below
-// zero). Rust's stored balance can drift by 1-2 wei vs the chain on
-// long-running positions; a full-withdraw Burn whose `amountTotal` was
-// computed against the on-chain (slightly higher) `scaledBalance` then
-// produces a `balance_delta` whose magnitude exceeds the stored balance,
-// and the unguarded `current + delta` would go negative and crash the
-// chunk. The apply fn must mirror the contract: clamp to zero.
+// The apply fn mirrors the on-chain clamp to zero (see
+// `finish_scaled_token_balance_state` in `write/positions.rs`).
 #[test]
 fn apply_scaled_burn_clamps_to_zero_when_delta_exceeds_balance() {
     let db = write_db_with_market();

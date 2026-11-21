@@ -3,8 +3,6 @@
 use super::util::parse_decimal_u256;
 use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 
-// ── the upsert substrate (`get_or_create_*`) ──────────────────────────────
-
 /// The post-apply context the discount refresh reads: the GHO debt position's
 /// `scaled_balance`/`last_index` (POST-apply — the `ScaledTokenMint`/`Burn` apply
 /// landed them) + the user's `address` + `stk_aave_balance`. Built by

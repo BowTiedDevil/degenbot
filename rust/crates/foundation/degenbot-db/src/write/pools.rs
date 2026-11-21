@@ -130,7 +130,6 @@ impl DegenbotDb {
         /// # Errors
         ///
         /// Returns [`DbError::Sqlite`] on a query failure.
-        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         fn apply_reserve_initialized, apply_reserve_initialized_on_conn(
             conn: &rusqlite::Connection,
@@ -143,7 +142,6 @@ impl DegenbotDb {
             price_source: Option<&str>,
             gho_link_token_id: Option<i64>,
         ) -> Result<i64, DbError>;
-        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         {
             if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {

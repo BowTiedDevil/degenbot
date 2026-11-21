@@ -31,8 +31,6 @@
 //! vs. the Alembic head; the round-trip is lossless across the full 32-byte
 //! EVM range.
 //!
-//! # Design references
-//!
 //! # The writer fence (ADR-070)
 //!
 //! The write substrate (the `write` module + the write-capable constructors
@@ -67,9 +65,7 @@ pub mod species;
 /// OFF) — see [`sql_ledger`] for the structural zero-overhead argument.
 #[cfg(feature = "sql-ledger")]
 pub mod sql_ledger;
-/// The write substrate (ADR-070): compiled only when the `writer` feature is
-/// enabled (the updater shells) or for this crate's own tests. Bot/engine
-/// crates never enable it, so the write fns are absent from their builds.
+/// The write substrate; see this crate's writer-fence section (ADR-070).
 #[cfg(any(test, feature = "writer"))]
 pub mod write;
 

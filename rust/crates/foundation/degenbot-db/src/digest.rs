@@ -71,9 +71,7 @@ pub const MARKET_DIGEST_TABLES: [&str; 10] = [
 /// One market table's record — a manifest `tables` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableDigest {
-    /// The table name.
     pub table: String,
-    /// Rows hashed.
     pub rows: u64,
     /// The canonical serialization's SHA-256 over the table, lowercase hex.
     pub digest: String,
@@ -299,7 +297,6 @@ fn manifest_error(detail: impl std::fmt::Display) -> DbError {
     DbError::Decode(format!("completed-market manifest: {detail}"))
 }
 
-/// The value of `key` in a parsed object.
 fn field<'a>(fields: &'a [(String, JsonValue)], key: &str) -> Result<&'a JsonValue, DbError> {
     fields
         .iter()
@@ -434,7 +431,6 @@ fn is_lowercase_hex_64(text: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-/// One object value's fields.
 fn expect_object<'a>(
     value: &'a JsonValue,
     what: &str,
@@ -447,7 +443,6 @@ fn expect_object<'a>(
     }
 }
 
-/// One string value.
 fn expect_str(value: &JsonValue, what: &str) -> Result<String, DbError> {
     match value {
         JsonValue::Str(text) => Ok(text.clone()),
@@ -455,7 +450,6 @@ fn expect_str(value: &JsonValue, what: &str) -> Result<String, DbError> {
     }
 }
 
-/// One boolean value.
 fn expect_bool(value: &JsonValue, what: &str) -> Result<bool, DbError> {
     match value {
         JsonValue::Bool(boolean) => Ok(*boolean),
@@ -465,7 +459,6 @@ fn expect_bool(value: &JsonValue, what: &str) -> Result<bool, DbError> {
     }
 }
 
-/// One plain integer value.
 fn expect_int(value: &JsonValue, what: &str) -> Result<i64, DbError> {
     match value {
         JsonValue::Int(integer) => Ok(*integer),
@@ -475,7 +468,6 @@ fn expect_int(value: &JsonValue, what: &str) -> Result<i64, DbError> {
     }
 }
 
-/// One integer or null value.
 fn expect_optional_int(value: &JsonValue, what: &str) -> Result<Option<i64>, DbError> {
     match value {
         JsonValue::Null => Ok(None),
@@ -920,7 +912,6 @@ fn push_json_string(json: &mut String, value: &str) {
     json.push('"');
 }
 
-/// Push a double-quoted, comma-separated identifier list.
 fn push_quoted_list(sql: &mut String, columns: &[String]) {
     for (index, column) in columns.iter().enumerate() {
         if index > 0 {
@@ -930,7 +921,6 @@ fn push_quoted_list(sql: &mut String, columns: &[String]) {
     }
 }
 
-/// Push a double-quoted SQL identifier.
 fn push_quoted(sql: &mut String, identifier: &str) {
     sql.push('"');
     sql.push_str(&identifier.replace('"', "\"\""));

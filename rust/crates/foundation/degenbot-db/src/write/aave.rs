@@ -317,8 +317,6 @@ impl DegenbotDb {
         }
     }
 
-    // ── the per-event apply fns (built on the upsert substrate) ──────────
-
     conn_writer! {
         /// Apply a `CollateralConfigurationChanged` event's decoded config
         /// bitmap to the asset's `aave_v3_asset_configs` row, minus the RPC fetch
@@ -410,7 +408,6 @@ impl DegenbotDb {
         /// # Errors
         ///
         /// Returns [`DbError::Sqlite`] on a query failure.
-        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         fn apply_e_mode_category_added, apply_e_mode_category_added_on_conn(
             conn: &rusqlite::Connection,
@@ -422,7 +419,6 @@ impl DegenbotDb {
             price_source: Option<&str>,
             label: &str,
         ) -> Result<i64, DbError>;
-        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         {
             if let Some(id) = existing_emode_category(conn, market_id, category_id)? {

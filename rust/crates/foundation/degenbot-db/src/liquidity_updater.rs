@@ -112,9 +112,7 @@ impl PoolUpdateState {
 /// A `(block_number, log_index)` pair — the per-pool apply-progress marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BlockLog {
-    /// The block number.
     pub block: u64,
-    /// The log index within that block.
     pub log_index: u64,
 }
 

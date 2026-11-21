@@ -4,21 +4,9 @@
 //! [`DegenbotDb`][crate::connection::DegenbotDb], whose connections are
 //! `PRAGMA query_only=on`, these open their own raw [`Connection`]s, run the
 //! full file lifecycle a standalone Rust consumer (`cargo add degenbot-db`)
-//! needs, and never set `query_only`:
-//!
-//! - [`create_new_database`] — WAL mode + the full head DDL + `VACUUM` + the
-//!   private `_degenbot_db_schema_version` stamp (Rust-owned from birth).
-//! - [`backup_database`] — `sqlite3.Connection.backup` equivalent
-//!   (rusqlite's online `Backup`), preserving the Python
-//!   `backup_sqlite_database`'s `PRAGMA integrity_check` assertions on **both**
-//!   the source and the destination.
-//! - [`compact_database`] — `VACUUM`.
-//! - [`upgrade_database`] — ensure the DB is at the current Rust schema; on a
-//!   fresh file applies the head DDL + the Rust stamp; a Rust-owned DB stamped
-//!   behind the binary is brought forward under the ADR-052 D2 forward
-//!   version-lock; an already-current DB is a no-op; a legacy
-//!   `alembic_version`-marked DB is healed out-of-place to Rust ownership
-//!   (ADR-011); a foreign file is **refused**.
+//! needs, and never set `query_only`. The surface is [`create_new_database`],
+//! [`backup_database`], [`compact_database`], [`inspect_schema_state`],
+//! [`convert_alembic_to_rust_owned`], and [`upgrade_database`].
 //!
 //! # Rust-owned from birth
 //!

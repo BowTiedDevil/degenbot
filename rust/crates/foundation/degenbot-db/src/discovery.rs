@@ -682,8 +682,6 @@ mod tests {
         db
     }
 
-    // ── upsert_exchange ──────────────────────────────────────────────────
-
     #[test]
     fn upsert_exchange_inserts_new_row_active_false_block_null() {
         let db = write_db();
@@ -761,8 +759,6 @@ mod tests {
         assert_eq!(stored, factory.to_checksum(None));
     }
 
-    // ── set_exchange_active ──────────────────────────────────────────────
-
     #[test]
     fn set_exchange_active_flips_false_to_true_and_back() {
         let db = write_db();
@@ -791,8 +787,6 @@ mod tests {
             "expected MissingRow for nonexistent id, got {err:?}"
         );
     }
-
-    // ── upsert_pool_manager ──────────────────────────────────────────────
 
     #[test]
     fn upsert_pool_manager_inserts_new_row() {
@@ -879,8 +873,6 @@ mod tests {
 
         assert_eq!(first, second, "identical recall must be a no-op");
     }
-
-    // ── fetch_exchange_by_name (the read-by-name companion) ───────────────
 
     #[test]
     fn fetch_exchange_by_name_returns_inserted_row_and_none_when_missing() {
