@@ -87,15 +87,13 @@ const ALLOWED_LABELS: &[&str] = &[
     // `degenbot_core::updater_telemetry::UpdaterKind` (variants only; the
     // host install in `degenbot-bot/src/instruments.rs` is the single
     // enum→`&'static str` conversion, so a stray value cannot compile).
-    // ADR-043 §9 review, DVLOOW/NGJBSF telemetry, approved by project
-    // manager 2026-10-06.
+    // ADR-043 §9 cardinality review.
     "updater",
     // `degenbot_updater_stage_duration_seconds{stage}`: the updater
     // chunk-loop stage — a six-value closed set (`chunk`, `fetch`,
     // `compute`, `verify`, `apply`, `cleanup`), compile-pinned by
     // `degenbot_core::updater_telemetry::UpdaterStage`.
-    // ADR-043 §9 review, DVLOOW/NGJBSF telemetry, approved by project
-    // manager 2026-10-06.
+    // ADR-043 §9 cardinality review.
     "stage",
     // `degenbot_delivery_admission_floored{seam}`: the pre-sim gas floor's
     // enforcement point — a two-value closed set (`inline` = the lane walk

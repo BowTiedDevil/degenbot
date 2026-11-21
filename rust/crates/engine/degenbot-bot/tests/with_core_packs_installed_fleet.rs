@@ -5,7 +5,7 @@
 //! Contracts pinned at the real-boot layer:
 //! 1. The python-driven pump's boot order (loader → holder install →
 //!    `EngineStages::with_core`) constructs the engine on the installed
-//!    config (the P6YXA6 production-boot fix regression guard; there is no
+//!    config (the production-boot regression guard; there is no
 //!    stance to probe — fleet structurally is the executor).
 
 #![expect(clippy::expect_used)]

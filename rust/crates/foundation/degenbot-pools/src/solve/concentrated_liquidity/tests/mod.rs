@@ -3188,7 +3188,7 @@ fn bench_active_set_walk_solve() {
     }
 }
 
-// ── Exact shifted-anchor tests (EHSWSX) ───────────────────────────────
+// ── Exact shifted-anchor tests ────────────────────────────────────────
 
 /// The deep beyond-prefix fixture at tuple (0, 10): hop 2's crossing
 /// gross input dominates. The transitional anchor (unshifted

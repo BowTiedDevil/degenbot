@@ -1644,11 +1644,11 @@ fn process_once_static_candidates(masked: &str) -> Vec<StaticCandidate> {
     candidates
 }
 
-/// Ratchet for the config-holder test seam (chunk SERRGX): every process-once
+/// Ratchet for the config-holder test seam: every process-once
 /// static whose initialization path reads the config holder must be classified
 /// in `tests/config_derived_statics_census.txt`.
 ///
-/// The SERRGX call-site audit made the seam safe but lives only in a result
+/// The call-site audit made the seam safe but lives only in a result
 /// doc — a SNAPSHOT, not a ratchet. A `OnceLock`/`LazyLock` initialized from
 /// the holder freezes a snapshot; a `reinstall_for_tests` leaves it
 /// stale-able. This gate makes the audit durable: a NEW config-derived

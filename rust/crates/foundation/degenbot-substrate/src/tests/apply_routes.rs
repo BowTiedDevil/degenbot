@@ -397,7 +397,7 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
     );
 }
 
-/// Regression (WZWKKU): `v3_restore_before_block(B)` with `B` strictly past
+/// Regression: `v3_restore_before_block(B)` with `B` strictly past
 /// the journal's newest delta must leave the pool's current state
 /// UNTOUCHED. This is the per-pool path `dispatch_reorg_log` hits for a
 /// `removed: true` log on an unrelated pool — totally normal reorg traffic.
@@ -496,7 +496,7 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
     );
 }
 
-/// Regression (HO3GWT, V3 backfill buffer): a Mint buffered during the
+/// Regression (V3 backfill buffer): a Mint buffered during the
 /// backfill phase, then applied at registration via
 /// `apply_backfill_buffer_v3`, must (1) push a tick-only journal delta,
 /// (2) advance `state.update_block` to the event's block, and (3) be
@@ -576,7 +576,7 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
     );
 }
 
-/// Regression (HO3GWT, V3 pump buffer): same invariants as the backfill
+/// Regression (V3 pump buffer): same invariants as the backfill
 /// path, but the event is buffered via the WS-pump path (`apply_v3_
 /// liquidity_update` while unregistered routes to the pump buffer) and
 /// applied via `apply_pump_buffer_v3`.
@@ -647,7 +647,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     );
 }
 
-/// Regression (HO3GWT, V4 backfill buffer): mirror of the V3 backfill
+/// Regression (V4 backfill buffer): mirror of the V3 backfill
 /// test for `apply_backfill_buffer_v4` — a `ModifyLiquidity` buffered
 /// during backfill must journal + advance `update_block` + be reversible
 /// via `v4_restore_before_block`.
@@ -957,7 +957,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     assert_eq!(s_b.update_block, s_a.update_block);
 }
 
-/// Regression (J63J3N, scalar read half): `PyLiquidityPool.snapshot_v3`
+/// Regression (scalar read half): `PyLiquidityPool.snapshot_v3`
 /// and the per-field scalar getters all routed through `get_v3_pool`,
 /// which returns `None` for `PoolEntry::V4` — silently dropping V4 reads
 /// (the read-side twin of the write-side bug). The fix is the
@@ -1058,7 +1058,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
     assert_eq!(view_b.update_block(), view_a.update_block());
 }
 
-/// Regression (J63J3N, tick-data read half): `tick_data_snapshot` and
+/// Regression (tick-data read half): `tick_data_snapshot` and
 /// `tick_bitmap_snapshot` routed through `get_v3_pool`, returning an
 /// empty dict for V4 pools. The family `get_v3_or_v4_pool` accessor's
 /// `tick_data()` must surface a V4 pool's tick map (post-Mint/Burn) — and

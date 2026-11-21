@@ -2,7 +2,7 @@
 //! reach Python `logging` under the correct logger names with the correct
 //! levels and messages.
 //!
-//! This tests the O7CE2A subscriber swap: `pyo3_log::init()` replaced by
+//! This tests the subscriber swap: `pyo3_log::init()` replaced by
 //! a `tracing_subscriber` registry with a batched Python-forwarding layer.
 //! The contract (parity with `src/degenbot/logging.py`) is:
 //!

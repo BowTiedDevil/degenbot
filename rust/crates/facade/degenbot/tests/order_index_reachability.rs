@@ -1,4 +1,4 @@
-//! B5L2XA: the net-profit order index must be reachable from the
+//! The net-profit order index must be reachable from the
 //! standalone Rust consumer (the `degenbot` umbrella).
 //!
 //! ADR-024's deterministic profit-descending pre-sim top-K selection runs
@@ -6,8 +6,8 @@
 //! consumer-side proof lives at the build/manifest layer: the umbrella both
 //! re-exports `degenbot_order_index` AND enables
 //! `degenbot-arbitrage/order-index` on its dep edge. This test is the
-//! compile-time half (the re-export); the feature-edge half is verified by
-//! the `cargo tree -e features` probe in the task's validation gates.
+//! compile-time half (the re-export); the feature-edge half is that dep edge
+//! in the umbrella manifest, which `cargo tree -e features` shows enabled.
 
 /// The order-index types must be nameable from the umbrella crate root
 /// (compile-time reachability — sibling to the scan-based gate in

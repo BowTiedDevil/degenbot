@@ -240,7 +240,7 @@ proptest! {
     }
 }
 
-// A33CRA acceptance: random mutations INTERLEAVED with a sequence of X values —
+// Random mutations INTERLEAVED with a sequence of X values —
 // the per-block pattern (X changes every block, mutations churn between blocks).
 // The hot-range reclassification must track both: after every op and at every
 // X, top_k / top_k_floor / best equal the brute ScanTopK reference exactly.

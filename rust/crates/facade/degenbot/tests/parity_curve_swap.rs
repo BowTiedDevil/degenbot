@@ -10,7 +10,7 @@
 //! (`degenbot._ffi.curve_dy.calculate_dy`, the PyO3 binding). The shared oracle is
 //! the recorded constant in the shared fixture file.
 //!
-//! ## Fixture (single source of truth — HRT356)
+//! ## Fixture (single source of truth)
 //!
 //! Loaded from the SHARED file `tests/standalone_parity/fixtures/curve_swap.json`,
 //! which the Python dual-driver test
@@ -33,7 +33,7 @@ use degenbot_math::curve::{
 };
 
 /// Path to the shared Curve fixture (loaded by both this Rust test and the
-/// Python dual-driver test — HRT356, the single source of truth).
+/// Python dual-driver test — the single source of truth).
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/standalone_parity/fixtures/curve_swap.json"

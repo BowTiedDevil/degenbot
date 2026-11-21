@@ -62,9 +62,11 @@ const FIXTURE_PATH: &str = concat!(
     "/../../../../tests/fixtures/path5000_v2v4v3_block25704509.json"
 );
 
-/// The VAASFM clamp margin (must stay in sync with the typed config's
+/// The clamp margin (must stay in sync with the typed config's
 /// `solve.clamp_margin_wei` default — 1 wei, the maximum-extraction choice;
-/// see the margin-policy checkpoint).
+/// see `concentrated_liquidity_hop_clamp_margin_exceeds_worst_solver_over_prediction`
+/// in `degenbot-pools/tests/v4_crossing_solver_vs_sim_parity.rs` for the
+/// measurement the margin must exceed).
 const CLAMP_MARGIN: u64 = 1;
 
 /// The recorded byte-exact V4 output the clamp must preserve (== the recorded

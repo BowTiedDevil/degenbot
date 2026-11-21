@@ -5,7 +5,7 @@ use degenbot_pools::{
 };
 
 // -----------------------------------------------------------------------
-// Curve stableswap solve branch (RPDDWH)
+// Curve stableswap solve branch
 // -----------------------------------------------------------------------
 /// Two-token Curve stableswap pool params (standard, raw balances, no
 /// rates, no lending). amp=100 (raw), fee=4e6 (0.04% of 1e10).
@@ -435,7 +435,7 @@ fn solve_cycle_race_marks_dirty_work_with_solve_span() {
 }
 /// (flips the trace-91a4a776 pin): the tombstone finalize must
 /// NOT run a solve cycle. Trace 91a4a776's inner `solve_dirty` — and the
-/// span gate later added around it — retired with this task: the finalize
+/// span gate later added around it — both retired: the finalize
 /// is dispatched tombstone-driven and executed by the drainer while the
 /// SUCCESSOR block's burst is still being applied, so its solve consumed
 /// the successor's first-dirt under the dead block's identity (traces
@@ -722,7 +722,7 @@ fn solve_span_records_cycle_solve_block() {
         "arb.solve must record the cycle's anchored block"
     );
 }
-// P5FEOI : original span test, otel-gated like its harness.
+// The original span test, otel-gated like its harness.
 #[cfg(feature = "otel")]
 #[test]
 #[expect(clippy::expect_used)]

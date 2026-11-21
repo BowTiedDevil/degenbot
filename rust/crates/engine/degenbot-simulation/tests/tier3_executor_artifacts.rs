@@ -1,4 +1,4 @@
-//! Toolchain-free integrity guard for the Vyper executor artifact (BHL2R2 /
+//! Toolchain-free integrity guard for the Vyper executor artifact (the
 //! tier-3b deterministic evm2-replay oracle).
 //!
 //! The tier-3b executor tests (S2/S3) run in the default

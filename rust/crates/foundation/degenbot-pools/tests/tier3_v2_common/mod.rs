@@ -37,7 +37,7 @@
 //! The driver is parameterized only by the fork's fee
 //! (`gamma_numer`/`fee_denom`), harness artifact name, and K-check error
 //! string ([`V2Fork`]), so a V2 fork (Sushi, …) is a one-line declaration and
-//! the two tests cannot drift (the HRT356 class).
+//! the two tests cannot drift.
 
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;

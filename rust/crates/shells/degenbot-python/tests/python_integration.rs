@@ -307,7 +307,7 @@ fn test_py_balancer_rate_provider_delegates() {
 /// Test the `PyCurveDataProvider` adapter: a Python object exposing the
 /// CurveDataProvider read interface is wrapped as a stored
 /// `Arc<dyn CurveDataProvider>` and the reads delegate to Python
-/// (ADR-005 JFGCHJ I/O trait object).
+/// (ADR-005 I/O trait object).
 #[test]
 fn test_py_curve_data_provider_delegates() {
     use degenbot_rs::bot::pool::make_curve_data_provider;

@@ -434,7 +434,7 @@ fn mock_family_ledger_lands_a_submitted_record() {
     );
 }
 
-/// The post-KDDCQI session-phase surface the Python stop funnels translate:
+/// The session-phase surface the Python stop funnels translate:
 /// one total Rust table, typed declines for illegal moves, shutdown total from
 /// every phase.
 #[test]

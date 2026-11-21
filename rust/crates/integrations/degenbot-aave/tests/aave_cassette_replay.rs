@@ -1,5 +1,5 @@
 //! Offline end-to-end replay of the Aave chunk loop over its committed golden
-//! capture (ADR-068; hand-off from the recorder chunk FZH6QM).
+//! capture (ADR-068).
 //!
 //! The committed cassette (the corpus home's
 //! `tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json`) was
@@ -25,7 +25,7 @@
 //! statement-count N+1 tripwire) rides the same replay through
 //! [`LedgerDb`] - the drift gate is byte-identical regeneration through the
 //! same writer (`REGENERATE_SQL_GOLDENS=1`), and each probe of the gate is a
-//! deliberate fault injection documented in the task sign-off.
+//! deliberate, documented fault injection.
 
 #![expect(
     clippy::unwrap_used,

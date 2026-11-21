@@ -304,7 +304,7 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
     w.copy_from_slice(&tk_out.as_ref()[0..32]);
     let on_gross = U256::from_be_bytes(w) & tier3_v3_common::MASK_128;
     w.copy_from_slice(&tk_out.as_ref()[32..64]);
-    // on-chain net is the int128 field: the LOW 16 bytes of the word (LIBQKE)
+    // on-chain net is the int128 field: the LOW 16 bytes of the word
     let mut net_low = [0u8; 16];
     net_low.copy_from_slice(&w[16..32]);
     let on_net = i128::from_be_bytes(net_low);

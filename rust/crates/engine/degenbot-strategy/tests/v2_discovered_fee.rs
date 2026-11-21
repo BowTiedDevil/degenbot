@@ -1,4 +1,4 @@
-//! M4LIT6 interface coverage: a discovered non-default V2 species fee must
+//! Interface coverage: a discovered non-default V2 species fee must
 //! survive connector loading, solver admission, lane composition, and the
 //! shared settlement/backrun executable-hop projection.
 

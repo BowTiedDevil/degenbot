@@ -1,10 +1,10 @@
 #![expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
-//! Tier-3b executor deploy-contract oracle (BHL2R2 / S2 foundation).
+//! Tier-3b executor deploy-contract oracle.
 //!
 //! Verifies that the committed Vyper executor artifact deploys correctly in
-//! the evm2 fixture EVM with the REAL constructor-arg contract — resolving the
-//! open "verify once by deploying" item from S1 (2ISTMX) before S2's
-//! reproduction harness depends on it.
+//! the evm2 fixture EVM with the REAL constructor-arg contract — closing the
+//! "verify once by deploying" gap before the reproduction harness depends on
+//! it.
 //!
 //! ## Finding that this test locks in (correct deployment contract)
 //! `cmd_executor.vy`'s constructor takes four role addresses. The `immutables.json`

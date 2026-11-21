@@ -1,7 +1,6 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Balancer V2 stable swap calc,
-//! ComposableStable `bpt_idx = Some(..)` path (ADR-005 standalone claim,
-//! RPSW4Z).
+//! ComposableStable `bpt_idx = Some(..)` path (ADR-005 standalone claim).
 //!
 //! Proves the BPT-index-skipping path in
 //! the `balancer_stable` family read door (`skip_bpt`) correctly **drops the BPT
@@ -32,13 +31,12 @@
 //! Python companion), and the ComposableStable fixture here re-derives the
 //! SAME constant through the BPT-drop path.
 //!
-//! ## Known gap to the full RPSW4Z scenario
+//! ## Known gap in the `bpt_idx = Some(1)` scenario
 //!
-//! The task body's exact scenario — `bpt_idx = Some(1)` with a
-//! `token0 → token2` swap (one index PAST the BPT) — is NOT reachable
-//! through the current `simulate_swap` dispatch, which is
-//! `zero_for_one`-based and hardcodes the swap to token-list positions
-//! `0 ↔ 1`. With `bpt_idx = Some(1)` the BPT IS at position 1, so
+//! The exact `bpt_idx = Some(1)` + `token0 → token2` scenario (one index PAST
+//! the BPT) is NOT reachable through the current `simulate_swap` dispatch,
+//! which is `zero_for_one`-based and hardcodes the swap to token-list
+//! positions `0 ↔ 1`. With `bpt_idx = Some(1)` the BPT IS at position 1, so
 //! positions `0 ↔ 1` is a swap involving the BPT itself (not a valid
 //! asset-pair swap). The "index PAST the BPT" rebase branch of `skip_bpt`
 //! is therefore covered by a DIRECT unit test on `skip_bpt` in
@@ -46,8 +44,8 @@
 //! bpt_idx), while THIS end-to-end fixture covers the BPT-drop branch
 //! (`bpt_idx = Some(2)`, swap between two non-BPT positions). The full
 //! end-to-end `bpt_idx = Some(1)` + `token0 → token2` scenario is blocked
-//! on the multi-token `simulate_swap` API extension (sibling to VQ4OHX
-//! tasks `7D34LW` Aerodrome stable decimals + `U2K6FN` Curve get_dy).
+//! on the multi-token `simulate_swap` API extension (sibling to the Aerodrome
+//! stable-decimals and Curve `get_dy` work).
 
 #![expect(clippy::doc_markdown)]
 

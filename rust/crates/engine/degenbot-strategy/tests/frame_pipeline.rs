@@ -1,4 +1,4 @@
-//! Frame-pipeline tests (task WKPZQK).
+//! Frame-pipeline tests.
 //!
 //! 1. The golden frame (offline): a hand-built replay journal (post-target
 //!    V2 reserves at slot 8) flows descriptors → `extract_pool_post_states`

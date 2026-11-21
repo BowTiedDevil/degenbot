@@ -7,7 +7,7 @@ use super::*;
 /// is process-unsafe in a parallel test with cross-thread span handles —
 /// the pump's per-epoch span is cloned and entered on later turns, so the
 /// exporter layer and the span carry state across threads). No other lib test
-/// takes the once-per-process global slot (the BGGTEG interest paint is
+/// takes the once-per-process global slot (the interest paint is
 /// `not(otel)`-gated), so this test wins it; its `set_global_default`
 /// repaints the callsite interest cache exactly like the paint would.
 /// The `OTel` layer itself is covered by the `otel_plumbing` integration

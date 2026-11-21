@@ -522,7 +522,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     );
 }
 
-/// OVVLGO: the V4 twin of the rolling-start race regression. The V4 seed
+/// The V4 twin of the rolling-start race regression. The V4 seed
 /// must survive a pump `ModifyLiquidity` event so step-1 (seed-verify at
 /// the snapshot block) is race-free under a rolling start. Mirrors
 /// `v3_snapshot_seed_survives_pump_liquidity_update` for the V4

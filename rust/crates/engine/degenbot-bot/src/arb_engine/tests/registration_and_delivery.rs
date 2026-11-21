@@ -97,7 +97,7 @@ fn process_block_routes_logs_to_sub_engines() {
         ],
     )
     .unwrap();
-    // Process with no logs — should not panic. X35QKN: process_block was
+    // Process with no logs — should not panic. process_block was
     // retired (the parallel log-routing API); an empty-log process is just
     // solve_dirty over empty dirty sets + the last_processed_block stamp.
     run_test_cycle(&mut engine, 1, &BlockMetadata::default(), &[]);
@@ -959,7 +959,7 @@ fn solve_all_paths_does_not_advance_delivered_without_channel() {
 }
 #[test]
 fn solve_does_not_send_result_batch_only_send_does() {
-    // Contract (lock granularity, 3HYYGQ): solving
+    // Contract (lock granularity): solving
     // (`solve_all_paths` / `solve_dirty` / `process_updates` — all through
     // `run_epoch`) recomputes `results` but must NOT push
     // a batch onto the result channel. Only `send_result_batch`
@@ -972,7 +972,7 @@ fn solve_does_not_send_result_batch_only_send_does() {
     // `result_rx.recv().await` — never a locked `latest_results()` — so it
     // never contends with a solve-held lock. Re-coupling the send into the
     // solve path would reintroduce exactly the "Mutex held for entire
-    // solve including the (now-blocking) channel send" concern this task
+    // solve including the (now-blocking) channel send" concern this separation
     // exists to prevent. The cold-start half of this invariant is pinned
     // by `solve_all_paths_does_not_advance_delivered_without_channel`
     // (no channel set); this test pins the live half (channel set, solve
@@ -1195,8 +1195,8 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
         "set_solve_anchor never clobbers a real anchor"
     );
 }
-/// Pin (the review's Q6 strengthening): the solve-stamp path is
-/// MONOTONE - a late/stale stamp can no longer regress the results
+/// Pin: the solve-stamp path is MONOTONE - a late/stale stamp can no
+/// longer regress the results
 /// anchor. Both stamps below go through the REAL solve-stamp path
 /// (`solve_dirty` -> `run_epoch`'s anchor re-stamp):
 /// block 10 anchors first, then a stale block-5 cycle (a lagging drain

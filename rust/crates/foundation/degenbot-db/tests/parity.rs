@@ -43,7 +43,7 @@ fn fixture_expected() -> Expected {
 
 /// Path to the frozen `parity_expected.json` oracle — shared by the typed
 /// [`fixture_expected`] reader and the raw-order order-assertion tests
-/// (ADTUMQ) that parse the JSON as a `serde_json::Value` to preserve object
+/// that parse the JSON as a `serde_json::Value` to preserve object
 /// key order.
 fn fixture_expected_path() -> PathBuf {
     PathBuf::from(FIXTURE_DIR).join("parity_expected.json")
@@ -255,7 +255,7 @@ fn fetch_all_liquidity_maps_v3_matches_python_oracle() {
     }
 }
 
-/// ADTUMQ order contract: `fetch_all_liquidity_maps` V3 must return pools in
+/// Order contract: `fetch_all_liquidity_maps` V3 must return pools in
 /// the SQL `ORDER BY p.address` sequence (binary collation on the stored
 /// EIP-55-checksummed strings), NOT a client-side re-sort. The redundancy has
 /// been removed; this test pins the contract so a regression that re-introduces
@@ -360,7 +360,7 @@ fn fetch_all_liquidity_maps_v4_matches_python_oracle() {
     }
 }
 
-/// ADTUMQ order contract for V4: `fetch_all_liquidity_maps` V4 returns pools in
+/// Order contract for V4: `fetch_all_liquidity_maps` V4 returns pools in
 /// the SQL `ORDER BY pm.address, v4.pool_hash, lp.tick` sequence (the streaming
 /// `current` accumulator relies on this). Pins the Rust Vec's `(pm_address,
 /// pool_hash)` sequence byte-identical to the frozen `parity_expected.json`

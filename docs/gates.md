@@ -134,7 +134,13 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
   paths mirror Detector 1's file classes (`src tests examples` plus the build
   surface: `justfile`, `*.toml`, `*.yml`/`*.yaml`, `*.pyi`, `*.sol`,
   `.github/**`, `tier3-oracle/**`, `scripts/`, `run_bot.sh`); `*.rs` files are
-  scanned on comment lines only, every other file class on all lines.
+  scanned on comment lines only, every other file class on all lines. The
+  `rust/crates/**` slice is the whole crate tree: crate `tests/`, `benches/`
+  and `examples/` and inline `src/**/tests` modules are in scope, because a
+  test comment cites a work item exactly as a shipped comment does and a
+  shared test harness is where those citations accumulate. Only generated
+  artifacts, the sha256-pinned `tier3-oracle/src*` harness sources, and this
+  gate's own hook/census files are excluded.
 - Detector 3 (the citation census ratchet) — the shapes the first two cannot
   see, case-insensitive and word-boundary anchored: `TODO-<hex>` in any case
   and `TODO(<word>)` tracker IDs, `Epic <token>` / `slice <token>` work-item

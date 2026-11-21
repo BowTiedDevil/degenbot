@@ -58,11 +58,17 @@
 #   - anything inside a longer word or identifier: the word-boundary rule
 #     excludes SCREAMING_SNAKE members and 0x-prefixed hex fragments
 #   Scope: src/ tests/ examples/ (all lines), scripts/ and run_bot.sh
-#   (all lines), rust/crates/*.rs comment lines only, plus the build
+#   (all lines), rust/crates/** comment lines only, plus the build
 #   surface — justfile, *.toml, *.yml/*.yaml, *.pyi, *.sol, .github/**,
 #   tier3-oracle/** — as all-lines files (their comments are '#' or '///',
-#   not Rust comments). Excluding rust tests/benches/examples, generated
-#   artifacts, and the gate's own census/hook/waiver files.
+#   not Rust comments). The rust/crates slice covers the whole crate tree,
+#   crate integration tests/benches/examples and inline src/**/tests modules
+#   included: a comment in a test cites a work item exactly as a shipped
+#   comment does, and a shared test harness is where those citations
+#   accumulated (docs/comments.md bans them in code without a test
+#   exemption). Excluding generated artifacts, the sha256-pinned
+#   tier3-oracle harness sources, and the gate's own census/hook/waiver
+#   files.
 #   Keep it fast (it runs in pre-commit): one rg pass + one awk pass, no
 #   per-token subprocesses.
 #   Override the census for testing: CHF=/dev/null <this script> (fails on
@@ -143,17 +149,17 @@ else
         '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
         ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
         ':(exclude)scripts/hooks/comment-hygiene*')
-    # Detector 2 scans shipped code only, so the index listing is filtered by
-    # root and by extension here: rg's glob list cannot narrow explicitly
-    # listed files, and a git pathspec ORs its patterns rather than intersecting
-    # them.
+    # The bare-token ratchet covers the whole tree — crate tests/benches/
+    # examples and inline src/**/tests modules included — so the index listing
+    # is filtered by root and by extension here: rg's glob list cannot narrow
+    # explicitly listed files, and a git pathspec ORs its patterns rather than
+    # intersecting them.
     # Single-quoted: an unquoted pattern in an array literal is pathname-expanded
     # against the working tree at assignment, which silently replaces the glob
     # with today's matches.
     code_roots=('src/' 'tests/' 'rust/crates/' 'scripts/' 'examples/' '.github/' 'tier3-oracle/')
     code_exact=('run_bot.sh' 'justfile' 'prek.toml' 'rust/Cargo.toml')
-    code_excludes=('rust/crates/*/tests/*' 'rust/crates/*/benches/*' 'rust/crates/*/examples/*' \
-                   'tier3-oracle/artifacts/*' 'tier3-oracle/src*/*' 'scripts/hooks/comment-hygiene*')
+    code_excludes=('tier3-oracle/artifacts/*' 'tier3-oracle/src*/*' 'scripts/hooks/comment-hygiene*')
     while IFS= read -r -d '' f; do
         skip=0
         for pat in "${code_excludes[@]}"; do

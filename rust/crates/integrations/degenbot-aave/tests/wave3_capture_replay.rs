@@ -18,7 +18,7 @@
 //! Per-scenario teeth (the adversarial contracts the capture program pins):
 //!
 //! `w3_aave_cross_tx_fact_dependence` — the `ChunkSubstrate` overlay case:
-//! the recorded RPC surface is the QR7QVT rt-gate shape (6 getLogs passes +
+//! the recorded RPC surface is the rt-gate shape (6 getLogs passes +
 //! exactly ONE `getDiscountPercent` `eth_call`, pinned at tx N's block 1001);
 //! tx N+1's pre-pass reads the user row tx N's apply created IN-CHUNK. 7
 //! served round trips, never 9: a committed-DB fact phase re-issues or drops
@@ -34,7 +34,7 @@
 //!
 //! `w3_aave_discount_revival_fixture` — the named counterfactual: the
 //! fixture chain's vToken revision is 1 (< the deprecation revision 4) so
-//! the QR7QVT option-(a) fact-run shape stays executable; the provenance
+//! the option-(a) fact-run shape stays executable; the provenance
 //! label is machine-gated here, and seeding the deprecation revision
 //! collapses the RPC shape (the revival probe).
 
@@ -91,7 +91,7 @@ const SPAN_FROM: u64 = 1000;
 const SPAN_TO: u64 = 1002;
 
 /// Independent literals: the chunk's recorded RPC surface per scenario — the
-/// QR7QVT rt-gate shape (six getLogs passes + the scenario's `eth_call`s).
+/// The rt-gate shape (six getLogs passes + the scenario's `eth_call`s).
 const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
 const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 8;
 const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 7;

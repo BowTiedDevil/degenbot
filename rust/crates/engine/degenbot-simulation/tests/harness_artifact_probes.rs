@@ -9,7 +9,7 @@
     clippy::cast_precision_loss,
     clippy::type_complexity
 )]
-//! TGUZCT item 3 — permanent artifact-side probes for the 0x43
+//! Permanent artifact-side probes for the 0x43
 //! `V4_BATCH_OPEN_WETH` opcode (settle-skip batch × `V4_MINT_COMPACT`).
 //!
 //! These run HAND-BUILT raw command streams — preamble from the current
@@ -24,12 +24,12 @@
 //!   `PM.balanceOf(executor, weth)` delta — the oracle half of the
 //!   on-chain floor).
 //! - (B) the legacy full-settle batch (0x42) + trailing mint REVERTS with
-//!   the NAMED `InsufficientMintDelta` error (the SMOZG3 opaque PM `D0`
+//!   the NAMED `InsufficientMintDelta` error (the opaque PM `D0`
 //!   credit-before-debit is gone).
 //! - (C) the hazard: an open batch (0x43) with NO follow-up mint reverts
 //!   at unlock with the stub's Error(string) "DELTA" revert (the stub's
 //!   model of v4-core's `CurrencyNotSettled`); the encoder's ledger pairing rule
-//!   (TGUZCT item 4) makes this stream unrepresentable.
+//!   makes this stream unrepresentable.
 
 use alloy::primitives::{keccak256, U256};
 use degenbot_executor::composers::{ComposerInputs, EncodeOptions};
@@ -246,7 +246,7 @@ fn tolerance(predicted: i128) -> i128 {
 #[test]
 fn reference_nonbatch_capture_stream_still_executes_with_mode2_floor() {
     let (mut h, hops, hop_outputs, _preamble, _s1, _s2, _mint, ref_payload) = probe_setup();
-    // The oracle probe's regime pin (SMOZG3 open question 1): zero pre-held
+    // The oracle probe's regime pin: zero pre-held
     // ERC6909 position — the capture is a fresh mint of the surplus.
     assert_eq!(
         h.pm_balance_of(h.executor, h.weth).unwrap(),
@@ -289,8 +289,9 @@ fn probe_open_weth_batch_plus_mint_executes_with_mode2_floor_and_capture() {
     let (currency_idx, recipient_idx, amount) = mint_codec(&mint);
 
     // The 0x43 variant: identical layout to 0x42, one command byte — the
-    // production encoder gains this variant with the SW42JA flip; these
-    // probes pin the artifact first, so the byte is patched in test space.
+    // production encoder gains this variant once capture composes with the
+    // batch; these probes pin the artifact first, so the byte is patched in
+    // test space.
     let mut batch = enc_v4_batch(&entries).unwrap();
     assert_eq!(batch[0], 0x42);
     batch[0] = 0x43;
@@ -331,7 +332,7 @@ fn probe_open_weth_batch_plus_mint_executes_with_mode2_floor_and_capture() {
 
 /// `(B)` the legacy full-settle batch (0x42) + trailing mint reverts with the
 /// NAMED `InsufficientMintDelta` error — the batch tail-settle took the WETH
-/// delta into custody, so the mint finds no live delta (SMOZG3's opaque PM
+/// delta into custody, so the mint finds no live delta (the opaque PM
 /// `D0` is gone).
 #[test]
 fn probe_full_settle_batch_plus_mint_reverts_with_named_error() {
@@ -366,7 +367,7 @@ fn probe_full_settle_batch_plus_mint_reverts_with_named_error() {
 /// the positive WETH delta unsettled, so the stub PoolManager reverts at
 /// unlock with Error(string) "DELTA" — the stub's model of v4-core's
 /// `CurrencyNotSettled` unlock check.
-/// The encoder's ledger pairing rule (TGUZCT item 4) makes this stream
+/// The encoder's ledger pairing rule makes this stream
 /// unrepresentable; this probe pins the on-chain consequence it protects.
 #[test]
 fn probe_open_batch_without_mint_reverts_unsettled_at_unlock() {

@@ -1,4 +1,4 @@
-//! Bundle wire-format + relay spec (task GSUF22).
+//! Bundle wire-format + relay spec.
 //!
 //! Seams: `degenbot_submission::bundle::{eth_send_bundle_request,
 //! eth_cancel_bundle_request, eth_send_bundle_cancel_request,

@@ -19,7 +19,7 @@
 //! direction-symmetry check (zfo == ofz at the 1:1 price) to catch a
 //! direction-flag inversion in the FFI seam.
 //!
-//! ## Fixture (single source of truth — HRT356)
+//! ## Fixture (single source of truth)
 //!
 //! The fixture + expected output are loaded from the SHARED file
 //! `tests/standalone_parity/fixtures/v3_swap.json`, which the Python
@@ -65,7 +65,7 @@ fn tokens_out(bot: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: U
 }
 
 /// Path to the shared V3 fixture (loaded by both this Rust test and the
-/// Python dual-driver test — HRT356, the single source of truth).
+/// Python dual-driver test — the single source of truth).
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/standalone_parity/fixtures/v3_swap.json"

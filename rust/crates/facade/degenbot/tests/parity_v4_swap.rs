@@ -19,7 +19,7 @@
 //! oracle is the recorded constant in the shared fixture file. Plus
 //! monotonicity + direction-symmetry sanity checks.
 //!
-//! ## Fixture (single source of truth — HRT356)
+//! ## Fixture (single source of truth)
 //!
 //! The fixture + expected output are loaded from the SHARED file
 //! `tests/standalone_parity/fixtures/v4_swap.json`, which the Python
@@ -48,7 +48,7 @@ use degenbot_pools::TickInfo;
 use hashbrown::HashMap;
 
 /// Path to the shared V4 fixture (loaded by both this Rust test and the
-/// Python dual-driver test — HRT356, the single source of truth).
+/// Python dual-driver test — the single source of truth).
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/standalone_parity/fixtures/v4_swap.json"

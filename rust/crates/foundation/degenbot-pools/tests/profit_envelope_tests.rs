@@ -425,7 +425,7 @@ fn parse_range(v: &serde_json::Value) -> Option<IntV3TickRangeHop> {
 
 #[test]
 fn precomputed_crossings_match_self_derived_bound() {
-    // BZSOJ7 parity gate: feeding the caller-carried crossing tables must
+    // Parity gate: feeding the caller-carried crossing tables must
     // produce the byte-identical bound as deriving them inside the envelope.
     for line in CAPTURES.lines().filter(|l| !l.trim().is_empty()).take(24) {
         let doc: serde_json::Value = serde_json::from_str(line).expect("valid capture JSONL");
@@ -774,7 +774,7 @@ fn bound_dominates_golden_profit_on_heavy_concentrated_liquidity_captures() {
 }
 
 // ---------------------------------------------------------------------------
-// M6776W degenerate-path golden capture harness tests
+// Degenerate-path golden capture harness tests
 // ---------------------------------------------------------------------------
 
 /// In-memory [`degenbot_pools::solve::gate::DegeneratePathSink`] — the

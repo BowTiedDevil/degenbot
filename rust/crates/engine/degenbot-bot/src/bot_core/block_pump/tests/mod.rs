@@ -1010,7 +1010,7 @@ fn make_v3_swap_log_with_block(pool_address: Address, block_number: u64) -> Log 
 }
 
 // -----------------------------------------------------------------
-// BAMKKI: interleaving fuzz harness. Randomized (seed-deterministic)
+// Interleaving fuzz harness: randomized (seed-deterministic)
 // composition of event feeds x pool lifecycle roles, driven through the
 // REAL pump, with a replay oracle. Any member of the late-admit family
 // (lost, duplicated, or mis-staged application across the

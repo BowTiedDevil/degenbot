@@ -407,11 +407,11 @@ fn bot_resource_carries_service_identity() {
     );
 }
 
-// MQUKB6-T0 (retired with the seam): the drain-pipe orphaning hazard is GONE —
-// SZJUKL deleted the DispatchOwner drainer task, and stage work executes
-// INLINE in the driver task, so its spans nest under the entered cursor span
-// by execution context (no task boundary to cross). The
-// `drain_work_parents_under_the_dispatching_span` test is retired with the FIFO.
+// The drain-pipe orphaning hazard is gone: with the DispatchOwner drainer
+// task deleted, stage work executes INLINE in the driver task, so its spans
+// nest under the entered cursor span by execution context (no task boundary
+// to cross). The `drain_work_parents_under_the_dispatching_span` test is
+// retired with the FIFO.
 
 /// T1 seam: a recorded counter is readable from the Prometheus registry text —
 /// the contract the Grafana scrape depends on.

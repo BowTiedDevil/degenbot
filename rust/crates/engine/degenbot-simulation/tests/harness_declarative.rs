@@ -9,11 +9,11 @@
     clippy::cast_sign_loss,
     clippy::type_complexity
 )]
-//! Executor grammar harness — the generated declarative matrix (UQOAHA).
+//! Executor grammar harness — the generated declarative matrix.
 //!
 //! The reachable 2- and 3-hop grammar is the **full cross-product** of
 //! `{V2,V3,V4}` per hop: `degenbot_executor::grammar_shape::derive_shape` (and the
-//! all-V2 any-N route, since the KO5NNB cutover) enumerate all `3²=9` two-hop
+//! all-V2 any-N route) enumerate all `3²=9` two-hop
 //! and `3³=27` three-hop family tuples; there is no residual for 2/3-hop
 //! paths. Every family is therefore **one generated table row** — the whole
 //! matrix is built by a loop over [`family_list`], not by hand-written tests.
@@ -35,7 +35,7 @@
 //! zero-balance matrix installs nothing at all — no runner mints a universal
 //! WETH or intermediate-token buffer behind a row's back.
 //!
-//! **Runtime-fidelity sign-off.** All 36 families (9 two-hop + 27 three-hop)
+//! **Runtime fidelity.** All 36 families (9 two-hop + 27 three-hop)
 //! pass through the real cmd_executor bytecode with exact
 //! `actual_delta == predicted_profit` — a property byte-parity cannot see.
 //! (Earlier this harness caught `v2_v2_v4`/`v2_v4_v4` reverting with v4-core's
@@ -750,7 +750,7 @@ fn matrix_covers_full_reachable_grammar() {
 
 /// Negative control: a deliberately unprofitable chain under the
 /// production axis-aware config (default Custody → `profit_mode=1`) now reverts
-/// **on-chain** at the U3WVLL profit assert — the money-loss floor is active
+/// **on-chain** at the profit assert — the money-loss floor is active
 /// by default, so the loss never executes. The harness classifies the revert
 /// and [`assert_profitable`]'s first guard ("payload must execute") fires.
 ///
@@ -793,7 +793,7 @@ fn unprofitable_chain_is_rejected() {
         .unwrap();
     assert_applied_capital(&result, "unprofitable self-fund");
     // The on-chain `profit_mode=1` assert reverts the losing self-fund path
-    // (U3WVLL floor) — the revert IS the protection; classify it as such.
+    // (money-loss floor) — the revert IS the protection; classify it as such.
     assert!(
         matches!(
             result.outcome,
@@ -986,7 +986,7 @@ fn erc6909_capture_v4v4_lands_in_vault() {
             ),
         },
     ];
-    // The oracle probe's regime pin (SMOZG3 open question 1): the executor
+    // The oracle probe's regime pin: the executor
     // holds NO ERC6909 position beforehand — the capture is a fresh mint of
     // the profit surplus, not a transfer of a pre-held claim.
     assert_eq!(
@@ -1004,7 +1004,7 @@ fn erc6909_capture_v4v4_lands_in_vault() {
     assert_erc6909_capture(&result, 2, "v4_v4 erc6909 capture");
 }
 
-/// SMOZG3 parity: the 3-hop pure-V4 family (`v4_v4_v4`, the other family that
+/// Parity: the 3-hop pure-V4 family (`v4_v4_v4`, the other family that
 /// declares the `capture` axis) captures to the vault with the same oracle.
 #[test]
 fn erc6909_capture_v4v4v4_lands_in_vault() {
@@ -1074,11 +1074,11 @@ fn erc6909_capture_v4v4v4_lands_in_vault() {
     assert_erc6909_capture(&result, 3, "v4_v4_v4 erc6909 capture");
 }
 
-/// TGUZCT/SW42JA (supersedes the SMOZG3 decline): `use_v4_batch` and
+/// `use_v4_batch` and
 /// `capture = ProfitCapture::Erc6909` now DO compose on a WETH-terminal pure-V4 path. The
 /// encoder emits the `V4_BATCH_OPEN_WETH` (0x43) variant — the batch leaves
 /// the positive WETH delta open, and the trailing `V4_MINT_COMPACT` converts
-/// it into the ERC6909 vault. The prior decline (SMOZG3, pre-deployment
+/// it into the ERC6909 vault. The prior decline (a pre-deployment
 /// artifact whose 0x42 tail-settle starved the mint) is lifted.
 #[test]
 fn erc6909_capture_with_batch_composes_via_open_weth_batch() {

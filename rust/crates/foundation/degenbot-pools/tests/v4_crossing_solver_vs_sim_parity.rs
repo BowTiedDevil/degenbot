@@ -1764,7 +1764,7 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
 /// Margin-policy measurement for the concentrated-liquidity-hop clamp : quantify the
 /// worst solver-vs-`v4_simulate_swap` OVER-prediction magnitude across the
 /// covered corpus (fee-1/ts=1 in both directions, plus the fee-3000/ts=60
-/// multi-tick topology) — the quantity the VAASFM clamp margin (1 wei) must
+/// multi-tick topology) — the quantity the clamp margin (1 wei) must
 /// strictly exceed so the clamp never lands exactly on an over-predicted tight
 /// value.
 ///
@@ -1774,11 +1774,11 @@ fn fee1_zfo_true_two_step_floored_equivalence() {
 /// a residue. The parity suites above already assert solver == twin (0
 /// divergence) across the multi-tick + fee-1 corpus; this test measures the
 /// strict over-prediction direction and asserts the chosen margin (1 wei) is
-/// strictly greater — a self-checking guard that the VAASFM maximum-extraction
+/// strictly greater — a self-checking guard that the maximum-extraction
 /// choice remains justified if a future topology re-introduces a residual.
 #[test]
 fn concentrated_liquidity_hop_clamp_margin_exceeds_worst_solver_over_prediction() {
-    /// The VAASFM margin decision (must stay > worst observed over-prediction).
+    /// The margin decision (must stay > worst observed over-prediction).
     /// Keep in sync with `ArbitrageEngine::concentrated_liquidity_hop_clamp_margin` in
     /// degenbot-bot (solver_dispatch.rs).
     const MARGIN: u64 = 1;

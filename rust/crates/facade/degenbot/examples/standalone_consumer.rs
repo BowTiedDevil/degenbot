@@ -58,7 +58,7 @@ use degenbot::simulation::apply_simulation_overrides;
 use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
 
-// PoolBuilder (T2, 3FVZF4): the construction-I/O traits + build fns reached
+// PoolBuilder (T2): the construction-I/O traits + build fns reached
 // via the umbrella (no pyo3). `FailingConstruction` is a module-level RPC
 // stub (never actually called — the standalone example is no-network) used
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
@@ -173,7 +173,7 @@ fn fixture_db_path() -> PathBuf {
 ///      that emits `S = MIN(last_update_block)` over the V3/V4 `exchanges`
 ///      rows for the chain (here `S = 12_340_000` = min(V3 `12_345_000`, V4
 ///      `12_340_000`)); no tick dict ever crosses the FFI (the DB read is owned
-///      by `degenbot-db`/`degenbot-bot` after DADWUP).
+///      by `degenbot-db`/`degenbot-bot`).
 ///
 /// The remaining two steps — (d) `BlockPump::subscribe(...)` and
 /// (e) `pump.resume_from_subscribe(state)` — close the S→W snapshot→WS
@@ -188,7 +188,7 @@ fn fixture_db_path() -> PathBuf {
 /// behind `SMOKE_RPC_URL` for the executable proof; without it the smoke
 /// loads the fixture and exits 0 (CI-runnable). The auto-backfill contract
 /// itself is asserted directly by `block_pump::tests::
-/// resume_anchors_to_subscribe_block` and the J3FMDO backfill tests; real
+/// resume_anchors_to_subscribe_block` and the `auto_backfill_*` tests; real
 /// consumers wire (d)+(e) from their own tokio runtime +
 /// sink/reorg/engine setup.
 fn fixture_snapshot_seed_block() -> Option<u64> {
@@ -617,7 +617,7 @@ fn operator_config_standalone_slice() {
 /// canonical pool identity through get-or-create, with no Python and no
 /// private dedup map of its own.
 ///
-/// The slice is the standalone form of the migration's central claim: identity
+/// The slice states the identity claim in standalone form: identity
 /// is minted once per session, and a second caller naming the same pool gets
 /// the SAME object back rather than a second one. It also pins the property
 /// that makes the registry an identity owner rather than a cache — the entry
@@ -696,7 +696,7 @@ fn session_registry_get_or_create_standalone_slice() {
     println!("standalone degenbot consumer OK: session registry get-or-create returns one canonical object");
 }
 
-/// (IKGQ6F / ADR-022 D1) Standalone-Rust consumer drives the core-owned
+/// (ADR-022 D1) Standalone-Rust consumer drives the core-owned
 /// registration verify-lifecycle (`degenbot::run_verify_lifecycle` over a
 /// `PoolLookup::from_address` key) with no
 /// Python in the build graph and no provider: a Tracked V3 pool registers
@@ -918,7 +918,7 @@ fn in_process_sim_standalone_slice() {
         sim.gas_used, sim.priority_fee, sim.net_profit
     );
 
-    // 7. Reach the PoolBuilder (T2, 3FVZF4): a `cargo add degenbot` consumer
+    // 7. Reach the PoolBuilder (T2): a `cargo add degenbot` consumer
     //    reaches the probe-dispatched build fns over a `ConstructionIo` with no
     //    pyo3 in the graph. Drive `probe_pool_type` against an always-failing
     //    RPC stub — every probe fails with an RPC error, which must surface —
@@ -943,7 +943,7 @@ fn in_process_sim_standalone_slice() {
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v2 over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
-    // ERC-20 (VK3YDM-S2): `build_erc20_metadata` is reachable standalone via
+    // ERC-20: `build_erc20_metadata` is reachable standalone via
     // the umbrella with no pyo3. Over the same always-failing stub it must
     // surface a typed `PoolBuilderError::Rpc` (the `get_code` guard errors)
     // rather than panic — pinning the umbrella path for the erc20 family (the
@@ -979,7 +979,7 @@ fn in_process_sim_standalone_slice() {
         matches!(err, Err(PoolBuilderError::Rpc(_))),
         "build_v4 over a failing RPC must yield a typed Rpc error, got {err:?}"
     );
-    // V4 identity resolution (TF7RZB-S3): `resolve_v4_identity` is a Rust-owned
+    // V4 identity resolution: `resolve_v4_identity` is a Rust-owned
     // core capability (DB two-step else caller overrides). Over a failing/no-DB
     // stub with EMPTY overrides it must degrade to the typed `MissingIdentity`
     // error, never a panic — pinning the standalone reach of the resolver.

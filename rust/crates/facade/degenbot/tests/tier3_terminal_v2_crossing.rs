@@ -22,8 +22,8 @@
 //! cannot silently vacate the gate. No RPC.
 //!
 //! Replaces the one-shot `examples/path*_solver_fixture.rs` harnesses
-//! (deleted with their captures in 4635a163f, HAVRUW/SEG2PS); the two
-//! captures were restored from that commit's parent for this gate.
+//! (deleted with their captures); both captures were restored from the parent
+//! of the commit that deleted them for this gate.
 
 use alloy::primitives::U256;
 use degenbot::bot::arb_engine::EngineStages;

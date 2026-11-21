@@ -12,7 +12,7 @@
 //! The driver is parameterized only by the fork's harness artifact name and
 //! whether the fork harness exceeds EIP-170 ([`V3Fork`]) plus a fork-specific
 //! storage seeder, so a concentrated liquidity fork is a one-line declaration and the V3 and
-//! Pancake-V3 tests cannot drift (the HRT356 class). Fork-specific event-variant
+//! Pancake-V3 tests cannot drift. Fork-specific event-variant
 //! assertions are NOT here: the probe returns the collected swap-tx logs so
 //! each test owns its own decoder-level checks.
 //!

@@ -17,11 +17,11 @@
     clippy::too_many_lines,
     clippy::print_stderr
 )]
-//! EYQ6UF: the native-bridge + capture-axis runtime proofs that complement the
+//! The native-bridge + capture-axis runtime proofs that complement the
 //! canonical evm2 matrix (`harness_declarative.rs`, which drives every
 //! `{V2,V3,V4}^` base family through the Plan with exact delta). The per-family
-//! `derived_*` / `plan_*` byte-parity rows were collapsed into that matrix in
-//! EYQ6UF — the Plan is the sole producer, so there is one canonical per-family
+//! `derived_*` / `plan_*` byte-parity rows were collapsed into that matrix:
+//! the Plan is the sole producer, so there is one canonical per-family
 //! proof (build Plan → `LedgerValidator::validate_full` → `plan_to_bytes` →
 //! evm2 execute → assert exact delta). This file keeps the sub-cases the base
 //! matrix does not drive: native-ETH input/output V4 bridges and the
@@ -48,24 +48,24 @@ fn liq() -> u128 {
     10u128.pow(22)
 }
 
-/// BP7KIR Checkpoint 1: the `v2_v3` (InPathFlash) family driven through the
+/// The `v2_v3` (InPathFlash) family driven through the
 /// **Plan tree** end-to-end — build Plan → encode to bytes → execute through the
 /// real cmd_executor with exact WETH delta; build Plan → project to LedgerOps →
 /// validate via the gate. Proves the Plan is the single source for both the byte
 /// stream and the validator's input (ADR-029 D4), and that byte-parity with the
 /// proven emitter holds while the gate catches misorderings the runtime cannot
 /// name.
-/// BP7KIR Increment 3: the `v4_v4` pure-V4 container on the Plan tree — the
+/// The `v4_v4` pure-V4 container on the Plan tree — the
 /// PM-net-zero master invariant. Build Plan → byte-parity with the proven
 /// emitter + gate (every touched PM delta nets to zero by `V4UnlockEnd`) +
 /// runtime exact delta.
-/// BP7KIR Increment 3b: the `v4_v2` boundary-seed family on the Plan tree
+/// The `v4_v2` boundary-seed family on the Plan tree
 /// the V4 forward output is taken directly to the V2 pair (PM→pool,
-/// `SeedPair`), consumed by a terminal `V2SwapCalc` (the 2PT5HH rule across
+/// `SeedPair`), consumed by a terminal `V2SwapCalc` (the seed-pair rule across
 /// the PM boundary), and the V4 WETH-input debt is settled by the
 /// `V4Sync`+`Erc20Transfer(WETH→PM)`+`V4Settle` boundary-seed funded by the
 /// V2 output. Build Plan → byte-parity + gate + runtime exact delta.
-/// BP7KIR Increment 3c: the `v4_v2` **native-input** sub-case — the V4
+/// The `v4_v2` **native-input** sub-case — the V4
 /// input is NATIVE, settled by `WethWithdraw` + `NativeTransfer` +
 /// `V4SettleDelta(native)` (funded by the V2 swap's WETH output). Build Plan
 /// → byte-parity + gate + runtime exact WETH delta.
@@ -134,7 +134,7 @@ fn v4v2_native_input_plan_byte_parity_validates_and_executes() {
     );
 }
 
-/// BP7KIR Increment 3c (native-OUTPUT): the `v4_v2` **native-V4-output**
+/// The `v4_v2` **native-V4-output**
 /// sub-case — the V4's output is native (taken out of the PM → wrapped to WETH
 /// via `WethDeposit` → transferred to seed the terminal V2 pair). The terminal
 /// V2 (V2SwapCalc) consumes the WETH seed and outputs `tok` (≠ WETH — the
@@ -220,11 +220,11 @@ fn v4v2_native_output_plan_byte_parity_validates_and_executes() {
     println!("── v4_v2 native-output (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
-/// BP7KIR Increment 3b: the `v2_v4` outside->V4 seed family (V2-flash
+/// The `v2_v4` outside->V4 seed family (V2-flash
 /// variant) on the Plan tree — same 2-level nesting as v3_v4 but a V2
 /// exact-out flash wraps the V4Unlock. Build Plan -> byte-parity + gate +
 /// runtime exact delta.
-/// BP7KIR Increment 3c → RFPI6H fix: the `v2_v4` **native-V4-input**
+/// The `v2_v4` **native-V4-input**
 /// sub-case — the V2-flash variant of the unwrap-then-native-seed topology.
 /// Same correct model as v3_v4 native-input (SelfFund(tok) entry capital,
 /// WethWithdraw → native seed, V2 flash repaid in `tok`). Build Plan →
@@ -232,7 +232,7 @@ fn v4v2_native_output_plan_byte_parity_validates_and_executes() {
 ///
 /// History: `derive_shape`'s v2_v4 native-V4-input branch repaid the V2 flash
 /// with the wrong currency (`forward_idx` = WETH, not the owed `tok`) and its
-/// bytes reverted on-chain with "T:ETH" (verified via probe). RFPI6H restored
+/// bytes reverted on-chain with "T:ETH" (verified via probe). The fix restored
 /// repayment with the V2 input currency (mirroring `derive_2hop_v3v4`), so
 /// byte-parity with the proven emitter holds once more and the runtime path
 /// executes cleanly through both pools.
@@ -317,7 +317,7 @@ fn v2v4_native_input_plan_byte_parity_validates_and_executes() {
     println!("── v2_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
-/// BP7KIR Increment 3c (native-OUTPUT): the `v2_v4` **native-V4-output**
+/// The `v2_v4` **native-V4-output**
 /// sub-case (V2-flash variant, DIFFERS from v3_v4). The V4's native output is
 /// captured to SELF, wrapped to WETH (WethDeposit), and the V2 flash is repaid
 /// from that WETH — the profit remains in WETH (weth_out − optimal_input). No
@@ -392,13 +392,13 @@ fn v2v4_native_output_plan_byte_parity_validates_and_executes() {
     );
 }
 
-/// BP7KIR Increment 3b: the `v3_v4` outside->V4 seed family on the Plan
+/// The `v3_v4` outside->V4 seed family on the Plan
 /// tree — the deepest nesting (a V3 FlashSwap wraps a V4Unlock in its
 /// callback). The V3 forward output enters the PM (V4Sync + Erc20Transfer +
 /// V4Settle boundary-seed), the V4 swap runs, V4TakeCompact(WETH->SELF)
 /// captures, and the V3 flash is explicitly repaid from that capture. Build
 /// Plan -> byte-parity + gate + runtime exact delta.
-/// BP7KIR Increment 3c: the `v3_v4` **native-V4-input** sub-case — the
+/// The `v3_v4` **native-V4-input** sub-case — the
 /// unwrap-then-native-seed topology. The V3 outputs WETH (unwrapped → native
 /// via `WethWithdraw`), the native seeds the V4 input via the `NativeTransfer` +
 /// `SettleDelta(native)` settle, and the V3 flash is repaid from entry capital
@@ -499,7 +499,7 @@ fn v3v4_native_input_plan_byte_parity_validates_and_executes() {
     println!("── v3_v4 native-input (Plan): byte-parity held, trace validated, terminal_delta={actual_delta}");
 }
 
-/// BP7KIR Increment 3c (native-OUTPUT): the `v3_v4` **native-V4-output**
+/// The `v3_v4` **native-V4-output**
 /// sub-case — the V4's native output is captured to SELF as native profit
 /// (the executor self-funds WETH to repay the V3 flash, since the V4 outputs
 /// native, not WETH). Build Plan → byte-parity + gate + runtime exact terminal
@@ -586,13 +586,13 @@ fn v3v4_native_output_plan_byte_parity_validates_and_executes() {
     println!("── v3_v4 native-output (Plan): byte-parity held, trace validated, native_delta={actual_delta}");
 }
 
-/// BP7KIR Increment 3b: the `v4_v3` boundary-take family on the Plan tree —
+/// The `v4_v3` boundary-take family on the Plan tree —
 /// the first cross-ledger family. `V4TakeCompact(cur→SELF)` is a cross-ledger
 /// move: it debits `PM[cur]` (the V4 take) AND credits the executor's
 /// `Erc20[cur]` (the token arrives), which the V3 flash's auto-repay then
 /// debits. Build Plan → byte-parity + gate (the V3 repayment can only follow
 /// the V4 take that funds it) + runtime exact delta.
-/// BP7KIR Increment 3c: the `v4_v3` **native-input** sub-case on the Plan
+/// The `v4_v3` **native-input** sub-case on the Plan
 /// tree — the V4 input is NATIVE (PM[native] debt), settled by the native
 /// pay-in pattern `WethWithdraw` + `NativeTransfer` + `V4SettleDelta(native)`.
 /// The `NativeTransfer` is the executor-debit half, separate from the PM-credit
@@ -682,7 +682,7 @@ fn v4v3_native_input_plan_byte_parity_validates_and_executes() {
     );
 }
 
-/// BP7KIR Increment 3c (native-OUTPUT): the `v4_v3` **native-V4-output**
+/// The `v4_v3` **native-V4-output**
 /// sub-case — the V4's *output* is native (taken out of the PM → wrapped to
 /// WETH via `WethDeposit` → feeds the terminal V3 as its WETH input). The
 /// terminal V3 outputs `tok` (≠ WETH — the profit), which funds the V4's
@@ -1229,7 +1229,7 @@ fn native_v4v4v4_derived_executes_with_exact_native_delta() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EYUWFG — runtime proof of the two pure-V4 gas-saving modes. Byte-parity
+// Runtime proof of the two pure-V4 gas-saving modes. Byte-parity
 // (new-vs-old) can't prove an untested layout executes; these drive the DERIVED
 // payloads through the real cmd_executor and assert Accepted + exact profit.
 //
@@ -1617,7 +1617,7 @@ fn v4v4v4_erc6909_executes_with_exact_profit() {
     );
 }
 
-/// WE45KC inc.2 runtime proof: `ProfitCapture::Native` on a WETH-terminal v4_v4
+/// Runtime proof: `ProfitCapture::Native` on a WETH-terminal v4_v4
 /// path. The WETH profit is taken to custody then `WETH_WITHDRAW`n to native —
 /// the executor's native delta equals the predicted profit (and WETH delta ≈ 0,
 /// since the profit left WETH). profit_mode=0 (default) skips profit
@@ -1726,7 +1726,7 @@ fn v4v4_native_capture_executes_with_exact_native_delta() {
     );
 }
 
-/// WE45KC inc.2 runtime proof (3-hop): `ProfitCapture::Native` on a
+/// Runtime proof (3-hop): `ProfitCapture::Native` on a
 /// WETH-terminal v4_v4_v4 path. Same shape as the 2-hop proof — the WETH profit
 /// is withdrawn to native; native delta = predicted profit, WETH delta ~ 0.
 /// Consolidates Native capture across the pure-V4 family (2-hop + 3-hop).
@@ -1844,7 +1844,7 @@ fn v4v4v4_native_capture_executes_with_exact_native_delta() {
     );
 }
 
-/// WE45KC inc.2: a non-WETH/non-native tok terminal + `ProfitCapture::Native`
+/// A non-WETH/non-native tok terminal + `ProfitCapture::Native`
 /// is declined (derive_shape returns None) — the executor cannot convert an
 /// arbitrary ERC-20 to native (ADR-029 D1: declared but not executable). The
 /// 3-hop companion to `v4_v4_native_capture_tok_terminal_declines`.
@@ -1931,7 +1931,7 @@ fn v4v4v4_native_capture_tok_terminal_declines() {
     );
 }
 
-/// WE45KC runtime (funding): `FundingSource::SelfFund` on an all-V2 2-hop path.
+/// Runtime (funding): `FundingSource::SelfFund` on an all-V2 2-hop path.
 /// The economic knob is now load-bearing: self-fund PRE-FUNDS the leading V2
 /// pair with the entry WETH and uses `V2_SWAP_CALC` for every hop (no flash
 /// callback, no flash-repay) — gas-cheaper than the default in-path-flash
@@ -2280,7 +2280,7 @@ fn v2_v3_self_fund_executes_with_exact_delta_and_differs_from_flash() {
     println!("── v2_v3 self-fund (runtime): delta={delta}, predicted={predicted_profit}");
 }
 
-/// U3WVLL defect fix: the on-chain profit assert is now ACTIVE by default
+/// The on-chain profit assert is ACTIVE by default
 /// (profit_mode=1, contract reads its own combined balance at start+end). A
 /// money-losing self-fund path reverts with `InsufficientProfit` — previously
 /// (min_profit=0 → no-op assert) it would silently succeed, exposing the
@@ -2351,7 +2351,7 @@ fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
     let outcome = h
         .execute_payload_config(&payload, 8_000_000, config)
         .unwrap();
-    // The money-losing path must REVERT (the U3WVLL fix).
+    // The money-losing path must REVERT (the on-chain profit assert).
     assert!(
         !outcome.executed(2),
         "money-losing self-fund path must revert (profit assert active): {outcome:?}"
@@ -2367,7 +2367,7 @@ fn u3wvll_money_losing_self_fund_path_reverts_with_profit_assert() {
     }
 }
 
-/// U3WVLL defect fix: bribes now compute on TRUE profit (combined_after -
+/// Bribes compute on TRUE profit (combined_after -
 /// combined_before), not on combined_after. A self-fund path where the executor
 /// holds entry WETH (combined_before > 0): the bribe is bips * true_profit,
 /// NOT bips * combined_after (which would over-bribe by draining entry capital).

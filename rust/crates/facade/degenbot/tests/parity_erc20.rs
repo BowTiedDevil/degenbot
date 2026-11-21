@@ -1,8 +1,7 @@
 #![expect(clippy::expect_used)]
-//! Tier-2 behavioral dual-driver parity — ERC-20 metadata resolution
-//! (VK3YDM-S6).
+//! Tier-2 behavioral dual-driver parity — ERC-20 metadata resolution.
 //!
-//! The VK3YDM-S2 port moved the ERC-20 *assembly* (DB-first metadata lookup,
+//! The Rust port moved the ERC-20 *assembly* (DB-first metadata lookup,
 //! on-chain read, UNKNOWN fallback, write-back, `BotState` registration) into
 //! the Rust core as `build_erc20_metadata` + `PyBot.build_erc20_token`. That is
 //! a capability crossing the FFI boundary, so AGENTS.md's Tier-2 rule applies:
@@ -16,7 +15,7 @@
 //! `(name, symbol, decimals)` as the **Python consumer** (`PyBot.build_erc20_token`
 //! over an offline alloy provider in `tests/standalone_parity/test_erc20_dual_driver.py`).
 //!
-//! ## Fixture (single source of truth — HRT356)
+//! ## Fixture (single source of truth)
 //!
 //! The plain canonical metadata is loaded from the SHARED file
 //! `tests/standalone_parity/fixtures/erc20_build.json`, which the Python twin

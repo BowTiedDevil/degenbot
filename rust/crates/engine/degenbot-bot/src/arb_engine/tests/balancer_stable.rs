@@ -1,7 +1,7 @@
 use super::*;
 
 // -----------------------------------------------------------------------
-// Balancer stable solve branch (IVLQRB)
+// Balancer stable solve branch
 // -----------------------------------------------------------------------
 /// Two-token Balancer stable pool params (`MetaStable` — no BPT), amp=200,
 /// 0.01% fee, invariant V2.

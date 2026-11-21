@@ -59,7 +59,7 @@ async fn notify_block_fires_once_per_accepted_header() {
     assert_eq!(notified[1].1, meta_102);
 }
 
-/// 5DM6JJ contract: the cold-start branch in `run_with_stream` must honor
+/// Contract: the cold-start branch in `run_with_stream` must honor
 /// `first_observed_block` when `last_processed_block()` is `None` (no
 /// prior anchor). This is the defensive safety net the legacy `spawn` fix
 /// leans on: passing the REAL subscribe block W (instead of the legacy
