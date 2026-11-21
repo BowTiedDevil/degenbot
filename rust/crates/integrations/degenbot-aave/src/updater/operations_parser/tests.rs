@@ -68,28 +68,41 @@ fn scaled_token_event_type_predicates() {
     assert!(CollateralInterestBurn.is_collateral());
 }
 
+/// `claim_into` claims every vector an operation owns: the pool event, the
+/// scaled events, the transfer events and the balance-transfer events, adding
+/// to the set it is given rather than replacing it.
 #[test]
-fn operation_event_log_indices_dedupes() {
-    // Operation.event_log_indices returns the unique log-index set across
-    // pool_event + scaled_events + transfer_events + balance_transfer_events
-    // — the parse() loop uses this to track which logs have been
-    // consumed so subsequent operations skip them.
+fn claim_into_claims_every_owned_vector() {
     let pool_log = test_log(1, &aave_event_decoder::AAVE_SUPPLY_TOPIC, &[]);
-    let mut op = Operation {
+    let shared_log = test_log(3, &aave_event_decoder::AAVE_BALANCE_TRANSFER_TOPIC, &[]);
+    let transfer_log = test_log(4, &aave_event_decoder::AAVE_MINT_TOPIC, &[]);
+    let balance_transfer_log = test_log(5, &aave_event_decoder::AAVE_BALANCE_TRANSFER_TOPIC, &[]);
+    let op = Operation {
         operation_id: 0,
-        operation_type: OperationType::Supply,
+        operation_type: OperationType::DeficitCoverage,
         pool_revision: 9,
         pool_event: Some(&pool_log),
-        scaled_events: Vec::new(),
-        transfer_events: vec![&pool_log], // duplicate — must be deduped.
-        balance_transfer_events: Vec::new(),
+        scaled_events: vec![scaled_event(
+            2,
+            ScaledTokenEventType::CollateralBurn,
+            Address::from([0x11; 20]),
+            Address::from([0x22; 20]),
+            U256::from(7),
+            None,
+        )],
+        transfer_events: vec![&shared_log, &transfer_log],
+        balance_transfer_events: vec![&shared_log, &balance_transfer_log],
         minted_to_treasury_amount: None,
         debt_to_cover: None,
         validation_errors: Vec::new(),
     };
-    op.transfer_events = vec![&pool_log];
-    let indices = op.event_log_indices();
-    assert_eq!(indices, vec![1]);
+
+    let mut claimed: HashSet<u64> = HashSet::from([99]);
+    op.claim_into(&mut claimed);
+    let mut claimed: Vec<u64> = claimed.into_iter().collect();
+    claimed.sort_unstable();
+
+    assert_eq!(claimed, vec![1, 2, 3, 4, 5, 99]);
 }
 
 // helper: construct a minimal Log for tests.
@@ -1864,4 +1877,143 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
         }
         other => panic!("expected AaveChunkEvent::ScaledTokenMint, got {other:?}"),
     }
+}
+
+// ── the DeficitCoverage claim set ─────────────────────────────────────────
+
+/// A market whose single reserve's aToken is `a_token` — the classification
+/// lookup every aToken log resolves through.
+fn fresh_db_with_aave_reserve(a_token: Address) -> degenbot_db::DegenbotDb {
+    use degenbot_core::address_utils::address_to_checksum_string;
+    let db = fresh_db_for_classification();
+    {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xunderlying'), (2, 1, ?1), (3, 1, '0xvtoken')",
+            rusqlite::params![address_to_checksum_string(&a_token)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, a_token_id, a_token_revision, v_token_id, v_token_revision, liquidity_index, liquidity_rate, borrow_index, borrow_rate) VALUES (1, 1, 1, 2, 1, 3, 1, '1000000000000000000000000000', '0', '1000000000000000000000000000', '0')",
+            [],
+        )
+        .unwrap();
+    }
+    db
+}
+
+/// The indexed-field topic word of an address.
+fn addr_topic(addr: Address) -> alloy::primitives::B256 {
+    alloy::primitives::B256::left_padding_from(addr.as_slice())
+}
+
+/// A scaled-token log: `topics` is the event signature plus its indexed
+/// fields, `words` the non-indexed data payload.
+fn aave_scaled_log(
+    idx: u64,
+    token: Address,
+    topics: Vec<alloy::primitives::B256>,
+    words: &[U256],
+) -> Log {
+    use alloy::primitives::{Bytes, Log as AlloyLog};
+    let mut data = Vec::with_capacity(32 * words.len());
+    for word in words {
+        data.extend_from_slice(&word.to_be_bytes::<32>());
+    }
+    Log {
+        inner: AlloyLog::new_unchecked(token, topics, Bytes::from(data)),
+        block_hash: None,
+        block_number: Some(100),
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: Some(idx),
+        removed: false,
+    }
+}
+
+/// The Umbrella deficit-coverage triplet — an ERC20 `Transfer` report, its
+/// scaled `BalanceTransfer` report, and the recipient's `Burn` — parses into
+/// one `DeficitCoverage` operation that owns all three logs, so none of them
+/// survives into `unassigned_events`.
+#[test]
+fn deficit_coverage_triplet_claims_every_log_it_owns() {
+    use degenbot_decoders::aave_event_decoder::{AAVE_BALANCE_TRANSFER_TOPIC, AAVE_BURN_TOPIC};
+    let a_token = Address::from([0x98; 20]);
+    let db = fresh_db_with_aave_reserve(a_token);
+    let conn = db.lock();
+    let user = Address::from([0x53; 20]);
+    let recipient = Address::from([0xD4; 20]);
+    let index = U256::from(1_131_490_601_199_816u64) * U256::from(1_000_000_000u64);
+    let erc20_amount = U256::from(168_401_963u64);
+    let bt_scaled = U256::from(148_831_959u64);
+    let burn_amount = U256::from(100u64);
+
+    let logs = [
+        erc20_transfer_log(214, a_token, user, recipient, erc20_amount),
+        aave_scaled_log(
+            216,
+            a_token,
+            vec![
+                AAVE_BALANCE_TRANSFER_TOPIC,
+                addr_topic(user),
+                addr_topic(recipient),
+            ],
+            &[bt_scaled, index],
+        ),
+        aave_scaled_log(
+            217,
+            a_token,
+            vec![
+                AAVE_BURN_TOPIC,
+                addr_topic(recipient),
+                addr_topic(Address::ZERO),
+            ],
+            &[burn_amount, U256::ZERO, index],
+        ),
+    ];
+    let events: Vec<&Log> = logs.iter().collect();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser = TransactionOperationsParser::new(
+        1,
+        1,
+        Address::repeat_byte(0x99),
+        None,
+        None,
+        None,
+        &conn,
+        &mut substrate,
+    )
+    .unwrap();
+    let parsed = parser.parse(&events, [0u8; 32]).unwrap();
+
+    assert_eq!(
+        parsed.operations.len(),
+        1,
+        "the triplet is one DeficitCoverage operation, never three"
+    );
+    let op = parsed.operations.first().unwrap();
+    assert_eq!(op.operation_type, OperationType::DeficitCoverage);
+    let paired_balance_transfers: Vec<u64> = op
+        .balance_transfer_events
+        .iter()
+        .map(|log| log.log_index.unwrap())
+        .collect();
+    assert_eq!(
+        paired_balance_transfers,
+        vec![216],
+        "the triplet's scaled BalanceTransfer report is the operation's paired balance transfer"
+    );
+    assert!(
+        !parsed
+            .unassigned_events
+            .iter()
+            .any(|log| log.log_index == Some(216)),
+        "the paired BalanceTransfer must reach the claim set; unassigned: {:?}",
+        parsed
+            .unassigned_events
+            .iter()
+            .map(|log| log.log_index)
+            .collect::<Vec<_>>()
+    );
 }

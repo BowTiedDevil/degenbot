@@ -25,6 +25,7 @@
 
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
+use std::collections::HashSet;
 
 // ── the ω-shape constants (`operations.py:L19-L23`) ────────────────────────
 
@@ -332,37 +333,21 @@ impl Operation<'_> {
         self.validation_errors.is_empty()
     }
 
-    /// The set of log-indices involved in this operation (mirror of
-    /// `Operation.get_event_log_indices`). Used by [`crate::operations_parser`]
-    /// to track which logs have been consumed by some Operation (so subsequent
-    /// operations skip them).
-    #[must_use]
-    pub fn event_log_indices(&self) -> Vec<u64> {
-        let mut indices: Vec<u64> = Vec::new();
-        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    /// Mark every log this operation owns as claimed. The parser claims only
+    /// through here, so an operation's ownership has one definition.
+    pub fn claim_into(&self, claimed: &mut HashSet<u64>) {
         if let Some(pool_ev) = self.pool_event {
-            let idx = pool_ev_idx(pool_ev);
-            indices.push(idx);
-            seen.insert(idx);
+            claimed.insert(pool_ev_idx(pool_ev));
         }
         for ev in &self.scaled_events {
-            if seen.insert(ev.log_index) {
-                indices.push(ev.log_index);
-            }
+            claimed.insert(ev.log_index);
         }
         for ev in &self.transfer_events {
-            let idx = log_idx(ev);
-            if seen.insert(idx) {
-                indices.push(idx);
-            }
+            claimed.insert(log_idx(ev));
         }
         for ev in &self.balance_transfer_events {
-            let idx = log_idx(ev);
-            if seen.insert(idx) {
-                indices.push(idx);
-            }
+            claimed.insert(log_idx(ev));
         }
-        indices
     }
 }
 

@@ -309,7 +309,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
                 events,
                 &mut assigned_log_indices,
             )?;
-            assigned_log_indices.extend(op.event_log_indices());
+            op.claim_into(&mut assigned_log_indices);
             operations.push(op);
             next_op_id += 1;
         }
@@ -326,11 +326,9 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             &mut next_op_id,
             &minted_to_treasury_events,
         );
-        assigned_log_indices.extend(
-            mint_to_treasury_ops
-                .iter()
-                .flat_map(|op| op.scaled_events.iter().map(|ev| ev.log_index)),
-        );
+        for op in &mint_to_treasury_ops {
+            op.claim_into(&mut assigned_log_indices);
+        }
         operations.extend(mint_to_treasury_ops);
 
         // Step 4c: DeficitCoverage (BalanceTransfer + Burn pairs).
@@ -339,11 +337,9 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             &mut assigned_log_indices,
             &mut next_op_id,
         );
-        assigned_log_indices.extend(
-            deficit_coverage_ops
-                .iter()
-                .flat_map(|op| op.scaled_events.iter().map(|ev| ev.log_index)),
-        );
+        for op in &deficit_coverage_ops {
+            op.claim_into(&mut assigned_log_indices);
+        }
         operations.extend(deficit_coverage_ops);
 
         // Step 4d: InterestAccrual.
@@ -352,12 +348,9 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             &mut assigned_log_indices,
             &mut next_op_id,
         );
-        assigned_log_indices.extend(interest_accrual_ops.iter().flat_map(|op| {
-            op.scaled_events
-                .iter()
-                .map(|ev| ev.log_index)
-                .chain(op.transfer_events.iter().map(|l| log_idx_value(l)))
-        }));
+        for op in &interest_accrual_ops {
+            op.claim_into(&mut assigned_log_indices);
+        }
         operations.extend(interest_accrual_ops);
 
         // Step 4e: standalone transfer reports (leftover handling).
@@ -368,13 +361,9 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             &assigned_log_indices,
             &mut next_op_id,
         );
-        assigned_log_indices.extend(transfer_ops.iter().flat_map(|op| {
-            op.scaled_events
-                .iter()
-                .map(|ev| ev.log_index)
-                .chain(op.transfer_events.iter().map(|l| log_idx_value(l)))
-                .chain(op.balance_transfer_events.iter().map(|l| log_idx_value(l)))
-        }));
+        for op in &transfer_ops {
+            op.claim_into(&mut assigned_log_indices);
+        }
         operations.extend(transfer_ops);
 
         // Step 4f: unassigned events (preserve the Python's ERC20-Transfer filter).
