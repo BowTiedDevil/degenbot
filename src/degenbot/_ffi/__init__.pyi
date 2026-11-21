@@ -4434,10 +4434,11 @@ class RetryPolicy:
     The verification-retry policy as it crosses the FFI seam — ONE value type
     from the driver shell to the core-owned retry dance.
 
-    The constructor validates through the core `RetryPolicy::validate` and
-    raises `ValueError` with the core's message, so the driver shell cannot
-    carry bounds the core would reject. Unset knobs default to the core's
-    `verification_default`, so there is one home for the numbers.
+    The constructor builds through the core `RetryPolicy::try_untrusted` and
+    raises `ValueError` with the core's message, so a policy this shell hands
+    the engine is valid by construction and needs no later check. Unset knobs
+    default to the core's `verification_default`, so there is one home for the
+    numbers.
     """
     def __new__(
         cls,
@@ -4455,14 +4456,6 @@ class RetryPolicy:
     def max_attempts(self, /) -> int: ...
     @property
     def max_delay(self, /) -> float: ...
-    def validate(self, /) -> None:
-        """
-        Validate the policy's field bounds against the core's rules.
-
-        # Errors
-
-        `ValueError` carrying the core validator's message.
-        """
 
 @final
 class SessionObject:

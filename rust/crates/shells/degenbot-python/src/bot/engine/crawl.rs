@@ -345,6 +345,45 @@ impl SnapshotArm for PySnapshotArm {
 
 // ── the configuration adapter ───────────────────────────────────────────────
 
+/// The bounded retry policy the driver's `retry` value declares.
+///
+/// The driver supplies the four knobs as a dict, so each is untrusted: the
+/// core constructor refuses an out-of-range value rather than admitting a
+/// policy the retry dance cannot honour.
+///
+/// # Errors
+///
+/// `ValueError` when `retry` is not a dict, a knob is not the declared type, or
+/// a knob is out of range.
+fn retry_policy_from_py(retry: &Bound<'_, PyAny>) -> PyResult<RetryPolicy> {
+    let retry = retry
+        .cast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("begin_crawl: `retry` must be a dict"))?;
+    RetryPolicy::try_untrusted(
+        retry
+            .get_item("max_attempts")?
+            .map(|value| value.extract::<u32>())
+            .transpose()?
+            .unwrap_or(1),
+        retry
+            .get_item("base_delay")?
+            .map(|value| value.extract::<f64>())
+            .transpose()?
+            .unwrap_or(0.0),
+        retry
+            .get_item("max_delay")?
+            .map(|value| value.extract::<f64>())
+            .transpose()?
+            .unwrap_or(0.0),
+        retry
+            .get_item("jitter")?
+            .map(|value| value.extract::<f64>())
+            .transpose()?
+            .unwrap_or(0.0),
+    )
+    .map_err(PyValueError::new_err)
+}
+
 /// Translate the driver's resolved configuration into the core's `CrawlConfig`.
 ///
 /// The driver supplies VALUES: the route, the cap, the discovery scope, the
@@ -357,10 +396,6 @@ impl SnapshotArm for PySnapshotArm {
 /// # Errors
 ///
 /// `ValueError` naming the field that could not be translated.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one flat translation table: the config schema is read field by field, in the order the core's CrawlConfig declares them"
-)]
 pub(crate) fn crawl_config_from_python(
     py: Python<'_>,
     config: &Bound<'_, PyAny>,
@@ -418,31 +453,7 @@ pub(crate) fn crawl_config_from_python(
     };
 
     let retry = required("retry")?;
-    let retry = retry
-        .cast::<PyDict>()
-        .map_err(|_| PyValueError::new_err("begin_crawl: `retry` must be a dict"))?;
-    let retry = RetryPolicy {
-        max_attempts: retry
-            .get_item("max_attempts")?
-            .map(|value| value.extract::<u32>())
-            .transpose()?
-            .unwrap_or(1),
-        base_delay: retry
-            .get_item("base_delay")?
-            .map(|value| value.extract::<f64>())
-            .transpose()?
-            .unwrap_or(0.0),
-        max_delay: retry
-            .get_item("max_delay")?
-            .map(|value| value.extract::<f64>())
-            .transpose()?
-            .unwrap_or(0.0),
-        jitter: retry
-            .get_item("jitter")?
-            .map(|value| value.extract::<f64>())
-            .transpose()?
-            .unwrap_or(0.0),
-    };
+    let retry = retry_policy_from_py(&retry)?;
 
     let policy = match optional("policy")? {
         Some(value) => crawl_path_policy_from_python(&value)?,

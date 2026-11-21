@@ -46,17 +46,26 @@ pub fn is_retryable(err: &RefusalKind) -> bool {
 /// Every consumer comes through here — the driver shell's injected policy and
 /// a standalone Rust bot alike — so a declared default cannot mean one thing
 /// in the cockpit and nothing at all in a `cargo add degenbot` bot.
-#[must_use]
-pub fn retry_policy_from_config(cfg: &degenbot_config::schema::VerifyConfig) -> RetryPolicy {
-    RetryPolicy {
+///
+/// The knobs arrive from the operator file and the environment layer, so this
+/// projection is a boundary: it refuses an out-of-range value rather than
+/// handing its caller a policy the retry dance cannot honour.
+///
+/// # Errors
+///
+/// Returns the core bounds message when a declared knob is out of range.
+pub fn retry_policy_from_config(
+    cfg: &degenbot_config::schema::VerifyConfig,
+) -> Result<RetryPolicy, String> {
+    RetryPolicy::try_untrusted(
         // The schema declares a `usize` count and the policy carries `u32`.
         // Saturation is the honest fold: any count above `u32::MAX` is already
         // "retry for the rest of the session" in a real budget.
-        max_attempts: u32::try_from(cfg.verify_retry_max_attempts).unwrap_or(u32::MAX),
-        base_delay: cfg.verify_retry_base_delay,
-        max_delay: cfg.verify_retry_max_delay,
-        jitter: cfg.verify_retry_jitter,
-    }
+        u32::try_from(cfg.verify_retry_max_attempts).unwrap_or(u32::MAX),
+        cfg.verify_retry_base_delay,
+        cfg.verify_retry_max_delay,
+        cfg.verify_retry_jitter,
+    )
 }
 
 /// A pseudo-random fraction in `[0, 1)` derived from the clock and the attempt
@@ -127,7 +136,7 @@ mod tests {
     fn the_schema_defaults_are_the_policy_defaults() {
         assert_eq!(
             retry_policy_from_config(&degenbot_config::schema::VerifyConfig::default()),
-            RetryPolicy::verification_default(),
+            Ok(RetryPolicy::verification_default()),
         );
     }
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -297,21 +306,33 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
+    /// A knob the operator file or the environment layer put out of range is
+    /// refused where the declaration becomes a policy, so no consumer of this
+    /// projection holds an unvalidated policy.
     #[test]
-    fn validate_rejects_out_of_range_knobs() {
-        assert!(RetryPolicy::verification_default().validate().is_ok());
-        assert!(zero_policy(0).validate().is_err());
-        let bad_jitter = RetryPolicy {
-            jitter: 2.0,
-            ..RetryPolicy::verification_default()
+    fn the_projection_refuses_an_out_of_range_declared_knob() {
+        use degenbot_config::schema::VerifyConfig;
+
+        assert!(retry_policy_from_config(&VerifyConfig::default()).is_ok());
+
+        let zero_attempts = VerifyConfig {
+            verify_retry_max_attempts: 0,
+            ..VerifyConfig::default()
         };
-        assert!(bad_jitter.validate().is_err());
-        let bad_order = RetryPolicy {
-            base_delay: 5.0,
-            max_delay: 1.0,
-            ..RetryPolicy::verification_default()
+        assert!(retry_policy_from_config(&zero_attempts).is_err());
+
+        let wide_jitter = VerifyConfig {
+            verify_retry_jitter: 2.0,
+            ..VerifyConfig::default()
         };
-        assert!(bad_order.validate().is_err());
+        assert!(retry_policy_from_config(&wide_jitter).is_err());
+
+        let inverted = VerifyConfig {
+            verify_retry_base_delay: 5.0,
+            verify_retry_max_delay: 1.0,
+            ..VerifyConfig::default()
+        };
+        assert!(retry_policy_from_config(&inverted).is_err());
     }
 
     #[test]

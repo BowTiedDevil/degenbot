@@ -102,6 +102,25 @@ verify_retry_jitter = 0.2
         with pytest.raises(ValueError, match="max_attempts"):
             probe.build_config(env={"VERIFICATION_RETRY_MAX_ATTEMPTS": "0"})
 
+    def test_the_ffi_constructor_refuses_each_out_of_range_knob(self) -> None:
+        """The constructor is the boundary, and it raises the core's own
+        wording verbatim.
+
+        A driver shell hands these messages straight to the operator, and the
+        schema's key docs promise them, so the refusal text is pinned here
+        byte for byte rather than matched loosely.
+        """
+        with pytest.raises(ValueError, match=r"^max_attempts must be >= 1, got 0$"):
+            RetryPolicy(max_attempts=0)
+        with pytest.raises(ValueError, match=r"^jitter must be in \[0, 1\], got 1\.5$"):
+            RetryPolicy(jitter=1.5)
+        with pytest.raises(ValueError, match=r"^base_delay must be >= 0, got -0\.1$"):
+            RetryPolicy(base_delay=-0.1)
+        with pytest.raises(ValueError, match=r"^max_delay must be >= 0, got -1$"):
+            RetryPolicy(max_delay=-1.0)
+        with pytest.raises(ValueError, match=r"^base_delay \(5\) must be <= max_delay \(1\)$"):
+            RetryPolicy(base_delay=5.0, max_delay=1.0)
+
 
 def test_the_engine_registry_carries_the_seed_and_forwards_the_value() -> None:
     """The registry exposes the stashed seed and forwards the value unchanged.

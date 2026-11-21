@@ -32,8 +32,15 @@ use std::time::Duration;
 ///
 /// Fields are public to keep the type a plain value object at construction
 /// sites (a driver shell's own policy value carries this shape across its
-/// seam); call [`RetryPolicy::validate`] before consuming a policy built from
-/// untrusted input.
+/// seam): a literal declares a policy this crate's owners chose, and a
+/// consumer reads its fields without a further check.
+///
+/// The four knobs are bounded. A value that arrives from outside the process —
+/// an operator file, the environment layer, a driver shell's constructor —
+/// enters through [`RetryPolicy::try_untrusted`], which refuses an
+/// out-of-range knob instead of returning a policy the retry dance cannot
+/// honour. That door is the boundary, so validity is a property of the value
+/// rather than a step each consumer has to remember.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RetryPolicy {
     /// Total attempts (>= 1); the first attempt is not a retry.
@@ -64,6 +71,33 @@ impl RetryPolicy {
         }
     }
 
+    /// Build a policy from four knobs supplied from outside the process,
+    /// refusing a combination the retry dance cannot honour.
+    ///
+    /// The refusal text names the knob and the value that failed; it is
+    /// surfaced verbatim to the operator (the FFI `RetryPolicy` constructor's
+    /// `ValueError`, the settlement example's config build), so its wording is
+    /// part of the boundary's contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when a knob is out of range.
+    pub fn try_untrusted(
+        max_attempts: u32,
+        base_delay: f64,
+        max_delay: f64,
+        jitter: f64,
+    ) -> Result<Self, String> {
+        let policy = Self {
+            max_attempts,
+            base_delay,
+            max_delay,
+            jitter,
+        };
+        policy.check_bounds()?;
+        Ok(policy)
+    }
+
     /// The verification-retry defaults — the single declaration site the
     /// Python driver reads through `degenbot._ffi` and the example's env
     /// parse falls back to.
@@ -81,15 +115,13 @@ impl RetryPolicy {
         }
     }
 
-    /// Validate the field bounds (fail fast). The message text is surfaced
-    /// verbatim by the FFI `RetryPolicy` constructor's `ValueError` and by the
-    /// example's env parse, so the driver shell and the Rust example report the
-    /// same wording.
+    /// The field bounds [`RetryPolicy::try_untrusted`] enforces, as the
+    /// refusal it returns.
     ///
     /// # Errors
     ///
     /// Returns a message when a knob is out of range.
-    pub fn validate(&self) -> Result<(), String> {
+    fn check_bounds(&self) -> Result<(), String> {
         if self.max_attempts < 1 {
             return Err(format!(
                 "max_attempts must be >= 1, got {}",
@@ -144,41 +176,48 @@ impl RetryPolicy {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
 mod tests {
     use super::*;
 
     #[test]
     fn verification_default_is_valid() {
-        assert!(RetryPolicy::verification_default().validate().is_ok());
+        let default = RetryPolicy::verification_default();
+        assert_eq!(
+            RetryPolicy::try_untrusted(
+                default.max_attempts,
+                default.base_delay,
+                default.max_delay,
+                default.jitter
+            ),
+            Ok(default)
+        );
     }
 
+    /// The boundary refuses an out-of-range knob with the message the FFI
+    /// constructor's `ValueError` and the settlement example's config build
+    /// surface verbatim, so the wording is pinned byte for byte here.
     #[test]
-    fn validate_rejects_out_of_range_knobs() {
-        let zero = RetryPolicy {
-            max_attempts: 0,
-            ..RetryPolicy::verification_default()
-        };
-        assert!(zero.validate().unwrap_err().contains("max_attempts"));
-
-        let bad_jitter = RetryPolicy {
-            jitter: 1.5,
-            ..RetryPolicy::verification_default()
-        };
-        assert!(bad_jitter.validate().unwrap_err().contains("jitter"));
-
-        let negative = RetryPolicy {
-            base_delay: -0.1,
-            ..RetryPolicy::verification_default()
-        };
-        assert!(negative.validate().unwrap_err().contains("base_delay"));
-
-        let inverted = RetryPolicy {
-            base_delay: 5.0,
-            max_delay: 1.0,
-            ..RetryPolicy::verification_default()
-        };
-        assert!(inverted.validate().unwrap_err().contains("base_delay"));
+    fn try_untrusted_rejects_zero_attempts_and_wide_jitter() {
+        assert_eq!(
+            RetryPolicy::try_untrusted(0, 0.5, 4.0, 0.5),
+            Err("max_attempts must be >= 1, got 0".to_string())
+        );
+        assert_eq!(
+            RetryPolicy::try_untrusted(4, 0.5, 4.0, 1.5),
+            Err("jitter must be in [0, 1], got 1.5".to_string())
+        );
+        assert_eq!(
+            RetryPolicy::try_untrusted(4, -0.1, 4.0, 0.5),
+            Err("base_delay must be >= 0, got -0.1".to_string())
+        );
+        assert_eq!(
+            RetryPolicy::try_untrusted(4, 0.5, -1.0, 0.5),
+            Err("max_delay must be >= 0, got -1".to_string())
+        );
+        assert_eq!(
+            RetryPolicy::try_untrusted(4, 5.0, 1.0, 0.5),
+            Err("base_delay (5) must be <= max_delay (1)".to_string())
+        );
     }
 
     #[test]

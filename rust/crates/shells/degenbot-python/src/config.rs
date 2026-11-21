@@ -25,10 +25,11 @@ use crate::prelude::*;
 /// The verification-retry policy as it crosses the FFI seam — ONE value type
 /// from the driver shell to the core-owned retry dance.
 ///
-/// The constructor validates through the core `RetryPolicy::validate` and
-/// raises `ValueError` with the core's message, so the driver shell cannot
-/// carry bounds the core would reject. Unset knobs default to the core's
-/// `verification_default`, so there is one home for the numbers.
+/// The constructor builds through the core `RetryPolicy::try_untrusted` and
+/// raises `ValueError` with the core's message, so a policy this shell hands
+/// the engine is valid by construction and needs no later check. Unset knobs
+/// default to the core's `verification_default`, so there is one home for the
+/// numbers.
 #[pyclass(frozen, get_all, module = "degenbot._ffi")]
 pub struct RetryPolicy {
     pub max_attempts: u32,
@@ -39,6 +40,9 @@ pub struct RetryPolicy {
 
 impl RetryPolicy {
     /// The core policy this seam value carries.
+    ///
+    /// Valid by construction: the frozen class has no setter and its
+    /// constructor is the only door, so the conversion needs no bounds check.
     pub(crate) fn to_core(&self) -> ::degenbot_core::retry::RetryPolicy {
         ::degenbot_core::retry::RetryPolicy {
             max_attempts: self.max_attempts,
@@ -59,26 +63,20 @@ impl RetryPolicy {
         max_delay: Option<f64>,
         jitter: Option<f64>,
     ) -> PyResult<Self> {
-        let core = ::degenbot_core::retry::RetryPolicy::verification_default();
-        let policy = Self {
-            max_attempts: max_attempts.unwrap_or(core.max_attempts),
-            base_delay: base_delay.unwrap_or(core.base_delay),
-            max_delay: max_delay.unwrap_or(core.max_delay),
-            jitter: jitter.unwrap_or(core.jitter),
-        };
-        policy.validate()?;
-        Ok(policy)
-    }
-
-    /// Validate the policy's field bounds against the core's rules.
-    ///
-    /// # Errors
-    ///
-    /// `ValueError` carrying the core validator's message.
-    fn validate(&self) -> PyResult<()> {
-        self.to_core()
-            .validate()
-            .map_err(::pyo3::exceptions::PyValueError::new_err)
+        let default = ::degenbot_core::retry::RetryPolicy::verification_default();
+        let core = ::degenbot_core::retry::RetryPolicy::try_untrusted(
+            max_attempts.unwrap_or(default.max_attempts),
+            base_delay.unwrap_or(default.base_delay),
+            max_delay.unwrap_or(default.max_delay),
+            jitter.unwrap_or(default.jitter),
+        )
+        .map_err(::pyo3::exceptions::PyValueError::new_err)?;
+        Ok(Self {
+            max_attempts: core.max_attempts,
+            base_delay: core.base_delay,
+            max_delay: core.max_delay,
+            jitter: core.jitter,
+        })
     }
 }
 

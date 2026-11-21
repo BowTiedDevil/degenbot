@@ -339,10 +339,11 @@ impl SettlementBotConfig {
             .as_ref()
             .map(|path| path.display().to_string());
 
-        // The retry policy is declared in the core schema, and the projection
-        // from that declaration lives beside the retry dance.
+        // The projection from the schema's declaration is the boundary: an
+        // out-of-range knob in the operator file or its environment layer is
+        // refused here, not at the first retry.
         let verification_retry_policy =
-            degenbot::bot_core::retry_policy_from_config(&loaded.config.verify);
+            degenbot::bot_core::retry_policy_from_config(&loaded.config.verify)?;
 
         Ok(Self {
             operator_address,
@@ -650,7 +651,6 @@ fn run() -> Result<(), String> {
         ..PathPolicy::default()
     };
     let retry_policy = cfg.verification_retry_policy;
-    retry_policy.validate()?;
     // 6. Offline-dry run: enumeration → directions → policy → candidate counts.
     let report = degenbot::runtime::get_runtime().block_on(run_offline(
         &built,
