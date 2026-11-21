@@ -132,12 +132,51 @@ pub(crate) const RETIRED_LAYOUT_ITEMS: &[(&str, &str)] = &[
 /// exported is gone from the schema, and `apply_env` walks the SCHEMA rather
 /// than the process env, so an export would otherwise be a silent no-op on a
 /// session whose operator believed it had switched behaviour. Each entry names
-/// what the setting became.
-pub(crate) const RETIRED_ENV_NAMES: &[(&str, &str)] = &[(
-    "DEGENBOT_ERC6909_PROFIT",
-    "the ERC6909 profit-capture switch is retired: capture is the per-path encode \
-     axis (EncodeOptions::capture = ProfitCapture::Erc6909), not an operator key",
-)];
+/// what the setting became. Presence alone is the trigger, so a blank export is
+/// the same refusal, and the list is CLOSED: an unknown name is not an error.
+pub(crate) const RETIRED_ENV_NAMES: &[(&str, &str)] = &[
+    (
+        "DEGENBOT_ERC6909_PROFIT",
+        "the ERC6909 profit-capture switch is retired: capture is the per-path encode \
+         axis (EncodeOptions::capture = ProfitCapture::Erc6909), not an operator key",
+    ),
+    (
+        "DEGENBOT_SOLVE_EXECUTOR",
+        "solve.executor is retired: the worker fleet hosts every bin, so per-bin \
+         hosting needs no executor selection",
+    ),
+    (
+        "DEGENBOT_LPT_PARTITION",
+        "solve.lpt_partition is retired: bins are always LPT-pre-balanced",
+    ),
+    (
+        "DEGENBOT_FLEET",
+        "fleet.stance is retired: the worker fleet is the only stance",
+    ),
+    (
+        "DEGENBOT_SOLVE_SIM_INFLIGHT",
+        "solve.solve_sim_inflight is retired: SimDriver capacity is fleet.sim_slot_cap, \
+         and inline-sim sizing is solve.inline_sim_workers",
+    ),
+    (
+        "DEGENBOT_DETACHED_SOLVES",
+        "solve.detached_solves is retired: detached is the only solve arm",
+    ),
+    (
+        "DEGENBOT_STRATEGY_NAME",
+        "strategy.name is retired: activation is per facet (strategy.<arm>.active)",
+    ),
+    (
+        "DEGENBOT_STRATEGY_SETTLEMENT_DEFAULT_ENDPOINTS",
+        "strategy.settlement.default_endpoints is retired: stamp the pinned allowlist \
+         at activation (degenbot strategy activate settlement --endpoints-default)",
+    ),
+    (
+        "TOKIO_WORKER_THREADS",
+        "the ambient runtime is sized from the cgroup CPU budget (runtime.io_workers), \
+         not from a thread count",
+    ),
+];
 
 /// Sanctioned free-form file sections the loader SKIPS: not typed, not
 /// retired. Read as raw tables by `file_path()` consumers sharing the

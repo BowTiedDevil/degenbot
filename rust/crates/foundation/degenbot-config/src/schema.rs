@@ -1380,16 +1380,6 @@ mod tests {
             );
             assert_eq!(key.map(|k| k.env), Some(env), "{toml_path} env drift");
         }
-        // The stance key is RETIRED — it must not be declared: the env var and
-        // the TOML key fail the load loudly at the loader.
-        assert!(
-            !SCHEMA.iter().any(|k| k.toml_path == "fleet.stance"),
-            "fleet.stance must be retired from the schema"
-        );
-        assert!(
-            !SCHEMA.iter().any(|k| k.env == "DEGENBOT_FLEET"),
-            "DEGENBOT_FLEET must be retired from the schema"
-        );
     }
 
     /// The declaration macro needs a literal for the env name, so these keys
@@ -1685,18 +1675,6 @@ mod tests {
         assert_eq!(
             BotConfig::default().persistence.state_dir,
             std::path::PathBuf::from("~/.local/state/degenbot/state")
-        );
-    }
-
-    #[test]
-    fn strategy_arm_selector_is_retired() {
-        // A single-arm selector cannot express a two-strategy host; the
-        // per-facet `active` keys own activation now, so every retired
-        // selector spelling must stay undeclared (fail-closed at the load).
-        assert!(
-            !SCHEMA.iter().any(|k| k.toml_path == "strategy.name"
-                || k.env == std::concat!("DEGENBOT_", "STRATEGY_NAME")),
-            "the retired single-arm selector must stay undeclared"
         );
     }
 
@@ -2298,27 +2276,6 @@ mod tests {
                 .expect("parses as usize");
             config.validate().expect("the legal extremes are valid");
         }
-    }
-
-    #[test]
-    fn retired_solve_stance_keys_are_not_declared() {
-        // Hard cutover: the detached-solve stance key is RETIRED with
-        // the in-cycle fallback arm — detached is the only solve arm now.
-        // The key must not be declared; a surviving TOML key fails the load
-        // with the generic unknown-key error (fail-closed) and a CLI
-        // override naming it is rejected (mirror of the fleet.stance
-        // retirement; the one-release pointed refusals were themselves
-        // removed at d5c450c84 — ADR-012 deletion, not a flag).
-        assert!(
-            !SCHEMA
-                .iter()
-                .any(|k| k.toml_path == "solve.detached_solves"),
-            "solve.detached_solves must be retired from the schema"
-        );
-        assert!(
-            !SCHEMA.iter().any(|k| k.env == "DEGENBOT_DETACHED_SOLVES"),
-            "DEGENBOT_DETACHED_SOLVES must be retired from the schema"
-        );
     }
 
     // `strmap` and the family-shaped `env_prefix` exist for tables whose KEYS

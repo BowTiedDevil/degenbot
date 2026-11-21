@@ -371,8 +371,11 @@ strategy StrategyConfig {
 ```
 
 Each facet's `active` key is its activation; there is no single-arm
-`strategy.name` selector (it is deliberately undeclared, pinned by
-`strategy_arm_selector_is_retired`). To add a family: add a `StrategyName`
+`strategy.name` selector (it is deliberately undeclared: an exported
+`DEGENBOT_STRATEGY_NAME` is refused at the config boundary by
+`RETIRED_ENV_NAMES`, pinned by
+`retired_env_names_are_refused_at_the_config_boundary`, and the TOML spelling is
+an undeclared key). To add a family: add a `StrategyName`
 variant in `degenbot-strategy/src/strategy_plane.rs`, add a `StrategyXConfig`
 facet struct with its keys, add the `strategy.<name>` row, and extend the schema
 tests (`strategy_facets_are_declared_as_typed_sections`,
@@ -384,8 +387,9 @@ on a name the config never configured.
 
 - Evidence: the facets are declared exactly once
   (`strategy_facets_are_declared_as_typed_sections`); the retired
-  `strategy.name` selector is pinned undeclared
-  (`strategy_arm_selector_is_retired`).
+  `strategy.name` selector is refused at the config boundary by
+  `RETIRED_ENV_NAMES` (`retired_env_names_are_refused_at_the_config_boundary`),
+  and its TOML spelling is an undeclared key.
 - Keeps: one declaration site; no strategy-scoped ad-hoc env reads outside the
   schema.
 - Retires: parallel env-only strategy selection; the single-arm selector.

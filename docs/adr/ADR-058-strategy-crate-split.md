@@ -153,8 +153,11 @@ What actually moved differed from the plan:
   and `StrategyName` becoming `Settlement | MevblockerBackrun | TxpoolBackrun`.
   There are no aliases and no legacy parsing; readiness legality is per facet
   (MEVBlocker bid mode requires `key_file` and `mevblocker_url`). The retired
-  single-arm `strategy.name` selector stays undeclared, pinned by
-  `strategy_arm_selector_is_retired`.
+  single-arm `strategy.name` selector stays undeclared: an exported
+  `DEGENBOT_STRATEGY_NAME` is refused at the config boundary by
+  `RETIRED_ENV_NAMES`, pinned by
+  `retired_env_names_are_refused_at_the_config_boundary`, and the TOML spelling
+  is an undeclared key.
 
 ## Consequences
 

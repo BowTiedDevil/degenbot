@@ -56,10 +56,6 @@ const BOOTSTRAP_KEYS: &[&str] = &["DEGENBOT_CONFIG"];
 /// declared them, so the file layer and these env names are one cascade.
 const DRIVER_DOMAIN_KEYS: &[&str] = &["DEGENBOT_OPERATOR_SOCKET"];
 
-/// RETIRED keys the loader guards for one release (P6YXA6 hard cutover):
-/// they fail the load loudly and point at the replacement rather than
-/// silently falling back — the deprecation-style hard error. They are not
-/// schema keys anymore; the guard lives in the env layer of `loader.rs`.
 /// Test-harness knobs (live fixtures + guards): these steer the replay
 /// test tiers (fixture block pins, scan windows, trace toggles) and the
 /// classifier panic-guard — they change which STATIC inputs a test sees,
@@ -85,12 +81,18 @@ const TEST_HARNESS_KEYS: &[&str] = &[
     "DEGENBOT_PHANTOM_PATH",
 ];
 
+/// Retired env names: the env layer refuses each of them at the config boundary
+/// (`RETIRED_ENV_NAMES` in `loader.rs`), naming its replacement and the
+/// migration doc, so none of them is a schema key and the parity sweep must not
+/// expect one.
 const RETIRED_KEYS: &[&str] = &[
     "DEGENBOT_LPT_PARTITION",
     "DEGENBOT_SOLVE_EXECUTOR",
     "DEGENBOT_FLEET",
     "DEGENBOT_SOLVE_SIM_INFLIGHT",
     "DEGENBOT_DETACHED_SOLVES",
+    "DEGENBOT_STRATEGY_NAME",
+    "DEGENBOT_STRATEGY_SETTLEMENT_DEFAULT_ENDPOINTS",
     // ADR-043 §5 retired verbosity flags. These literals live in
     // `degenbot_core::telemetry::RETIRED_ENV_NAMES` (the boot-time detection
     // list) because the scanner sweeps the crates; the names are detected and
@@ -177,11 +179,10 @@ fn declared_prefixed_names() -> BTreeSet<String> {
         .collect()
 }
 
-#[test]
-fn schema_covers_the_full_key_inventory() {
-    let sweep: BTreeSet<String> = inventory().into_iter().collect();
-    assert!(!sweep.is_empty(), "inventory sweep produced no keys");
-
+/// The schema inventory a sweep implies: every swept name minus the documented
+/// artifact, bootstrap, driver-domain, harness, and retired sets, plus the
+/// digit-truncated expansions the artifact regex could not reach.
+fn expected_schema_inventory(sweep: &BTreeSet<String>) -> BTreeSet<String> {
     let mut expected: BTreeSet<String> = sweep
         .iter()
         .filter(|k| {
@@ -194,13 +195,21 @@ fn schema_covers_the_full_key_inventory() {
         .cloned()
         .collect();
     for expansion in SWEEP_EXPANSIONS {
-        // Only expand when the artifact that produced it was actually
-        // observed (keeps the snapshot fallback consistent).
+        // Only expand when the artifact that produced it was actually observed,
+        // so the snapshot fallback sees exactly what the live sweep does.
         if SWEEP_ARTIFACTS.iter().any(|a| sweep.contains(*a)) || sweep.contains(*expansion) {
             let _ = expected.insert((*expansion).to_string());
         }
     }
+    expected
+}
 
+#[test]
+fn schema_covers_the_full_key_inventory() {
+    let sweep: BTreeSet<String> = inventory().into_iter().collect();
+    assert!(!sweep.is_empty(), "inventory sweep produced no keys");
+
+    let expected = expected_schema_inventory(&sweep);
     let actual = declared_prefixed_names();
 
     let unknown: Vec<_> = actual.difference(&expected).collect();
@@ -220,24 +229,5 @@ fn snapshot_fallback_agrees_with_schema() {
         !sweep.iter().any(|k| k.contains("REGEN_DOCS")),
         "snapshot is self-contaminated; regenerate it with the exclusion glob"
     );
-    // This filter chain must mirror `schema_covers_the_full_key_inventory`
-    // exactly — the two inventory paths (live sweep, committed snapshot) hold
-    // the identical parity contract.
-    let mut expected: BTreeSet<String> = sweep
-        .iter()
-        .filter(|k| {
-            !SWEEP_ARTIFACTS.contains(&k.as_str())
-                && !BOOTSTRAP_KEYS.contains(&k.as_str())
-                && !DRIVER_DOMAIN_KEYS.contains(&k.as_str())
-                && !TEST_HARNESS_KEYS.contains(&k.as_str())
-                && !RETIRED_KEYS.contains(&k.as_str())
-        })
-        .cloned()
-        .collect();
-    for expansion in SWEEP_EXPANSIONS {
-        if SWEEP_ARTIFACTS.iter().any(|a| sweep.contains(*a)) || sweep.contains(*expansion) {
-            let _ = expected.insert((*expansion).to_string());
-        }
-    }
-    assert_eq!(declared_prefixed_names(), expected);
+    assert_eq!(declared_prefixed_names(), expected_schema_inventory(&sweep));
 }

@@ -1,7 +1,7 @@
 //! Pins for the `strategy.settlement` facet activation keys: the declared
 //! surface resolves from TOML, from env, and collapses to its declared
-//! defaults. The retired `default_endpoints` marker must be inert
-//! everywhere.
+//! defaults. A retired marker spelling is refused at the env boundary with
+//! its activation remediation.
 
 #![expect(
     clippy::expect_used,
@@ -48,21 +48,24 @@ fn settlement_facet_resolves_from_env() {
 }
 
 #[test]
-fn the_retired_default_endpoint_marker_env_var_is_inert() {
+fn the_retired_default_endpoint_marker_is_refused_at_the_env_boundary() {
     let env = MapEnv::new(BTreeMap::from([(
         "DEGENBOT_STRATEGY_SETTLEMENT_DEFAULT_ENDPOINTS".to_string(),
         "true".to_string(),
     )]));
-    let loaded = BotConfigLoader::new()
+    let err = BotConfigLoader::new()
         .with_env(Box::new(env))
         .load()
-        .expect("env load");
-    let s = &loaded.config.strategy.settlement;
+        .expect_err("the retired marker fails the load");
+    let message = format!("{err}");
     assert!(
-        !s.active,
-        "the retired marker spells nothing the schema knows"
+        message.contains("--endpoints-default"),
+        "the refusal names the activation remediation: {message}"
     );
-    assert_eq!(s.endpoints, None);
+    assert!(
+        message.contains("docs/config-migration.md"),
+        "the refusal points at the migration doc: {message}"
+    );
 }
 
 #[test]

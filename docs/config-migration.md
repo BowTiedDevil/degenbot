@@ -68,8 +68,21 @@ for the two names that DID have a replacement (`[otel]` and the top-level `defau
 
 ## In-schema key retirements (typed migrations)
 
-Later hard cutovers retired SCHEMA keys the same way: a surviving env var
-or TOML key fails the load loudly with a pointed message, for one release.
+Later hard cutovers retired SCHEMA keys the same way, and the rule is standing
+rather than a one-release shim. An exported retired name is refused at the
+environment boundary, permanently: the load fails with a pointed message naming
+what the setting became and pointing back here, alongside every other problem
+the load found. A surviving TOML spelling is simply an undeclared key, so it
+fails with the generic unknown-key error. The refusal list is closed: a name
+that was never part of the operator vocabulary is ignored, not refused.
+
+Four further retired env names are refused at that boundary alongside the
+table's rows: `TOKIO_WORKER_THREADS` (the ambient I/O runtime worker count is
+`runtime.io_workers`, derived from the cgroup CPU budget when unset),
+`DEGENBOT_DETACHED_SOLVES` (detached is the only solve arm),
+`DEGENBOT_STRATEGY_NAME` (activation is per facet, `strategy.<arm>.active`),
+and `DEGENBOT_STRATEGY_SETTLEMENT_DEFAULT_ENDPOINTS` (stamp the pinned allowlist
+at activation with `degenbot strategy activate settlement --endpoints-default`).
 
 | Retired key | Cutover | Replacement |
 |---|---|---|

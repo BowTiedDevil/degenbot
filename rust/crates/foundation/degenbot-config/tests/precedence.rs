@@ -458,22 +458,86 @@ fn runtime_io_workers_invalid_value_fails_closed() {
     );
 }
 
-/// Post-migration contract: the retired env names are plain unknown env —
-/// the migration-shim refusals have been removed, so a surviving variable
-/// neither fails the load nor resurrects legacy behavior (it is ignored).
+/// A retired operator env name is refused at the config boundary, naming what
+/// the setting became and the migration doc. The refusal list is closed: a name
+/// that was never part of the operator vocabulary is ignored.
 #[test]
-fn retired_env_shims_are_ignored() {
-    let ok = BotConfigLoader::new()
-        .with_env(map_env(&[
-            ("TOKIO_WORKER_THREADS", "2"),
-            ("DEGENBOT_SOLVE_EXECUTOR", "tokio"),
-            ("DEGENBOT_FLEET", "fleet"),
-            ("DEGENBOT_SOLVE_SIM_INFLIGHT", "8"),
-            ("DEGENBOT_LPT_PARTITION", "4"),
-            ("DEGENBOT_DETACHED_SOLVES", "0"),
-        ]))
-        .load();
-    assert!(ok.is_ok(), "retired env names are ignored: {ok:?}");
+fn retired_env_names_are_refused_at_the_config_boundary() {
+    let retired = [
+        ("DEGENBOT_ERC6909_PROFIT", "ProfitCapture::Erc6909"),
+        ("DEGENBOT_SOLVE_EXECUTOR", "worker fleet"),
+        ("DEGENBOT_LPT_PARTITION", "LPT-pre-balanced"),
+        ("DEGENBOT_FLEET", "worker fleet"),
+        ("DEGENBOT_SOLVE_SIM_INFLIGHT", "fleet.sim_slot_cap"),
+        ("DEGENBOT_DETACHED_SOLVES", "detached is the only solve arm"),
+        ("DEGENBOT_STRATEGY_NAME", "strategy.<arm>.active"),
+        (
+            "DEGENBOT_STRATEGY_SETTLEMENT_DEFAULT_ENDPOINTS",
+            "--endpoints-default",
+        ),
+        ("TOKIO_WORKER_THREADS", "runtime.io_workers"),
+    ];
+    for (name, replacement) in retired {
+        let err = must_err(&BotConfigLoader::new().with_env(map_env(&[(name, "1")])));
+        let message = format!("{err}");
+        assert!(message.contains(name), "{name} must be named: {message}");
+        assert!(
+            message.contains(replacement),
+            "{name} must name its replacement ({replacement}): {message}"
+        );
+        assert!(
+            message.contains("docs/config-migration.md"),
+            "{name} must point at the migration doc: {message}"
+        );
+    }
+}
+
+/// The refusal lookup is exact-name, never a prefix match: a live key that
+/// merely shares a retired name's prefix is not refused.
+#[test]
+fn a_live_key_sharing_a_retired_prefix_is_not_refused() {
+    must_ok(&BotConfigLoader::new().with_env(map_env(&[
+        ("DEGENBOT_FLEET_PROFILE", "auto"),
+        ("DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", "1"),
+        ("DEGENBOT_SOLVE_INLINE_SIM", "0"),
+    ])));
+
+    let err = must_err(&BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_FLEET", "fleet")])));
+    assert!(
+        format!("{err}").contains("retired environment variable DEGENBOT_FLEET"),
+        "the exact retired name is still refused: {err}"
+    );
+}
+
+/// Presence, not value, is the trigger: a blank export is the same refusal.
+#[test]
+fn a_blank_retired_env_export_is_still_refused() {
+    let err = must_err(&BotConfigLoader::new().with_env(map_env(&[("TOKIO_WORKER_THREADS", "")])));
+    assert!(
+        format!("{err}").contains("TOKIO_WORKER_THREADS"),
+        "a blank retired export is refused too: {err}"
+    );
+}
+
+/// The refusal joins the aggregate report rather than short-circuiting it, and
+/// a name outside the closed list stays ignored.
+#[test]
+fn a_retired_env_refusal_aggregates_with_the_other_problems() {
+    let err = must_err(&BotConfigLoader::new().with_env(map_env(&[
+        ("DEGENBOT_FLEET", "fleet"),
+        ("DEGENBOT_IO_WORKERS", "lots"),
+    ])));
+    let message = format!("{err}");
+    assert!(
+        message.contains("(2 problem(s))"),
+        "both problems are reported: {message}"
+    );
+    assert!(
+        message.contains("DEGENBOT_FLEET") && message.contains("runtime.io_workers"),
+        "the aggregate names both problems: {message}"
+    );
+
+    must_ok(&BotConfigLoader::new().with_env(map_env(&[("DEGENBOT_NO_SUCH_KEY", "1")])));
 }
 
 #[test]

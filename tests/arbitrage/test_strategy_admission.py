@@ -2,8 +2,11 @@
 
 Selection lives in the per-facet ``strategy.<facet>.active`` flags (ADR-055);
 the retired single-arm ``strategy.name`` selector is gone from the Rust schema
-(pinned by ``strategy_arm_selector_is_retired``) and the Python config model
-that mirrored it is gone too, so there is no second spelling left to refuse.
+— an exported ``DEGENBOT_STRATEGY_NAME`` is refused at the config boundary by
+``RETIRED_ENV_NAMES``, pinned by
+``retired_env_names_are_refused_at_the_config_boundary``, and its TOML spelling
+is an undeclared key — and the Python config model that mirrored it is gone
+too, so there is no second spelling left to refuse.
 The settlement runner carries no Python-side arm gate: the host boot registers
 each configured facet and ``enable_strategy`` surfaces the typed refusal, so
 there is one admission authority. These tests pin the host's typed refusal;
@@ -26,8 +29,9 @@ class TestAdmissionIsHostOwned:
     def test_runner_carries_no_python_arm_gate(self, monkeypatch):
         """The runner constructs under the retired env; admission is the host's.
 
-        A placeholder cfg is honest here — construction never touches it and no
-        runner-side env check runs (the retired env name is inert).
+        A placeholder cfg is honest here — runner construction reads no config,
+        so the Rust boundary refusal of ``DEGENBOT_STRATEGY_NAME`` never runs in
+        this test and no runner-side env check decides anything.
         """
         monkeypatch.setenv(STRATEGY_ENV, "txpool_backrun")
         assert BotRunner(None) is not None  # type: ignore[arg-type]
