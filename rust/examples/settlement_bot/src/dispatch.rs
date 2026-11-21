@@ -28,6 +28,7 @@ use alloy::primitives::{B256, U256};
 use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees};
 use degenbot::batch_executor::PathResolver;
 use degenbot::bot::arb_engine::EngineStages;
+use degenbot::errors::NextBaseFeeError;
 use degenbot::execution::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{Dispatcher, ReceiptProbe, SubmissionError, SubmissionResult};
@@ -108,15 +109,21 @@ pub fn priority_fee(
 }
 
 /// Compute the next-block base fee from the parent block header.
-#[must_use]
-pub fn next_base_fee(parent_base_fee: u128, parent_gas_used: u128, parent_gas_limit: u128) -> u128 {
+///
+/// # Errors
+///
+/// Returns [`NextBaseFeeError::ZeroGasTarget`] for a header whose gas target is
+/// zero while it used gas.
+pub fn next_base_fee(
+    parent_base_fee: u128,
+    parent_gas_used: u128,
+    parent_gas_limit: u128,
+) -> Result<u128, NextBaseFeeError> {
     degenbot::eip_1559::next_base_fee(
         parent_base_fee,
         parent_gas_used,
         parent_gas_limit,
-        None,
-        degenbot::eip_1559::DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-        degenbot::eip_1559::DEFAULT_ELASTICITY_MULTIPLIER,
+        degenbot::eip_1559::BaseFeeParams::DEFAULT,
     )
 }
 
@@ -224,7 +231,7 @@ mod tests {
     fn next_base_fee_rises_above_target() {
         let fee = next_base_fee(1_000_000_000, 20_000_000, 30_000_000);
         // target=15e6, delta_gas=5e6, delta = 1e9*5e6/15e6/8 = 41_666_666
-        assert_eq!(fee, 1_041_666_666);
+        assert_eq!(fee, Ok(1_041_666_666));
     }
 
     #[test]

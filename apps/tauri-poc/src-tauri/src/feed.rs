@@ -169,16 +169,15 @@ async fn run_feed(app: AppHandle, url: String, shutdown: Arc<AtomicBool>) {
                                 None
                             }
                         };
-                        let next_base_fee_wei = base_fee_per_gas.map(|base_fee| {
-                            u64::try_from(eip_1559::next_base_fee(
+                        let next_base_fee_wei = base_fee_per_gas.and_then(|base_fee| {
+                            let next = eip_1559::next_base_fee(
                                 u128::from(base_fee),
                                 u128::from(gas_used),
                                 u128::from(gas_limit),
-                                None,
-                                8,
-                                2,
-                            ))
-                            .unwrap_or(u64::MAX)
+                                eip_1559::BaseFeeParams::DEFAULT,
+                            )
+                            .ok()?;
+                            Some(u64::try_from(next).unwrap_or(u64::MAX))
                         });
                         let block = model.on_header(
                             number,

@@ -50,9 +50,7 @@ use degenbot_bot::arb_engine::{
     SessionEvent, SessionStream, SimulatedPathResult, TeardownReport,
 };
 use degenbot_bot::arb_engine::{CapturedSwapRow, InlineSimFailure, InlineSwapFamily};
-use degenbot_core::eip_1559::{
-    next_base_fee, DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, DEFAULT_ELASTICITY_MULTIPLIER,
-};
+use degenbot_core::eip_1559::{next_base_fee, BaseFeeParams};
 use degenbot_pools::solve::SolvePathResult;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::capture::SwapFamily;
@@ -81,21 +79,24 @@ impl BlockClock {
     /// Advance the clock from one accepted header.
     ///
     /// Returns whether the clock moved: a repeated or older header is not
-    /// accepted (a rewind would re-consume an epoch's view).
+    /// accepted (a rewind would re-consume an epoch's view), and neither is a
+    /// header whose next base fee is uncomputable (a gas target of zero for a
+    /// block that used gas) — the clock stays at the last block it could price.
     pub fn advance(&mut self, notification: &BlockNotification) -> bool {
         if notification.number < self.current_block {
             return false;
         }
-        self.current_block = notification.number;
-        self.block_timestamp = notification.timestamp;
-        self.base_fee_next = next_base_fee(
+        let Ok(base_fee_next) = next_base_fee(
             u128::from(notification.base_fee_per_gas.unwrap_or(0)),
             u128::from(notification.gas_used),
             u128::from(notification.gas_limit),
-            None,
-            DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-            DEFAULT_ELASTICITY_MULTIPLIER,
-        );
+            BaseFeeParams::DEFAULT,
+        ) else {
+            return false;
+        };
+        self.current_block = notification.number;
+        self.block_timestamp = notification.timestamp;
+        self.base_fee_next = base_fee_next;
         true
     }
 
@@ -1210,6 +1211,35 @@ mod tests {
             gas_used: 15_000_000,
             gas_limit: 30_000_000,
         }
+    }
+
+    /// A zero gas target with zero usage is the unchanged branch: the clock
+    /// moves and prices the block at the parent fee.
+    #[test]
+    fn clock_prices_a_zero_limit_header_with_no_usage() {
+        let mut clock = BlockClock::default();
+        let header = BlockNotification {
+            gas_used: 0,
+            gas_limit: 0,
+            ..block(1, 5)
+        };
+        assert!(clock.advance(&header));
+        assert_eq!(clock.current_block, 1);
+        assert_eq!(clock.base_fee_next, 1_000_000_000);
+    }
+
+    /// A header that used gas under a zero gas target has no divisor for the
+    /// delta, so the clock refuses it and stays where it was.
+    #[test]
+    fn clock_refuses_a_header_with_no_priceable_target() {
+        let mut clock = BlockClock::default();
+        let header = BlockNotification {
+            gas_used: 1,
+            gas_limit: 1,
+            ..block(1, 5)
+        };
+        assert!(!clock.advance(&header));
+        assert_eq!(clock, BlockClock::default());
     }
 
     /// The fake sim leaf: it fails on the marked block and signals every pass,

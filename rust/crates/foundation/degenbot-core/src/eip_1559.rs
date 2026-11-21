@@ -18,6 +18,9 @@
 
 use alloy::primitives::U256;
 use std::cmp::Ordering;
+use std::num::NonZeroU128;
+
+use crate::errors::{BaseFeeParamsError, NextBaseFeeError};
 
 /// EIP-1559 base-fee maximum change denominator (`BASE_FEE_MAX_CHANGE_DENOMINATOR`).
 ///
@@ -35,12 +38,85 @@ pub const DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR: u128 = 8;
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 
+/// The EIP-1559 parameters one call needs: the two divisors and the optional
+/// base-fee floor.
+///
+/// Both divisors are [`NonZeroU128`], so the zero they would divide by in the
+/// raw formula is unrepresentable here. Untrusted values (the Python boundary,
+/// configuration) go through [`BaseFeeParams::try_new`], which refuses a zero
+/// with [`BaseFeeParamsError`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BaseFeeParams {
+    base_fee_max_change_denominator: NonZeroU128,
+    elasticity_multiplier: NonZeroU128,
+    min_base_fee: Option<u128>,
+}
+
+impl BaseFeeParams {
+    /// The EIP-1559 mainnet parameters: denominator 8, elasticity 2, no floor.
+    pub const DEFAULT: Self = Self {
+        base_fee_max_change_denominator: NonZeroU128::new(DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR)
+            .expect("the EIP-1559 default max-change denominator is non-zero"),
+        elasticity_multiplier: NonZeroU128::new(DEFAULT_ELASTICITY_MULTIPLIER)
+            .expect("the EIP-1559 default elasticity multiplier is non-zero"),
+        min_base_fee: None,
+    };
+
+    /// Build the parameters from untrusted values.
+    ///
+    /// # Errors
+    ///
+    /// [`BaseFeeParamsError::ZeroMaxChangeDenominator`] or
+    /// [`BaseFeeParamsError::ZeroElasticityMultiplier`] when either divisor is
+    /// zero.
+    pub fn try_new(
+        base_fee_max_change_denominator: u128,
+        elasticity_multiplier: u128,
+        min_base_fee: Option<u128>,
+    ) -> Result<Self, BaseFeeParamsError> {
+        let base_fee_max_change_denominator = NonZeroU128::new(base_fee_max_change_denominator)
+            .ok_or(BaseFeeParamsError::ZeroMaxChangeDenominator)?;
+        let elasticity_multiplier = NonZeroU128::new(elasticity_multiplier)
+            .ok_or(BaseFeeParamsError::ZeroElasticityMultiplier)?;
+        Ok(Self {
+            base_fee_max_change_denominator,
+            elasticity_multiplier,
+            min_base_fee,
+        })
+    }
+
+    /// The maximum per-block change, as a `1/n` fraction of the parent fee.
+    #[must_use]
+    pub const fn base_fee_max_change_denominator(&self) -> NonZeroU128 {
+        self.base_fee_max_change_denominator
+    }
+
+    /// The gas-limit-to-gas-target multiplier.
+    #[must_use]
+    pub const fn elasticity_multiplier(&self) -> NonZeroU128 {
+        self.elasticity_multiplier
+    }
+
+    /// The optional base-fee floor.
+    #[must_use]
+    pub const fn min_base_fee(&self) -> Option<u128> {
+        self.min_base_fee
+    }
+
+    /// The gas target of `parent_gas_limit` — the delta's divisor, which is zero
+    /// only for a gas limit below the elasticity multiplier.
+    #[must_use]
+    pub const fn gas_target(&self, parent_gas_limit: u128) -> u128 {
+        parent_gas_limit / self.elasticity_multiplier.get()
+    }
+}
+
 /// Calculate the next EIP-1559 base fee for a compatible blockchain.
 ///
 /// Integer-exact (no float) evaluation of the formula in the [EIP-1559]
-/// proposal's example code. The default `base_fee_max_change_denominator` (8) and
-/// `elasticity_multiplier` (2) are taken from EIP-1559; non-Ethereum EIP-1559
-/// chains (e.g. some L2s) may override either.
+/// proposal's example code. [`BaseFeeParams::DEFAULT`] carries EIP-1559's
+/// `base_fee_max_change_denominator` (8) and `elasticity_multiplier` (2);
+/// non-Ethereum EIP-1559 chains (e.g. some L2s) may override either.
 ///
 /// # Branch logic
 ///
@@ -59,71 +135,88 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 /// no clamp. `min_base_fee` supports non-Ethereum EIP-1559 chains that floor
 /// the base fee (e.g. Linea).
 ///
-/// # Panics
+/// # Totality
 ///
-/// Every path below is integer division:
+/// Never panics: both divisors are [`NonZeroU128`] by construction, the delta
+/// only divides by a gas target proven non-zero above, the [`U256`] narrowing
+/// saturates, and the increase path saturates at `u128::MAX`.
 ///
-/// - `elasticity_multiplier == 0` — the gas-target division.
-/// - `parent_gas_limit < elasticity_multiplier` — the target is zero, and the
-///   delta division panics unless `parent_gas_used` is also zero (zero usage
-///   takes the unchanged branch and computes no delta).
-/// - `base_fee_max_change_denominator == 0` — the delta division, on every
-///   branch that computes one.
+/// # Errors
+///
+/// [`NextBaseFeeError::ZeroGasTarget`] when `parent_gas_limit` is below
+/// [`BaseFeeParams::elasticity_multiplier`] while `parent_gas_used` is
+/// non-zero: the gas target is zero, so the delta has no divisor. The same zero
+/// target with zero usage takes the unchanged branch and stays total.
 ///
 /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
-#[must_use]
 pub fn next_base_fee(
     parent_base_fee: u128,
     parent_gas_used: u128,
     parent_gas_limit: u128,
-    min_base_fee: Option<u128>,
-    base_fee_max_change_denominator: u128,
-    elasticity_multiplier: u128,
-) -> u128 {
-    let last_gas_target = parent_gas_limit / elasticity_multiplier;
+    params: BaseFeeParams,
+) -> Result<u128, NextBaseFeeError> {
+    let last_gas_target = params.gas_target(parent_gas_limit);
+    if last_gas_target == 0 && parent_gas_used != 0 {
+        return Err(NextBaseFeeError::ZeroGasTarget {
+            parent_gas_limit,
+            elasticity_multiplier: params.elasticity_multiplier().get(),
+        });
+    }
+
+    let delta = |gas_used_delta: u128| {
+        // U256 intermediate: parent_base_fee * gas_used_delta can exceed u128.
+        U256::from(parent_base_fee) * U256::from(gas_used_delta)
+            / U256::from(last_gas_target)
+            / U256::from(params.base_fee_max_change_denominator().get())
+    };
 
     let working_base_fee = match parent_gas_used.cmp(&last_gas_target) {
         Ordering::Equal => parent_base_fee,
         Ordering::Greater => {
-            let gas_used_delta = parent_gas_used - last_gas_target;
-            // U256 intermediate: parent_base_fee * gas_used_delta can exceed u128.
-            let delta = U256::from(parent_base_fee) * U256::from(gas_used_delta)
-                / U256::from(last_gas_target)
-                / U256::from(base_fee_max_change_denominator);
-            let base_fee_delta = std::cmp::max(delta.to::<u128>(), 1);
-            parent_base_fee + base_fee_delta
+            let base_fee_delta = std::cmp::max(
+                delta(parent_gas_used - last_gas_target).saturating_to::<u128>(),
+                1,
+            );
+            parent_base_fee.saturating_add(base_fee_delta)
         }
         Ordering::Less => {
-            let gas_used_delta = last_gas_target - parent_gas_used;
-            let delta = U256::from(parent_base_fee) * U256::from(gas_used_delta)
-                / U256::from(last_gas_target)
-                / U256::from(base_fee_max_change_denominator);
-            let base_fee_delta = delta.to::<u128>();
-            parent_base_fee - base_fee_delta
+            parent_base_fee - delta(last_gas_target - parent_gas_used).saturating_to::<u128>()
         }
     };
 
-    match min_base_fee {
+    Ok(match params.min_base_fee() {
         Some(min) => working_base_fee.max(min),
         None => working_base_fee,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::too_many_lines)]
+    #![expect(clippy::expect_used, clippy::too_many_lines)]
 
     use super::*;
+    use crate::errors::{BaseFeeParamsError, NextBaseFeeError};
 
     /// A parity-test fixture row:
     /// `(parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
     ///   base_fee_max_change_denominator, elasticity_multiplier)` → expected result.
     type Case = (u128, u128, u128, Option<u128>, u128, u128, u128);
 
+    /// The params of one fixture row, built through the refusing constructor.
+    fn params(min_base_fee: Option<u128>, denominator: u128, elasticity: u128) -> BaseFeeParams {
+        BaseFeeParams::try_new(denominator, elasticity, min_base_fee)
+            .expect("the fixtures use the non-zero divisors the type requires")
+    }
+
+    /// The fee for an in-domain row: no fixture asks with a zero gas target.
+    fn fee(bf: u128, gu: u128, gl: u128, params: BaseFeeParams) -> u128 {
+        next_base_fee(bf, gu, gl, params).expect("the fixtures keep the gas target non-zero")
+    }
+
     /// Convenience wrapper using the EIP-1559 defaults and no `min_base_fee`
     /// — the common mainnet call shape.
     fn nbf(bf: u128, gu: u128, gl: u128) -> u128 {
-        next_base_fee(bf, gu, gl, None, 8, 2)
+        fee(bf, gu, gl, BaseFeeParams::DEFAULT)
     }
 
     // Parity fixtures recorded from the Python reference implementation.
@@ -270,7 +363,7 @@ mod tests {
         ];
 
         for &(bf, gu, gl, min, d, e, want) in cases {
-            let got = next_base_fee(bf, gu, gl, min, d, e);
+            let got = fee(bf, gu, gl, params(min, d, e));
             assert_eq!(
                 got, want,
                 "parity mismatch: next_base_fee(bf={bf}, gu={gu}, gl={gl}, min={min:?}, d={d}, e={e})"
@@ -289,7 +382,7 @@ mod tests {
         proptest!(|(bf in 0u128..u128::MAX / 2, gl in 2u128..u128::MAX / 2, e in 2u128..=4)| {
             let target = gl / e;
             if target > 0 {
-                prop_assert_eq!(next_base_fee(bf, target, gl, None, 8, e), bf);
+                prop_assert_eq!(fee(bf, target, gl, params(None, 8, e)), bf);
             }
         });
     }
@@ -302,7 +395,7 @@ mod tests {
         proptest!(|(bf in 1u128..u128::MAX / 2, gl in 4u128..u128::MAX / 2, e in 2u128..=4, over in 1u128..1000)| {
             let target = gl / e;
             if target > 0 && target + over <= gl && bf < u128::MAX / 4 {
-                let next = next_base_fee(bf, target + over, gl, None, 8, e);
+                let next = fee(bf, target + over, gl, params(None, 8, e));
                 prop_assert!(next > bf, "next={next} bf={bf}");
             }
         });
@@ -316,7 +409,7 @@ mod tests {
         proptest!(|(bf in 1u128..u128::MAX / 2, gl in 4u128..u128::MAX / 2, e in 2u128..=4, under in 0u128..1000)| {
             let target = gl / e;
             if target > 0 && under < target {
-                let next = next_base_fee(bf, target - under, gl, None, 8, e);
+                let next = fee(bf, target - under, gl, params(None, 8, e));
                 prop_assert!(next <= bf, "next={next} bf={bf}");
             }
         });
@@ -331,7 +424,7 @@ mod tests {
             let target = gl / 2;
             if target > 0 {
                 // empty block → maximal decrease; the clamp must still hold.
-                let next = next_base_fee(bf, 0, gl, Some(min), 8, 2);
+                let next = fee(bf, 0, gl, params(Some(min), 8, 2));
                 prop_assert!(next >= min, "next={next} < min={min}");
             }
         });
@@ -353,11 +446,11 @@ mod tests {
             let target = gl / 2;
             if target > 0 {
                 let delta_max_up = bf * (gl - target) / target / denom;
-                let up = next_base_fee(bf, gl, gl, None, denom, 2); // full block (max over)
+                let up = fee(bf, gl, gl, params(None, denom, 2)); // full block (max over)
                 prop_assert!(up <= bf + delta_max_up + 1, "up={up} > bf+{delta_max_up}+1 (bf={bf},gl={gl},d={denom})");
                 // decrease path: max decrease is the empty-block delta = bf/denom exactly.
                 let delta_max_down = bf / denom;
-                let down = next_base_fee(bf, 0, gl, None, denom, 2); // empty block (max under)
+                let down = fee(bf, 0, gl, params(None, denom, 2)); // empty block (max under)
                 prop_assert!(down >= bf - delta_max_down, "down={down} < bf-{delta_max_down} (bf={bf},gl={gl},d={denom})");
             }
         });
@@ -371,8 +464,8 @@ mod tests {
     /// `x`).
     #[test]
     fn min_fee_zero_is_noop() {
-        let none = next_base_fee(1_000_000_000, 0, 30_000_000, None, 8, 2);
-        let zero = next_base_fee(1_000_000_000, 0, 30_000_000, Some(0), 8, 2);
+        let none = fee(1_000_000_000, 0, 30_000_000, BaseFeeParams::DEFAULT);
+        let zero = fee(1_000_000_000, 0, 30_000_000, params(Some(0), 8, 2));
         assert_eq!(none, zero);
         assert_eq!(zero, 875_000_000);
     }
@@ -382,21 +475,101 @@ mod tests {
     #[test]
     fn increase_floor_bumps_by_one() {
         // bf=1, target=1; gu=2>1 → gas_used_delta=1, delta=1*1//1//8=0 → max(0,1)=1 → 1+1=2
-        assert_eq!(next_base_fee(1, 2, 2, None, 8, 2), 2);
+        assert_eq!(nbf(1, 2, 2), 2);
         // bf=0, gu=2>1 → delta=max(0,1)=1 → 0+1=1
-        assert_eq!(next_base_fee(0, 2, 2, None, 8, 2), 1);
+        assert_eq!(nbf(0, 2, 2), 1);
     }
 
-    /// Defaults constants match EIP-1559.
+    /// Defaults constants match EIP-1559, and the default params carry them.
     #[test]
     fn eip1559_defaults() {
         assert_eq!(DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, 8);
         assert_eq!(DEFAULT_ELASTICITY_MULTIPLIER, 2);
+        assert_eq!(
+            BaseFeeParams::DEFAULT
+                .base_fee_max_change_denominator()
+                .get(),
+            DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR
+        );
+        assert_eq!(
+            BaseFeeParams::DEFAULT.elasticity_multiplier().get(),
+            DEFAULT_ELASTICITY_MULTIPLIER
+        );
+        assert_eq!(BaseFeeParams::DEFAULT.min_base_fee(), None);
     }
 
     /// Smoke: nbf convenience matches the explicit-defaults call.
     #[test]
     fn convenience_matches_explicit_defaults() {
         assert_eq!(nbf(1_000_000_000, 0, 30_000_000), 875_000_000);
+    }
+
+    // ---------------------------------------------------------------------------
+    // The zero divisors are unrepresentable: refused at construction, or a typed
+    // refusal where the divisor is relational.
+    // ---------------------------------------------------------------------------
+
+    /// A zero max-change denominator never reaches the delta division.
+    #[test]
+    fn zero_denominator_is_refused_at_params_construction() {
+        assert_eq!(
+            BaseFeeParams::try_new(0, DEFAULT_ELASTICITY_MULTIPLIER, None),
+            Err(BaseFeeParamsError::ZeroMaxChangeDenominator)
+        );
+    }
+
+    /// A zero elasticity never reaches the gas-target division.
+    #[test]
+    fn zero_elasticity_is_refused_at_params_construction() {
+        assert_eq!(
+            BaseFeeParams::try_new(DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, 0, None),
+            Err(BaseFeeParamsError::ZeroElasticityMultiplier)
+        );
+    }
+
+    /// A zero gas target with non-zero usage has no divisor for the delta, so a
+    /// block that used gas is a typed refusal (the pre-cutover panic path).
+    #[test]
+    fn zero_gas_target_with_nonzero_usage_is_a_typed_refusal() {
+        assert_eq!(
+            next_base_fee(1_000_000_000, 1, 0, BaseFeeParams::DEFAULT),
+            Err(NextBaseFeeError::ZeroGasTarget {
+                parent_gas_limit: 0,
+                elasticity_multiplier: DEFAULT_ELASTICITY_MULTIPLIER,
+            })
+        );
+        assert_eq!(
+            next_base_fee(1_000_000_000, 2, 1, BaseFeeParams::DEFAULT),
+            Err(NextBaseFeeError::ZeroGasTarget {
+                parent_gas_limit: 1,
+                elasticity_multiplier: DEFAULT_ELASTICITY_MULTIPLIER,
+            })
+        );
+    }
+
+    /// The same zero target with zero usage divides nothing: the unchanged
+    /// branch stays total, so a pre-EIP-1559-shaped header still prices.
+    #[test]
+    fn zero_gas_target_with_zero_usage_stays_the_unchanged_branch() {
+        assert_eq!(nbf(1_000_000_000, 0, 0), 1_000_000_000);
+        assert_eq!(nbf(1_000_000_000, 0, 1), 1_000_000_000);
+    }
+
+    /// The increase path saturates at the `u128` ceiling instead of overflowing,
+    /// both when the add carries past it and when the `U256` delta itself exceeds
+    /// `u128` (a wide elasticity widens the delta up to `e - 1` times the parent
+    /// fee).
+    #[test]
+    fn increase_saturates_at_the_u128_ceiling() {
+        assert_eq!(nbf(u128::MAX, 2, 2), u128::MAX);
+        assert_eq!(
+            fee(
+                u128::MAX,
+                64,
+                64,
+                params(None, DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, 64)
+            ),
+            u128::MAX
+        );
     }
 }

@@ -20,12 +20,22 @@ def next_base_fee(
     elasticity_multiplier: SupportsIndex = 2,
 ) -> int:
     """
-    Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
+    Compute the EIP-1559 next-block base fee from the pure-Rust
     `degenbot_core::eip_1559::next_base_fee`.
 
     Args: `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
     `min_base_fee`, `base_fee_max_change_denominator` (default 8) and
     `elasticity_multiplier` (default 2). U256 intermediates avoid u128 overflow.
+
+    The numeric signature is this seam's job: Python has no non-zero integer
+    type, so the two divisors arrive as plain ints and the Rust core's refusals
+    leave here as `ValueError`.
+
+    # Errors
+
+    `ValueError` when either divisor is zero, or when `parent_gas_limit` is below
+    `elasticity_multiplier` while `parent_gas_used` is non-zero (a zero gas target
+    with no divisor for the delta).
     """
 
 __all__ = [

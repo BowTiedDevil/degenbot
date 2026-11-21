@@ -274,3 +274,39 @@ def test_fee_calcs():
         )
         == min_base_fee
     )
+
+    # The numeric signature is the untrusted boundary: a zero divisor is a loud
+    # ValueError, never a process panic.
+    with pytest.raises(ValueError, match="base fee max change denominator"):
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=15_000_000,
+            parent_gas_limit=30_000_000,
+            base_fee_max_change_denominator=0,
+        )
+
+    with pytest.raises(ValueError, match="elasticity multiplier"):
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=15_000_000,
+            parent_gas_limit=30_000_000,
+            elasticity_multiplier=0,
+        )
+
+    # A zero gas target with non-zero usage has no divisor for the delta.
+    with pytest.raises(ValueError, match="zero gas target"):
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=1,
+            parent_gas_limit=1,
+        )
+
+    # The same zero target with zero usage divides nothing: unchanged, no refusal.
+    assert (
+        next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=0,
+            parent_gas_limit=0,
+        )
+        == base_fee
+    )

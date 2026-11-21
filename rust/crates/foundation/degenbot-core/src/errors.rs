@@ -89,6 +89,55 @@ impl From<TickMathError> for PyErr {
     }
 }
 
+/// Errors from building [`crate::eip_1559::BaseFeeParams`].
+///
+/// The parameters hold their divisors as [`std::num::NonZeroU128`], so a zero
+/// can only arrive from untrusted input (the Python boundary, configuration)
+/// and is refused here rather than dividing.
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BaseFeeParamsError {
+    /// `base_fee_max_change_denominator` was zero — the delta's divisor.
+    #[error("base fee max change denominator must be non-zero")]
+    ZeroMaxChangeDenominator,
+    /// `elasticity_multiplier` was zero — the gas-target divisor.
+    #[error("elasticity multiplier must be non-zero")]
+    ZeroElasticityMultiplier,
+}
+
+#[cfg(feature = "pyo3")]
+impl From<BaseFeeParamsError> for PyErr {
+    fn from(err: BaseFeeParamsError) -> Self {
+        Self::new::<PyValueError, _>(err.to_string())
+    }
+}
+
+/// Errors from [`crate::eip_1559::next_base_fee`].
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NextBaseFeeError {
+    /// The parent header's gas target (`parent_gas_limit / elasticity_multiplier`)
+    /// is zero while `parent_gas_used` is non-zero, so the delta division has no
+    /// divisor. The same zero target with zero usage is the unchanged branch and
+    /// computes no delta.
+    #[error(
+        "zero gas target: parent gas limit {parent_gas_limit} is below elasticity multiplier {elasticity_multiplier} for a block that used gas"
+    )]
+    ZeroGasTarget {
+        /// The parent header's gas limit.
+        parent_gas_limit: u128,
+        /// The elasticity multiplier the gas target is derived with.
+        elasticity_multiplier: u128,
+    },
+}
+
+#[cfg(feature = "pyo3")]
+impl From<NextBaseFeeError> for PyErr {
+    fn from(err: NextBaseFeeError) -> Self {
+        Self::new::<PyValueError, _>(err.to_string())
+    }
+}
+
 /// Errors that can occur during ABI decoding.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
