@@ -516,10 +516,9 @@ impl DegenbotDb {
     /// # No unique index → explicit SELECT-then-INSERT dedup
     ///
     /// `exchanges` has NO unique index on `(chain_id, name)` (see
-    /// [`crate::schema_head`]), and none may be added (a new index
-    /// would force a new Alembic migration = out of scope per ADR-010). So this
-    /// uses the explicit `SELECT … WHERE chain_id, name` → `INSERT` dedup the
-    /// Python code uses, NOT `INSERT … ON CONFLICT(chain_id, name)`. The
+    /// [`crate::schema::SCHEMA_HEAD`]), matching the Python/Alembic head. So
+    /// this uses the explicit `SELECT … WHERE chain_id, name` → `INSERT` dedup
+    /// the Python code uses, NOT `INSERT … ON CONFLICT(chain_id, name)`. The
     /// inherent SELECT-then-INSERT race matches the Python trajectory's own
     /// race; the CLI holds the connection mutex via [`Self::lock`] so a
     /// single-process caller is race-free.
@@ -618,8 +617,9 @@ impl DegenbotDb {
     /// # Unique index → `ON CONFLICT` upsert
     ///
     /// Unlike `exchanges`, `pool_managers` HAS the `ix_pool_manager_address_chain`
-    /// unique index on `(address, chain)` (see [`crate::schema_head`]), so this
-    /// uses `INSERT … ON CONFLICT(address, chain) DO UPDATE SET
+    /// unique index on `(address, chain)` (see
+    /// [`crate::schema::SCHEMA_HEAD`]), so this uses
+    /// `INSERT … ON CONFLICT(address, chain) DO UPDATE SET
     /// kind=excluded.kind, state_view=excluded.state_view,
     /// exchange_id=excluded.exchange_id RETURNING …` — idempotent: re-calling
     /// with a changed `state_view` (or `kind`/`exchange_id`) updates the row in

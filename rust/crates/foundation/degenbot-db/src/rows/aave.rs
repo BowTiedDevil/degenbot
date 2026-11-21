@@ -4,14 +4,16 @@
 //! [`alloy::primitives::Address`]. Column SELECT order matches each table's
 //! `from_row` layout below.
 //!
-//! Writes for Aave belong to the writer-orchestration scope (Non-goals);
-//! only the row structs + read decoding land here, so the snapshot reader can
-//! surface them.
+//! The writes that populate these tables live in `crate::write::aave`; this
+//! module is the read-side projection, and [`crate::aave`]'s `fetch_aave_*`
+//! reads build [`AaveV3MarketRow`], [`AaveV3ContractRow`], and
+//! [`AaveV3UserRow`] from it.
 
-#![expect(dead_code)] // Aave read structs decode here (spike AC); the fetch_aave_*
-                      // read fns + writer upserts land in the writer-orchestration scope, at which point these
-                      // decoders are exercised. Defined now so the typed surface is
-                      // ready for the consumer tasks.
+#![expect(dead_code)] // Only the user row has an in-crate decoder caller
+                      // (`fetch_aave_user_by_address`); every other `pub(crate)`
+                      // `from_row` here is uncalled — the market and contract reads
+                      // build their structs field-by-field. That gap is what this
+                      // expectation covers; the structs themselves stay public API.
 
 use alloy::primitives::{Address, U256};
 use rusqlite::Row;

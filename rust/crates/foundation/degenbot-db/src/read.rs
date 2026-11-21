@@ -1,7 +1,7 @@
 //! Low-level read fns — typed row lookups mirroring the `SQLAlchemy`
 //! `DatabaseSnapshot` reader (the parity oracle). Each takes the
 //! [`DegenbotDb`] handle, locks the [`Connection`], prepares a statement, and
-//! decodes rows via the [`crate::rows`] `FromRow` impls.
+//! decodes rows through each row type's inherent `from_row`.
 //!
 //! See `src/degenbot/uniswap/{v3,v4}_snapshot.py` `DatabaseSnapshot` for the
 //! canonical query shapes.

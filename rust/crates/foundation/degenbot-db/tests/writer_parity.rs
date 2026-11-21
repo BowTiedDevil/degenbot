@@ -8,7 +8,7 @@
 //! This is the Rust-internal half of the parity gate. The Python-written
 //! Aave oracle (`cli/aave/event_handlers.py::_process_*` + the
 //! `get_or_create_*` upsert helpers) is the source of truth; the per-handler
-//! unit tests in `write.rs` pin each handler's field mapping vs the Python
+//! unit tests in `write/tests.rs` pin each handler's field mapping vs the Python
 //! ORM defaults + the create-vs-mutate trajectory, and this integration test
 //! composes them into a realistic per-block backfill sequence (the "warm/bulk
 //! path") to prove the substrate produces a coherent multi-table DB

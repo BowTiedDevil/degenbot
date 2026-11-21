@@ -18,14 +18,11 @@ pub(crate) fn decode_u256(s: &str) -> Result<U256, DbError> {
         .map_err(|e| DbError::Decode(format!("u256 parse of {s:?}: {e}")))
 }
 
-/// Decode a signed `VARCHAR(78)` column value to [`I256`]. Used for
-/// `liquidity_net` (upper ticks carry a negative net). The DB stores it as a
-/// signed decimal string (Python `str(int)`), so `U256::from_str_radix`
-/// rejects the leading `-`; `I256::from_dec_str` accepts it.
 /// Decode a signed-decimal `liquidity_net` TEXT value to `i128` (the on-chain
-/// int128 width). Byte-identical round-trip versus the old I256
-/// codec: both emit `str(value)` signed decimal; any out-of-i128-range row is
-/// a decode error rather than a silent wraparound.
+/// int128 width). Upper ticks carry a negative net, stored as a signed decimal
+/// string (Python `str(int)`), and the value round-trips byte-identically as
+/// that signed decimal; an out-of-range or malformed row is a decode error
+/// rather than a silent wraparound.
 ///
 /// # Errors
 ///
@@ -42,10 +39,9 @@ pub(crate) fn decode_i128_net(s: &str) -> Result<i128, DbError> {
 /// # Errors
 ///
 /// Returns [`DbError::Decode`] if the non-null value is not a valid `U256`.
-// Reference-free until fetch_aave_* lands — keep it that way: a call
-// from dead code (e.g. the aave module's `RowGet` impls) left this `expect`
-// unfulfilled on older rustc versions, breaking builds under
-// `[workspace.lints.rust] warnings = "deny"` (macos-14 wheel CI).
+// Deliberately reference-free: the aave row decoders inline their own optional
+// decode (see `RowGet for Option<U256>` in rows/aave.rs) so this helper stays
+// unreferenced and its `expect` below stays fulfilled.
 #[expect(dead_code)]
 pub(crate) fn decode_opt_u256(s: Option<&str>) -> Result<Option<U256>, DbError> {
     s.map(decode_u256).transpose()

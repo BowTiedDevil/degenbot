@@ -1,10 +1,9 @@
 #![cfg(feature = "writer")]
-//! Regression test for the WAL held-read-tx concurrency model (spike):
-//! `DegenbotDb::open_snapshot_tx()` acquires one
-//! deferred read transaction at bot startup and holds it across `build_paths`
-//! so every per-pool `fetch_liquidity_map` + the `fetch_newest_update_block`
-//! read share a single DB snapshot, immune to concurrent `pool_updater`
-//! commits (Approach 1, chosen method).
+//! Regression test for the WAL held-read-tx concurrency model:
+//! `SnapshotDb::open` acquires one deferred read transaction at bot startup and
+//! holds it across `build_paths` so every per-pool `fetch_liquidity_map` + the
+//! `fetch_newest_update_block` read share a single DB snapshot, immune to
+//! concurrent `pool_updater` commits.
 //!
 //! This is the behavior the `SnapshotStore` was hand-rolling: a single
 //! consistent DB cut frozen at bot startup that concurrent writer commits
@@ -27,9 +26,9 @@
 //!    (not just the scalar block number).
 //!
 //! The negative-control test (`per_call_reads_see_concurrent_writer_advance`)
-//! pins the race the held tx closes: without a held tx (today's per-call
-//! `lock()` shape), the second read sees the writer's advance — the
-//! false-verify-failure the Store was working around.
+//! pins the race the held tx closes: under the per-call `lock()` shape the
+//! second read sees the writer's advance — the false-verify-failure the Store
+//! was working around.
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 use rusqlite::{Connection, TransactionBehavior};

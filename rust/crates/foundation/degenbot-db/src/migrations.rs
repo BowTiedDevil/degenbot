@@ -13,23 +13,20 @@
 //! release fixture matrix) is documented on
 //! [`crate::schema::RUST_SCHEMA_VERSION`].
 //!
-//! # Verdict (spike, 2026-09; ADR-052 D3)
+//! # Verdict (ADR-052 D3)
 //!
 //! The default candidate was `rusqlite_migration` 2.6.0 (Apache-2.0, MSRV 1.95
-//! < workspace 1.97, `PRAGMA user_version` stamping). It compiles against this
-//! workspace's `rusqlite` 0.40 and its behavior was probed against a spike DB —
-//! and it was **rejected** in favor of the hand-rolled forward-only loop below.
-//! The blockers are recorded here so nobody re-litigates without an upstream
-//! API change:
+//! < workspace 1.97, `PRAGMA user_version` stamping). It was **rejected** in
+//! favor of the hand-rolled forward-only loop below. The blockers are recorded
+//! here so nobody re-litigates without an upstream API change:
 //!
 //! 1. **`to_latest` cannot express D2's per-step transaction.** Its `goto_up`
 //!    runs every pending step inside one transaction and sets `user_version`
-//!    once at the end, so a poisoned step rolls the whole run back. The spike
-//!    confirmed a failed step 2 also discarded the committed-good step 1's
-//!    table — contradicting "each step its own transaction; a failed step rolls
-//!    back to the last-good stamp". Satisfying D2 means bypassing `to_latest`
-//!    and looping `to_version(v)` per step, i.e. not using the library's
-//!    headline API.
+//!    once at the end, so a poisoned step rolls the whole run back — a failed
+//!    step 2 also discards the committed-good step 1's table, contradicting
+//!    "each step its own transaction; a failed step rolls back to the last-good
+//!    stamp". Satisfying D2 means bypassing `to_latest` and looping
+//!    `to_version(v)` per step, i.e. not using the library's headline API.
 //! 2. **The ahead refusal carries no versions.** `to_latest` returns
 //!    `MigrationDefinitionError::DatabaseTooFarAhead`, whose `Display` is a
 //!    generic sentence with neither the DB's nor the binary's schema number.
@@ -50,11 +47,10 @@
 //! writes the existing stamp, applies each step in its own transaction, and
 //! renders the exact refusal with both versions.
 //!
-//! (The pre-existing rejection of `sqlx::migrate!` / `refinery` in
-//! [`crate::migrate`] — own tracking table + DDL replay against unknown DBs —
-//! was never the blocker for `rusqlite_migration`, which uses `user_version`;
-//! the blockers above are. Post-Alembic-retirement that "unknown DB" objection
-//! is weaker, but the single-surface argument stands.)
+//! (The rejection of `sqlx::migrate!` / `refinery` in [`crate::migrate`] — own
+//! tracking table + DDL replay against unknown DBs — was never the blocker for
+//! `rusqlite_migration`, which uses `user_version`; the blockers above are.
+//! The single-surface argument stands.)
 //!
 //! # Precondition
 //!

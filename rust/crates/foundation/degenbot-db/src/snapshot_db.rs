@@ -109,8 +109,9 @@ impl SnapshotDb {
     }
 
     /// A raw connection to `path` (`:memory:` supported) with the three
-    /// concurrency PRAGMAs already applied — the factory the ADR-052 D1
-    /// heal-at-open calls for the initial open and the post-heal reopen.
+    /// concurrency PRAGMAs already applied — the connection factory
+    /// [`ensure_schema_at_open`] takes, used for the initial open and (only on
+    /// a heal, which this handle never requests) the post-heal reopen.
     fn open_primed(path: &Path) -> Result<Connection, DbError> {
         let conn = if path == Path::new(":memory:") {
             Connection::open_in_memory()?
@@ -123,7 +124,9 @@ impl SnapshotDb {
         Ok(conn)
     }
 
-    /// PRAGMAs + ADR-052 D1 heal-at-open + `query_only=on` + `BEGIN`. Mirrors
+    /// PRAGMAs + the schema gate + `query_only=on` + `BEGIN`. The gate runs
+    /// with `auto_heal = false`, so an Alembic-marked DB opens
+    /// [`SchemaState::LegacyAlembic`] and nothing is written. Mirrors
     /// `DegenbotDb`'s open tail then issues the held read tx.
     fn finish_open(path: &Path) -> Result<(Connection, SchemaState), DbError> {
         let (conn, state) = ensure_schema_at_open(path, false, Self::open_primed)?;
@@ -165,12 +168,11 @@ impl SnapshotDb {
     /// The caller logs/acts on `report.advanced`.
     ///
     /// # Errors
-    /// [`DbError::Sqlite`] if the `COMMIT` or the post-commit re-read fails.
     ///
-    /// # Panics
-    /// Panics if a `last_update_block` is negative — invalid DB state (`SQLite`
-    /// stores block numbers as signed `i64`, but on-chain block numbers are
-    /// non-negative). Mirrors `Bot::load_snapshot_from_db`'s contract.
+    /// [`DbError::Sqlite`] if the `COMMIT` or the post-commit re-read fails, or
+    /// [`DbError::Decode`] when a `last_update_block` is negative (invalid DB
+    /// state — `SQLite` stores block numbers as signed `i64`, on-chain block
+    /// numbers are non-negative).
     pub fn close_with_canary(
         self,
         s_snapshot: Option<u64>,

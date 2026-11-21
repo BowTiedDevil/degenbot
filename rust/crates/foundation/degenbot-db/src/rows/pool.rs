@@ -268,7 +268,7 @@ pub struct ManagedLiquidityPoolRow {
 
 impl ManagedLiquidityPoolRow {
     /// Decode from `SELECT id, kind, manager_id FROM managed_pools`.
-    #[expect(dead_code)] // exercised by a future managed-pool read fn (spike 4c siblings)
+    #[expect(dead_code)] // no read fn decodes the managed_pools base row yet
     pub(crate) fn from_row(row: &Row<'_>) -> Result<Self, DbError> {
         Ok(Self {
             id: row.get(0)?,

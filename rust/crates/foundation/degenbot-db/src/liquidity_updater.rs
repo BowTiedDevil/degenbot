@@ -925,12 +925,11 @@ impl DegenbotDb {
     /// (4 vars/row → ≤ 7,500 rows/chunk): an upsert on the position's key, so a
     /// re-apply of the same chunk is idempotent.
     ///
-    /// The `on_conflict_do_update`'s `where != excl.net || != excl.gross`
-    /// guard is implicit: `SQLite`'s `ON CONFLICT DO UPDATE` writes the new
-    /// values unconditionally on conflict (the Python `where` skips no-op
-    /// writes; the Rust path writes every time, which is observationally
-    /// identical — the resulting row's net/gross equals the conflict-excluded
-    /// value either way).
+    /// The emitted `ON CONFLICT … DO UPDATE` carries the explicit
+    /// `WHERE liquidity_positions.liquidity_net != excluded.liquidity_net OR
+    /// …liquidity_gross != excluded.liquidity_gross` guard, so a conflict whose
+    /// stored net and gross already match writes nothing — the same no-op skip
+    /// the Python `where` performs.
     ///
     /// # Errors
     ///

@@ -245,9 +245,9 @@ impl DegenbotDb {
 
     // ── Substrate lookups (the parser's address→id resolution) ──
     //
-    // Four lookups the parser needs. Each mirrors
-    // the Python `operations_parser.py::_get_*` helpers in shape — `&Connection`
-    // so a chunk's lookups run inside its one `Transaction` (the write-module
+    // The GHO-token lookup the parser needs. It mirrors the Python
+    // `operations_parser.py::_get_*` helpers in shape — `&Connection` so a
+    // chunk's lookups run inside its one `Transaction` (the write-module
     // connection seam).
 
     conn_writer! {

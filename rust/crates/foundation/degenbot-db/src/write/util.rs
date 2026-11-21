@@ -2,8 +2,9 @@
 
 use super::{DbError, OptionalExtension};
 
-/// Parse a decimal-`VARCHAR` `U256` value — the stored form of an
-/// `AaveV3*Position.balance`.
+/// Parse a decimal `VARCHAR(78)` `U256` cell — the stored form of every
+/// `BigInteger` column these write fns read back (position balances,
+/// `stk_aave_balance`, `last_index`).
 ///
 /// # Errors
 ///

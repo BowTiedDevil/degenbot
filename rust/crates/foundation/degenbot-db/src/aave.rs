@@ -567,11 +567,13 @@ impl DegenbotDb {
 
     // ── the orchestrator's market-bootstrap substrate ─────────
     //
-    // Four read fns the `run_aave_update` orchestrator
-    // calls once at the top of a run to build the per-market `AaveMarketContext`
-    // (the pool/configurator/oracle/gho-asset addresses + the scaled-token
-    // address set + the `last_update_block` cursor). Three reads compose it: the
-    // contracts row, the GHO token, and the chain's aToken/vToken address set.
+    // The four reads `run_aave_update` makes at the top of a run to build the
+    // per-market `AaveMarketContext` — the market row
+    // (`fetch_aave_market_row`), the contracts row (`fetch_aave_contracts`), the
+    // GHO token (`fetch_aave_gho_asset`), and the chain's aToken/vToken address
+    // set (`fetch_aave_scaled_token_addresses`) — carrying the
+    // pool/configurator/oracle/gho-asset addresses, the scaled-token address
+    // set, and the `last_update_block` cursor.
     //
     // They follow the same `&self` + `self.lock()` + `rusqlite::params!` shape
     // as `fetch_aave_oracle_address` / `fetch_aave_asset_addresses` above (the

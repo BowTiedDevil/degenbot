@@ -496,7 +496,7 @@ impl DegenbotDb {
         }
     }
 
-    // ── `&self` wrappers (thin lock-and-delegate) ─────────────
+    // ── position-row lookups (`&Connection`-bound) ─────────────
 
     /// Resolve the collateral (aToken) or debt (vToken) position-row id by
     /// `(user_id, asset_id, position_type)`. Mirrors the parser's need to

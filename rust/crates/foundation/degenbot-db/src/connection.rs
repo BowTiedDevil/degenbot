@@ -15,22 +15,26 @@
 //!    Rust read touches them. The switch is retried through fresh-open
 //!    contention, which SQLite's busy handler does NOT cover (see
 //!    [`crate::pragma`]).
-//! 4. the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
-//!    version-lock (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB
-//!    (head-stamped OR stale) is healed out-of-place to `RustOwned` unless
-//!    an explicit `auto_heal = false` pins the pre-D1 posture; a fresh standalone file
-//!    gets the embedded DDL; an unrecognized file refuses. A Rust-owned DB
-//!    behind the binary applies its pending steps at open; a DB ahead of the
-//!    binary refuses with `DbError::SchemaAhead`; a DB at current is a no-op.
+//! 4. the schema gate + the ADR-052 D2 forward version-lock
+//!    (`migrate::ensure_schema_at_open`) — an Alembic-stamped DB (head-stamped
+//!    OR stale) opens [`SchemaState::LegacyAlembic`], read-only and unhealed:
+//!    the heal is explicit, requested by `open_with(path, auto_heal = true, …)`
+//!    or by [`crate::ops::upgrade_database`] / [`crate::heal::heal_database`],
+//!    which rebuild the legacy DB out-of-place to `RustOwned`. A fresh
+//!    standalone file gets the embedded DDL; an unrecognized file refuses. A
+//!    Rust-owned DB behind the binary applies its pending steps at open; a DB
+//!    ahead of the binary refuses with `DbError::SchemaAhead`; a DB at current
+//!    is a no-op.
 //! 5. `PRAGMA query_only=on;` — **HARD AC** (binding #2): once `open()`
 //!    returns, every **read** connection is physically incapable of mutating
 //!    the DB.
 //!
-//! Heal-at-open runs at BOTH read and write opens — one rule for all opens: a
-//! stale read that did not heal would be a lie about the schema. The heal's
-//! atomic swap renames the source file, so a reader already holding the file
-//! mid-heal keeps seeing the OLD inode until its next open (deliberate; the
-//! swap is crash-safe by ADR-011).
+//! Heal is opt-in, one rule for read and write opens alike: every plain
+//! `open*` constructor passes `auto_heal = false`, so opening never mutates,
+//! and the `LegacyAlembic` disposition reports exactly what was read. The
+//! heal's atomic swap renames the source file, so a reader already holding the
+//! file mid-heal keeps seeing the OLD inode until its next open (deliberate;
+//! the swap is crash-safe by ADR-011).
 //!
 //! # Why `query_only` follows the schema step (not precedes it)
 //!
@@ -66,18 +70,20 @@ pub struct DegenbotDb {
 
 impl DegenbotDb {
     /// Open a file-backed read handle, run the open PRAGMA sequence + the
-    /// ADR-052 D1 heal-at-open, and return the handle and the schema
-    /// disposition.
+    /// schema gate, and return the handle and the schema disposition.
     ///
-    /// A legacy `alembic_version`-marked DB is healed out-of-place at open
-    /// ([`crate::heal::heal_database`] under the ADR-011 atomic swap,
-    /// preserving the original as `*.bak`) and the disposition is
-    /// [`SchemaState::RustOwned`]. With `auto_heal = false` the pre-D1
-    /// posture is restored: the legacy DB opens as
-    /// [`SchemaState::LegacyAlembic`] (nothing written). An unrecognized file
-    /// still refuses ([`DbError::UnrecognizedSchema`]), and a fresh standalone
-    /// file gets the embedded DDL + the private `_degenbot_db_schema_version`
-    /// stamp before `query_only=on` is set.
+    /// Opening never mutates the file: the plain `open*` constructors pass
+    /// `auto_heal = false`, so a legacy `alembic_version`-marked DB opens as
+    /// [`SchemaState::LegacyAlembic`] (nothing written, read-only). The
+    /// out-of-place heal — [`crate::heal::heal_database`] under the ADR-011
+    /// atomic swap, preserving the original as `*.bak`, landing
+    /// [`SchemaState::RustOwned`] — runs only when a caller asks for it:
+    /// [`Self::open_with`] with `auto_heal = true`, or
+    /// [`crate::ops::upgrade_database`] / [`crate::heal::heal_database`]
+    /// directly. An unrecognized file refuses
+    /// ([`DbError::UnrecognizedSchema`]), and a fresh standalone file gets the
+    /// embedded DDL + the private `_degenbot_db_schema_version` stamp before
+    /// `query_only=on` is set.
     ///
     /// # Errors
     ///
@@ -101,11 +107,11 @@ impl DegenbotDb {
     }
 
     /// Open a file-backed **write-capable** handle (the writer substrate).
-    /// Same concurrency PRAGMAs ([`crate::pragma::apply_open_pragmas`]) +
-    /// ADR-052 D1 heal-at-open as [`Self::open`]
-    /// (an Alembic-stamped DB heals to [`SchemaState::RustOwned`]; the
-    /// `auto_heal = false` restores the pre-D1 posture), but
-    /// `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
+    /// Same concurrency PRAGMAs ([`crate::pragma::apply_open_pragmas`]) + the
+    /// same schema gate as [`Self::open`] — likewise `auto_heal = false`, so
+    /// an Alembic-stamped DB opens [`SchemaState::LegacyAlembic`] with no heal
+    /// — but `query_only` is **NEVER** set: the connection can
+    /// `INSERT`/`UPDATE`.
     ///
     /// This does NOT violate binding #2 ("every **read** connection
     /// opened by degenbot-db MUST set `query_only=on`"): the *read* constructors

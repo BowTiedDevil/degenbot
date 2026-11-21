@@ -7,9 +7,10 @@
 //!
 //! The domain types live HERE (in `degenbot-db`, a leaf) rather than borrowing
 //! `degenbot-bot`'s `TickInfo` — that would pull a `degenbot-db → degenbot-bot`
-//! dependency edge (BotState/state-machine logic into a persistence leaf). The
-//! sibling routing task converts `LiquidityMap → V3PoolState`'s
-//! `tick_data` at the `PyBot`-registration seam (a 1:1 field copy).
+//! dependency edge (BotState/state-machine logic into a persistence leaf).
+//! Consumers read them through the `TickMapDb` seam, and the bot's tick
+//! assembly converts a `LiquidityMap` into its `TickInfo` map there (a 1:1
+//! field copy).
 
 use hashbrown::HashMap;
 
@@ -486,22 +487,12 @@ pub fn fetch_liquidity_map_v4_on_conn(
     Ok(Some(LiquidityMap { tick_data }))
 }
 
-/// The `uniswap_v3_pools.liquidity_update_block` for a pool, by address — the
-/// block the DB liquidity map is exact at (the authoritative liquidity clock of
-/// a DB-seeded `Tracked` pool). Resolves the pool id by address
-/// then reads the V3 row's `liquidity_update_block`.
-///
-/// Returns `None` if no such pool exists or it is not registered as a
-/// V3-family kind (mirrors [`fetch_liquidity_map_on_conn`]'s miss semantics).
-///
-/// # Errors
-/// [`DbError::Sqlite`] on a query failure.
-/// Map a V3-family `kind` to its per-dex liquidity table. All four share the
-/// same `(pool_id, tick_spacing, liquidity_update_block, ...)` schema; the
-/// liquidity clock of a `Tracked` pool lives in its OWN table, not a single
-/// one — pool 0x1ac1 was a `pancakeswap_v3` and a
-/// uniswap-only lookup returned `None`, so the seed verify fell back to head
-/// and re-tripped the wrong-block bug). Returns `None` for non-V3 kinds.
+/// Map a V3-family `kind` to its per-dex liquidity table. All four V3 species
+/// tables share the `(pool_id, tick_spacing, liquidity_update_block, …)` shape,
+/// and the liquidity clock of a `Tracked` pool lives in its OWN table: a
+/// uniswap-only lookup misses a fork pool, and the seed verify then falls back
+/// to head — anchoring on a block its tick data does not reflect. Returns
+/// `None` for non-V3 kinds.
 fn v3_kind_liquidity_table(kind: &str) -> Option<&'static str> {
     let species = crate::species::manifest().get(kind)?;
     (species.family == crate::species::Family::V3).then_some(species.table.as_str())

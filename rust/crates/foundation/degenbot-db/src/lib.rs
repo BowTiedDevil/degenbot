@@ -3,23 +3,24 @@
 //! A pyo3-free read handle over a degenbot `SQLite` DB, with a Rust-owned
 //! schema gate. Owns connection/pool management, the schema DDL (the Rust
 //! schema head), typed row structs for every table, low-level read row
-//! functions, and the migration runner that opens an existing legacy
-//! `alembic_version`-marked `SQLite` DB by auto-healing it to Rust ownership.
+//! functions, and the migration runner that classifies an existing
+//! `alembic_version`-marked `SQLite` DB (read-only, no heal) and rebuilds it
+//! to Rust ownership only when the caller opts into the out-of-place heal.
 //!
 //! # Open path
 //!
 //! [`DegenbotDb::open`] sets `PRAGMA journal_mode=WAL; busy_timeout=5000;
-//! synchronous=NORMAL;` (matching the Python open path — Phase 0),
-//! runs the schema gate + ADR-052 D1 heal-at-open + the ADR-052 D2 forward
-//! version-lock (`migrate::ensure_schema_at_open`) — a legacy DB carrying the
-//! `alembic_version` marker table is healed out-of-place to `RustOwned` unless
-//! An explicit `auto_heal = false` pins the pre-D1 posture, a fresh standalone file
-//! gets the embedded DDL, an unrecognized file refuses, a Rust-owned DB behind
-//! the binary applies its pending steps, and a DB ahead of the binary refuses
-//! with `DbError::SchemaAhead` — then sets `PRAGMA query_only=on;`: the
+//! synchronous=NORMAL;` (matching the Python open path), runs the schema gate +
+//! the ADR-052 D2 forward version-lock (`migrate::ensure_schema_at_open`) — a
+//! legacy DB carrying the `alembic_version` marker table opens
+//! `SchemaState::LegacyAlembic` read-only and unhealed (the out-of-place heal
+//! to `RustOwned` is opt-in: `open_with(path, auto_heal = true, …)` or
+//! `ops::upgrade_database`), a fresh standalone file gets the embedded DDL, an
+//! unrecognized file refuses, a Rust-owned DB behind the binary applies its
+//! pending steps, and a DB ahead of the binary refuses with
+//! `DbError::SchemaAhead` — then sets `PRAGMA query_only=on;`: the
 //! load-bearing guarantee that the returned Rust **reader** cannot mutate the
-//! DB (binding #2). The heal runs at BOTH read and write opens (one rule for
-//! all opens).
+//! DB (binding #2).
 //!
 //! # The `VARCHAR(78)` ↔ `U256` boundary
 //!

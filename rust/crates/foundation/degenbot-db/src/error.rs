@@ -30,10 +30,10 @@ pub enum DbError {
     #[error("required row not found: {0}")]
     MissingRow(String),
 
-    /// A `pools.kind` discriminator outside the V2/V3 vocabulary the
-    /// pathfinding graph can represent — a pool family the graph builder
-    /// cannot place. Refused instead of dropped so a forward-kind row cannot
-    /// silently vanish from discovery.
+    /// A `pools.kind` discriminator the unified-pools edge load cannot place —
+    /// a V4 kind (V4 pools live in `managed_pools`, not `pools`), or a kind the
+    /// pool-family taxonomy does not know. Refused instead of dropped so a
+    /// forward-kind row cannot silently vanish from discovery.
     #[error("unknown pool kind {kind:?} for pool id {pool_id}")]
     UnknownPoolKind {
         /// The unrecognized `kind` discriminator.

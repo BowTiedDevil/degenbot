@@ -128,9 +128,11 @@ fn bit(bitmap: U256, b: u32) -> bool {
 pub struct AssetRow {
     /// `aave_v3_assets.id`.
     pub id: i64,
-    /// The aToken's revision (drives [`ScaledTokenProcessor::collateral`]).
+    /// The aToken's revision — the revision the scaled-token processor
+    /// dispatches its collateral events on.
     pub a_token_revision: u32,
-    /// The vToken's revision (drives [`ScaledTokenProcessor::debt`]).
+    /// The vToken's revision — the revision the scaled-token processor
+    /// dispatches its debt events on.
     pub v_token_revision: u32,
     /// The underlying-token address (HexBytes-free lowercase hex string).
     pub underlying_token_address: String,
@@ -665,8 +667,8 @@ impl DegenbotDb {
     /// Resolve the asset-row id for an emitter token address (the
     /// `_get_asset_by_token_type` port). The `_get_token_type` +
     /// `_get_asset_by_token` JOIN — the parser classifies each decoded
-    /// `Mint/Burn/BalanceTransfer` event by the contract that emitted it: aToken →
-    /// [`ScaledTokenEventType`][crate::operations::ScaledTokenEventType] collateral, vToken → debt.
+    /// `Mint/Burn/BalanceTransfer` event by the contract that emitted it: aToken
+    /// → a collateral event, vToken → a debt event.
     /// The `token_type` discriminates which column to JOIN against
     /// (`a_token_id` / `v_token_id`); returns `None` if the address isn't a
     /// known market asset (the caller decides — for plain ERC20 `Transfer`

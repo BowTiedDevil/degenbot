@@ -410,7 +410,7 @@ fn v3_fork_pool_apply_matches_oracle() {
     apply_v3_events(&db, exp.chain_id, &exp.pool_address);
 
     let conn = db.lock();
-    // Positions + init-maps are kind-agnostic (keyed by pool_id).
+    // Positions are kind-agnostic (keyed by pool_id).
     let mut positions: Vec<(i32, String, String)> = conn
         .prepare("SELECT tick, liquidity_net, liquidity_gross FROM liquidity_positions WHERE pool_id = ?1")
         .unwrap()

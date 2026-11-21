@@ -9,8 +9,9 @@
 //! `u128::MAX` (for the gross column), proving the decimal-string round-trip.
 //!
 //! The fixture DB carries the current Rust schema stamp, so opening it returns
-//! [`SchemaState::RustOwned`] without running a migration. The auto-heal
-//! killswitch remains pinned so fixture-backed tests never rewrite the file.
+//! [`SchemaState::RustOwned`] without running a migration, and no fixture-backed
+//! test rewrites its file: the plain `open` constructors pass
+//! `auto_heal = false`, so opening never mutates.
 //!
 //! To regenerate the fixture (after changing seed data):
 //!   `uv run python rust/crates/foundation/degenbot-db/tests/fixtures/generate_parity.py`

@@ -9,10 +9,10 @@
 //!
 //! Algorithm ([`ensure_schema`]):
 //! 1. If the `alembic_version` table exists the DB is LEGACY (ADR-052 D6: a
-//!    pure presence detector — the revision is never inspected). It is HEALED
-//!    at open by `ensure_schema_at_open` (ADR-052 D1): the out-of-place
-//!    rebuild lands `RustOwned`, unless an explicit `auto_heal = false` pins the
-//!    pre-D1 posture (the legacy DB opens read-only, unhealed);
+//!    pure presence detector — the revision is never inspected). It opens as
+//!    [`SchemaState::LegacyAlembic`], read-only and unhealed; the out-of-place
+//!    rebuild that lands `RustOwned` runs only when the caller passes
+//!    `auto_heal = true` to [`ensure_schema_at_open`] (ADR-052 D1);
 //! 2. If `alembic_version` is absent but the file already has tables (a foreign
 //!    `SQLite` file passed by mistake) → [`SchemaState::Unrecognized`], refuse;
 //! 3. If `alembic_version` is absent AND the file is empty (a fresh standalone
@@ -48,8 +48,8 @@ use crate::schema::{RUST_SCHEMA_VERSION, SCHEMA_HEAD, SCHEMA_VERSION_TABLE};
 pub enum SchemaState {
     /// A LEGACY DB: the `alembic_version` marker table is present. The
     /// revision is never inspected (ADR-052 D6 — presence detection only). The
-    /// Rust core wrote nothing; the D1 open path heals this unless the
-    /// An explicit `auto_heal = false` open pins it read-only.
+    /// Rust core wrote nothing and the handle is read-only: only an explicit
+    /// `auto_heal = true` open heals this disposition.
     LegacyAlembic,
     /// A fresh standalone DB (no Alembic history) — the embedded DDL was applied
     /// and [`SCHEMA_VERSION_TABLE`] was stamped with [`RUST_SCHEMA_VERSION`].
@@ -123,13 +123,13 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
 /// crash-safe by ADR-011; the next open lands on the healed inode).
 /// [`ensure_schema`] itself cannot heal: it is handed an already-open
 /// `&Connection` and no path, so this path-aware wrapper is the helper every
-/// open path shares — read AND write, one rule (a stale read that did not heal
-/// would be a lie about the schema).
+/// open path shares, read and write alike. The heal decision is the caller's
+/// `auto_heal` argument, and no open constructor here passes `true`.
 ///
 /// Non-Rust-owned states (`FreshStandalone`, `Unrecognized`, and the
-/// killswitch-pinned Alembic dispositions) pass through the lock untouched; the
-/// caller applies its own refusal for `Unrecognized` (and for a stale Alembic
-/// DB when the killswitch pinned `auto_heal` to `false`).
+/// `LegacyAlembic` disposition an `auto_heal = false` open produces) pass
+/// through the lock untouched; the caller applies its own refusal for
+/// `Unrecognized`.
 ///
 /// # Errors
 ///
@@ -182,8 +182,8 @@ where
     let conn = open(path)?;
     let state = ensure_schema(&conn)?;
 
-    // Heal only the legacy-marker disposition, and only when enabled (the
-    // an explicit `auto_heal = false` open pins the pre-D1 behavior).
+    // Heal only the legacy-marker disposition, and only when the caller opted
+    // in; an `auto_heal = false` open leaves it read-only instead.
     if !auto_heal || !matches!(state, SchemaState::LegacyAlembic) {
         // Non-heal path: a genuine Rust-owned DB is brought forward under the D2
         // lock; every other disposition passes through untouched.
@@ -748,8 +748,8 @@ mod open_tests {
         drop(conn);
         assert!(!bak_path(&legacy).exists());
 
-        // A Rust-owned DB still opens RustOwned under the killswitch (ownership
-        // is orthogonal to heal policy).
+        // A Rust-owned DB still opens RustOwned under an `auto_heal = false`
+        // open — ownership is orthogonal to heal policy.
         let owned = dir.path().join("owned.db");
         create_new_database(&owned).unwrap();
         let (_conn, disposition) = ensure_schema_at_open(&owned, false, primed).unwrap();
