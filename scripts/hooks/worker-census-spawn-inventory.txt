@@ -1,0 +1,96 @@
+# Worker-census spawn-site inventory -- the reviewed exception list for
+# scripts/hooks/worker_census_spawn_gate.py
+# Index: docs/gates.md section 3 "Worker census".
+#
+# Rule: every `thread::Builder::new`, `Builder::new_multi_thread` or
+# `Builder::new_current_thread` site under rust/crates must sit in a function
+# that registers a WorkerCensusEntry (`worker_census::register`, directly or
+# through a same-file helper that does), or be listed here under a written
+# reason. One row per site, formatted "<repo-relative-path>:<function>" -- the
+# file and the enclosing function are the unit the registration rule speaks
+# about, so a row survives a line reflow.
+#
+# The reconciliation is bidirectional and fails closed: a site with no row
+# fails, a row with no live site fails, a row with no `#` reason above it fails,
+# and a missing file fails instead of certifying an empty census (an empty file
+# is legal -- the tree's own sites still fail it one by one).
+#
+# Ratchet: a row is added ONLY with a reviewed reason for why the site cannot
+# register at its spawn point, and it is deleted in the change that registers,
+# moves or removes the site. `just check-worker-census-spawn --rows` prints the
+# rows the tree does not hold yet, for review before they land.
+
+# --- production spawners whose census row is registered a frame above them ---
+
+# The offline fan-out probes build their own short-lived runtime through this
+# helper. A probe binary installs no census exporter and dumps no boot table, so
+# a row here would publish into a table nothing reads.
+rust/crates/engine/degenbot-arbitrage/src/probe_support/dispatch_probe.rs:runtime
+
+# The solver fleet's seat threads. Their census rows are the fleet role rows
+# (`fleet_solver_slots` and the rest of the fleet set), registered by the
+# dispatcher's fleet boot from `WorkerRole::census_resource()` and named from
+# `role.thread_name()`; this boot spawns the seats behind those rows.
+rust/crates/engine/degenbot-bot/src/arb_engine/fleet_solve_executor.rs:boot_seats
+
+# The seat host's two bindings, the same role rows one frame above: the fleet
+# boot registers them from the role descriptor, and both bindings name their
+# threads from `desc.role.thread_name()` / `desc.host_thread`.
+rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/host.rs:boot_pinned
+rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/host.rs:boot_serial
+
+# The scrape thread's row (`metrics_scrape`) is registered by
+# `on_pipeline_started()` at pipeline boot, not by the spawner: the spawner is
+# the injectable `ScrapeSpawner` fn pointer whose failing stub is the
+# spawn-failure test seam, so the registration cannot ride it.
+rust/crates/engine/degenbot-bot/src/metrics.rs:spawn_scrape_server
+
+# A one-shot CLI arm's runtime: built, used and dropped inside one call by a
+# command that boots no census dump, so no reader exists in that process shape.
+rust/crates/shells/degenbot-cli-core/src/block.rs:block_on
+
+# --- test-only runtimes and threads ---
+
+# Created, used and dropped inside one test function -- in an integration test,
+# a bench, an inline `cfg(test)` module, or a shared test helper under `tests/`.
+# A `cfg(test)` registration would upsert the process-global table that the
+# production assertions of the same binary read, and no test process exports the
+# Gauge or dumps the boot table. These are listed rather than exempted because a
+# test thread is invisible to the /proc comm cross-check exactly as a production
+# one is: the rule is about spawn sites, not about which binary hosts them.
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_same_height_reorg_retires_the_anchors_storage_memo
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:dispatch_end_to_end_revert_fixture_matches_fixed_expectations
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:fanout_does_not_hold_the_botstate_guard_across_provider_io
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_fanout_prefetches_the_anchors_slot_set_once
+rust/crates/engine/degenbot-arbitrage/tests/admitted_candidates.rs:fan_out_on_runtime
+rust/crates/engine/degenbot-arbitrage/tests/admitted_candidates.rs:run_admitted
+rust/crates/engine/degenbot-arbitrage/tests/admitted_candidates.rs:run_raw
+rust/crates/engine/degenbot-arbitrage/tests/candidate_identity.rs:run_admitted_fan_out
+rust/crates/engine/degenbot-arbitrage/tests/candidate_identity.rs:run_fan_out
+rust/crates/engine/degenbot-arbitrage/tests/candidate_identity.rs:run_raw_leaf
+rust/crates/engine/degenbot-arbitrage/tests/heterogeneous_deployments.rs:a_one_entry_registry_matches_the_single_deployment_leaf
+rust/crates/engine/degenbot-arbitrage/tests/heterogeneous_deployments.rs:run_fanout_with
+rust/crates/engine/degenbot-arbitrage/tests/production_adapter.rs:a_declined_candidate_does_not_refuse_a_simulatable_sibling
+rust/crates/engine/degenbot-arbitrage/tests/production_adapter.rs:an_all_answered_probe_batch_keeps_its_typed_outcomes_and_runs_no_evm
+rust/crates/engine/degenbot-arbitrage/tests/production_adapter.rs:an_unverified_token_refuses_the_fanout_before_any_evm_work
+rust/crates/engine/degenbot-arbitrage/tests/production_adapter.rs:run_fanout
+rust/crates/engine/degenbot-arbitrage/tests/release_binding.rs:block_on
+rust/crates/engine/degenbot-arbitrage/tests/validation_classification.rs:run_fanout_with_subscriber
+rust/crates/engine/degenbot-batch-executor/tests/heterogeneous_fanout.rs:run_admitted_fanout
+rust/crates/engine/degenbot-batch-executor/tests/heterogeneous_fanout.rs:the_submit_plan_carries_each_targets_own_transaction
+rust/crates/engine/degenbot-bot/src/arb_engine/fleet_solve_executor.rs:fleet_seats_run_units_with_no_ambient_tokio_runtime
+rust/crates/engine/degenbot-bot/src/arb_engine/fleet_solve_executor.rs:spawn
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/mod.rs:run_reorg_stream
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/reorg.rs:synthetic_lateness_jitter_never_trips_fatal_paths
+rust/crates/engine/degenbot-bot/tests/otel_env_endpoint.rs:env_endpoint_delivers_on_both_runtimes_and_env_timeout_bounds_a_stall
+rust/crates/engine/degenbot-bot/tests/otel_jaeger_e2e.rs:span_reaches_real_jaeger_from_a_current_thread_runtime
+rust/crates/engine/degenbot-bot/tests/otel_jaeger_e2e.rs:span_reaches_real_jaeger_from_a_multi_thread_runtime
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_hook_requote_bench.rs:requote_latency_envelope
+rust/crates/foundation/degenbot-rpc/src/provider.rs:a_constructed_provider_snapshots_the_declared_retry_budget
+rust/crates/foundation/degenbot-rpc/src/provider.rs:sim_bounded_rebinds_the_policy_and_leaves_the_generic_posture_alone
+rust/crates/shells/degenbot-cli-core/src/operator.rs:a_dribbling_server_is_bounded_by_the_total_deadline
+rust/crates/shells/degenbot-cli-core/src/operator.rs:exchange_within_reads_a_full_line_under_a_short_budget
+rust/crates/shells/degenbot-cli-core/tests/block_offset_resolution_ws.rs:drop_shuts_down_serve_even_with_a_live_connection
+rust/crates/shells/degenbot-cli-core/tests/block_offset_resolution_ws.rs:spawn
+rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs:escalations_reenter_the_caller_span_through_the_port
+rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs:sim_task_span_parents_under_the_caller_span

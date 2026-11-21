@@ -25,21 +25,30 @@
 //! The solve-fleet naming (`degenbot-solve-*`) and the hotpath
 //! profiler-owned `hp-*` threads are untouched by this registry.
 //!
-//! # REGISTRATION IS DOCUMENTATION-ENFORCED
+//! # Registration is gate-enforced
 //!
-//! **If you add a new spawn site — any `thread::Builder::new`,
-//! `tokio::runtime::Builder` (a solve executor), or capacity
-//! constant that bounds concurrent execution — you MUST register it here**
-//! via `worker_census::register`. The census survives unknown-future spawns
-//! only by this documentation; an unregistered thread is invisible to the
-//! gauge, the boot dump, and the /proc comm cross-check. Registered ids:
-//! `io_runtime_workers`, `cli_sigint_listener`, `inline_sim_runtime_workers`,
-//! `solve_probe_executor`, `fleet_solver_slots`, `fleet_simdriver_slots`,
-//! `fleet_resolve_slots`, `fleet_merge_slots`, `fleet_pool_state_updater_slots`,
-//! `detached_solve_bins`, `metrics_scrape`, `rust_log_drainer`, `gil_probe`,
-//! `fork_pubsub_workers`, `hosted_pubsub_workers` (the last two via
-//! [`crate::pubsub_runtime::OwnedPubsubRuntime`], which publishes the LIVE
-//! instance count).
+//! **Every spawn site registers.** Any `thread::Builder::new`, a
+//! `tokio::runtime::Builder` (a solve executor), or a capacity constant that
+//! bounds concurrent execution MUST register here via [`register`]: an
+//! unregistered thread is invisible to the gauge, the boot dump, and the /proc
+//! comm cross-check.
+//!
+//! The rule is mechanical, not documentary. `just check-worker-census-spawn`
+//! (`scripts/hooks/worker_census_spawn_gate.py`, docs/gates.md section 3) scans
+//! every `rust/crates` source for the spawn shapes and requires each site to sit
+//! in a function that registers — directly, or through a helper in the same file
+//! (the [`crate::pubsub_runtime::OwnedPubsubRuntime`] shape) — or to be listed
+//! in `scripts/hooks/worker-census-spawn-inventory.txt` under a written reason.
+//! That inventory is the reviewed exception list (test-only runtimes, and
+//! production spawners whose census row is registered a frame above them), and
+//! it is a ratchet: it grows only with a reviewed reason.
+//!
+//! [`REGISTERED_RESOURCE_IDS`] is the closed set of `resource` ids the metric and
+//! the boot dump may carry. A named test pins it against the tree's registration
+//! sites in both directions, so a phantom id and an undeclared one both fail. The
+//! two pubsub ids are in it once each:
+//! [`crate::pubsub_runtime::OwnedPubsubRuntime`] publishes them with the LIVE
+//! instance count.
 //!
 //! # Fleet roles
 //!
@@ -57,8 +66,8 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerCensusEntry {
     /// Stable, low-cardinality resource id — the `resource` metric label.
-    /// Must be a small closed set (metric cardinality rule); reuse an id
-    /// listed in the module docs instead of minting a near-duplicate.
+    /// Must be a member of [`REGISTERED_RESOURCE_IDS`] (the metric cardinality
+    /// rule); reuse an id already there instead of minting a near-duplicate.
     pub resource: &'static str,
     /// What kind of execution resource this is (fleet `kind` label surface).
     pub kind: &'static str,
@@ -80,6 +89,33 @@ pub struct WorkerCensusEntry {
     /// binding).
     pub binding: &'static str,
 }
+
+/// The closed set of `resource` ids a production process may publish — the
+/// cardinality contract for the `resource` label of
+/// `degenbot_worker_census{resource=...}`.
+///
+/// Sorted, one row per id. A new execution resource adds its id in the same change
+/// that registers it; a `cfg(test)`-only registration stays out (a test row
+/// reaches a test binary's table, never a production scrape) and is named for what
+/// it is — `census-*` or `*_test`.
+pub const REGISTERED_RESOURCE_IDS: &[&str] = &[
+    "cli_sigint_listener",
+    "fleet_merge_slots",
+    "fleet_pool_state_updater_slots",
+    "fleet_registrar_slots",
+    "fleet_resolve_slots",
+    "fleet_simdriver_slots",
+    "fleet_solver_slots",
+    "fleet_submitter_slots",
+    "fleet_verifier_slots",
+    "fork_pubsub_workers",
+    "gil_probe",
+    "hosted_pubsub_workers",
+    "inline_sim_runtime_workers",
+    "io_runtime_workers",
+    "metrics_scrape",
+    "rust_log_drainer",
+];
 
 static CENSUS: OnceLock<Mutex<Vec<WorkerCensusEntry>>> = OnceLock::new();
 static BOOT_DUMPED: OnceLock<()> = OnceLock::new();
@@ -118,9 +154,8 @@ fn table_cell() -> &'static Mutex<Vec<WorkerCensusEntry>> {
 /// called once per resource init (idempotent upsert, so
 /// lazily-initialized sites may call it unconditionally). Fires the
 /// export hook after the upsert; a registration arriving AFTER the boot
-/// dump emits its own structured `info!` line (the census survives
-/// unknown-future spawns only by registration documentation — see the
-/// module docs).
+/// dump emits its own structured `info!` line, so a lazily-booted resource is
+/// visible in the log too.
 pub fn register(entry: WorkerCensusEntry) {
     let late = BOOT_DUMPED.get().is_some();
     // Copy the logging fields out before the move into the table.

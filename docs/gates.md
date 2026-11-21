@@ -16,7 +16,7 @@ The nine ratchets:
 | --- | --- | --- | --- |
 | Comment hygiene | `scripts/hooks/comment-hygiene.sh` | `scripts/hooks/comment-hygiene-census.txt` (+ `-waivers.txt`) and `scripts/hooks/comment-hygiene-citation-census.txt` (Detector 3) | `just lint-comment-hygiene` |
 | Config-derived statics | `rust/crates/facade/degenbot/tests/architecture_gates.rs::config_derived_statics_are_classified` | `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` | `just check-config-derived-statics` |
-| Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (+ `pubsub_runtime.rs` live counts) | the `register(...)` call sites themselves | `cargo test -p degenbot-core worker_census` |
+| Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (spawn sites: `scripts/hooks/worker_census_spawn_gate.py`; live counts: `pubsub_runtime.rs`) | `scripts/hooks/worker-census-spawn-inventory.txt` + `REGISTERED_RESOURCE_IDS` + the `register(...)` call sites themselves | `just check-worker-census-spawn` |
 | Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
@@ -59,7 +59,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 | Comment hygiene (citation) | Strip the citation (docs/comments.md); delete the census row it leaves in the same change |
 | Comment hygiene (bare token) | Add the identifier to `scripts/hooks/comment-hygiene-census.txt` (lexicon section), or strip the token |
 | Config-derived statics | Update `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` |
-| Worker census | Register the worker through `degenbot-core`'s `worker_census` |
+| Worker census | Register the worker at the spawn site through `degenbot-core`'s `worker_census`, or add a reviewed row to `scripts/hooks/worker-census-spawn-inventory.txt` |
 | Stub drift | `just gen-stubs` |
 | pytest noise gate | Fix the call site that sprays (the signatures live in `scripts/pytest_noise_gate.sh`) |
 | Capability catalog | Add the crate to `docs/capabilities.md` |
@@ -283,22 +283,56 @@ process-global per-resource live counter (incremented on `build`, decremented in
 fleet size at dump time. That is how `fork_pubsub_workers` and
 `hosted_pubsub_workers` stay accurate.
 
-**Census.** There is no separate file: the census *is* the set of
-`worker_census::register(...)` call sites (the module docs enumerate the
-registered ids and state the rule: if you add a spawn site — any
-`thread::Builder::new`, a solve-executor `tokio::runtime::Builder`, or a capacity
-constant that bounds concurrent execution — you MUST register it).
+**Gate body (the rule).** The registry module docs state the rule — every spawn
+site registers: any `thread::Builder::new`, a solve-executor
+`tokio::runtime::Builder`, or a capacity constant that bounds concurrent
+execution — and `scripts/hooks/worker_census_spawn_gate.py` enforces it.
+The scanner reads every `*.rs` source under `rust/crates` (crate sources,
+integration tests, benches and inline `cfg(test)` modules included, because a
+test thread is invisible to the `/proc` cross-check exactly as a production one
+is) and requires each `thread::Builder::new`, `Builder::new_multi_thread` and
+`Builder::new_current_thread` site to sit in a function that registers: one that
+calls `worker_census::register`, or one that delegates to a helper in the same
+file that does (the `OwnedPubsubRuntime::build` → `publish` shape). A site
+neither path covers fails, named by file, line and function. Two blind spots are
+deliberate and stated in the gate's header: the matcher is lexical (a runtime
+built behind a re-spelled binding is not a site), and the rule covers std
+threads and tokio runtimes, not `rayon::ThreadPoolBuilder` pools or capacity
+constants.
+
+**Census.** `scripts/hooks/worker-census-spawn-inventory.txt`: one
+`path:function` row per spawn site the two registering paths do not cover, each
+group under a written `#` reason. It is the reviewed exception list — test-only
+runtimes, and production spawners whose census row is registered a frame above
+them — and it is reconciled in both directions and fails closed: a site with no
+row, a row with no live site, a row with no reason above it, and a missing
+inventory each fail. The ratchet only grows with a reviewed reason, and a row is
+deleted in the change that registers, moves or removes its site.
+
+The other half of the census is `REGISTERED_RESOURCE_IDS` in the module: the
+closed `resource` id set, whose cardinality is the metric's contract. A
+`cfg(test)`-only registration stays out of it and is named for what it is
+(`census-*`, `*_test`); a new production resource adds its id in the change that
+registers it.
 
 **Adding an entry.** At the new spawn site, call
 `degenbot_core::worker_census::register(WorkerCensusEntry { resource, kind,
 count, thread_name, sizing, binding })` with a distinct `thread_name` pattern
 (two runtimes must never share `tokio-runtime-worker`) and a stable,
-low-cardinality `resource` id (reuse an existing id rather than mint a
-near-duplicate). For a live fleet, use `OwnedPubsubRuntime` so the count tracks
-instances rather than freezing at first registration.
+low-cardinality `resource` id from `REGISTERED_RESOURCE_IDS` (reuse an id rather
+than mint a near-duplicate, and add the id there when it is new). For a live
+fleet, use `OwnedPubsubRuntime` so the count tracks instances rather than
+freezing at first registration. If the site cannot register where it spawns — a
+one-shot command's runtime, a test harness — add its row and reason to the
+inventory, with `just check-worker-census-spawn --rows` as the starting point.
 
-**Run it.** `cargo test -p degenbot-core worker_census` (4 tests). The runtime
-surface is also exercised by the full Rust suite (`just test-rust`).
+**Run it.** `just check-worker-census-spawn` for the spawn-site gate (`--rows`
+prints the inventory rows the tree does not hold yet). The registry's own unit
+tests and the closed-set pin both ride the crate's suite:
+`just test-rust-nextest -p degenbot-core`; the pin lives in
+`rust/crates/foundation/degenbot-core/tests/worker_census_closed_set.rs` as
+`every_snapshot_resource_is_in_the_closed_set`. The runtime surface is also
+exercised by the full Rust suite (`just test-rust`).
 
 ---
 

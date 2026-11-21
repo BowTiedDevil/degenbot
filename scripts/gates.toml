@@ -68,6 +68,14 @@ files = "^docs/architecture/rust-settlement-bot-parity\\.md$|^tests/standalone_p
 pass_filenames = false
 
 [[gate]]
+id = "worker-census-spawn"
+name = "Worker-census spawn sites"
+stage = "pre-commit"
+entry = "just check-worker-census-spawn"
+files = '\.rs$|^scripts/hooks/worker_census_spawn_gate\.py$|^scripts/hooks/worker-census-spawn-inventory\.txt$'
+pass_filenames = false
+
+[[gate]]
 id = "python-fmt-staged"
 name = "Python fmt (staged)"
 stage = "pre-commit"

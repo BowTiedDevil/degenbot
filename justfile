@@ -2230,7 +2230,7 @@ lint-markdown-check:
 # `ty` covers the gate surface; the one-off recorders and math oracles join when
 # their pre-existing diagnostics are triaged.
 lint-python:
-    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py
     # ty runs in the project environment (it resolves third-party imports and the
     # degenbot stubs from the venv), which is where its dev dependency installs it.
     {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
@@ -2262,7 +2262,7 @@ lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
-    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py
+    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py
     {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
@@ -2473,6 +2473,23 @@ test-settlement-parity:
 # live-invariant gate (ADR-087 D2): watches the live parity-ledger prose against the boot-gate oracle's ledger rows; not tripwire precedent.
 check-parity-ledger-single-source:
     {{py_run}} python scripts/hooks/parity_ledger_single_source.py
+
+# The worker-census spawn-site gate (docs/gates.md section 3): every
+# `thread::Builder::new`, `Builder::new_multi_thread` or
+# `Builder::new_current_thread` site under rust/crates must sit in a function
+# that registers a `WorkerCensusEntry`, or be admitted by a row under a written
+# reason in scripts/hooks/worker-census-spawn-inventory.txt. The reconciliation
+# runs both ways (a site with no row, a row with no site) and fails closed on a
+# missing inventory or a scan that found no site. Stdlib Python only, one pass
+# over the crate tree (~0.3 s), so it rides the per-commit tier; the
+# negative-probe suite is tests/test_worker_census_spawn_gate.py.
+#
+# `just check-worker-census-spawn --rows` prints the rows the inventory does not
+# hold yet.
+#
+# live-invariant gate (ADR-087 D2): watches the live spawn sites of the crate tree against their registrations and the reviewed inventory; not tripwire precedent.
+check-worker-census-spawn *args:
+    python3 scripts/hooks/worker_census_spawn_gate.py {{args}}
 
 # ========== No-Python Console Gate (ADR-051 D10) ==========
 #
