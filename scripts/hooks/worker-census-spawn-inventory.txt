@@ -2,8 +2,8 @@
 # scripts/hooks/worker_census_spawn_gate.py
 # Index: docs/gates.md section 3 "Worker census".
 #
-# Rule: every `thread::Builder::new`, `Builder::new_multi_thread` or
-# `Builder::new_current_thread` site under rust/crates must sit in a function
+# Rule: every `thread::Builder::new`, `thread::spawn`, `Builder::new_multi_thread`
+# or `Builder::new_current_thread` site under rust/crates must sit in a function
 # that registers a WorkerCensusEntry (`worker_census::register`, directly or
 # through a same-file helper that does), or be listed here under a written
 # reason. One row per site, formatted "<repo-relative-path>:<function>" -- the
@@ -94,3 +94,88 @@ rust/crates/shells/degenbot-cli-core/tests/block_offset_resolution_ws.rs:drop_sh
 rust/crates/shells/degenbot-cli-core/tests/block_offset_resolution_ws.rs:spawn
 rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs:escalations_reenter_the_caller_span_through_the_port
 rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs:sim_task_span_parents_under_the_caller_span
+
+# --- bare `thread::spawn` sites in inline `#[cfg(test)]` modules ---
+#
+# The test-only judgment the `thread::Builder::new` rows already carry, for the
+# bare shape: each of these threads is created, used and joined inside one test,
+# or by that test's own fixture helper, in an inline `#[cfg(test)]` module -- the
+# `mod tests;` files such a module declares included. A `cfg(test)` registration
+# would upsert the process-global table a sibling test of the same binary asserts
+# on, and no test process exports the Gauge or dumps the boot table, so a
+# registration here would publish into a table nothing reads.
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_delivered_head_nothing_prepared_resolves_the_selection_with_the_abandoned_reason
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_lagging_fan_out_anchor_reads_the_previous_generation_and_a_two_block_lag_does_not
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_lineage_refused_head_takes_the_legacy_path_with_its_reason
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_ready_head_answers_the_fanout_and_repeats_without_new_bal_work
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_same_block_in_flight_head_waits_for_the_settle_and_resolves_delta
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:a_same_height_reorg_selects_the_replacement_branch
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:an_abandoned_preparation_resolves_the_selection_on_the_legacy_lane_with_the_abandoned_reason
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:an_abandoned_preparation_takes_the_fan_out_to_the_legacy_lane_with_the_abandoned_reason
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:an_explicit_failure_waits_once_then_the_legacy_prefetch_lane_works
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:an_in_flight_head_resolves_delta_and_the_fan_out_pays_no_prefetch_batch
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:an_unsupported_bal_endpoint_takes_the_legacy_path_with_its_reason
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:candidate_verdicts_and_failure_buckets_are_identical_with_the_pipeline_on_and_off
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:dispatch_never_prepares_a_bal_and_a_never_delivered_head_takes_the_legacy_lane
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:dispatch_selects_delta_when_the_head_settled_ready_and_pays_no_prefetch_batch
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:duplicate_fan_outs_join_one_completion_without_duplicate_bal
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_fanout_id_joins_selection_prefetch_sim_and_trace_rows_for_one_fan_out
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_off_lane_is_byte_identical_to_the_shipped_legacy_path
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_opt_in_off_makes_no_bal_request_and_keeps_the_prefetch_lane
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_previous_block_does_not_wait_while_the_current_head_is_in_flight
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs:the_storage_selection_changes_the_reads_and_never_the_verdict
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs:solve_cycle_race_marks_dirty_work_with_solve_span
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs:streaming_delivery_emits_fast_result_while_slow_path_solves
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs:tokio_executor_merges_fast_paths_while_slow_path_solves
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/paths_reorg_and_locking.rs:engine_then_core_lock_order_survives_concurrent_readers_and_writer
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/paths_reorg_and_locking.rs:solve_cycle_parallel_fanout_survives_concurrent_readers_and_writer
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/spans_exit.rs:timed_exit_flag_exits_parked_select_promptly
+rust/crates/engine/degenbot-bot/src/bot_core/lifecycle.rs:retained_snapshot_tx_waits_for_the_last_assembler_before_the_canary
+rust/crates/engine/degenbot-bot/src/bot_core/registration_lifecycle.rs:nested_read_with_queued_writer_is_a_lock_cycle
+rust/crates/engine/degenbot-bot/src/bot_core/verify_claims.rs:blocking_caller_shares_the_same_policy_matrix
+rust/crates/engine/degenbot-bot/src/hosted_sources.rs:counting_listener
+rust/crates/engine/degenbot-strategy/src/backrun_driver/tests.rs:ipc_node
+rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:recording_ipc_node
+rust/crates/foundation/degenbot-rpc/src/provider.rs:spawn_429_node
+rust/crates/foundation/degenbot-rpc/src/provider.rs:spawn_slow_first_node
+rust/crates/foundation/degenbot-rpc/src/subscription/tests.rs:a_publication_cannot_be_displaced_by_a_concurrent_transition
+rust/crates/foundation/degenbot-substrate/src/registration_anchor.rs:fused_lookup_stays_live_under_concurrent_writer
+rust/crates/foundation/degenbot-substrate/src/state_lock.rs:read_with_lease_completes_under_queued_writer
+rust/crates/integrations/degenbot-fork/src/node.rs:drop_on_a_bare_thread_tears_down_within_the_bound
+rust/crates/shells/degenbot-cli-core/src/operator.rs:dribble_once
+rust/crates/shells/degenbot-python/src/db/read_seams.rs:sqlite_wait_releases_gil
+
+# --- bare `thread::spawn` sites in integration-test binaries and `tests/support/` helpers ---
+#
+# One-shot fixture threads of an integration-test binary: a fake node, a metrics
+# or OTLP listener, a lock-contention peer -- each joined, or shut down and waited
+# for, before the test that owns it returns. An integration-test binary installs
+# no census exporter and dumps no boot table, so a registration would reach a
+# table nothing reads; the thread is a spawn site all the same, and this row is
+# what says so.
+rust/crates/engine/degenbot-bot/tests/otel_plumbing.rs:metrics_http_server_serves_registry_text
+rust/crates/engine/degenbot-bot/tests/otel_tls_repro.rs:child_leaks_guard
+rust/crates/engine/degenbot-bot/tests/support/otlp_http_receiver.rs:start
+rust/crates/foundation/degenbot-db/tests/fresh_open_race.rs:concurrent_fresh_open_of_one_path_all_succeed
+rust/crates/foundation/degenbot-pool-updater/tests/provider_lifecycle_contract.rs:spawn
+rust/crates/foundation/degenbot-rpc/tests/chain_binding.rs:serving
+rust/crates/shells/degenbot-cli-core/tests/aave_arms.rs:spawn
+rust/crates/shells/degenbot-cli-core/tests/block_offset_resolution.rs:spawn
+rust/crates/shells/degenbot-cli-core/tests/pool_verify_lifecycle.rs:spawn
+rust/crates/shells/degenbot-cli-core/tests/rpc_frames.rs:serve_once
+rust/crates/shells/degenbot-python/tests/concurrency_stress.rs:test_attach_completes_under_gil_contention
+rust/crates/shells/degenbot-python/tests/gil_release_block_on_contract.rs:test_detach_releases_gil_during_block_on
+rust/crates/shells/degenbot-python/tests/gil_state_write_concurrency.rs:run_cycle_with_deadline
+
+# --- bare `thread::spawn` sites in the GIL/BotState test seams ---
+#
+# `test_gil.rs` is the `auto-initialize`-gated, Rust-callable seam behind the
+# GIL-inversion contract, and its holder threads are joined by the test outside
+# any GIL scope. `PyAlloyProvider::verify_gil_release` spawns, joins and reads its
+# witness flag inside the one call that proves `py.detach()` released the GIL.
+# Neither owns a thread a dump could catch -- each is a one-shot witness that
+# never outlives its call -- so there is no live resource for a `resource` id to
+# name.
+rust/crates/shells/degenbot-python/src/bot/test_gil.rs:state_write_park_cycle
+rust/crates/shells/degenbot-python/src/bot/test_gil.rs:update_v3_park_cycle
+rust/crates/shells/degenbot-python/src/rpc/provider.rs:verify_gil_release

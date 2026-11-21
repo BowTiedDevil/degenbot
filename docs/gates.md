@@ -284,21 +284,21 @@ fleet size at dump time. That is how `fork_pubsub_workers` and
 `hosted_pubsub_workers` stay accurate.
 
 **Gate body (the rule).** The registry module docs state the rule — every spawn
-site registers: any `thread::Builder::new`, a solve-executor
-`tokio::runtime::Builder`, or a capacity constant that bounds concurrent
-execution — and `scripts/hooks/worker_census_spawn_gate.py` enforces it.
-The scanner reads every `*.rs` source under `rust/crates` (crate sources,
+site registers: any `thread::Builder::new`, a bare `thread::spawn`, a
+solve-executor `tokio::runtime::Builder`, or a capacity constant that bounds
+concurrent execution — and `scripts/hooks/worker_census_spawn_gate.py` enforces
+it. The scanner reads every `*.rs` source under `rust/crates` (crate sources,
 integration tests, benches and inline `cfg(test)` modules included, because a
 test thread is invisible to the `/proc` cross-check exactly as a production one
-is) and requires each `thread::Builder::new`, `Builder::new_multi_thread` and
-`Builder::new_current_thread` site to sit in a function that registers: one that
-calls `worker_census::register`, or one that delegates to a helper in the same
-file that does (the `OwnedPubsubRuntime::build` → `publish` shape). A site
-neither path covers fails, named by file, line and function. Two blind spots are
-deliberate and stated in the gate's header: the matcher is lexical (a runtime
-built behind a re-spelled binding is not a site), and the rule covers std
-threads and tokio runtimes, not `rayon::ThreadPoolBuilder` pools or capacity
-constants.
+is) and requires each `thread::Builder::new`, `thread::spawn`,
+`Builder::new_multi_thread` and `Builder::new_current_thread` site to sit in a
+function that registers: one that calls `worker_census::register`, or one that
+delegates to a helper in the same file that does (the `OwnedPubsubRuntime::build`
+→ `publish` shape). A site neither path covers fails, named by file, line and
+function. Two blind spots are deliberate and stated in the gate's header: the
+matcher is lexical (a runtime built behind a re-spelled binding, or a std thread
+behind a renamed import, is not a site), and the rule covers std threads and
+tokio runtimes, not `rayon::ThreadPoolBuilder` pools or capacity constants.
 
 **Census.** `scripts/hooks/worker-census-spawn-inventory.txt`: one
 `path:function` row per spawn site the two registering paths do not cover, each

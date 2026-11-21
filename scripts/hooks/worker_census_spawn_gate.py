@@ -21,12 +21,14 @@ test thread is as invisible to the /proc cross-check as a production one. The
 scan reads the working tree (a brand-new untracked source file is examined the
 moment it is written); `rust/target` is skipped.
 
-**The three spawn shapes.** `thread::Builder::new` (a std thread),
-`Builder::new_multi_thread` and `Builder::new_current_thread` (a tokio runtime).
-The tokio shapes are matched without their `tokio::runtime::` path so an
-imported or aliased builder is still a site; the std shape is matched with its
-`thread::` path so the many unrelated `*Builder::new()` constructors
-(`ProviderBuilder`, `AnvilForkBuilder`, `tempfile::Builder`) are not sites.
+**The four spawn shapes.** `thread::Builder::new` (a std thread behind a
+builder), `thread::spawn` (a bare one), `Builder::new_multi_thread` and
+`Builder::new_current_thread` (a tokio runtime). The tokio shapes are matched
+without their `tokio::runtime::` path so an imported or aliased builder is still
+a site; the two std shapes are matched with their `thread::` path, so
+`std::thread::spawn` and an imported `thread::spawn` are both sites while the
+many unrelated `*Builder::new()` constructors (`ProviderBuilder`,
+`AnvilForkBuilder`, `tempfile::Builder`) are not.
 
 **Inventory.** `scripts/hooks/worker-census-spawn-inventory.txt`, one
 `path:function` row per unsanctioned site (a site's identity is its file and its
@@ -38,7 +40,8 @@ empty census. The inventory is a ratchet: it grows only with a reviewed reason,
 and a row is deleted in the change that registers (or removes) its site.
 
 **Blind spots.** The matcher is lexical, not a parser: a spawn built behind a
-re-spelled binding (`use tokio::runtime::Builder as B`) is not a site, and a
+re-spelled binding (`use tokio::runtime::Builder as B`) is not a site, nor is one
+reached through a renamed std import (`use std::thread as t;`), and a
 `rayon::ThreadPoolBuilder`, a `crossbeam` scope thread, or a capacity constant
 that bounds concurrent execution is out of the rule's scope -- the rule covers
 std threads and tokio runtimes. A site outside any function (a macro body, a
@@ -51,10 +54,16 @@ certify what it was pointed at.
 
 **Red path, recorded as the two-run probe** (the shape the comment-hygiene gate
 records, and the one `tests/test_worker_census_spawn_gate.py` pins): run one over
-a tree holding a bare `std::thread::Builder::new()` in a function that never
-registers fails, naming `path:line` and the row to add; run two, with that row in
-the inventory, is green. `--rows` prints the rows the inventory does not hold yet,
-so adding an entry is a paste-and-review edit.
+a tree holding a `std::thread::Builder::new()` in a function that never registers
+fails, naming `path:line` and the row to add; run two, with that row in the
+inventory, is green. The same probe was recorded for the bare shape when the
+matcher grew its fourth token: a fixture holding `std::thread::spawn(|| {})` inside
+`spawn_helper` failed naming `rust/crates/fixture-crate/src/spawn_site.rs:2` and
+the row `rust/crates/fixture-crate/src/spawn_site.rs:spawn_helper`, and was green
+once that row landed -- and the registering form of the same fixture, whose
+function calls `worker_census::register` above the spawn, is green with no row at
+all. `--rows` prints the rows the inventory does not hold yet, so adding an entry
+is a paste-and-review edit.
 
 live-invariant gate (ADR-087 D2): watches the live spawn sites of the crate tree against their registrations and the reviewed inventory; not tripwire precedent.
 """
@@ -76,6 +85,7 @@ _DEFAULT_INVENTORY = "scripts/hooks/worker-census-spawn-inventory.txt"
 _SKIP_DIRS = frozenset({"target", "vendor"})
 _SPAWN_TOKENS = (
     ("thread::Builder::new", "std thread"),
+    ("thread::spawn", "bare std thread"),
     ("Builder::new_multi_thread", "tokio multi-thread runtime"),
     ("Builder::new_current_thread", "tokio current-thread runtime"),
 )

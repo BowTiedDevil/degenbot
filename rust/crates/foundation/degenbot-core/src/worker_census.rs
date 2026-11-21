@@ -27,9 +27,9 @@
 //!
 //! # Registration is gate-enforced
 //!
-//! **Every spawn site registers.** Any `thread::Builder::new`, a
-//! `tokio::runtime::Builder` (a solve executor), or a capacity constant that
-//! bounds concurrent execution MUST register here via [`register`]: an
+//! **Every spawn site registers.** Any `thread::Builder::new`, a bare
+//! `thread::spawn`, a `tokio::runtime::Builder` (a solve executor), or a capacity
+//! constant that bounds concurrent execution MUST register here via [`register`]: an
 //! unregistered thread is invisible to the gauge, the boot dump, and the /proc
 //! comm cross-check.
 //!

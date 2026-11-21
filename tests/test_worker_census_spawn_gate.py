@@ -12,7 +12,12 @@ to the gate:
     names the file, the line, the shape and the row to add.
   * ``test_the_two_run_probe_is_green_once_its_row_lands`` is run two: the same
     tree, the same site, admitted by one reviewed row, is green.
-  * ``test_every_spawn_shape_is_a_site`` drives the three shapes one at a time, so
+  * ``test_a_planted_bare_spawn_fails_and_names_it`` and
+    ``test_the_bare_probe_is_green_once_its_row_lands_or_the_function_registers``
+    are the same two runs for the bare ``thread::spawn`` shape: the extended
+    token names the file and line, and both sanctuaries (a reviewed row, a
+    registering function) are green.
+  * ``test_every_spawn_shape_is_a_site`` drives the four shapes one at a time, so
     a shape that stopped matching cannot hide behind the others.
   * ``test_a_registering_function_is_sanctioned`` pins the positive path: a
     function that registers its own site is never reported.
@@ -55,6 +60,19 @@ _REGISTERING_FILE = """pub fn spawn_helper() {
 pub fn spawn_listed_helper() {
     let _ = std::thread::Builder::new().spawn(|| {});
 }
+fn row() -> WorkerCensusEntry {
+    todo!()
+}
+"""
+_BARE_STD_SITE = """pub fn spawn_helper() {
+    let _ = std::thread::spawn(|| {});
+}
+"""
+_REGISTERING_BARE_FILE = """pub fn spawn_helper() {
+    degenbot_core::worker_census::register(row());
+    let _ = std::thread::spawn(|| {});
+}
+
 fn row() -> WorkerCensusEntry {
     todo!()
 }
@@ -122,13 +140,43 @@ def test_the_two_run_probe_is_green_once_its_row_lands(tmp_path: Path) -> None:
     assert "1 admitted by 1 reviewed inventory rows" in result.stdout, result.stdout
 
 
+# --- the recorded two-run probe, for the bare shape the matcher grew ---------
+def test_a_planted_bare_spawn_fails_and_names_it(tmp_path: Path) -> None:
+    """Run one: a bare `thread::spawn` site fails, naming its file, line and row."""
+    tree = _tree(tmp_path, _BARE_STD_SITE)
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"fresh: {_SITE_FILE}:2: spawn_helper (bare std thread)" in result.stderr, result.stderr
+    assert f"inventory row: {_ROW}" in result.stderr, result.stderr
+
+
+def test_the_bare_probe_is_green_once_its_row_lands_or_the_function_registers(
+    tmp_path: Path,
+) -> None:
+    """Run two: the bare site is green admitted by a row, and green registered."""
+    admitted = _run(
+        _tree(tmp_path / "admitted", _BARE_STD_SITE),
+        _inventory(tmp_path, f"# fixture: a one-shot probe thread\n{_ROW}\n"),
+    )
+    assert admitted.returncode == 0, admitted.stdout + admitted.stderr
+    assert "1 admitted by 1 reviewed inventory rows" in admitted.stdout, admitted.stdout
+    registered = _run(
+        _tree(tmp_path / "registered", _REGISTERING_BARE_FILE),
+        _inventory(tmp_path, "# no exceptions yet\n"),
+    )
+    assert registered.returncode == 0, registered.stdout + registered.stderr
+    assert "1 register in their own function" in registered.stdout, registered.stdout
+
+
 # --- every shape, and the positive path --------------------------------------
 def test_every_spawn_shape_is_a_site(tmp_path: Path) -> None:
-    """A source with a bare spawn site fails in each of the three shapes."""
-    for index, source in enumerate((_BARE_SITE, _MULTI_SITE, _CURRENT_SITE)):
+    """A source with a bare spawn site fails in each of the four shapes."""
+    shapes = (_BARE_SITE, _BARE_STD_SITE, _MULTI_SITE, _CURRENT_SITE)
+    for index, source in enumerate(shapes):
         tree = _tree(tmp_path / f"shape-{index}", source)
         result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
         assert result.returncode == 1, result.stdout + result.stderr
+        assert f"fresh: {_SITE_FILE}:2: spawn_helper" in result.stderr, result.stderr
         assert f"inventory row: {_ROW}" in result.stderr, result.stderr
 
 
