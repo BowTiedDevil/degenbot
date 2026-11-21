@@ -4,6 +4,160 @@ use super::{
     ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser, U256,
 };
 
+// ── the collateral scan's diagnosis ───────────────────────────────────────
+
+/// How many rejected in-window log indices a refusal names before it summarises
+/// the rest as a count: the payload is one log line, not a candidate dump.
+const REFUSAL_EXEMPLAR_LIMIT: usize = 8;
+
+/// The slot a liquidation's collateral events fill: the user's debit, or the
+/// scaled report of a movement to the liquidator / treasury.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollateralSlot {
+    Debit,
+    Transfer,
+}
+
+/// Why the collateral scan skipped one scaled candidate, in the scan's own
+/// filter order. A candidate is counted under the first reason that refuses it,
+/// so one refusal's tallies sum to the events the scan walked.
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollateralSkip {
+    /// An earlier operation claimed a log emitted inside this window.
+    AlreadyClaimed = 0,
+    /// Emitted outside this liquidation's own sub-call.
+    OutsideWindow = 1,
+    /// Not this liquidation's collateral aToken.
+    WrongToken = 2,
+    /// The log's ownership role is neither a collateral debit nor a scaled
+    /// movement report (a companion report, an index-less mirror, another role).
+    WrongDisposition = 3,
+    /// The event kind does not fill the disposition's slot.
+    WrongKind = 4,
+    /// Another user's event.
+    WrongUser = 5,
+    /// A `CollateralMint` that is not the interest-exceeds debit: that slot
+    /// needs `amount < balance_increase`.
+    NotNetDebit = 6,
+}
+
+impl CollateralSkip {
+    /// Every reason, in discriminant order — the order a refusal renders.
+    const ALL: [Self; 7] = [
+        Self::AlreadyClaimed,
+        Self::OutsideWindow,
+        Self::WrongToken,
+        Self::WrongDisposition,
+        Self::WrongKind,
+        Self::WrongUser,
+        Self::NotNetDebit,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AlreadyClaimed => "already claimed",
+            Self::OutsideWindow => "outside window",
+            Self::WrongToken => "wrong token",
+            Self::WrongDisposition => "wrong disposition",
+            Self::WrongKind => "wrong kind",
+            Self::WrongUser => "wrong user",
+            Self::NotNetDebit => "not a net debit",
+        }
+    }
+
+    const fn slot(self) -> usize {
+        self as usize
+    }
+}
+
+/// One liquidation's collateral scan: the events it collected, and the reason it
+/// skipped every other scaled candidate. On success the tally is a few integer
+/// increments; on refusal it is the whole diagnostic payload.
+#[derive(Debug, Default)]
+pub(super) struct CollateralScanTally {
+    matched: usize,
+    skipped: [usize; CollateralSkip::ALL.len()],
+    rejected_in_window: Vec<u64>,
+}
+
+impl CollateralScanTally {
+    fn record(&mut self, reason: CollateralSkip, log_index: u64) {
+        self.skipped[reason.slot()] += 1;
+        if reason != CollateralSkip::OutsideWindow {
+            self.rejected_in_window.push(log_index);
+        }
+    }
+
+    /// Every scaled event the scan walked: matched or skipped exactly once.
+    fn scanned(&self) -> usize {
+        self.matched + self.skipped.iter().sum::<usize>()
+    }
+
+    fn in_window(&self) -> usize {
+        self.scanned() - self.skipped[CollateralSkip::OutsideWindow.slot()]
+    }
+
+    /// The refusal payload. Its consumer writes it into one `AAVE-PARSE-FAIL`
+    /// log line, so the candidates appear as counts plus at most
+    /// [`REFUSAL_EXEMPLAR_LIMIT`] rejected in-window log indices.
+    pub(super) fn refusal(&self, user: Address, anchor: u64, window: LiquidationWindow) -> String {
+        let (start, end) = window.bounds();
+        let skipped = CollateralSkip::ALL
+            .iter()
+            .map(|reason| format!("{}: {}", reason.label(), self.skipped[reason.slot()]))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Expected at least 1 collateral event (burn or transfer) for liquidation. \
+             User: {user}, anchor: LiquidationCall log {anchor}, window: {start}..{end}, \
+             scaled events: {}, in-window: {}, matched: {}, skipped: {{{skipped}}}, \
+             rejected in-window logs: {}",
+            self.scanned(),
+            self.in_window(),
+            self.matched,
+            self.exemplars(),
+        )
+    }
+
+    fn exemplars(&self) -> String {
+        if self.rejected_in_window.is_empty() {
+            return "none".to_string();
+        }
+        let shown = self
+            .rejected_in_window
+            .iter()
+            .take(REFUSAL_EXEMPLAR_LIMIT)
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hidden = self
+            .rejected_in_window
+            .len()
+            .saturating_sub(REFUSAL_EXEMPLAR_LIMIT);
+        if hidden == 0 {
+            shown
+        } else {
+            format!("{shown} (+{hidden} more)")
+        }
+    }
+}
+
+/// The collateral events one liquidation owns, with the tally that explains
+/// every candidate it did not collect.
+pub(super) struct CollateralScan<'b, 'a> {
+    pub(super) burn: Option<&'b ScaledTokenEvent<'a>>,
+    pub(super) transfers: Vec<&'b ScaledTokenEvent<'a>>,
+    pub(super) tally: CollateralScanTally,
+}
+
+impl CollateralScan<'_, '_> {
+    /// `true` when the liquidation owns no collateral event at all.
+    pub(super) fn is_empty(&self) -> bool {
+        self.burn.is_none() && self.transfers.is_empty()
+    }
+}
+
 impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the liquidation engine ────────────────────────────────────────────
 
@@ -229,7 +383,10 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// position's last action is emitted as that net-burn `Mint`, never as a
     /// `Burn`.
     ///
-    /// Returns `(collateral_burn, collateral_transfers)`.
+    /// Returns the [`CollateralScan`]: the debit, the scaled transfer reports,
+    /// and the tally that explains every candidate this liquidation did not
+    /// collect. The tally rides the same walk, so a refusal can name the reason
+    /// each in-window candidate was skipped without a second filter.
     pub(super) fn collect_collateral_events<'b>(
         user: Address,
         collateral_a_token_address: Option<Address>,
@@ -237,55 +394,107 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         ownership: &EventOwnership,
         window: LiquidationWindow,
         assigned_indices: &HashSet<u64>,
-    ) -> (
-        Option<&'b ScaledTokenEvent<'a>>,
-        Vec<&'b ScaledTokenEvent<'a>>,
-    )
+    ) -> CollateralScan<'b, 'a>
     where
         'a: 'b,
     {
-        let mut collateral_transfers: Vec<&ScaledTokenEvent<'a>> = Vec::new();
-        let mut collateral_burn: Option<&ScaledTokenEvent<'a>> = None;
+        let mut scan = CollateralScan {
+            burn: None,
+            transfers: Vec::new(),
+            tally: CollateralScanTally::default(),
+        };
         for ev in scaled_events {
-            if assigned_indices.contains(&ev.log_index) || !window.owns(ev.log_index) {
-                continue;
-            }
-            // Match collateral events only if they belong to this liquidation's
-            // collateral asset (prevents incorrect matching when a user is
-            // liquidated multiple times with different collateral assets).
-            if let Some(expected) = collateral_a_token_address {
-                if ev.token_address != expected {
-                    continue;
+            match Self::collateral_slot(
+                ev,
+                user,
+                collateral_a_token_address,
+                ownership,
+                window.owns(ev.log_index),
+                assigned_indices,
+            ) {
+                Ok(CollateralSlot::Debit) => {
+                    scan.burn = Some(ev);
+                    scan.tally.matched += 1;
                 }
-            }
-            match ownership.disposition(ev.log_index) {
-                Some(EventDisposition::SemanticBurn)
-                    if ev.event_type == ScaledTokenEventType::CollateralBurn
-                        && ev.user_address == user =>
-                {
-                    collateral_burn = Some(ev);
+                Ok(CollateralSlot::Transfer) => {
+                    scan.transfers.push(ev);
+                    scan.tally.matched += 1;
                 }
-                Some(EventDisposition::SemanticMint)
-                    if ev.event_type == ScaledTokenEventType::CollateralMint
-                        && ev.user_address == user
-                        && ev.amount < ev.balance_increase.unwrap_or_default() =>
-                {
-                    collateral_burn = Some(ev);
-                }
-                // The scaled report of a collateral movement is the only transfer
-                // report a liquidation applies: the index-less ERC20 report of
-                // the same movement is its mirror, and a companion report belongs
-                // to its semantic event.
-                Some(EventDisposition::BalanceTransfer { .. })
-                    if ev.event_type == ScaledTokenEventType::CollateralTransfer
-                        && ev.user_address == user =>
-                {
-                    collateral_transfers.push(ev);
-                }
-                _ => {}
+                Err(reason) => scan.tally.record(reason, ev.log_index),
             }
         }
-        (collateral_burn, collateral_transfers)
+        scan
+    }
+
+    /// The collateral slot one scaled event fills for this liquidation, or the
+    /// one reason the scan skips it. The checks run in filter order — the
+    /// window first, so `already claimed` only ever means claimed *inside* this
+    /// window — and each candidate is refused, and counted, once.
+    fn collateral_slot(
+        ev: &ScaledTokenEvent<'_>,
+        user: Address,
+        collateral_a_token_address: Option<Address>,
+        ownership: &EventOwnership,
+        in_window: bool,
+        assigned_indices: &HashSet<u64>,
+    ) -> Result<CollateralSlot, CollateralSkip> {
+        // The window is coarsest: an out-of-window log is another
+        // liquidation's leg whether or not it is already claimed, and saying
+        // "already claimed" here would read as a starvation inside THIS window.
+        if !in_window {
+            return Err(CollateralSkip::OutsideWindow);
+        }
+        if assigned_indices.contains(&ev.log_index) {
+            return Err(CollateralSkip::AlreadyClaimed);
+        }
+        // Match collateral events only if they belong to this liquidation's
+        // collateral asset (prevents incorrect matching when a user is
+        // liquidated multiple times with different collateral assets).
+        if collateral_a_token_address.is_some_and(|expected| ev.token_address != expected) {
+            return Err(CollateralSkip::WrongToken);
+        }
+        match ownership
+            .disposition(ev.log_index)
+            .ok_or(CollateralSkip::WrongDisposition)?
+        {
+            EventDisposition::SemanticBurn => {
+                if ev.event_type != ScaledTokenEventType::CollateralBurn {
+                    return Err(CollateralSkip::WrongKind);
+                }
+                if ev.user_address != user {
+                    return Err(CollateralSkip::WrongUser);
+                }
+                Ok(CollateralSlot::Debit)
+            }
+            EventDisposition::SemanticMint => {
+                if ev.event_type != ScaledTokenEventType::CollateralMint {
+                    return Err(CollateralSkip::WrongKind);
+                }
+                if ev.user_address != user {
+                    return Err(CollateralSkip::WrongUser);
+                }
+                if ev.amount >= ev.balance_increase.unwrap_or_default() {
+                    return Err(CollateralSkip::NotNetDebit);
+                }
+                Ok(CollateralSlot::Debit)
+            }
+            // The scaled report of a collateral movement is the only transfer
+            // report a liquidation applies: the index-less ERC20 report of the
+            // same movement is its mirror, and a companion report belongs to its
+            // semantic event.
+            EventDisposition::BalanceTransfer { .. } => {
+                if ev.event_type != ScaledTokenEventType::CollateralTransfer {
+                    return Err(CollateralSkip::WrongKind);
+                }
+                if ev.user_address != user {
+                    return Err(CollateralSkip::WrongUser);
+                }
+                Ok(CollateralSlot::Transfer)
+            }
+            EventDisposition::StandaloneTransfer { .. }
+            | EventDisposition::DuplicateCarrier { .. }
+            | EventDisposition::Companion { .. } => Err(CollateralSkip::WrongDisposition),
+        }
     }
 
     /// the gnarly ~160-LoC
@@ -301,6 +510,11 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     ///
     /// Returns [`ParseError::Substrate`] if either the aToken or vToken sibling
     /// lookup fails (parity: `assert debt_v_token_address is not None`).
+    ///
+    /// Returns [`ParseError::NoMatch`] when the liquidation owns no collateral
+    /// event; its payload names the `LiquidationCall` anchor, the liquidation
+    /// window, and the collateral scan's skip tally, so the refusal states its
+    /// own cause.
     #[expect(clippy::too_many_lines)] // 5-nested-branch fn — intrinsic
     pub(super) fn create_liquidation_operation(
         &mut self,
@@ -369,26 +583,28 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         );
         // Collect collateral events (burns + transfers) from this
         // liquidation's own sub-call.
-        let (collateral_burn, collateral_transfers) = Self::collect_collateral_events(
+        let window = LiquidationWindow::ending_at(all_events, this_log_index);
+        let scan = Self::collect_collateral_events(
             user,
             collateral_a_token_address,
             scaled_events,
             ownership,
-            LiquidationWindow::ending_at(all_events, this_log_index),
+            window,
             assigned_indices,
         );
         // A liquidation requires at least one collateral event.
-        if collateral_burn.is_none() && collateral_transfers.is_empty() {
-            return Err(ParseError::NoMatch(format!(
-                "Expected at least 1 collateral event (burn or transfer) for liquidation. \
-                 User: {user}, scaled_events log indices: {}",
-                scaled_events
-                    .iter()
-                    .map(|e| e.log_index.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+        if scan.is_empty() {
+            return Err(ParseError::NoMatch(scan.tally.refusal(
+                user,
+                this_log_index,
+                window,
             )));
         }
+        let CollateralScan {
+            burn: collateral_burn,
+            transfers: collateral_transfers,
+            ..
+        } = scan;
         // Find debt mint events that represent net debt increase during
         // liquidation (when accrued interest > debt repayment:
         // balance_increase > amount).

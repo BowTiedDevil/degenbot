@@ -320,6 +320,12 @@ impl LiquidationWindow {
     pub(super) fn owns(self, log_index: u64) -> bool {
         (self.start..self.end).contains(&log_index)
     }
+
+    /// The half-open `(start, end)` bounds the window owns, for a refusal that
+    /// must name the range it looked in.
+    pub(super) fn bounds(self) -> (u64, u64) {
+        (self.start, self.end)
+    }
 }
 
 /// The index-less ERC20 `Transfer` report of a balance movement.

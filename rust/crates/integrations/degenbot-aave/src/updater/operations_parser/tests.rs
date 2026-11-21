@@ -321,6 +321,7 @@ fn scaled_event(
             Some(Address::ZERO),
         ),
         ScaledTokenEventType::CollateralBurn
+        | ScaledTokenEventType::CollateralInterestBurn
         | ScaledTokenEventType::DebtBurn
         | ScaledTokenEventType::GhoDebtBurn => (
             ScaledTokenEventData::Burn {
@@ -1387,7 +1388,7 @@ fn collect_collateral_events_burn_vs_transfers_split() {
     let events = vec![burn, transfer, other_burn];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
-    let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+    let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
@@ -1396,12 +1397,12 @@ fn collect_collateral_events_burn_vs_transfers_split() {
         &assigned,
     );
     assert!(
-        cb.is_some(),
+        scan.burn.is_some(),
         "collateral_burn found for this liquidation's aToken"
     );
-    assert_eq!(cb.unwrap().log_index, 10);
+    assert_eq!(scan.burn.unwrap().log_index, 10);
     assert_eq!(
-        ct.len(),
+        scan.transfers.len(),
         0,
         "the index-less ERC20 report of a collateral movement is not a \
          liquidation collateral event: the Burn carries the debit and the \
@@ -1461,7 +1462,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     let events = vec![burn, erc20_fee_transfer, bt_fee_transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
-    let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+    let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
@@ -1470,16 +1471,16 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
         &assigned,
     );
     // Burn must be found.
-    assert_eq!(cb.unwrap().log_index, 10);
+    assert_eq!(scan.burn.unwrap().log_index, 10);
     // ONLY the scaled report is collected — the ERC20 report is a benign mirror.
     assert_eq!(
-        ct.len(),
+        scan.transfers.len(),
         1,
         "only the scaled report of the fee movement is collected; \
          the ERC20 report is the same movement's underlying-unit mirror"
     );
     assert_eq!(
-        ct[0].log_index, 12,
+        scan.transfers[0].log_index, 12,
         "the collected transfer is the BalanceTransfer report"
     );
     assert_eq!(
@@ -1524,7 +1525,7 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
     let events = vec![burn, pair_transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
-    let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+    let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
@@ -1532,10 +1533,10 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
         LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
-    assert!(cb.is_some(), "burn collected");
-    assert_eq!(cb.unwrap().log_index, 10);
+    assert!(scan.burn.is_some(), "burn collected");
+    assert_eq!(scan.burn.unwrap().log_index, 10);
     assert_eq!(
-        ct.len(),
+        scan.transfers.len(),
         0,
         "the burn's companion report is benign-ignored by disposition"
     );
@@ -1571,7 +1572,7 @@ fn collect_collateral_events_no_burn_only_transfers() {
     let events = vec![transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
-    let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+    let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
@@ -1579,9 +1580,568 @@ fn collect_collateral_events_no_burn_only_transfers() {
         LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
-    assert!(cb.is_none(), "no burn — collateral moved via transfer");
-    assert_eq!(ct.len(), 1);
-    assert_eq!(ct[0].log_index, 11);
+    assert!(
+        scan.burn.is_none(),
+        "no burn — collateral moved via transfer"
+    );
+    assert_eq!(scan.transfers.len(), 1);
+    assert_eq!(scan.transfers[0].log_index, 11);
+}
+
+// ── the collateral refusal's diagnostics ──────────────────────────────────
+//
+// A liquidation with no collateral event refuses with a payload naming the
+// `LiquidationCall` anchor, the [`LiquidationWindow`] bounds, and why every
+// in-window candidate was rejected. Its consumer is one `AAVE-PARSE-FAIL` log
+// line (`updater/run/process.rs`), so it stays single-line and bounded.
+
+/// The pool the refusal fixtures' parser is constructed for.
+fn liquidation_fixture_pool() -> Address {
+    Address::repeat_byte(0x99)
+}
+
+/// Seed the rows `create_liquidation_operation`'s sibling lookups read: the
+/// market, the `POOL` revision, and one reserve row per asset (the collateral
+/// asset resolves to `a_token`, the debt asset to `v_token`).
+fn fresh_db_with_liquidation_reserves(
+    collateral_asset: Address,
+    a_token: Address,
+    debt_asset: Address,
+    v_token: Address,
+) -> degenbot_db::DegenbotDb {
+    use degenbot_db::DegenbotDb;
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+             VALUES (1, 1, 'mainnet', 1, NULL)",
+            [],
+        )
+        .unwrap();
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &conn,
+            1,
+            "POOL",
+            &liquidation_fixture_pool().to_checksum(None),
+            Some(9),
+        )
+        .unwrap();
+        let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
+            &conn,
+            1,
+            &a_token.to_checksum(None),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
+            &conn,
+            1,
+            &v_token.to_checksum(None),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        for underlying in [collateral_asset, debt_asset] {
+            let underlying_id = DegenbotDb::get_or_create_erc20_token_on_conn(
+                &conn,
+                1,
+                &underlying.to_checksum(None),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            DegenbotDb::apply_reserve_initialized_on_conn(
+                &conn,
+                1,
+                underlying_id,
+                a_token_id,
+                1,
+                v_token_id,
+                1,
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
+    db
+}
+
+/// Drive `create_liquidation_operation` for `anchors[anchor_index]` and return
+/// the collateral guard's refusal payload. Every entry of `anchors` is a
+/// `LiquidationCall`, so that anchor's window opens after its predecessor.
+#[expect(clippy::too_many_arguments)] // one arg per fixture axis
+fn refused_liquidation_payload(
+    collateral_asset: Address,
+    a_token: Address,
+    debt_asset: Address,
+    v_token: Address,
+    anchors: &[Log],
+    scaled: &[ScaledTokenEvent<'static>],
+    anchor_index: usize,
+    claimed: &[u64],
+) -> String {
+    let db = fresh_db_with_liquidation_reserves(collateral_asset, a_token, debt_asset, v_token);
+    let conn = db.lock();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser = TransactionOperationsParser::new(
+        1,
+        1,
+        liquidation_fixture_pool(),
+        None,
+        None,
+        None,
+        &conn,
+        &mut substrate,
+    )
+    .unwrap();
+    let ownership = EventOwnership::classify(scaled);
+    let all_events: Vec<&Log> = anchors.iter().collect();
+    let mut assigned: HashSet<u64> = claimed.iter().copied().collect();
+    match parser.create_liquidation_operation(
+        0,
+        &anchors[anchor_index],
+        scaled,
+        &ownership,
+        &all_events,
+        &mut assigned,
+    ) {
+        Ok(_) => panic!("the fixture carries no collateral event for this liquidation"),
+        Err(ParseError::NoMatch(payload)) => payload,
+        Err(other) => panic!("the collateral guard refuses with NoMatch; got {other:?}"),
+    }
+}
+
+/// Acceptance 1: the refusal names the `LiquidationCall` anchor and the window
+/// bounds the scan was limited to, on one log line.
+#[test]
+fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
+    let user = Address::repeat_byte(0xA0);
+    let other_user = Address::repeat_byte(0xA1);
+    let collateral_asset = Address::repeat_byte(0xB0);
+    let a_token = Address::repeat_byte(0xB1);
+    let debt_asset = Address::repeat_byte(0xD0);
+    let v_token = Address::repeat_byte(0xD1);
+
+    let anchors = [
+        liquidation_call_log(10, collateral_asset, debt_asset, other_user, U256::from(1)),
+        liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
+    ];
+    // The user's collateral Burn is emitted inside the PREVIOUS liquidation's
+    // window, so this liquidation's own window carries no candidate at all.
+    let scaled = [scaled_event(
+        5,
+        ScaledTokenEventType::CollateralBurn,
+        user,
+        a_token,
+        U256::from(500),
+        None,
+    )];
+
+    let payload = refused_liquidation_payload(
+        collateral_asset,
+        a_token,
+        debt_asset,
+        v_token,
+        &anchors,
+        &scaled,
+        1,
+        &[],
+    );
+
+    assert!(
+        payload.contains("LiquidationCall log 30"),
+        "the payload names the anchor that closed the sub-call: {payload}"
+    );
+    assert!(
+        payload.contains("window: 11..30"),
+        "the payload names the window bounds: {payload}"
+    );
+    assert!(
+        payload.contains(&user.to_string()),
+        "the payload names the user: {payload}"
+    );
+    assert!(
+        payload.contains("in-window: 0") && payload.contains("rejected in-window logs: none"),
+        "an empty window says so instead of dumping the transaction: {payload}"
+    );
+    assert!(
+        !payload.contains('\n'),
+        "the payload is one log line: {payload}"
+    );
+}
+
+/// Acceptance 2: every scaled candidate is counted exactly once, under the one
+/// reason the scan's filter order assigns it.
+#[test]
+#[expect(clippy::too_many_lines)] // the fixture is one candidate per skip reason
+fn collateral_refusal_tallies_every_scaled_candidate_once() {
+    let user = Address::repeat_byte(0xA0);
+    let other_user = Address::repeat_byte(0xA1);
+    let collateral_asset = Address::repeat_byte(0xB0);
+    let a_token = Address::repeat_byte(0xB1);
+    let other_a_token = Address::repeat_byte(0xB2);
+    let liquidator = Address::repeat_byte(0xC0);
+    let debt_asset = Address::repeat_byte(0xD0);
+    let v_token = Address::repeat_byte(0xD1);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let anchors = [
+        liquidation_call_log(10, collateral_asset, debt_asset, other_user, U256::from(1)),
+        liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
+    ];
+    let scaled = [
+        // Outside this liquidation's window (log 5 < 11).
+        scaled_event(
+            5,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        // In window, but another user's burn.
+        scaled_event(
+            12,
+            ScaledTokenEventType::CollateralBurn,
+            other_user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        // In window, but another market's collateral token.
+        scaled_event(
+            14,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            other_a_token,
+            U256::from(500),
+            None,
+        ),
+        // In window and the right token, but the index-less report of a
+        // movement: its disposition is never a liquidation collateral event.
+        transfer_to_event(
+            16,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            liquidator,
+            a_token,
+            U256::from(500),
+        ),
+        // In window and the right token, but an interest burn of the aToken is
+        // not the liquidation's collateral debit.
+        scaled_event(
+            18,
+            ScaledTokenEventType::CollateralInterestBurn,
+            user,
+            a_token,
+            U256::from(500),
+            Some(ray),
+        ),
+        // In window and the right kind, but the mint increases the position:
+        // the interest-exceeds debit slot requires amount < balance_increase.
+        scaled_event(
+            20,
+            ScaledTokenEventType::CollateralMint,
+            user,
+            a_token,
+            U256::from(500),
+            Some(ray),
+        ),
+        // In window and would-be the collateral debit, but an earlier
+        // operation already claimed it.
+        scaled_event(
+            22,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+    ];
+
+    let payload = refused_liquidation_payload(
+        collateral_asset,
+        a_token,
+        debt_asset,
+        v_token,
+        &anchors,
+        &scaled,
+        1,
+        &[22],
+    );
+
+    assert!(
+        payload.contains("scaled events: 7") && payload.contains("in-window: 6"),
+        "the payload counts every scaled candidate and the window's share: {payload}"
+    );
+    for reason in [
+        "already claimed: 1",
+        "outside window: 1",
+        "wrong token: 1",
+        "wrong disposition: 1",
+        "wrong kind: 1",
+        "wrong user: 1",
+        "not a net debit: 1",
+    ] {
+        assert!(
+            payload.contains(reason),
+            "the payload reports {reason}: {payload}"
+        );
+    }
+    assert!(
+        payload.contains("matched: 0"),
+        "no candidate matched: {payload}"
+    );
+    assert!(
+        payload.contains("rejected in-window logs: 12, 14, 16, 18, 20, 22"),
+        "the payload names the rejected in-window candidates: {payload}"
+    );
+}
+
+/// The window is the coarsest filter. A candidate that is both claimed and
+/// outside this liquidation's window is the starved-liquidation case — an
+/// earlier liquidation took the leg — so it is attributed `outside window`, and
+/// never named as a rejected IN-WINDOW log.
+#[test]
+fn a_claimed_candidate_outside_the_window_is_attributed_to_the_window() {
+    let user = Address::repeat_byte(0xA0);
+    let other_user = Address::repeat_byte(0xA1);
+    let collateral_asset = Address::repeat_byte(0xB0);
+    let a_token = Address::repeat_byte(0xB1);
+    let debt_asset = Address::repeat_byte(0xD0);
+    let v_token = Address::repeat_byte(0xD1);
+
+    let anchors = [
+        liquidation_call_log(10, collateral_asset, debt_asset, other_user, U256::from(1)),
+        liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
+    ];
+    // The user's collateral Burn (log 5) was already claimed by the earlier
+    // liquidation — and it is outside this liquidation's window (11..30).
+    let scaled = [scaled_event(
+        5,
+        ScaledTokenEventType::CollateralBurn,
+        user,
+        a_token,
+        U256::from(500),
+        None,
+    )];
+
+    let payload = refused_liquidation_payload(
+        collateral_asset,
+        a_token,
+        debt_asset,
+        v_token,
+        &anchors,
+        &scaled,
+        1,
+        &[5],
+    );
+
+    assert!(
+        payload.contains("outside window: 1"),
+        "the claimed out-of-window leg is attributed outside window: {payload}"
+    );
+    assert!(
+        payload.contains("already claimed: 0"),
+        "an out-of-window leg is never counted as an in-window claim: {payload}"
+    );
+    assert!(
+        payload.contains("in-window: 0"),
+        "the out-of-window candidate never inflates the in-window count: {payload}"
+    );
+    assert!(
+        payload.contains("rejected in-window logs: none"),
+        "the out-of-window candidate is never named as in-window: {payload}"
+    );
+}
+
+/// Acceptance 3: the payload stays one bounded line at the receipt scale that
+/// motivated it (218 scaled candidates in one transaction).
+#[test]
+fn collateral_refusal_stays_one_line_at_receipt_scale() {
+    /// The fixed cap: one `AAVE-PARSE-FAIL` line's diagnostic budget.
+    const RECEIPT_SCALE_PAYLOAD_CAP: usize = 600;
+
+    let user = Address::repeat_byte(0xA0);
+    let other_user = Address::repeat_byte(0xA1);
+    let collateral_asset = Address::repeat_byte(0xB0);
+    let a_token = Address::repeat_byte(0xB1);
+    let other_a_token = Address::repeat_byte(0xB2);
+    let debt_asset = Address::repeat_byte(0xD0);
+    let v_token = Address::repeat_byte(0xD1);
+    let ray = U256::from(1_000_000_000_u64);
+
+    let anchors = [
+        liquidation_call_log(78, collateral_asset, debt_asset, other_user, U256::from(1)),
+        liquidation_call_log(196, collateral_asset, debt_asset, user, U256::from(1)),
+    ];
+    // 218 candidates over the receipt's log range. The window this liquidation
+    // owns is 79..196, and every one of its 117 candidates is rejected: half
+    // another user's burns, half the user's burns of another aToken.
+    let scaled: Vec<ScaledTokenEvent<'static>> = (0..218)
+        .map(|log_index| {
+            if (79..196).contains(&log_index) {
+                if log_index % 2 == 0 {
+                    scaled_event(
+                        log_index,
+                        ScaledTokenEventType::CollateralBurn,
+                        other_user,
+                        a_token,
+                        U256::from(1),
+                        None,
+                    )
+                } else {
+                    scaled_event(
+                        log_index,
+                        ScaledTokenEventType::CollateralBurn,
+                        user,
+                        other_a_token,
+                        U256::from(1),
+                        None,
+                    )
+                }
+            } else {
+                scaled_event(
+                    log_index,
+                    ScaledTokenEventType::DebtBurn,
+                    other_user,
+                    v_token,
+                    U256::from(1),
+                    Some(ray),
+                )
+            }
+        })
+        .collect();
+
+    let payload = refused_liquidation_payload(
+        collateral_asset,
+        a_token,
+        debt_asset,
+        v_token,
+        &anchors,
+        &scaled,
+        1,
+        &[],
+    );
+
+    assert!(!payload.contains('\n'), "one log line: {payload}");
+    assert!(
+        payload.len() < RECEIPT_SCALE_PAYLOAD_CAP,
+        "{} chars exceeds the {RECEIPT_SCALE_PAYLOAD_CAP}-char cap: {payload}",
+        payload.len()
+    );
+    assert!(
+        payload.contains("scaled events: 218")
+            && payload.contains("in-window: 117")
+            && payload.contains("outside window: 101"),
+        "the receipt-scale counts stay readable: {payload}"
+    );
+    assert!(
+        payload.contains("(+109 more)"),
+        "the rejected in-window exemplars are capped at 8 of 117: {payload}"
+    );
+}
+
+/// Acceptance 4: the block-26_458_346 shape — the collateral leg exists, but it
+/// belongs to an earlier liquidation of the same user, so this liquidation's own
+/// window holds only rejects. The refusal says so.
+#[test]
+fn liquidation_whose_collateral_leg_lives_in_another_window_refuses_with_diagnostics() {
+    let user = Address::repeat_byte(0xA0);
+    let other_user = Address::repeat_byte(0xA1);
+    let collateral_asset = Address::repeat_byte(0xB0);
+    let a_token = Address::repeat_byte(0xB1);
+    let other_a_token = Address::repeat_byte(0xB2);
+    let liquidator = Address::repeat_byte(0xC0);
+    let debt_asset = Address::repeat_byte(0xD0);
+    let v_token = Address::repeat_byte(0xD1);
+
+    let anchors = [
+        liquidation_call_log(78, collateral_asset, debt_asset, other_user, U256::from(1)),
+        liquidation_call_log(96, collateral_asset, debt_asset, user, U256::from(1)),
+        liquidation_call_log(196, collateral_asset, debt_asset, user, U256::from(1)),
+    ];
+    let scaled = [
+        // The user's seized-collateral Burn closed the EARLIER liquidation.
+        scaled_event(
+            89,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        // This liquidation's window (97..196) holds three rejects.
+        scaled_event(
+            100,
+            ScaledTokenEventType::CollateralBurn,
+            other_user,
+            a_token,
+            U256::from(500),
+            None,
+        ),
+        scaled_event(
+            150,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            other_a_token,
+            U256::from(500),
+            None,
+        ),
+        transfer_to_event(
+            191,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            liquidator,
+            a_token,
+            U256::from(500),
+        ),
+    ];
+
+    let all_events: Vec<&Log> = anchors.iter().collect();
+    assert!(
+        LiquidationWindow::ending_at(&all_events, 96).owns(89),
+        "the fixture's collateral leg belongs to the earlier liquidation"
+    );
+    assert!(
+        !LiquidationWindow::ending_at(&all_events, 196).owns(89),
+        "and it is outside the refusing liquidation's own window"
+    );
+
+    let payload = refused_liquidation_payload(
+        collateral_asset,
+        a_token,
+        debt_asset,
+        v_token,
+        &anchors,
+        &scaled,
+        2,
+        &[],
+    );
+
+    for expected in [
+        "LiquidationCall log 196",
+        "window: 97..196",
+        "scaled events: 4",
+        "in-window: 3",
+        "outside window: 1",
+        "wrong user: 1",
+        "wrong token: 1",
+        "wrong disposition: 1",
+        "matched: 0",
+        "rejected in-window logs: 100, 150, 191",
+    ] {
+        assert!(
+            payload.contains(expected),
+            "the starved liquidation's refusal reports {expected}: {payload}"
+        );
+    }
 }
 
 /// `LiquidationGroup::detect_pattern` —
