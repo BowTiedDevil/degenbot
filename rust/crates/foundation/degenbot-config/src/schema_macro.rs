@@ -89,7 +89,6 @@ macro_rules! config_schema_flat {
         }
     };
 
-    // A normal key declaration passes through unchanged.
     (
         @body [$sec:ident] [$Sec:ident]
         [ $(#[$m:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]
@@ -489,7 +488,6 @@ macro_rules! config_schema_impl {
         }
     };
 
-    // A key declaration inside a section body.
     (
         @body [$sec:ident] [$Sec:ident]
         [ $(#[$fmeta:meta])* $f:ident [ $($kt:tt)+ ] = $def:expr, env = $env:literal, def = $def_repr:literal, doc = $doc:literal; $($rest:tt)* ]

@@ -353,7 +353,6 @@ fn expand_state_path_sibling_of_state_home_is_not_rebased() {
 /// A surface that carries the capability as text (a console flag, a foreign-
 /// language binding argument) must accept exactly the names the refusal
 /// prints, or one scope ends up with two vocabularies.
-
 #[test]
 fn scope_parses_from_its_own_refusal_spelling() {
     for scope in [NodeScope::Request, NodeScope::Subscription] {
@@ -367,7 +366,6 @@ fn scope_parses_from_its_own_refusal_spelling() {
 
 /// The refusal names both capabilities: a caller that guessed wrong learns the
 /// closed set from the error rather than from the source.
-
 #[test]
 fn unknown_scope_refusal_names_every_capability() {
     let message = match NodeScope::from_str("polling") {

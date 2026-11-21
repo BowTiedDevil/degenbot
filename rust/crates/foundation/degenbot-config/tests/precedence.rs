@@ -9,11 +9,8 @@ use degenbot_config::{BotConfigLoader, MapEnv, Source};
 // - bool   : `allocator.mimalloc_auto_purge` / `DEGENBOT_MIMALLOC_AUTO_PURGE`
 // - ms     : `state_lock.warn_ms`            / `DEGENBOT_LOCK_WARN_MS`
 // - usize  : `solve.envelope_max_tangent_lines` / `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES`
-// - enum   : (no standing representative — the enum-key slots retired with
-//          `solve.executor` / `DEGENBOT_SOLVE_EXECUTOR` at the P6YXA6 hard
-//          cutover and with `fleet.stance` / `DEGENBOT_FLEET` at the LW-T9
-//          hard cutover; the enum parse law is covered by the quiesce-mode
-//          chain below, BM35LK)
+// - enum   : (no standing representative — the enum parse law is covered by
+//          the quiesce-mode chain below)
 
 // Test env provider.
 fn map_env(pairs: &[(&str, &str)]) -> Box<dyn degenbot_config::EnvVars> {
@@ -37,7 +34,6 @@ fn temp_toml(name: &str, body: &str) -> PathBuf {
 }
 
 fn cleanup(path: &PathBuf) {
-    // Temp-file cleanup is best-effort in a sandboxed test tree.
     if std::fs::remove_file(path).is_err() {}
 }
 
@@ -143,7 +139,7 @@ fn defaults_feed_every_representative_type() {
         cfg.config.solve.envelope_max_tangent_lines, 32,
         "usize default"
     );
-    // BM35LK quiesce-estimator keys: f64 + enum + ms defaults.
+    // Quiesce-estimator keys: f64 + enum + ms defaults.
     assert_eq!(
         cfg.config.pump.quiesce_mode,
         degenbot_config::QuiesceMode::Adaptive,
@@ -283,8 +279,8 @@ fn quiesce_keys_precedence_chain_env_beats_file_beats_default() {
 
 #[test]
 fn every_layer_for_every_type_in_sequence() {
-    // (BM35LK: the quiesce keys ride the same loader machinery — asserted
-    // for env+file precedence below in `quiesce_keys_precedence_chain`.)
+    // The quiesce keys ride the same loader machinery — asserted for env+file
+    // precedence below in `quiesce_keys_precedence_chain`.
     // One full precedence chain per representative type.
     let path = temp_toml(
         "chain",
@@ -327,9 +323,8 @@ fn every_layer_for_every_type_in_sequence() {
 
 #[test]
 fn loader_fails_closed_on_bad_values_and_unknown_keys() {
-    // LW-T9: the RETIRED stance key is not a schema key anymore — a CLI
-    // override naming it is rejected as unknown (fail-closed, no silent
-    // fallback).
+    // A CLI override must name a schema key, so the retired stance name is
+    // rejected as unknown (fail-closed, no silent fallback).
     let err = must_err(
         &BotConfigLoader::new()
             .without_env()
@@ -340,8 +335,8 @@ fn loader_fails_closed_on_bad_values_and_unknown_keys() {
         "the retired key is rejected: {err}"
     );
 
-    // the RETIRED executor key is not a schema key anymore — a CLI
-    // override naming it is rejected as unknown (fail-closed).
+    // The same law for the retired executor name: a CLI override must name a
+    // schema key, so it is rejected as unknown (fail-closed).
     let err = must_err(
         &BotConfigLoader::new()
             .without_env()
@@ -352,11 +347,9 @@ fn loader_fails_closed_on_bad_values_and_unknown_keys() {
         "the retired key is rejected: {err}"
     );
 
-    // WFF6MM hard cutover: the RETIRED detached-solve stance key is not a
-    // schema key anymore — a CLI override naming it is rejected as unknown
-    // (fail-closed), and a surviving TOML key fails with the generic
-    // unknown-key error (the one-release pointed refusal was removed at
-    // d5c450c84; ADR-012 deletion, not a flag).
+    // The same law for the retired detached-solve stance name: a CLI override
+    // naming it is rejected as unknown (fail-closed), and a surviving TOML key
+    // fails with the generic unknown-key error.
     let err = must_err(
         &BotConfigLoader::new()
             .without_env()

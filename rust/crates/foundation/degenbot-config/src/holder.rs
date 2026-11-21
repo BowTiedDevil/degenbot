@@ -2,42 +2,41 @@
 //!
 //! Exactly one site reads the environment for `DEGENBOT_*` keys: the
 //! 12-factor loader. The boot path loads the config once and installs the
-//! resulting value via [`install`]; every former environment-reading call
-//! site (which previously read per-key env vars at call time) consults
-//! [`config`] and gets a typed schema field. This module performs no
-//! environment access itself — it is a value holder (the ADR-021 tripwire
-//! pattern, "carries data, never the environment").
+//! resulting value via [`install`]; every call site that would otherwise read
+//! per-key env vars at call time consults [`config`] and gets a typed schema
+//! field. This module performs no environment access itself: it is a value
+//! holder (the ADR-021 tripwire pattern, "carries data, never the
+//! environment").
 //!
 //! Tests that never install a config observe the schema defaults, which is
-//! byte-compatible with running in a clean environment. (Per-process A/B
+//! byte-compatible with running in a clean environment. Per-process A/B
 //! testing and a second bot instance install distinct values before the
-//! first engine construction — the ground the retired solver RUNTIME
-//! OnceLock used to hold process-wide.)
+//! first engine construction.
 //!
 //! # Snapshot, not a one-shot
 //!
 //! [`install`] keeps PRODUCTION first-wins semantics: the first boot to
-//! install owns the snapshot and every later `install` is a no-op. What
-//! changed is the storage SHAPE: the slot is a swappable pointer rather than
-//! a `OnceLock`, so the sanctioned TEST seam [`reinstall_for_tests`] can
-//! re-govern the snapshot from a fresh env+file load. The seam does not exist
-//! to change production behavior — no production code calls it — but a
-//! `OnceLock` cannot be cleared, and the suite needs exactly that re-govern.
+//! install owns the snapshot and every later `install` is a no-op. Storage is
+//! a swappable pointer rather than a `OnceLock`, because the sanctioned TEST
+//! seam [`reinstall_for_tests`] must re-govern the snapshot from a fresh
+//! env+file load. The seam does not exist to change production behavior — no
+//! production code calls it — but a `OnceLock` cannot be cleared, and the
+//! suite needs exactly that re-govern.
 //!
 //! ## Safety contract of [`reinstall_for_tests`]
 //!
-//! Previously-constructed engines keep their minted snapshots: an engine
-//! clones the [`config_arc`] value (or reads a typed field) at CONSTRUCTION,
-//! never through a live holder pointer, so a reinstall re-governs only future
-//! resolutions. The process-lifetime resources sized from the first snapshot
-//! (the shared io runtime, the solve/io worker pools) are deliberately NOT
-//! re-sized by the seam — the same "process-lifetime, not per-engine"
-//! boundary the io runtime has always had.
+//! Engines constructed before a reinstall keep their minted snapshots: an
+//! engine clones the [`config_arc`] value (or reads a typed field) at
+//! CONSTRUCTION, never through a live holder pointer, so a reinstall
+//! re-governs only future resolutions. The process-lifetime resources sized
+//! from the first snapshot (the shared io runtime, the solve/io worker pools)
+//! are deliberately NOT re-sized by the seam: they are process-lifetime, not
+//! per-engine.
 //!
-//! Every published snapshot is leaked to a `'static` reference (the previous
-//! `OnceLock` gave the one value it held the same process-lifetime
-//! guarantee); [`reinstall_for_tests`] therefore leaks one `Arc<BotConfig>`
-//! per reinstall, bounded by the test that drives it.
+//! Every published snapshot is leaked to a `'static` reference, because
+//! snapshots are process-lifetime by design; [`reinstall_for_tests`]
+//! therefore leaks one `Arc<BotConfig>` per reinstall, bounded by the test
+//! that drives it.
 
 use std::sync::{Arc, RwLock};
 
@@ -124,7 +123,7 @@ pub fn installed() -> bool {
 /// deliberately loud. Unlike [`install`], this is NOT first-wins — overwriting
 /// the snapshot is the whole point. Returns the newly published Arc so a
 /// caller can assert identity. See the module docs for the safety contract
-/// (previously-constructed engines keep their minted snapshots).
+/// (engines constructed before the reinstall keep their minted snapshots).
 #[doc(hidden)]
 #[must_use]
 pub fn reinstall_for_tests(cfg: Arc<BotConfig>) -> &'static Arc<BotConfig> {

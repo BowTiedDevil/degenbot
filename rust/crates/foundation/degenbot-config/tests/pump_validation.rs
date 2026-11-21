@@ -30,7 +30,6 @@ fn temp_toml(name: &str, body: &str) -> PathBuf {
 }
 
 fn cleanup(path: &PathBuf) {
-    // Temp-file cleanup is best-effort in a sandboxed test tree.
     if std::fs::remove_file(path).is_err() {}
 }
 

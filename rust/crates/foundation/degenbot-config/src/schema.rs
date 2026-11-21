@@ -398,7 +398,7 @@ crate::config_schema! {
         io_workers [opt usize] = None, env = "DEGENBOT_IO_WORKERS", def = "(unset; derived from the cgroup CPU budget)",
             doc = "Ambient I/O runtime worker count; when unset it is derived from the cgroup CPU budget after the solve bins take theirs (see solve.solve_cpus / solve.solve_headroom).";
         fleet_profile [enum FleetProfile Auto Pinned Serial] = FleetProfile::Auto, env = "DEGENBOT_FLEET_PROFILE", def = "auto",
-            doc = "Fleet host-binding profile (FLEETFLOOR FF-T2): auto resolves the host tier from the CPU budget (pinned at/above the pinned-role floor, serial on 2-5 cores, refused below 2); pinned/serial force a binding — a forced pinned binding below the floor runs marked oversubscribed, and forced bindings still need 2 or more cores.";
+            doc = "Fleet host-binding profile: auto resolves the host tier from the CPU budget (pinned at/above the pinned-role floor, serial on 2-5 cores, refused below 2); pinned/serial force a binding — a forced pinned binding below the floor runs marked oversubscribed, and forced bindings still need 2 or more cores.";
     }
 
     telemetry TelemetryConfig {
@@ -492,11 +492,6 @@ crate::config_schema! {
             doc = "WS completeness gating (newHeads + logs double-delivery check); `0` disables.";
         strict_sparse_apply [bool] = false, env = "DEGENBOT_STRICT_SPARSE_APPLY", def = "false",
             doc = "Strict sparse-word apply gate for V3 Mint/Burn and V4 ModifyLiquidity events. ON refuses a tick mutation whose boundary tick-bitmap word is not in the pool's checked set (`known_bitmap_words` on a Sparse pool), backfills the word through the stored tick-data fetcher with no state lock held, and re-routes the event; a word that cannot be backfilled leaves the event unapplied as the typed `MissingTickWord` routing outcome. OFF (the default) is the lazy production posture: the event applies immediately and the word is fetched at solve time. ON protects the reorg journal's per-tick priors, which applying over an unchecked word would record for a region whose other initialized ticks are absent.";
-        // the
-        // adaptive trailing-quiesce estimator (the default); `fixed` retains
-        // the constant `pump_debounce_ms` behavior. W =
-        // clamp(EWMA·quiesce_margin, floor, ceil), the EWMA tracking each
-        // block's max intra-block silence gap.
         quiesce_mode [enum QuiesceMode Fixed Adaptive] = QuiesceMode::Adaptive, env = "DEGENBOT_PUMP_QUIESCE_MODE", def = "adaptive",
             doc = "Settle-window mode: `fixed` = constant pump.pump_debounce_ms debounce; `adaptive` = EWMA trailing-quiesce estimator (never below quiesce_floor_ms, never above quiesce_ceil_ms; late-admit budget overruns hold at the ceiling).";
         quiesce_floor_ms [ms] = 2, env = "DEGENBOT_PUMP_QUIESCE_FLOOR_MS", def = "2",
@@ -537,11 +532,11 @@ crate::config_schema! {
         inline_sim_workers [opt usize] = None, env = "DEGENBOT_INLINE_SIM_WORKERS", def = "(unset; derived from CPU budget)",
             doc = "Inline-sim worker count (thread count of the payload-sim runtime). When set it must be within 1..=32: the load refuses a value outside that range, naming this key and the range, and the runtime is sized with exactly the count declared. Unset derives the count from the leftover CPU budget.";
         admission_shed [bool] = true, env = "DEGENBOT_SOLVE_ADMISSION", def = "true",
-            doc = "QTZGFL capacity-modulated admission stance: unset/`1`/`true`/`on` (default) replaces the retired in-flight cap degrade with budget = max(0, admission_target_depth - in-flight) and SHEDS zero-budget cycles; `0`/`false`/`off` is the intentional take-all no-shed operator stance (A/B).";
+            doc = "Capacity-modulated admission stance: unset/`1`/`true`/`on` (default) replaces the retired in-flight cap degrade with budget = max(0, admission_target_depth - in-flight) and SHEDS zero-budget cycles; `0`/`false`/`off` is the intentional take-all no-shed operator stance (A/B).";
         admission_target_depth [usize] = 8, env = "DEGENBOT_SOLVE_ADMISSION_TARGET_DEPTH", def = "8",
-            doc = "QTZGFL: un-merged-result pipe depth target in KEYS (pools) — the draw budget headroom. Clamped at engine construction to 1..=DETACHED_INFLIGHT_CAP (DETACHED_INFLIGHT_CAP is only the default/clamp for this key now, no longer a runtime cap verdict); default 8 = DETACHED_INFLIGHT_CAP.";
+            doc = "Un-merged-result pipe depth target in KEYS (pools) — the draw budget headroom. Clamped at engine construction to 1..=DETACHED_INFLIGHT_CAP (DETACHED_INFLIGHT_CAP is this key's default and clamp, not a runtime cap verdict); default 8 = DETACHED_INFLIGHT_CAP.";
         admission_retention_blocks [u64] = 50, env = "DEGENBOT_SOLVE_ADMISSION_RETENTION", def = "50",
-            doc = "QTZGFL: retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50.";
+            doc = "Retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50.";
         min_profit_wei [u128] = 0, env = "DEGENBOT_MIN_PROFIT_WEI", def = "0",
             doc = "Minimum path profit floor in wei (decimal text; TOML: quoted string).";
         clamp_margin_wei [u128] = 1, env = "DEGENBOT_CLAMP_MARGIN_WEI", def = "1",
@@ -576,7 +571,7 @@ crate::config_schema! {
         pool_state_updater_slots [opt usize] = None, env = "DEGENBOT_FLEET_POOL_STATE_UPDATER_SLOTS", def = "(unset; default 4)",
             doc = "PoolStateUpdater slot cap (the registration intake station: duty-counted, spendable from the fractional-quota remainder, Deferrable cordon class); default 4.";
         cordon_enter_events [usize] = 2, env = "DEGENBOT_FLEET_CORDON_ENTER_EVENTS", def = "2",
-            doc = "Throttle events within the enter window that cordon the fleet (design doc §6 enter trigger; Q5 amendment delivered: runtime-tunable via the operator channel — `degenbot fleet posture set --cordon-enter-events N` on a live process).";
+            doc = "Throttle events within the enter window that cordon the fleet; runtime-tunable on a live process through the operator channel — `degenbot fleet posture set --cordon-enter-events N`.";
         cordon_enter_window_ms [ms] = 1000, env = "DEGENBOT_FLEET_CORDON_ENTER_WINDOW_MS", def = "1000",
             doc = "Rolling window (ms) for the throttle-event burst enter trigger.";
         cordon_duty_percent [f64] = 2.0, env = "DEGENBOT_FLEET_CORDON_DUTY_PERCENT", def = "2.0",
@@ -588,9 +583,9 @@ crate::config_schema! {
         cordon_sim_intake_floor [opt usize] = None, env = "DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR", def = "(unset; half the slot cap)",
             doc = "SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap).";
         intake_backstop_ms [ms] = 250, env = "DEGENBOT_FLEET_INTAKE_BACKSTOP_MS", def = "250",
-            doc = "Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin.";
+            doc = "Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units. Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin.";
         intake_no_progress_ticks [usize] = 8, env = "DEGENBOT_FLEET_INTAKE_NO_PROGRESS_TICKS", def = "8",
-            doc = "Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY (TB4QGX T4). Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass.";
+            doc = "Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY. Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass.";
     }
 
     capture CaptureConfig {

@@ -39,11 +39,8 @@
 //! # Strictness
 //!
 //! The loader is fail-closed: unparsable values and unknown TOML keys are
-//! reported in one aggregate error rather than silently falling back. This
-//! is a deliberate break from several per-site fail-open parses scattered
-//! across the bot today; call sites migrate onto [`BotConfig`] in the
-//! "Migrate env reads onto `BotConfig`" task and re-validate their fallback
-//! semantics there.
+//! reported in one aggregate error rather than silently falling back, which
+//! replaces the scattered per-site fail-open env parses.
 //!
 //! # Family-shaped keys and driver-domain resolvers
 //!
@@ -69,8 +66,8 @@ pub mod doc;
 pub mod error;
 /// the process-wide typed-config holder. The loader (the ONLY env
 /// reader) produces a [`BotConfig`]; the boot path installs it here and every
-/// formerly env-reading call site in the workspace reads a typed field off
-/// [`holder::config`] instead. A plain VALUE holder — zero env access.
+/// call site in the workspace reads a typed field off [`holder::config`]
+/// instead of the environment. A plain VALUE holder — zero env access.
 pub mod holder;
 pub mod loader;
 pub mod readiness;

@@ -1,4 +1,4 @@
-//! RED-first pins for the two per-ecosystem backrun facets: every key
+//! Pins for the two per-ecosystem backrun facets: every key
 //! resolves from TOML, from env, and collapses to its declared default.
 
 #![expect(

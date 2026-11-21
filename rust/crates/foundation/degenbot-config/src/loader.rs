@@ -103,7 +103,7 @@ impl EnvVars for MapEnv {
     }
 }
 
-/// Migration doc named by every retired-layout refusal .
+/// Migration doc named by every retired-layout and retired-env refusal.
 const MIGRATION_DOC: &str = "docs/config-migration.md";
 
 /// Retired operator-file layout items: top-level keys/section names from the
@@ -253,9 +253,9 @@ impl EnvVars for EnvRef<'_> {
 
 impl Default for BotConfigLoader<'_> {
     /// Defaults + process environment (no file, no CLI) — the documented
-    /// production surface. A `#[derive(Default)]` here silently produced a
-    /// no-env loader (K7-config gap: production boots ignored every
-    /// DEGENBOT_* override).
+    /// production surface. `Default` must attach the process environment: a
+    /// `#[derive(Default)]` yields a no-env loader, and production boots would
+    /// then ignore every `DEGENBOT_*` override.
     fn default() -> Self {
         Self {
             file: None,
@@ -488,7 +488,7 @@ impl LoadState {
         );
     }
 
-    /// Layer 2 (lowest override): the --config TOML file.
+    /// The file layer (lowest override): the --config TOML file.
     fn apply_file(&mut self, path: &Path) {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -646,7 +646,7 @@ impl LoadState {
         }
     }
 
-    /// Layer 3: the environment. Iterates the SCHEMA (not the process env) so
+    /// The environment layer. Iterates the SCHEMA (not the process env) so
     /// foreign DEGENBOT_*-prefixed vars never leak into the typed tree.
     fn apply_env(&mut self, env: &dyn EnvVars) {
         // A retired export fails the load rather than silently doing nothing.
@@ -721,8 +721,8 @@ impl LoadState {
         }
     }
 
-    /// Layer 4 (highest): CLI / explicit argument overrides, keyed by env
-    /// name or dotted TOML path.
+    /// The CLI layer (highest): CLI / explicit argument overrides, keyed by
+    /// env name or dotted TOML path.
     fn apply_cli(&mut self, cli: &[(String, String)]) {
         for (name, value) in cli {
             match resolve_key(name) {

@@ -50,39 +50,54 @@ use std::sync::OnceLock;
 /// A name is reported as written at the call site, so a read whose name is
 /// computed is enumerated by the identifier it computes from -- the loader's
 /// `env::var(name)` seam and the companion's retired-key identifiers alike.
-/// An expression
-/// no name is reducible from is reported `<computed>`, which no file may be
-/// enumerated for by accident.
+/// An expression no name is reducible from is reported `<computed>`, which no
+/// file may be enumerated for by accident.
+///
+/// # Entry classes
+///
+/// Every entry belongs to one of four classes, and the class rationale lives
+/// HERE so a per-entry line carries only what is true of that file:
+///
+/// 1. **Infra** -- OS or tooling signal variables (a shell's `HOME`, the
+///    tracing convention's `RUST_LOG`) no static schema can own.
+/// 2. **Offline tool knob** -- a per-run control of an offline probe,
+///    benchmark, replay, or capture generator. The readout is a measurement or
+///    a corpus selection, so the knob carries no operator-config authority, and
+///    routing it through the loader would hand a standalone tool the config
+///    crate's dependency graph for no behavioral gain.
+/// 3. **Test-only stance** -- a name a parent test sets to drive a CHILD test
+///    binary, or a dev/feature-gated stance inside `src`. Presence coordinates
+///    a harness; it never configures a production boot.
+/// 4. **Refusal or plumbing** -- a presence-only read of a retired name (no
+///    value is consumed) or console-level plumbing the logging stack owns.
 fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
     static MAP: OnceLock<BTreeMap<&'static str, &'static [&'static str]>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = BTreeMap::new();
-        // (1) Infra — OS/tooling signal variables no static schema can own.
-        // (TOKIO_WORKER_THREADS is refused: the ambient runtime is sized from
-        // the cgroup CPU budget via the typed `runtime.io_workers` key.)
+        // Infra: shell state, the tracing-convention filter, and the
+        // companion's exporter endpoint. (TOKIO_WORKER_THREADS is refused: the
+        // ambient runtime is sized from the cgroup CPU budget via the typed
+        // `runtime.io_workers` key.)
         m.insert(
             "crates/shells/degenbot-python/src/python_log_layer.rs",
             &[
                 "HOME",
                 "RUST_LOG",
                 "OTEL_EXPORTER_OTLP_ENDPOINT",
-                // Logging-infra tooling signal (same class as RUST_LOG): the
-                // stderr fmt-layer mirror gate. Output plumbing, not config.
+                // The stderr fmt-layer mirror gate: output plumbing, not config.
                 "DEGENBOT_LOG_FMT",
             ][..],
         );
-        // (2) Dev-test knobs in library code (offline tooling only).
+        // Offline tool knobs in library code.
         m.insert(
             "crates/engine/degenbot-bot/src/profiling.rs",
             &["HOTPATH_SHUTDOWN_MS"][..],
         );
-        // the concentrated-liquidity-hop clamp margin now rides the typed config
-        // (`solve.clamp_margin_wei`), so the cycle source reads no
-        // environment; the probe-fixture loader below is the remaining
-        // offline entry.
+        // The probe-fixture corpus path, `cfg(test)` only: the
+        // concentrated-liquidity-hop clamp margin rides the typed config
+        // (`solve.clamp_margin_wei`), so this is the one remaining env read on
+        // that path.
         m.insert(
-            // the probe fixture loader moved out of solver_dispatch
-            // into its own test-only module (corpus path override, cfg(test)).
             "crates/engine/degenbot-bot/src/arb_engine/executor_ab_probe.rs",
             &["DEGENBOT_PROBE_FIXTURE"][..],
         );
@@ -99,16 +114,10 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["T1_CAPTURE"][..], // executor shape dev-capture gate
         );
 
-        // Same class as the knobs above, on a relocated surface: the two Aave
-        // window recorders now owned by the fixture-tool crate (their keys live
-        // under the workspace `tools/` tree, not `crates/`). Leaving `examples/`,
-        // which this scan skips as a test surface, exposed their pre-existing
-        // explicit `--node` fallback to the production-source scan. The read is
-        // the recorder's documented invocation default, consulted only when the
-        // flag and its value are absent: a standalone offline tool's shell
-        // contract, not a second operator-config authority. Enumerated here
-        // rather than routed through the loader, which would hand a fixture tool
-        // the config crate's dependencies for no behavioural gain.
+        // The two Aave window recorders read the chain-1 endpoint as their
+        // documented invocation default, consulted only when the explicit
+        // `--node` flag and its value are absent: a standalone offline tool's
+        // shell contract, not a second operator-config authority.
         m.insert(
             "tools/fixture-tools/src/bin/generate_aave_upgrade_windows/main.rs",
             &["DEGENBOT_RPC_HTTP_CHAINID_1"][..],
@@ -122,14 +131,11 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
 
         insert_solver_lab_entries(&mut m);
 
-        // The Python oracle corpus recorder, same class and same cause: leaving
-        // `examples/` (skipped as a test surface) exposed its pre-existing endpoint
-        // fallback to the production-source scan. Both reads are the recorder's
-        // documented invocation default, consulted only when that tier's repeatable
-        // `--ethereum-node` / `--base-node` flag is absent, and the base read keeps the
-        // keyless endpoint the aerodrome/pancakeswap parity tests fork. Enumerated here
-        // rather than routed through the loader: it is a standalone offline tool's shell
-        // contract, and it opens no operator DB and reads no typed config key.
+        // The Python oracle corpus recorder reads each tier's documented
+        // endpoint default, consulted only when that tier's repeatable
+        // `--ethereum-node` / `--base-node` flag is absent; the base read keeps
+        // the keyless endpoint the aerodrome/pancakeswap parity tests fork. It
+        // opens no operator DB and reads no typed config key.
         m.insert(
             "tools/fixture-tools/src/bin/record_py_oracle_corpus/main.rs",
             &[
@@ -138,16 +144,10 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             ][..],
         );
 
-        // The concentrated-liquidity capture generator, same class and same cause: it left
-        // `degenbot-rpc`'s `examples/`, which this scan skips as a test surface, so its four
-        // pre-existing keys are now visible to the production-source scan. All four are the
-        // generator's documented shell contract -- the required endpoint, the pinned block,
-        // the per-pool tick-word fetch cap, and the per-block path cap -- read once at
-        // start-up with the same defaults and the same parse-and-fall-back behavior they have
-        // always had. Enumerated here rather than routed through the loader: it is a
-        // standalone live-node tool that opens no operator DB and reads no typed config key,
-        // and the loader would hand it the config crate's dependency graph for no behavioral
-        // gain.
+        // The concentrated-liquidity capture generator's shell contract: the
+        // required endpoint, the pinned block, the per-pool tick-word fetch cap,
+        // and the per-block path cap, each read once at start-up. It opens no
+        // operator DB and reads no typed config key.
         m.insert(
             "tools/fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs",
             &[
@@ -158,22 +158,22 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             ][..],
         );
         m.insert(
-            // (3) stance: the reset-lock flock test spawns a child test
-            // binary that takes the real lock before the parent kills it —
-            // cross-process coordination, not operator config.
+            // The reset-lock flock test spawns a child test binary that takes
+            // the real lock before the parent kills it -- cross-process
+            // coordination, not operator config.
             "crates/shells/degenbot-cli-core/src/aave.rs",
             &["RESET_LOCK_TEST_DB", "RESET_LOCK_TEST_READY"][..],
         );
-        // (3) Test-only stances inside src: the parent test sets these to
-        // drive the CHILD test binary (no config loader in the harness).
+        // Test-only stances inside src: the parent test sets these to drive
+        // the CHILD test binary (no config loader in the harness).
         m.insert(
             "crates/engine/degenbot-bot/src/bot_core/block_pump.rs",
             &[
                 "DEGENBOT_SELF_ABORT_TEST",
                 "DEGENBOT_DESYNC_TEST_STANCE",
-                // Reviewer note (3): DEGENBOT_RPC_WS_CHAINID_<chain_id> is
-                // INTENTIONALLY dynamic (non-schema); the suffix is the
-                // numeric chain id. Documented next to SCHEMA.
+                // DEGENBOT_RPC_WS_CHAINID_<chain_id> is INTENTIONALLY dynamic
+                // (non-schema); the suffix is the numeric chain id. Documented
+                // next to SCHEMA.
                 "DEGENBOT_RPC_WS_CHAINID_1",
             ][..],
         );
@@ -181,14 +181,13 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             "crates/shells/degenbot-python/src/diagnostics/thread_registry.rs",
             &["DEGENBOT_STATE_LOCK_DIAG"][..], // test stance (feature-gated)
         );
-        // (4) The ADR-043 §5 retired-name boot detection: reads the env by
-        // iterating a closed list (`RETIRED_ENV_NAMES`), so the name is
-        // computed at the call site. Detection only — no alias is honored.
-        //
-        // The ADR-043 §4 filter branch rides the same file: `RUST_LOG` is the
-        // tracing-convention override (it wins verbatim on every sink; the
-        // typed `telemetry.log_level`/`telemetry.diag` knobs apply otherwise).
-        // Output plumbing, not config (same class as the Python layer's).
+        // Refusal and plumbing. The ADR-043 §5 retired-name boot detection
+        // reads the env by iterating a closed list (`RETIRED_ENV_NAMES`), so
+        // the name is computed at the call site; detection only -- no alias is
+        // honored. The ADR-043 §4 filter branch rides the same file: `RUST_LOG`
+        // is the tracing-convention override (it wins verbatim on every sink;
+        // the typed `telemetry.log_level`/`telemetry.diag` knobs apply
+        // otherwise). Output plumbing, not config.
         m.insert(
             "crates/foundation/degenbot-core/src/telemetry.rs",
             &["name", "RUST_LOG"][..],
@@ -200,37 +199,23 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
     })
 }
 
-/// The engine-lab entries, inserted into the same map the Rust scan reads. A
-/// separate builder for the same reason as the two below: the fan-out
-/// instruments share one relocation story, and holding them apart keeps each
-/// registry readable.
+/// The offline engine-lab instrument entries. A separate builder keeps this
+/// registry readable: the fan-out probes below, each with its own per-run knob
+/// set, would otherwise bury the library-code entries above.
 fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // The cold-miss fan-out instrument, same class and same cause: it left
-    // `degenbot-simulation`'s `examples/` (skipped as a test surface) for the
-    // engine-lab tool crate, so its two pre-existing per-run controls are now
-    // visible to the production-source scan. Both are the probe's documented
-    // invocation defaults -- the modeled RPC round-trip latency and the frame
-    // count N -- read once at start-up with the same defaults (200 us, 8) and
-    // the same parse-and-fall-back behavior they have always had. Neither is an
-    // operator-config key: the readout is a measurement, so routing them
-    // through the loader would hand a lab binary the config crate's dependency
-    // graph for no behavioral gain.
+    // The cold-miss fan-out probe's two per-run knobs: the modeled RPC
+    // round-trip latency and the frame count N, read once at start-up
+    // (defaults 200 us, 8).
     map.insert(
         "tools/engine-lab/src/bin/cold_miss_fanout_probe/main.rs",
         &["COLD_MISS_LATENCY_US", "COLD_MISS_FRAMES"][..],
     );
 
-    // The per-worker fan-out instrument, same class and same cause: it also
-    // left `examples/` for the engine-lab tool crate, so its ten pre-existing
-    // per-run controls are now visible to the production-source scan. All ten
-    // are that probe's documented invocation knobs -- the two modeled
+    // The per-worker fan-out probe's ten per-run knobs: the two modeled
     // round-trip prices, the candidate and worker counts, the corpus shape, the
     // recorded-trace path and its chunk size, and the three diagnostic
-    // switches -- read once at start-up with the defaults they have always had
-    // (700 us, 1200 us, 21 candidates, 2 workers, `production`) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the readout
-    // is a measurement, so routing them through the loader would hand a lab
-    // binary the config crate's dependency graph for no behavioral gain.
+    // switches, read once at start-up (defaults 700 us, 1200 us, 21 candidates,
+    // 2 workers, `production`).
     map.insert(
         "tools/engine-lab/src/bin/worker_fanout_probe/main.rs",
         &[
@@ -247,32 +232,18 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         ][..],
     );
 
-    // The phase-6 sim-mode benchmark, same class and same cause: it also left
-    // `examples/` for the engine-lab tool crate, so its one pre-existing
-    // per-run control is now visible to the production-source scan. It is the
-    // benchmark's documented invocation default -- the iteration count per
-    // mode, read once at start-up with the same default (100) and the same
-    // parse-and-fall-back behavior it has always had. It is not an
-    // operator-config key: the readout is a measurement, so routing it through
-    // the loader would hand a lab binary the config crate's dependency graph
-    // for no behavioral gain.
+    // The sim-mode benchmark's iteration count per mode, read once at start-up
+    // (default 100).
     map.insert(
         "tools/engine-lab/src/bin/sim_mode_bench/main.rs",
         &["SIM_BENCH_ITERS"][..],
     );
 
-    // The hotpath Prometheus exporter probe, same class and same cause: it
-    // left `degenbot-bot`'s `examples/` (skipped as a test surface) for the
-    // engine-lab tool crate, so its two pre-existing controls are now visible
-    // to the production-source scan. Both are the probe's documented
-    // invocation contract -- the `DEGENBOT_HOTPATH=1` guard/runtime gate the
-    // bot's `profiling::hotpath_guard` itself consults (the probe refuses to
-    // run without it), and the exporter port override (`HOTPATH_PROMETHEUS_PORT`,
-    // default 6772) read once at scrape time with the same
-    // parse-and-fall-back behavior it has always had. Neither is an
-    // operator-config key: the probe is a bounded exporter proof, so routing
-    // them through the loader would hand a lab binary the config crate's
-    // dependency graph for no behavioral gain.
+    // The hotpath Prometheus exporter probe's invocation contract: the
+    // `DEGENBOT_HOTPATH=1` guard/runtime gate the bot's
+    // `profiling::hotpath_guard` itself consults (the probe refuses to run
+    // without it), and the exporter port override (`HOTPATH_PROMETHEUS_PORT`,
+    // default 6772) read once at scrape time.
     map.insert(
         "tools/engine-lab/src/bin/hotpath_prometheus_probe/main.rs",
         &["DEGENBOT_HOTPATH", "HOTPATH_PROMETHEUS_PORT"][..],
@@ -280,18 +251,11 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
 
     insert_bal_engine_lab_entries(map);
 
-    // The session-scheduler fan-out instrument, same class and same cause: it
-    // also left `examples/` for the engine-lab tool crate, so its seven
-    // pre-existing per-run controls are now visible to the production-source
-    // scan. All seven are that probe's documented invocation knobs -- the two
+    // The session-scheduler fan-out probe's seven per-run knobs: the two
     // modeled round-trip prices, the lane and slot counts, the lane-progress
     // diagnostic, the planted-divergence negative control, and the recorded
-    // trace path -- read once at start-up with the defaults they have always
-    // had (the optimistic 200/400 us and pessimistic 700/1200 us points, W=2,
-    // F=8, `/tmp/fanout_trace.log`) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the readout
-    // is a measurement, so routing them through the loader would hand a lab
-    // binary the config crate's dependency graph for no behavioral gain.
+    // trace path, read once at start-up (defaults: the optimistic 200/400 us
+    // and pessimistic 700/1200 us points, W=2, F=8, `/tmp/fanout_trace.log`).
     map.insert(
         "tools/engine-lab/src/bin/session_fanout_probe/main.rs",
         &[
@@ -306,10 +270,9 @@ fn insert_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
     );
 }
 
-/// The BAL engine-lab entries, inserted into the same map the Rust scan
-/// reads. A separate builder for the same reason as the two below: the nine
-/// BAL instruments share one relocation story and one key-prefix family,
-/// and holding them apart keeps each registry readable.
+/// The BAL engine-lab instrument entries. A separate builder because the nine
+/// BAL instruments share one `BAL_*` key-prefix family; holding them apart
+/// keeps each registry readable.
 fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
     insert_bal_offline_probe_entries(map);
 
@@ -320,31 +283,17 @@ fn insert_bal_engine_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'st
 /// node. Split from the live half so each registry helper stays under the
 /// line-count lint with every per-entry justification carried in place.
 fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // The offline BAL delta-snapshot instrument, same class and same cause:
-    // it also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its five pre-existing per-run controls are now visible to the
-    // production-source scan. All five are that probe's documented invocation
-    // knobs -- the planted-divergence negative control and the working-set
-    // matrix's four sizes/reps/lookups/depth bounds -- read once at start-up
-    // with the defaults they have always had (2500..1000000 sizes, 11 reps,
-    // 10000 lookups, depth 2) and the same parse-and-fall-back behavior. None
-    // is an operator-config key: the readout is a measurement, so routing them
-    // through the loader would hand a lab binary the config crate's dependency
-    // graph for no behavioral gain.
-    // The analytical candidate-scaling report instrument, same class and
-    // same cause: it also left `degenbot-simulation`'s `examples/` for the
-    // engine-lab tool crate, so its one pre-existing per-run control is now
-    // visible to the production-source scan. It is the probe's documented
-    // invocation knob -- the planted-mismatch red calibration path -- read
-    // once at start-up with its `== "1"` gate semantics unchanged. It is not
-    // an operator-config key: the readout is an analytical report, so routing
-    // it through the loader would hand a lab binary the config crate's
-    // dependency graph for no behavioral gain.
+    // The analytical candidate-scaling report's planted-mismatch calibration
+    // path, read once at start-up with its `== "1"` gate.
     map.insert(
         "tools/engine-lab/src/bin/bal_candidate_scaling_probe/main.rs",
         &["BAL_SCALING_PLANT_MISMATCH"][..],
     );
 
+    // The offline BAL delta-snapshot probe's five per-run knobs: the
+    // planted-divergence negative control and the working-set matrix's four
+    // sizes/reps/lookups/depth bounds, read once at start-up (defaults
+    // 2500..1000000 sizes, 11 reps, 10000 lookups, depth 2).
     map.insert(
         "tools/engine-lab/src/bin/bal_delta_snapshot_probe/main.rs",
         &[
@@ -356,17 +305,10 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
         ][..],
     );
 
-    // The offline BAL retention instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its five pre-existing per-run controls are now visible to the
-    // production-source scan. All five are that probe's documented invocation
-    // knobs -- the threshold matrix, the synthetic long run's three sizes, and
-    // the planted-divergence negative control -- read once at start-up with
-    // the defaults they have always had (thresholds 1/2/4/8, 300 blocks, 2000
-    // keys, wave 4) and the same parse-and-fall-back behavior. None is an
-    // operator-config key: the readout is a measurement, so routing them
-    // through the loader would hand a lab binary the config crate's dependency
-    // graph for no behavioral gain.
+    // The offline BAL retention probe's five per-run knobs: the threshold
+    // matrix, the synthetic long run's three sizes, and the planted-divergence
+    // negative control, read once at start-up (defaults thresholds 1/2/4/8,
+    // 300 blocks, 2000 keys, wave 4).
     map.insert(
         "tools/engine-lab/src/bin/bal_retention_probe/main.rs",
         &[
@@ -378,19 +320,12 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
         ][..],
     );
 
-    // The offline BAL round-coalesced replay instrument, same class and same
-    // cause: it also left `degenbot-simulation`'s `examples/` for the
-    // engine-lab tool crate, so its eight pre-existing per-run controls are now
-    // visible to the production-source scan. All eight are that probe's
-    // documented invocation knobs -- the two recorded-trace paths and their
-    // matching real-coverage captures, the two modeled round-trip prices, the
-    // worker and slot counts, the idle-block window, and the planted-divergence
-    // negative control -- read once at start-up with the defaults they have
-    // always had (the two `/tmp` corpora, the 200/400 us and 700/1200 us
-    // points, W=2, F=8, idle 8) and the same parse-and-fall-back behavior. None
-    // is an operator-config key: the readout is a measurement, so routing them
-    // through the loader would hand a lab binary the config crate's dependency
-    // graph for no behavioral gain.
+    // The offline BAL round-coalesced replay probe's eight per-run knobs: the
+    // two recorded-trace paths and their matching real-coverage captures, the
+    // two modeled round-trip prices, the worker and slot counts, the idle-block
+    // window, and the planted-divergence negative control, read once at
+    // start-up (defaults: the two `/tmp` corpora, the 200/400 us and 700/1200
+    // us points, W=2, F=8, idle 8).
     map.insert(
         "tools/engine-lab/src/bin/bal_delta_rounds_probe/main.rs",
         &[
@@ -405,19 +340,13 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
         ][..],
     );
 
-    // The paired production-relevance replay instrument, same class and same
-    // cause: it also left `degenbot-simulation`'s `examples/` for the
-    // engine-lab tool crate, so its eight pre-existing per-run controls are now
-    // visible to the production-source scan. All eight are that probe's
-    // documented invocation knobs -- the recorded-trace path and its matching
-    // real-coverage capture, the two modeled round-trip prices, the worker and
-    // slot counts, the idle-block window, and the planted-divergence negative
-    // control -- read once at start-up with the defaults they have always had
-    // (`/tmp/bal_production_trace.log`, the committed production capture, the
-    // 200/400 us and 700/1200 us points, W=2, F=8, idle 8) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the readout
-    // is a measurement, so routing them through the loader would hand a lab
-    // binary the config crate's dependency graph for no behavioral gain.
+    // The paired production-relevance replay probe's eight per-run knobs: the
+    // recorded-trace path and its matching real-coverage capture, the two
+    // modeled round-trip prices, the worker and slot counts, the idle-block
+    // window, and the planted-divergence negative control, read once at
+    // start-up (defaults: `/tmp/bal_production_trace.log`, the committed
+    // production capture, the 200/400 us and 700/1200 us points, W=2, F=8,
+    // idle 8).
     map.insert(
         "tools/engine-lab/src/bin/bal_production_relevance_probe/main.rs",
         &[
@@ -432,17 +361,9 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
         ][..],
     );
 
-    // The offline BAL dispatch-scaling instrument, same class and same cause:
-    // it also left `degenbot-arbitrage`'s `examples/` for the engine-lab tool
-    // crate, so its two pre-existing per-run controls are now visible to the
-    // production-source scan. Both are that probe's documented invocation
-    // knobs -- the fan-out size list and the interleaved repetitions per leg
-    // -- read once at start-up with the defaults they have always had (counts
-    // 1,4,16,50,100,500,1000 and 3 repetitions) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the
-    // readout is a measurement, so routing them through the loader would hand
-    // a lab binary the config crate's dependency graph for no behavioral
-    // gain.
+    // The offline BAL dispatch-scaling probe's two per-run knobs: the fan-out
+    // size list and the interleaved repetitions per leg, read once at start-up
+    // (defaults: counts 1,4,16,50,100,500,1000 and 3 repetitions).
     map.insert(
         "tools/engine-lab/src/bin/bal_dispatch_scaling_probe/main.rs",
         &["BAL_DISPATCH_SCALING_COUNTS", "BAL_DISPATCH_SCALING_REPS"][..],
@@ -453,17 +374,10 @@ fn insert_bal_offline_probe_entries(map: &mut BTreeMap<&'static str, &'static [&
 /// declared live endpoint, each carrying the two endpoint names beside its
 /// own controls.
 fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // The live BAL carry-forward instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its five pre-existing per-run controls are now visible to the
-    // production-source scan. All five are that probe's documented invocation
-    // contract -- the recorded-trace path (`/tmp/fanout_trace.log`), the
-    // first/last corpus-block overrides, and the two endpoint names the live
-    // legs dial -- read once at start-up with the defaults they have always
-    // had (26375033..=26375053) and the same parse-and-fall-back behavior.
-    // None is an operator-config key: the readout is a live measurement, so
-    // routing them through the loader would hand a lab binary the config
-    // crate's dependency graph for no behavioral gain.
+    // The live BAL carry-forward probe's invocation contract: the
+    // recorded-trace path (`/tmp/fanout_trace.log`), the first/last
+    // corpus-block overrides, and the two endpoint names the live legs dial,
+    // read once at start-up (defaults 26375033..=26375053).
     map.insert(
         "tools/engine-lab/src/bin/bal_carry_probe/main.rs",
         &[
@@ -475,19 +389,12 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
         ][..],
     );
 
-    // The live BAL head-lifecycle instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its nine pre-existing per-run controls are now visible to the
-    // production-source scan. All nine are that probe's documented invocation
-    // contract -- the historical/fresh-head/waiter sample knobs, the parked
-    // window each waiter sample holds, the planted-divergence negative
-    // control, the summary-out path, and the two endpoint names the live legs
-    // dial -- read once at start-up with the defaults they have always had
-    // (26375033..=26375053, 6 fresh heads, 21 waiter samples, 20 ms hold) and
-    // the same parse-and-fall-back behavior, the two zero sample sizes
-    // disabling their legs. None is an operator-config key: the readout is a
-    // live measurement, so routing them through the loader would hand a lab
-    // binary the config crate's dependency graph for no behavioral gain.
+    // The live BAL head-lifecycle probe's invocation contract: the
+    // historical/fresh-head/waiter sample knobs, the parked window each waiter
+    // sample holds, the planted-divergence negative control, the summary-out
+    // path, and the two endpoint names the live legs dial, read once at
+    // start-up (defaults 26375033..=26375053, 6 fresh heads, 21 waiter
+    // samples, 20 ms hold; the two zero sample sizes disable their legs).
     map.insert(
         "tools/engine-lab/src/bin/bal_head_lifecycle_probe/main.rs",
         &[
@@ -503,19 +410,11 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
         ][..],
     );
 
-    // The live real-read-oracle instrument, same class and same cause: it
-    // also left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its six pre-existing per-run controls are now visible to the
-    // production-source scan. All six are that probe's documented invocation
-    // contract -- the soak-trace path (the recipe exports
-    // `logs/bal_postfix_soak_trace.log`), the anchor and row-count selectors,
-    // the planted one-wei negative control, and the two endpoint names the
-    // live legs dial -- read once at start-up with the defaults they have
-    // always had (6 anchors x 2 rows, the plant unarmed) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the
-    // readout is a live measurement, so routing them through the loader would
-    // hand a lab binary the config crate's dependency graph for no behavioral
-    // gain.
+    // The live real-read-oracle probe's invocation contract: the soak-trace
+    // path (the recipe exports `logs/bal_postfix_soak_trace.log`), the anchor
+    // and row-count selectors, the planted one-wei negative control, and the
+    // two endpoint names the live legs dial, read once at start-up (defaults:
+    // 6 anchors x 2 rows, the plant unarmed).
     map.insert(
         "tools/engine-lab/src/bin/bal_real_read_oracle_probe/main.rs",
         &[
@@ -528,23 +427,15 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
         ][..],
     );
 
-    // The wall-clock ceiling instrument, same class and same cause: it also
-    // left `degenbot-simulation`'s `examples/` for the engine-lab tool
-    // crate, so its fourteen pre-existing per-run controls are now visible
-    // to the production-source scan. All fourteen are that probe's
-    // documented invocation contract -- the recorded-trace path
-    // (`/tmp/fanout_trace.log`), the real-coverage fixture path and its
+    // The wall-clock ceiling probe's invocation contract: the recorded-trace
+    // path (`/tmp/fanout_trace.log`), the real-coverage fixture path and its
     // capture flag, the coverage-mode selector, the leg selector, the two
-    // modeled round-trip prices, the worker and slot counts, the two
-    // negative controls, the lane-progress diagnostic, and the two endpoint
-    // names the dev-only fixture-capture phase dials (the offline replay
-    // itself never touches the network) -- read once at start-up with the
-    // defaults they have always had (both coverage modes, all three legs,
-    // the 200/400 us and 700/1200 us points, W=2, F=8, the committed
-    // capture, no plant armed) and the same parse-and-fall-back behavior.
-    // None is an operator-config key: the readout is a measurement, so
-    // routing them through the loader would hand a lab binary the config
-    // crate's dependency graph for no behavioral gain.
+    // modeled round-trip prices, the worker and slot counts, the two negative
+    // controls, the lane-progress diagnostic, and the two endpoint names the
+    // dev-only fixture-capture phase dials (the offline replay itself never
+    // touches the network), read once at start-up (defaults: both coverage
+    // modes, all three legs, the 200/400 us and 700/1200 us points, W=2, F=8,
+    // the committed capture, no plant armed).
     map.insert(
         "tools/engine-lab/src/bin/bal_wall_ceiling_probe/main.rs",
         &[
@@ -565,19 +456,11 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
         ][..],
     );
 
-    // The live BAL acquisition instrument, same class and same cause: it also
-    // left `degenbot-arbitrage`'s `examples/` for the engine-lab tool crate,
-    // so its five pre-existing per-run controls are now visible to the
-    // production-source scan. All five are that probe's documented invocation
-    // contract -- the anchor block, the interleaved repetitions, the corpus
-    // width list, and the two endpoint names the live legs dial (the chain-1
-    // endpoint family first, the conftest archive endpoint as the fallback) --
-    // read once at start-up with the defaults they have always had (anchor
-    // 26375043, 7 repetitions, widths 1,4,16,50,100,500,1000) and the same
-    // parse-and-fall-back behavior. None is an operator-config key: the
-    // readout is a live measurement, so routing them through the loader would
-    // hand a lab binary the config crate's dependency graph for no behavioral
-    // gain.
+    // The live BAL acquisition probe's invocation contract: the anchor block,
+    // the interleaved repetitions, the corpus width list, and the two endpoint
+    // names the live legs dial (the chain-1 endpoint family first, the conftest
+    // archive endpoint as the fallback), read once at start-up (defaults anchor
+    // 26375043, 7 repetitions, widths 1,4,16,50,100,500,1000).
     map.insert(
         "tools/engine-lab/src/bin/bal_live_acquisition_probe/main.rs",
         &[
@@ -591,20 +474,11 @@ fn insert_bal_live_probe_entries(map: &mut BTreeMap<&'static str, &'static [&'st
 }
 
 /// The solver-lab entries, inserted into the same map the Rust scan reads. A
-/// separate builder for the same reason as the Python half's: these four
-/// binaries share one relocation story, and holding them apart keeps each
-/// registry readable.
+/// separate builder keeps the four offline replay binaries together.
 fn insert_solver_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // The two solver replay binaries, same class and same cause: they left
-    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
-    // solver-lab tool crate, so their pre-existing offline replay controls
-    // now reach the production-source scan. Each is a per-run knob for a
-    // local corpus replay -- the iteration count, and the golden
-    // regeneration flag for the concentrated-liquidity program -- read once
-    // at start-up with the same defaults and the same parse-and-fall-back
-    // behavior they have always had. No operator-config authority, and the
-    // loader would hand a solver-lab binary the config crate's dependency
-    // graph for no behavioral gain.
+    // The two solver replay binaries' per-run knobs for a local corpus replay:
+    // the iteration count, and the golden regeneration flag for the
+    // concentrated-liquidity program.
     map.insert(
         "tools/solver-lab/src/bin/concentrated_liquidity_solve_replay/main.rs",
         &["DR_REPLAY_ITERS", "DR_REPLAY_REGEN"][..],
@@ -614,30 +488,18 @@ fn insert_solver_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
         &["DR_REPLAY_ITERS"][..],
     );
 
-    // The entry A/B readout, same class and same cause: it left
-    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
-    // solver-lab tool crate, so its two pre-existing per-run controls are
-    // now visible to the production-source scan. The rep count per path per
-    // arm and the memo stance are each read once at start-up with the same
-    // defaults (25 reps, stance off) and the same parse-and-fall-back
-    // behavior they have always had. No operator-config authority, and the
-    // loader would hand a solver-lab binary the config crate's dependency
-    // graph for no behavioral gain.
+    // The entry A/B readout's two per-run knobs: the rep count per path per
+    // arm and the memo stance, read once at start-up (defaults 25 reps, stance
+    // off).
     map.insert(
         "tools/solver-lab/src/bin/entry_ab_readout/main.rs",
         &["DR_AB_ITERS", "DR_AB_MEMO"][..],
     );
 
-    // The cache-lab replay, same class and same cause: it left
-    // `degenbot-pools`'s `examples/` (skipped as a test surface) for the
-    // solver-lab tool crate, so its four pre-existing per-run controls are
-    // now visible to the production-source scan. Each is read once at
-    // start-up with the same defaults and the same parse-and-fall-back
-    // behavior it has always had: the path cap and the transitions per
-    // path shorten a local sweep, `DRCLAB_DIGEST` echoes each reference
-    // solve, and `DRCLAB_MICRO` adds the micro-bench readout. No
-    // operator-config authority, and the loader would hand a solver-lab
-    // binary the config crate's dependency graph for no behavioral gain.
+    // The cache-lab replay's four per-run knobs, read once at start-up: the
+    // path cap and the transitions per path shorten a local sweep,
+    // `DRCLAB_DIGEST` echoes each reference solve, and `DRCLAB_MICRO` adds the
+    // micro-bench readout.
     map.insert(
         "tools/solver-lab/src/bin/concentrated_liquidity_cache_lab/main.rs",
         &[
@@ -653,10 +515,10 @@ fn insert_solver_lab_entries(map: &mut BTreeMap<&'static str, &'static [&'static
 /// reads. A separate builder only so each stays readable: the key spaces are
 /// disjoint, so the two cannot collide and the lookup stays single.
 fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str]>) {
-    // (6) The Python companion, which is a driver over the Rust core and
-    // not a second config authority. Every entry here is a name the typed
-    // schema does not own, read at a site that predates the cascade, or a
-    // tooling posture the cascade does not express.
+    // The Python companion is a driver over the Rust core, not a second config
+    // authority. Every entry here is a name the typed schema does not own, a
+    // read at a site the cascade cannot reach, or a tooling posture the cascade
+    // does not express.
     //
     // The companion's one class of env read is the refusal: `name` is the
     // element of the closed retired-knob list
