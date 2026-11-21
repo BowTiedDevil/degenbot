@@ -187,7 +187,10 @@ mod tests {
             .expect("ambient runtime must self-register in the census");
         assert_eq!(row.count, rt.metrics().num_workers());
         assert_eq!(row.thread_name, "degenbot-io-rt-{n}");
-        assert_eq!(row.sizing, row.sizing); // sizing text is documentation; presence is the contract
+        assert!(
+            !row.sizing.is_empty(),
+            "census row must carry a sizing rule"
+        );
     }
 
     /// The bridge must work from BOTH sides of the runtime boundary: a plain

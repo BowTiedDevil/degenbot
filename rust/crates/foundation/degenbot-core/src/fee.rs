@@ -524,10 +524,10 @@ mod tests {
         );
     }
 
-    /// The retired `spec_bounds::validate_stable_swap_fee` bound, re-homed on
-    /// the type: a retained gamma is scaled and positive.
+    /// A retained gamma is scaled and positive: zero is refused, equality is a
+    /// zero fee.
     #[test]
-    fn fee_ratio_bounds_replace_the_retired_stable_swap_fee_validator() {
+    fn fee_ratio_bounds_are_scaled_and_positive() {
         assert_eq!(fee_ratio(99_960, 100_000).gamma_numer(), 99_960);
         assert_eq!(fee_ratio(1, 100_000).fee_numer(), 99_999);
         assert_eq!(
