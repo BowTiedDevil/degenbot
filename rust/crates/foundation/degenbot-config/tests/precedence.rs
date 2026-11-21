@@ -1,5 +1,7 @@
-//! Acceptance criterion: precedence is unit-tested per layer on
-//! representative keys of each type (bool, duration-ms, usize).
+//! Precedence is pinned per layer — built-in default, config file, env, CLI —
+//! on one representative key of each type: bool
+//! (`allocator.mimalloc_auto_purge`), duration-ms (`state_lock.warn_ms`),
+//! usize (`solve.envelope_max_tangent_lines`).
 
 use std::path::PathBuf;
 

@@ -1,7 +1,8 @@
-//! Acceptance criterion: the loader's schema covers the FULL `DEGENBOT_*`
-//! key inventory. This test diffs the raw inventory sweep (`rg -o
-//! "DEGENBOT_[A-Z_]+" rust/crates --no-filename | sort -u`) against the
-//! schema's env names, with the documented artifact/expansion set below.
+//! The loader's schema covers the FULL `DEGENBOT_*` key inventory: the raw
+//! inventory sweep
+//! `rg -o "DEGENBOT_[A-Z_]+" rust/crates --no-filename | sort -u`
+//! is diffed against the schema's env names, with the documented
+//! artifact/expansion set below.
 
 use std::collections::BTreeSet;
 use std::path::Path;

@@ -1,9 +1,10 @@
-//! Acceptance criterion: a generated key-reference doc renders EVERY key
-//! with env name, TOML path, default, and description — and the committed
-//! `docs/rust-config-keys.md` is in lockstep with the schema.
+//! A generated key-reference doc renders EVERY key with env name, TOML path,
+//! default, and description, and the committed `docs/rust-config-keys.md` is
+//! in lockstep with the schema.
 //!
-//! Regenerate the committed doc with:
-//! `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config`
+//! Regenerate the committed doc with `just gen-config-docs`, the recipe that
+//! names the in-place write
+//! `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config`.
 
 use std::path::PathBuf;
 

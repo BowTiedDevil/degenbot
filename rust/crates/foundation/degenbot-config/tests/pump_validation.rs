@@ -1,5 +1,5 @@
-//! Acceptance criterion: the pump settle-window ranges are enforced where the
-//! configuration is loaded. A value that parses into its declared kind but
+//! The pump settle-window ranges are enforced where the configuration is
+//! loaded. A value that parses into its declared kind but
 //! cannot serve the estimator (a zero window, a crossed window, a non-positive
 //! or non-finite multiplier/smoothing constant) fails the load with an error
 //! naming the key and its env name; a valid value reaches the typed tree
