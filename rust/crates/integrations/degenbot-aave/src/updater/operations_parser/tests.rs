@@ -1,4 +1,4 @@
-use super::util::{CompanionSide, EventDisposition, EventOwnership};
+use super::util::{CompanionSide, EventDisposition, EventOwnership, LiquidationWindow};
 use super::*;
 use crate::operations::{LiquidationGroup, LiquidationPattern};
 use crate::updater::run::substrate::ChunkSubstrate;
@@ -1304,6 +1304,33 @@ fn analyze_user_liquidation_count_counts_per_user() {
     assert_eq!(counts.get(&user_b), Some(&1));
 }
 
+/// `LiquidationWindow` is half-open and anchored on the previous
+/// `LiquidationCall`: consecutive liquidations own disjoint ranges, and the
+/// first one owns everything before it.
+#[test]
+fn liquidation_windows_partition_a_transaction_between_its_anchors() {
+    let anchors = [
+        liquidation_call_log(40, Address::ZERO, Address::ZERO, Address::ZERO, U256::ZERO),
+        liquidation_call_log(90, Address::ZERO, Address::ZERO, Address::ZERO, U256::ZERO),
+    ];
+    let all_events: Vec<&Log> = anchors.iter().collect();
+
+    let first = LiquidationWindow::ending_at(&all_events, 40);
+    let second = LiquidationWindow::ending_at(&all_events, 90);
+
+    assert!(
+        first.owns(0),
+        "the first liquidation owns the transaction's opening logs"
+    );
+    assert!(first.owns(39));
+    assert!(!first.owns(40), "an anchor belongs to no window");
+    assert!(!first.owns(41));
+    assert!(second.owns(41), "the second starts after the first anchor");
+    assert!(second.owns(89));
+    assert!(!second.owns(90));
+    assert!(!second.owns(39), "windows never overlap");
+}
+
 /// `collect_collateral_events`: the `collateral_burn` vs `collateral_transfers`
 /// split. A liquidator's credit arrives as the movement's scaled
 /// `BalanceTransfer` report (or a `Mint` when `receiveAToken=true`); the
@@ -1352,6 +1379,7 @@ fn collect_collateral_events_burn_vs_transfers_split() {
         Some(a_token),
         &events,
         &ownership,
+        LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
     assert!(
@@ -1425,6 +1453,7 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
         Some(a_token),
         &events,
         &ownership,
+        LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
     // Burn must be found.
@@ -1487,6 +1516,7 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
         Some(a_token),
         &events,
         &ownership,
+        LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
     assert!(cb.is_some(), "burn collected");
@@ -1533,6 +1563,7 @@ fn collect_collateral_events_no_burn_only_transfers() {
         Some(a_token),
         &events,
         &ownership,
+        LiquidationWindow::ending_at(&[], 100),
         &assigned,
     );
     assert!(cb.is_none(), "no burn — collateral moved via transfer");

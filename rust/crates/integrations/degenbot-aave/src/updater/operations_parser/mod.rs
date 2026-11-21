@@ -73,6 +73,9 @@ mod validation;
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod tests;
 
+#[cfg(test)]
+mod receipt_repro;
+
 pub use util::amounts_match_with_tolerance;
 pub(crate) use util::{addr_to_hex, log_idx_value, parse_address};
 use util::{is_erc20_transfer_log, is_minted_to_treasury_log, EventOwnership};

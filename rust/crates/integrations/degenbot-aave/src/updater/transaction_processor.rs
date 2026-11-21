@@ -457,7 +457,8 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
             ScaledTokenEventType::DebtBurn
             | ScaledTokenEventType::DebtTransfer
             | ScaledTokenEventType::Erc20DebtTransfer => extract_pool_amount_word0(pool_event),
-            ScaledTokenEventType::CollateralBurn
+            ScaledTokenEventType::CollateralMint
+            | ScaledTokenEventType::CollateralBurn
             | ScaledTokenEventType::CollateralTransfer
             | ScaledTokenEventType::Erc20CollateralTransfer => {
                 extract_pool_amount_word1(pool_event)
@@ -593,12 +594,16 @@ fn build_scaled_event_chunk_event(
                         | OperationType::GhoRepay
                 )
                 && ev.amount < balance_increase;
-            // The interest-exceeds edge for aToken: WITHDRAW/REPAY_WITH_ATOKENS
-            // where `amount < balance_increase` — the Mint is emitted as an
-            // effective Burn (mirror of `_process_operation`'s special case).
+            // The interest-exceeds edge for aToken: a WITHDRAW, a
+            // REPAY_WITH_ATOKENS or a liquidation where
+            // `amount < balance_increase` — the Mint is emitted as an effective
+            // Burn, sized by the Pool's own word for that operation.
             let is_collateral_interest_exceeds_edge = matches!(
                 op.operation_type,
-                OperationType::Withdraw | OperationType::RepayWithAtokens
+                OperationType::Withdraw
+                    | OperationType::RepayWithAtokens
+                    | OperationType::Liquidation
+                    | OperationType::GhoLiquidation
             ) && ev.amount < balance_increase;
             if is_debt_repay_mint_edge {
                 // Treat the Mint as a DebtBurn, sized by the Pool word: the

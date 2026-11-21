@@ -279,6 +279,26 @@ Only occurs for aTokens (collateral). Transfers scaled amount directly:
 
 **Rust tables updated**: `aave_v3_users`, `aave_v3_collateral_positions`
 
+### Liquidation (`LiquidationCall`)
+
+A `LiquidationCall` closes the sub-call whose legs it reports, so a liquidation
+owns the scaled-token logs emitted **between the previous `LiquidationCall` in
+the transaction and its own**. That window — not the `(user, collateral asset)`
+pair alone — decides ownership: one transaction can liquidate the same user
+twice against the same collateral asset, and each leg's `Burn`/`Mint` and
+protocol-fee `BalanceTransfer` belong only to the sub-call that emitted them.
+
+A liquidation's collateral debit is the `Burn` **or** an interest-exceeds
+`Mint` (`value < balance_increase`): when the seized collateral is smaller than
+the interest accrued since the position's last action, the aToken emits the
+net-burn `Mint` instead of a `Burn`. Both are sized from the `LiquidationCall`'s
+`liquidatedCollateralAmount` (data word 1) through the collateral-burn
+`TokenMath` row (`ray_div_ceil` at revision 4+).
+
+Debt legs use the same rule against data word 0 (`debtToCover`), with the
+per-`(user, debt asset)` sequential matching that disambiguates
+`SINGLE`/`COMBINED_BURN`/`SEPARATE_BURNS` patterns.
+
 ### Token Upgrade (`Upgraded`)
 
 When aToken or vToken implementation changes:

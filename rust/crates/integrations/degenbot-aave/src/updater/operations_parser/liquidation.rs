@@ -1,4 +1,4 @@
-use super::util::{clone_scaled_event, EventDisposition, EventOwnership};
+use super::util::{clone_scaled_event, EventDisposition, EventOwnership, LiquidationWindow};
 use super::{
     aave_event_decoder, log_idx_value, Address, HashMap, HashSet, Log, Operation, OperationType,
     ParseError, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser, U256,
@@ -212,12 +212,22 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// this liquidation's collateral asset (the movement to the liquidator, or
     /// the protocol-fee move to the treasury).
     ///
-    /// Ownership comes from [`EventOwnership`]: a zero-address companion report
-    /// is benign-ignored (its delta belongs to the semantic event), and an
-    /// index-less ERC20 report never carries a liquidation movement — the `Burn`
-    /// and the scaled `BalanceTransfer` reports do. Nothing is written into the
-    /// claim set: a report excluded here is excluded by its disposition, so this
-    /// collector only *skips* logs an earlier operation already claimed.
+    /// Ownership is two filters, and both are required. [`LiquidationWindow`]
+    /// bounds the scan to this liquidation's own sub-call, so two liquidations
+    /// of the same user against the same collateral asset never see each
+    /// other's legs. [`EventOwnership`] then excludes the zero-address
+    /// companion reports (their delta belongs to the semantic event) and the
+    /// index-less ERC20 reports (a liquidation movement is carried by the
+    /// `Burn`/`Mint` and by the scaled `BalanceTransfer`). Nothing is written
+    /// into the claim set: a report excluded here is excluded by its
+    /// disposition, so this collector only *skips* logs an earlier operation
+    /// already claimed.
+    ///
+    /// The debit slot is the `CollateralBurn` **or** the interest-exceeds
+    /// `CollateralMint` (`value < balance_increase`): a liquidation whose
+    /// seized collateral is smaller than the interest accrued since the
+    /// position's last action is emitted as that net-burn `Mint`, never as a
+    /// `Burn`.
     ///
     /// Returns `(collateral_burn, collateral_transfers)`.
     pub(super) fn collect_collateral_events<'b>(
@@ -225,6 +235,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         collateral_a_token_address: Option<Address>,
         scaled_events: &'b [ScaledTokenEvent<'a>],
         ownership: &EventOwnership,
+        window: LiquidationWindow,
         assigned_indices: &HashSet<u64>,
     ) -> (
         Option<&'b ScaledTokenEvent<'a>>,
@@ -236,7 +247,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         let mut collateral_transfers: Vec<&ScaledTokenEvent<'a>> = Vec::new();
         let mut collateral_burn: Option<&ScaledTokenEvent<'a>> = None;
         for ev in scaled_events {
-            if assigned_indices.contains(&ev.log_index) {
+            if assigned_indices.contains(&ev.log_index) || !window.owns(ev.log_index) {
                 continue;
             }
             // Match collateral events only if they belong to this liquidation's
@@ -251,6 +262,13 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 Some(EventDisposition::SemanticBurn)
                     if ev.event_type == ScaledTokenEventType::CollateralBurn
                         && ev.user_address == user =>
+                {
+                    collateral_burn = Some(ev);
+                }
+                Some(EventDisposition::SemanticMint)
+                    if ev.event_type == ScaledTokenEventType::CollateralMint
+                        && ev.user_address == user
+                        && ev.amount < ev.balance_increase.unwrap_or_default() =>
                 {
                     collateral_burn = Some(ev);
                 }
@@ -349,12 +367,14 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             user_liquidation_count,
             liquidation_position,
         );
-        // Collect collateral events (burns + transfers).
+        // Collect collateral events (burns + transfers) from this
+        // liquidation's own sub-call.
         let (collateral_burn, collateral_transfers) = Self::collect_collateral_events(
             user,
             collateral_a_token_address,
             scaled_events,
             ownership,
+            LiquidationWindow::ending_at(all_events, this_log_index),
             assigned_indices,
         );
         // A liquidation requires at least one collateral event.

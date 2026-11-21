@@ -477,23 +477,11 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
     )
     li += 1
 
-    # tx 2: LiquidationCall liquidates SENDER's WETH collateral. The aToken
+    # tx 2: a LiquidationCall liquidates SENDER's WETH collateral. The aToken
     # emits the Burn + the paired ERC20 Transfer-to-0x0 (the burn-side pair —
-    # `value` == Burn.value since balanceIncrease=0).
-    logs.append(
-        make_liquidation_call_log(
-            collateral_asset=_WETH,
-            debt_asset=_DAI,
-            user=_SENDER,
-            debt_to_cover=_LIQ_BURN_UNDERLYING,  # exact value not used for the collateral-side math
-            liquidated_collateral_amount=_LIQ_BURN_UNDERLYING,
-            liquidator=_LIQUIDATOR,
-            receive_a_token=True,
-            log_index=li,
-            tx_hash=_TX_LIQ,
-        )
-    )
-    li += 1
+    # `value` == Burn.value since balanceIncrease=0) inside the sub-call, and
+    # `LiquidationCall` closes it (Pool `_executeLiquidationCall` emits the
+    # event after the aToken legs).
     # The burn-side companion ERC20 Transfer SENDER→0x0 (the bug class —
     # applied ALONGSIDE the Burn event by dispatch_liquidation pre-fix). The
     # aToken's ERC20 Transfer carries the SCALED balance moved (the aToken
@@ -519,6 +507,20 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             value=_LIQ_BURN_UNDERLYING,
             balance_increase=0,
             index=_LIQ_INDEX,
+            log_index=li,
+            tx_hash=_TX_LIQ,
+        )
+    )
+    li += 1
+    logs.append(
+        make_liquidation_call_log(
+            collateral_asset=_WETH,
+            debt_asset=_DAI,
+            user=_SENDER,
+            debt_to_cover=_LIQ_BURN_UNDERLYING,  # exact value not used for the collateral-side math
+            liquidated_collateral_amount=_LIQ_BURN_UNDERLYING,
+            liquidator=_LIQUIDATOR,
+            receive_a_token=True,
             log_index=li,
             tx_hash=_TX_LIQ,
         )
