@@ -39,6 +39,8 @@
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per
 # re-exported name, so a name added to an existing `pub use a::b::{X, Y}` block
 # moves the pin exactly as a new `pub fn` does.
+# Review rows name the counted declarations by their names at that review, so a
+# declaration that later left the surface stays named in the row that recounts it.
 #
 # The root's `pub use` blocks ARE the door: the four capability modules hold
 # the trees, and every name a consumer may write at the crate root is one of
