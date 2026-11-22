@@ -1,17 +1,11 @@
 //! Integration tests for the `pool verify` provider lifecycle.
 //!
-//! The verify arm builds ONE chain-verified provider per run, on the
+//! The verify arm builds one chain-verified provider per run, on the
 //! process-wide shared runtime (the pattern `run_pool_update` uses for its
 //! chunk loop) — never a throwaway runtime + transport per target family,
 //! whose connection tasks die with the ad-hoc runtime (the alloy
 //! `BackendGone` churn). These tests pin the lifecycle through the public
-//! `run()` seam against a minimal local JSON-RPC stub:
-//!
-//! - GREEN run (matching chain, an empty tracked map verifies without any
-//!   further RPC): exactly one build.
-//! - wrong-chain endpoint: REFUSED before any comparison (the chain-binding
-//!   contract), for BOTH families.
-//! - pre-RPC refusals (pool unknown): zero builds, zero dials.
+//! `run()` seam against a minimal local JSON-RPC stub.
 
 #![expect(clippy::unwrap_used, clippy::panic)]
 
@@ -145,8 +139,8 @@ fn answer(
         chain_id_reads.fetch_add(1, Ordering::AcqRel);
         serde_json::json!(format!("0x{chain_id:x}"))
     } else {
-        // The GREEN empty-map verify performs NO further reads; anything
-        // that does arrive is a refusal the run reports.
+        // The empty-map verify performs no further reads; anything that does
+        // arrive is a refusal the run reports.
         let error = serde_json::json!({"code": -32601, "message": "method not found"});
         let response = serde_json::json!({
             "jsonrpc": "2.0",
@@ -261,8 +255,6 @@ fn verify_command(
     })
 }
 
-/// A GREEN verify run builds its ONE chain-verified provider and never
-/// re-dials: exactly one build, exactly one `eth_chainId` bind read.
 #[test]
 fn pool_verify_builds_one_provider_and_runs_the_gate_green() {
     let _guard = BUILD_COUNTER.lock().unwrap();
@@ -298,9 +290,6 @@ fn pool_verify_builds_one_provider_and_runs_the_gate_green() {
     );
 }
 
-/// A provider bound to a DIFFERENT chain is refused before any on-chain
-/// comparison — the chain-identity contract the hoisted construction must
-/// keep (V3 family).
 #[test]
 fn pool_verify_refuses_an_endpoint_serving_a_different_chain_v3() {
     let _guard = BUILD_COUNTER.lock().unwrap();
@@ -329,9 +318,6 @@ fn pool_verify_refuses_an_endpoint_serving_a_different_chain_v3() {
     assert_eq!(stub.chain_id_reads(), 1);
 }
 
-/// Same refusal for the V4 family: the hoisted construction serves BOTH
-/// families, and neither compares on-chain state against a foreign-chain
-/// endpoint.
 #[test]
 fn pool_verify_refuses_an_endpoint_serving_a_different_chain_v4() {
     let _guard = BUILD_COUNTER.lock().unwrap();
@@ -355,8 +341,6 @@ fn pool_verify_refuses_an_endpoint_serving_a_different_chain_v4() {
     assert_eq!(verify_provider_build_count(), 1);
 }
 
-/// The lazy build: an arm that fails BEFORE the node is needed (the pool is
-/// unknown) builds no provider and dials nothing.
 #[test]
 fn pool_verify_without_a_verified_pool_never_builds_a_provider() {
     let _guard = BUILD_COUNTER.lock().unwrap();

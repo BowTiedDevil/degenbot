@@ -1,8 +1,4 @@
-//! Integration tests for the `aave` command arms .
-//!
-//! Covers the active-market walk (`aave update`), the market row flips
-//! (`activate`/`deactivate`), and the market/user scalar reads behind
-//! `aave position show` — all against a temp DB, offline.
+//! Integration tests for the `aave` command arms.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::cell::RefCell;
@@ -125,12 +121,9 @@ fn run_aave(command: AaveCommand, path: &Path, e: &MapEnv) -> degenbot_cli_core:
     run(&Command::Aave(command), &ctx, &prompter)
 }
 
-// ── a local activation-RPC stub ───────────────────────────────────────────
-
 /// The checksummed address provider `resolve_aave_deployment(1)` names.
 const POOL_ADDRESS_PROVIDER: &str = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
 
-/// The chain's GHO token address.
 const GHO_TOKEN: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
 
 /// The head block the activation metadata reads pin.
@@ -286,8 +279,6 @@ fn write_rpc_response(stream: &mut TcpStream, response: &serde_json::Value) -> s
     stream.flush()
 }
 
-// ── deployment resolution ─────────────────────────────────────────────────
-
 #[test]
 fn only_ethereum_mainnet_has_an_aave_deployment() {
     let deployment = resolve_aave_deployment(1).unwrap();
@@ -304,8 +295,6 @@ fn only_ethereum_mainnet_has_an_aave_deployment() {
         Err(CliError::UnknownDeployment { .. })
     ));
 }
-
-// ── deactivate ────────────────────────────────────────────────────────────
 
 #[test]
 fn deactivate_without_a_market_reports_no_entry() {
@@ -385,8 +374,6 @@ fn deactivate_flips_active_and_reports_already_inactive_silently() {
         "already-inactive is silent"
     );
 }
-
-// ── position show ─────────────────────────────────────────────────────────
 
 #[test]
 fn position_show_rejects_an_invalid_address() {
@@ -480,8 +467,6 @@ fn position_show_reads_the_scalar_market_user_and_position_rows() {
     assert_eq!(debt[0].balance.to_string(), "500");
 }
 
-// ── update ────────────────────────────────────────────────────────────────
-
 #[test]
 fn update_without_active_markets_is_a_typed_failure() {
     let dir = TempDir::new().unwrap();
@@ -535,8 +520,6 @@ fn update_skips_a_market_needing_bootstrap() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].outcome, AaveUpdateOutcome::NeedsBootstrap);
 }
-
-// ── reset ─────────────────────────────────────────────────────────────────
 
 const UNKNOWN_MARKET: &str = "No Such Aave Market";
 
@@ -597,13 +580,11 @@ fn reset_dry_run_prints_the_plan_without_deleting() {
     assert_eq!(by_table("aave_v3_collateral_positions"), 1);
     assert_eq!(by_table("aave_v3_debt_positions"), 1);
     assert_eq!(by_table("aave_v3_users"), 1);
-    // Nothing was deleted.
     let conn = rusqlite::Connection::open(&db).unwrap();
     let users: i64 = conn
         .query_row("SELECT COUNT(*) FROM aave_v3_users", [], |r| r.get(0))
         .unwrap();
     assert_eq!(users, 1);
-    // The plan renders the counts on stdout.
     let lines = outcome.report().unwrap().render_lines();
     assert!(
         lines.iter().any(|l| l.contains("aave_v3_users: 1 row(s)")),
@@ -655,7 +636,6 @@ fn reset_reinits_through_the_activate_seam_without_an_update() {
         Some(16_291_070),
         "the cursor sits at the bootstrap block, not the pre-reset cursor"
     );
-    // The purge removed every populated row.
     let by_table = |t: &str| counts.iter().find(|c| c.table == t).unwrap().rows;
     assert_eq!(by_table("aave_v3_collateral_positions"), 1);
     assert_eq!(by_table("aave_v3_debt_positions"), 1);
@@ -688,7 +668,6 @@ fn reset_reinits_through_the_activate_seam_without_an_update() {
         )
         .unwrap();
     assert_eq!(ap_rows, 1, "the re-init ensured the address-provider row");
-    // The report renders the activate-seam outcome, not an update entry.
     let lines = outcome.report().unwrap().render_lines();
     assert!(
         lines

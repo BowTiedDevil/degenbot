@@ -1,17 +1,13 @@
-//! Integration tests for the block-tagoffset resolution path
+//! Integration tests for the block-tag offset resolution path
 //! (`block::resolve_to_block` / `fetch_tag_block_number`).
 //!
 //! The defect class pinned here: a transport-backed provider (an alloy
 //! `AlloyProvider` and the background connection tasks it spawns) constructed
-//! inside ONE `block_on` ad-hoc runtime and then USED in ANOTHER. The tag
-//! WITH an offset (`latest:-64` — also the `--to-block` default) reaches the
+//! inside one `block_on` ad-hoc runtime and then used in another. The tag
+//! with an offset (`latest:-64` — also the `--to-block` default) reaches the
 //! RPC read; a provider built on runtime A, driven on runtime B, fails its
 //! first request with alloy's `TransportErrorKind::BackendGone`
 //! ("backend connection task has stopped").
-//!
-//! - `latest:-64`-shaped specs MUST resolve against a live local JSON-RPC stub.
-//! - A bare tag (`latest`) resolves to `None` without touching the network at
-//!   all (the core fetches the chain tip itself).
 
 #![expect(clippy::unwrap_used)]
 
@@ -25,7 +21,6 @@ use std::time::Duration;
 
 use degenbot_cli_core::block::{parse_to_block, resolve_to_block, ToBlockSpec};
 
-/// The tag block the stub serves (`0x1337`).
 const TAG_BLOCK: u64 = 0x1337;
 /// A negative offset the tests add like `--to-block latest:-64` does.
 const OFFSET: i64 = -64;
@@ -125,8 +120,8 @@ fn answer(stream: &mut TcpStream) -> std::io::Result<()> {
         });
         return write_response(stream, &response);
     }
-    // A full serpable block body: alloy's RPC header deserialization requires
-    // these fields present (verified by the first red run's deser refusal).
+    // A full block body: alloy's RPC header deserialization requires these
+    // fields present.
     let block = serde_json::json!({
         "number": format!("0x{TAG_BLOCK:x}"),
         "hash": format!("0x{}", "ab".repeat(32)),
@@ -166,11 +161,6 @@ fn write_response(stream: &mut TcpStream, response: &serde_json::Value) -> std::
     stream.flush()
 }
 
-/// RED for the cross-runtime defect: a tag WITH an offset (`latest:-64`, the
-/// `--to-block` default) builds a provider, then issues `eth_getBlockByNumber`
-/// against it. On the broken code the provider's transport backend task dies
-/// with the runtime that constructed it, and the request fails
-/// "backend connection task has stopped" instead of resolving.
 #[test]
 fn tag_with_offset_resolves_against_live_stub() {
     let node = StubNode::spawn();
@@ -186,8 +176,6 @@ fn tag_with_offset_resolves_against_live_stub() {
     );
 }
 
-/// A bare tag (`latest`) stays pure: `resolve_to_block` must return `None`
-/// ("advance to the chain tip") without dialing the stub at all.
 #[test]
 fn bare_tag_resolves_without_dialing_the_node() {
     let node = StubNode::spawn();
@@ -196,8 +184,6 @@ fn bare_tag_resolves_without_dialing_the_node() {
     assert_eq!(node.connections(), 0, "a bare tag must not reach the node");
 }
 
-/// A negative offset that drives the tag block below zero is refused with the
-/// same `BlockResolution` mapping (range check, not an RPC failure).
 #[test]
 fn out_of_range_offset_is_refused() {
     let node = StubNode::spawn();

@@ -2,7 +2,7 @@
 //! (`block::resolve_to_block`).
 //!
 //! The HTTP-only stub in `block_offset_resolution.rs` cannot catch the defect
-//! class fixed here: a WS transport spawns a PERSISTENT connection task bound
+//! class this file pins: a WS transport spawns a persistent connection task bound
 //! to the runtime that constructed its provider, so the
 //! build-runtime/drive-runtime split the HTTP path tolerates fails over WS
 //! with alloy's `TransportErrorKind::BackendGone`
@@ -10,9 +10,9 @@
 //! `resolve_to_block(TagOffset)` call over `ws://` succeeds — which requires
 //! the provider build and the read to share one runtime.
 //!
-//! (lint allow) The stub harness and the assertions construct results with
-//! `expect`: a local fixture failing to bind, spawn, or parse is an instant,
-//! loud test failure.
+//! The stub harness and the assertions construct results with `expect`: a
+//! local fixture failing to bind, spawn, or parse is an instant, loud test
+//! failure.
 #![expect(clippy::expect_used, clippy::unwrap_used)]
 
 use degenbot_cli_core::block::{parse_to_block, resolve_to_block};
@@ -21,7 +21,6 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message;
 
-/// The tag block the stub serves (`0x1337`).
 const TAG_BLOCK: u64 = 0x1337;
 /// The negative offset mirroring the `--to-block` default.
 const OFFSET: i64 = -64;
@@ -44,7 +43,7 @@ impl StubWsNode {
         let listener =
             runtime.block_on(async { TcpListener::bind("127.0.0.1:0").await.expect("bind") });
         let url = format!("ws://{}", listener.local_addr().unwrap());
-        // The shutdown must be STATEFUL: `Drop` can land while `serve` is
+        // The shutdown must be stateful: `Drop` can land while `serve` is
         // inside a per-connection loop, where an edge-triggered notify has no
         // registered waiter and is lost — leaving `serve` parked on
         // `notified()` + `accept()` forever and `Drop`'s `thread.join()` hung.
@@ -88,8 +87,8 @@ async fn serve(listener: TcpListener, mut shutdown: watch::Receiver<bool>) {
         };
         loop {
             // The shutdown select spans the connection loop too, not only the
-            // accept path: the drop-under-load hang fired precisely while a
-            // (possibly dead) connection was being drained here.
+            // accept path: a drop landing while a (possibly dead) connection
+            // is being drained must still reach `serve`.
             let frame = tokio::select! {
                 _ = shutdown.changed() => break 'outer,
                 next = ws.next() => match next {
@@ -145,12 +144,6 @@ async fn serve(listener: TcpListener, mut shutdown: watch::Receiver<bool>) {
     }
 }
 
-/// Dropping the stub must shut `serve` down even while a client connection is
-/// still open. (Red over the lost-shutdown defect: `Notify::notify_waiters`
-/// only wakes waiters registered at that instant, so a drop that lands while
-/// `serve` is inside a per-connection loop loses the signal and `Drop`'s
-/// `thread.join()` blocks the test forever — the flaky 20s nextest
-/// termination on `tag_with_offset_resolves_over_websocket`.)
 #[test]
 fn drop_shuts_down_serve_even_with_a_live_connection() {
     let node = StubWsNode::spawn();
@@ -160,7 +153,7 @@ fn drop_shuts_down_serve_even_with_a_live_connection() {
         .build()
         .expect("client runtime");
     let url = node.url.clone();
-    // Complete a WS handshake and keep the connection OPEN: the stub is then
+    // Complete a WS handshake and keep the connection open: the stub is then
     // parked in its per-connection loop, exactly the state in which an
     // edge-triggered shutdown notify is lost.
     let _client = runtime.block_on(async move {
@@ -169,8 +162,6 @@ fn drop_shuts_down_serve_even_with_a_live_connection() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         ws
     });
-    // Drop the stub while the socket is still open; shutdown must reach
-    // `serve` and let `Drop`'s join return.
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         drop(node);
@@ -181,10 +172,6 @@ fn drop_shuts_down_serve_even_with_a_live_connection() {
         .expect("stub drop must complete while a connection is open");
 }
 
-/// The `latest:-64` default resolves over a WebSocket endpoint: the provider
-/// build and the `eth_getBlockByNumber` read share one runtime, so the WS
-/// transport's connection task is alive for the read. (Red over the defect:
-/// a build-on-one-runtime/read-on-another pair fails this with backend-gone.)
 #[test]
 fn tag_with_offset_resolves_over_websocket() {
     let node = StubWsNode::spawn();

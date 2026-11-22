@@ -1,4 +1,4 @@
-//! Integration tests for the `database` command arms .
+//! Integration tests for the `database` command arms.
 //!
 //! Fixture conventions mirror `degenbot-db`'s own tests: temp dirs, never committed
 //! fixtures. States exercised: Rust-owned (fresh create), legacy-marker,
@@ -100,8 +100,6 @@ fn inspect(path: &Path) -> SchemaState {
     ops::inspect_schema_state(path).unwrap()
 }
 
-// ── backup ────────────────────────────────────────────────────────────────
-
 #[test]
 fn backup_writes_bak_without_prompting_when_absent() {
     let dir = TempDir::new().unwrap();
@@ -127,7 +125,6 @@ fn backup_prompts_and_replaces_when_target_exists() {
     let dir = TempDir::new().unwrap();
     let db = rust_owned(dir.path());
     let backup = database_backup_path(&db);
-    // A stale/garbage pre-existing target the operator must confirm replacing.
     std::fs::write(&backup, b"not a database").unwrap();
 
     let prompter = RecordingPrompter::new(true);
@@ -142,7 +139,6 @@ fn backup_prompts_and_replaces_when_target_exists() {
         calls[0].0
     );
     assert!(!calls[0].1, "default is false");
-    // The garbage was replaced by a real backup.
     assert!(matches!(inspect(&backup), SchemaState::RustOwned { .. }));
 }
 
@@ -160,8 +156,6 @@ fn backup_declined_aborts_and_leaves_target_untouched() {
     assert!(matches!(outcome.error(), Some(CliError::Aborted)));
     assert_eq!(std::fs::read(&backup).unwrap(), b"keep me");
 }
-
-// ── reset ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn reset_prompts_unless_force() {
@@ -195,7 +189,7 @@ fn reset_prompts_unless_force() {
 fn reset_creates_missing_parent_directories() {
     // The default DB state home (~/.local/state/degenbot/db/) does not exist
     // on a fresh install; reset must bootstrap the chain, not fail on the
-    // open. (A rogue-session recovery ran into exactly this.)
+    // open.
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("missing/nested/dir/degenbot.db");
 
@@ -209,8 +203,6 @@ fn reset_creates_missing_parent_directories() {
     assert_eq!(outcome.exit_code, ExitCode::Success);
     assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
-
-// ── compact ───────────────────────────────────────────────────────────────
 
 #[test]
 fn compact_succeeds_without_prompting() {
@@ -227,8 +219,6 @@ fn compact_succeeds_without_prompting() {
         Some(CommandReport::Database(DatabaseReport::Compacted { .. }))
     ));
 }
-
-// ── inspect ───────────────────────────────────────────────────────────────
 
 #[test]
 fn inspect_reports_state_without_writing() {
@@ -256,8 +246,6 @@ fn inspect_reports_state_without_writing() {
         vec!["Schema state: legacy_alembic.".to_string()]
     );
 }
-
-// ── cutover ───────────────────────────────────────────────────────────────
 
 #[test]
 fn cutover_converts_legacy_marker() {
@@ -287,7 +275,6 @@ fn cutover_converts_legacy_marker() {
     assert_eq!(*result, degenbot_cli_core::CutoverOutcome::Converted);
     assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 
-    // A second forced cutover is an idempotent no-op.
     let again = run_db(
         DatabaseCommand::Cutover {
             dry_run: false,
@@ -405,8 +392,6 @@ fn cutover_on_empty_refuses_nothing_to_do() {
     ));
     assert!(prompter.calls().is_empty());
 }
-
-// ── heal ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn heal_rebuilds_legacy_marker_to_rust_owned() {
@@ -526,8 +511,6 @@ fn heal_prompts_unless_force() {
     assert_eq!(inspect(&db), SchemaState::LegacyAlembic);
 }
 
-// ── upgrade (retired) ─────────────────────────────────────────────────────
-
 #[test]
 fn upgrade_is_retired_and_points_at_heal() {
     let dir = TempDir::new().unwrap();
@@ -552,8 +535,6 @@ fn upgrade_is_retired_and_points_at_heal() {
     assert!(message.contains("degenbot database heal"));
     assert!(matches!(inspect(&db), SchemaState::RustOwned { .. }));
 }
-
-// ── exit-code + prompt-plan surfaces ──────────────────────────────────────
 
 #[test]
 fn boot_refused_maps_to_ex_config_78() {

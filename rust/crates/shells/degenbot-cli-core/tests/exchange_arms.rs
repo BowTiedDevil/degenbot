@@ -1,9 +1,4 @@
-//! Integration tests for the `exchange` command arms .
-//!
-//! Covers the data-driven collapse of the 34 Python click verbs: the coverage
-//! test pins every retired `(chain, dex)` pair to a shipped registry record (the
-//! Uniswap V4 singletons excepted, documented), and the arm tests exercise the
-//! get-or-create / active-flip / V4 manager upsert against a temp DB.
+//! Integration tests for the `exchange` command arms.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::cell::RefCell;
@@ -75,12 +70,8 @@ fn pool_manager_count(path: &Path) -> i64 {
         .unwrap()
 }
 
-// ── coverage: every Python-era verb resolves ──────────────────────────────
-
 #[test]
 fn every_retired_verb_pair_resolves_to_a_deployment() {
-    // 17 command chains (10 Base + 7 Ethereum), each with activate + deactivate
-    // handlers = the 34 retired Python verbs.
     assert_eq!(RETIRED_EXCHANGES.len(), 17);
     for entry in RETIRED_EXCHANGES {
         let resolved = resolve_deployment(entry.chain_id, entry.dex_slug).unwrap();
@@ -104,9 +95,6 @@ fn every_retired_verb_pair_resolves_to_a_deployment() {
 
 #[test]
 fn only_the_uniswap_v4_singletons_lack_a_registry_record() {
-    // The V4 pool_manager/state_view are the only literals without a factory
-    // path in the registry (documented in the Python deployments module); every
-    // other retired verb is registry-backed.
     let non_registry: Vec<(&str, &str)> = RETIRED_EXCHANGES
         .iter()
         .filter(|e| {
@@ -141,8 +129,6 @@ fn chain_selector_parses_slugs_and_ids() {
         Err(CliError::UnknownChain { .. })
     ));
 }
-
-// ── activate / deactivate ─────────────────────────────────────────────────
 
 #[test]
 fn activate_creates_row_active_true_with_registry_identity() {
@@ -298,7 +284,7 @@ fn list_on_a_fresh_database_reports_every_supported_pair() {
         panic!("expected an ExchangeReport::Listed");
     };
     assert_eq!(rows.len(), RETIRED_EXCHANGES.len());
-    // Declaration order: Base before Ethereum, all rows "not in database".
+    // Declaration order: Base before Ethereum.
     assert_eq!(rows[0].chain_id, 8453);
     assert_eq!(rows[0].dex_slug, "aerodrome_v2");
     assert_eq!(rows.last().unwrap().dex_slug, "uniswap_v4");
@@ -334,7 +320,6 @@ fn list_reflects_activation_state_and_honors_the_chain_filter() {
         .iter()
         .any(|l| l == "Uniswap V2 on Ethereum (chain ID 1): active"));
 
-    // The chain filter narrows to one chain's pairs only.
     let (filtered, _) = run_exchange(
         ExchangeCommand::List {
             chain: Some("ethereum".to_string()),
@@ -357,7 +342,6 @@ fn list_reflects_activation_state_and_honors_the_chain_filter() {
         .iter()
         .any(|l| l == "Pancakeswap V2 on Ethereum (chain ID 1): not in database"));
 
-    // A deactivation shows as inactive, not absent.
     let (deactivated, _) = run_exchange(
         ExchangeCommand::Deactivate {
             chain: "ethereum".to_string(),

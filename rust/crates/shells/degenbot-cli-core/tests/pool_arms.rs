@@ -1,8 +1,4 @@
-//! Integration tests for the `pool` command arms .
-//!
-//! The `--to-block` semantics are unit-tested purely (no RPC); the arm tests
-//! cover the flag parse, the pre-RPC refusals, and the prompt/exit-code
-//! surfaces.
+//! Integration tests for the `pool` command arms.
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::cell::RefCell;
@@ -52,8 +48,6 @@ fn env_with_rpc() -> MapEnv {
     MapEnv::new(map)
 }
 
-// ── --to-block resolution parity ──────────────────────────────────────────
-
 #[test]
 fn to_block_parses_tags_offsets_and_integers() {
     assert_eq!(parse_to_block("latest").unwrap(), ToBlockSpec::Tip);
@@ -78,7 +72,6 @@ fn to_block_parses_tags_offsets_and_integers() {
     );
     // A bare tag with an explicit zero offset still means "chain tip".
     assert_eq!(parse_to_block("latest:0").unwrap(), ToBlockSpec::Tip);
-    // Python `int(offset)` accepts surrounding whitespace / a sign.
     assert_eq!(
         parse_to_block("latest: 5 ").unwrap(),
         ToBlockSpec::TagOffset {
@@ -105,7 +98,6 @@ fn to_block_rejects_malformed_identifiers() {
 
 #[test]
 fn resolve_to_block_passes_numbers_and_tips_through_without_rpc() {
-    // No RPC for integers or pure tags.
     assert_eq!(
         resolve_to_block(ToBlockSpec::Number(42), "http://127.0.0.1:1").unwrap(),
         Some(42)
@@ -115,8 +107,6 @@ fn resolve_to_block_passes_numbers_and_tips_through_without_rpc() {
         None
     );
 }
-
-// ── pool update arm ───────────────────────────────────────────────────────
 
 #[test]
 fn pool_update_rejects_a_malformed_to_block_before_any_rpc() {
@@ -198,8 +188,6 @@ fn pool_update_without_a_chain_id_is_a_config_failure() {
     assert_eq!(outcome.exit_code, ExitCode::Failure);
     assert!(matches!(outcome.error(), Some(CliError::Config(_))));
 }
-
-// ── pool verify arm (pre-RPC refusals) ────────────────────────────────────
 
 #[test]
 fn pool_verify_requires_a_pool_manager_for_v4() {
@@ -309,8 +297,6 @@ fn prompt_plans_are_none_for_both_pool_arms() {
     );
 }
 
-// ── pool update failure rendering ─────────────────────────────────────────
-
 // The connection-class failure is injected honestly through the real seam:
 // an unparseable RPC URL makes `AlloyProvider::new` return
 // `ProviderError::ConnectionFailed` (the variant the transport's
@@ -391,8 +377,7 @@ fn pool_update_transport_failure_names_endpoint_chain_and_range() {
     let staged = seed_active_exchanges(&db, 8453);
     assert!(!staged.is_empty(), "the fixture must register exchanges");
     let message = drop_failure_message(&db);
-    // The message never updated these rows — the fixture's own cursors are
-    // still the truth this test pins.
+    // The failure report reflects the fixture's own staged cursors.
     assert!(
         message.contains(&format!(
             "the RPC connection to {DROP_ENDPOINT} dropped mid-run"

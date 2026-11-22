@@ -1,18 +1,9 @@
-//! Frame-level + wire-hygiene tests for the operator command-channel client
-//! (ADR-051 D6;).
+//! Frame-level + wire-hygiene tests for the operator command-channel client.
 //!
-//! The client is exercised two ways:
-//!
-//! - **pure frame tests** over [`decode_response`]/[`render_json_sorted`]:
-//!   happy `ok`, structured `{"ok": false}`, the host's unknown-op reply,
-//!   and malformed JSON (which must never panic);
-//! - **loopback socket tests** against an in-test std UDS harness that writes
-//!   fixture response frames (not a live Python host), proving the transport
-//!   reads one request line and one response line;
-//! - **wire-hygiene refusals**: an unknown `cordon_*` key, an empty posture
-//!   patch, and an unknown hop-family string are refused BEFORE any socket is
-//!   touched (the socket paths in these tests do not exist, so an attempted
-//!   connect would surface as a protocol error instead).
+//! The loopback socket tests use an in-test std UDS harness that writes
+//! fixture response frames; the wire-hygiene refusals must fire before any
+//! socket is touched (the socket paths in those tests do not exist, so an
+//! attempted connect would surface as a protocol error instead).
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::BTreeMap;
@@ -31,7 +22,6 @@ use degenbot_cli_core::operator::{
 use degenbot_cli_core::{
     run, CliContext, CliError, Command, ExitCode, FleetCommand, PathCommand, Prompter,
 };
-// The report/decoded-frame types the Unix loopback transports assert over.
 #[cfg(unix)]
 use degenbot_cli_core::{CommandReport, FleetReport, PathDirection, PathReport};
 use degenbot_config::MapEnv;
@@ -76,8 +66,6 @@ fn closed_port_socket(dir: &TempDir) -> String {
     // wire-hygiene error proves the refusal happened before talk.
     dir.path().join("no-listener.sock").display().to_string()
 }
-
-// -- pure frame decoding ----------------------------------------------------
 
 #[test]
 fn decode_response_accepts_a_happy_ok_frame() {
@@ -147,8 +135,6 @@ fn render_json_sorted_matches_python_sort_keys() {
     assert_eq!(render_json_sorted(None), "{}");
 }
 
-// -- loopback transport -----------------------------------------------------
-
 #[cfg(unix)]
 #[test]
 fn happy_ok_frame_round_trips_over_a_loopback_socket() {
@@ -205,8 +191,8 @@ fn unreachable_socket_is_a_protocol_error() {
 }
 
 /// Off Unix there is no transport at all: the one transport site returns the
-/// typed protocol refusal instead of the crate failing to build (the Windows
-/// wheel regression). The message names the missing Unix domain socket.
+/// typed protocol refusal instead of the crate failing to build. The message
+/// names the missing Unix domain socket.
 #[cfg(not(unix))]
 #[test]
 fn no_unix_domain_socket_is_a_protocol_refusal() {
@@ -220,8 +206,6 @@ fn no_unix_domain_socket_is_a_protocol_refusal() {
         "got {err:?}"
     );
 }
-
-// -- arm-level happy path ---------------------------------------------------
 
 #[cfg(unix)]
 #[test]
@@ -314,8 +298,6 @@ fn fleet_posture_show_maps_a_host_refusal_to_exit_one() {
     let _ = handle.join();
 }
 
-// -- wire hygiene (refused before the socket is touched) --------------------
-
 #[test]
 fn unknown_posture_key_is_refused_before_talk() {
     let dir = TempDir::new().unwrap();
@@ -391,8 +373,6 @@ fn unknown_hop_family_is_refused_before_talk() {
         "a hop without an address is refused"
     );
 }
-
-// -- posture value + socket resolution --------------------------------------
 
 #[test]
 fn posture_patch_accepts_a_known_subset_and_the_null_restore_sentinel() {

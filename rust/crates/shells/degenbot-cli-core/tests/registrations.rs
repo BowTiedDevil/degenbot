@@ -1,8 +1,9 @@
 //! Integration tests for the supported-exchange / supported-market auto-
-//! registration: the console no longer requires the operator to CREATE rows.
-//! Every supported (chain, DEX) pair + Aave market that is not found in the
-//! DB is registered **inactive** at the write-open seams (fresh `database
-//! reset`, `pool update`, `aave update`); activation is then a pure flag flip.
+//! registration: the console creates supported rows itself. Every supported
+//! (chain, DEX) pair + Aave market that is not found in the DB is registered
+//! **inactive** at the write-open seams (fresh `database reset`, `pool
+//! update`, `aave update`); exchange activation is then a pure flag flip,
+//! while `aave activate` completes the bare market row.
 
 #![expect(clippy::unwrap_used)]
 
@@ -86,7 +87,6 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
         ))
     ));
 
-    // Every supported exchange pair is registered inactive...
     assert_eq!(
         exchange_count(&db),
         i64::try_from(RETIRED_PAIRS).unwrap(),
@@ -100,7 +100,6 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
         let (active,) = exchange_row(&db, chain, name).unwrap();
         assert!(!active, "{name} must register inactive");
     }
-    // ...including the V4 pool manager singletons.
     assert_eq!(pool_manager_count(&db), 2, "both V4 singletons registered");
 
     // The supported Aave market is registered inactive + unstamped (the
@@ -109,7 +108,6 @@ fn database_reset_registers_supported_exchanges_and_market_inactive() {
     assert!(!active);
     assert_eq!(stamp, None, "bare registration carries no bootstrap stamp");
 
-    // `exchange list` now reads them as inactive (not "not in database").
     let outcome = run_cmd(
         &Command::Exchange(ExchangeCommand::List { chain: None }),
         &db,
@@ -134,7 +132,6 @@ fn ensure_is_idempotent_and_activation_flips_without_creating() {
     assert_eq!(second.exchanges, 0, "idempotent: nothing new registered");
     assert_eq!(second.aave_markets, 0, "idempotent: nothing new registered");
 
-    // Activation on a pre-registered row is a pure flag flip.
     let outcome = run_cmd(
         &Command::Exchange(ExchangeCommand::Activate {
             chain: "ethereum".to_string(),
@@ -154,10 +151,8 @@ fn ensure_is_idempotent_and_activation_flips_without_creating() {
 
 #[test]
 fn registered_bare_market_has_no_contract_substrate() {
-    // The auto-registered aave row is BARE: no POOL_ADDRESS_PROVIDER contract
-    // row, no GHO rows, no bootstrap stamp. `aave activate` must COMPLETE it.
-    // (The RPC-free substrate proof lives in the degenbot-aave activate
-    // tests; this asserts the registration state end to end.)
+    // The auto-registered aave row is bare: `aave activate` completes it (the
+    // RPC-free substrate proof lives in the degenbot-aave activate tests).
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("degenbot.db");
     ensure_supported_registrations(&db).unwrap();

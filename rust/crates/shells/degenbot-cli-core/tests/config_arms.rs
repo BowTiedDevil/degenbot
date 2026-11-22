@@ -1,9 +1,4 @@
 //! Integration tests for the `config` command arms.
-//!
-//! The read-only surface: `config show` (the values the operator file
-//! declares), `config show --resolved` (every layer's winning value with the
-//! layer that supplied it), and `config path` (the file the mutating arms
-//! write). The mutating `get|set|unset` arms land on the same verb.
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::cell::RefCell;
@@ -308,7 +303,6 @@ fn set_redacts_in_render_but_the_file_keeps_the_credential() {
         outcome.error().map(ToString::to_string)
     );
 
-    // The file on disk keeps exactly what the operator wrote.
     let text = std::fs::read_to_string(&file).unwrap();
     assert!(
         text.contains("user:secret@host"),
@@ -329,7 +323,6 @@ fn set_redacts_in_render_but_the_file_keeps_the_credential() {
         );
     }
 
-    // `config show --resolved` renders the redacted form.
     let read_ctx = ctx(&env, Some(&file));
     let show = run(
         &Command::Config(ConfigCommand::Show { resolved: true }),
@@ -342,7 +335,6 @@ fn set_redacts_in_render_but_the_file_keeps_the_credential() {
         "nodes.http[1] = https://host/x?api_key=REDACTED (file)"
     );
 
-    // `config get` uses the same render contract.
     let get_ctx = ctx(&env, Some(&file));
     let get = run(
         &Command::Config(ConfigCommand::Get {
