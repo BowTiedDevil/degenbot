@@ -175,7 +175,6 @@ pub(crate) struct ChunkContext<'span> {
     market_id: i64,
     chain_id: i64,
     pool_address: Address,
-    oracle_address: Option<Address>,
     memo: RevisionMemo,
     conn: &'span Connection,
     substrate: &'span mut ChunkSubstrate,
@@ -189,14 +188,12 @@ impl<'span> ChunkContext<'span> {
     /// `block_number` starts at the span's first block; each log-transaction's
     /// dispatch enters its own block through [`ChunkContext::begin_transaction`]
     /// before any read or emitted event.
-    #[expect(clippy::too_many_arguments)] // the chunk's dispatch constants, one constructor
     pub(crate) fn for_chunk(
         span: &'span ChunkSpan,
         provider: AlloyProvider,
         market_id: i64,
         chain_id: i64,
         pool_address: Address,
-        oracle_address: Option<Address>,
         conn: &'span Connection,
         substrate: &'span mut ChunkSubstrate,
     ) -> Self {
@@ -206,7 +203,6 @@ impl<'span> ChunkContext<'span> {
             market_id,
             chain_id,
             pool_address,
-            oracle_address,
             memo: RevisionMemo::new(),
             conn,
             substrate,
@@ -274,15 +270,12 @@ impl<'span> ChunkContext<'span> {
         self.chain_id
     }
 
-    /// The `POOL` proxy address (`getConfiguration` + the ops parser's scope).
-    pub(super) fn pool_address(&self) -> Address {
+    /// The `POOL` proxy address (`getConfiguration` + the ops parser's
+    /// scope). A same-chunk `AddressSet` POOL rotation updates it in place at
+    /// the transition boundary, so a later transaction's RPC targets follow
+    /// the replacement instead of the chunk-start snapshot.
+    pub(crate) fn pool_address(&self) -> Address {
         self.pool_address
-    }
-
-    /// The `PRICE_ORACLE` address as captured at chunk start (the per-event
-    /// `resolve_reserve_oracle_address` re-reads `conn` when this is `None`).
-    pub(super) fn oracle_address(&self) -> Option<Address> {
-        self.oracle_address
     }
 
     /// The chunk overlay's ONE apply seam: commit `events` to `conn` and let
@@ -307,7 +300,28 @@ impl<'span> ChunkContext<'span> {
     ) -> Result<AaveChunkWriteReport, DbError> {
         let conn = self.conn;
         let market_id = self.market_id;
-        apply_chunk_events_on_conn(conn, market_id, events, &mut *self.substrate)
+        let report = apply_chunk_events_on_conn(conn, market_id, events, &mut *self.substrate)?;
+        // Same-transition RPC targets: the dispatch's own `getConfiguration`
+        // + ops-parser scope RPCs the POOL proxy by this field, so an
+        // `AddressSet` POOL rotation applied mid-chunk must repoint it at the
+        // transition boundary (the DB row is the durable half; this is the
+        // in-chunk half). The oracle target is NOT cached here —
+        // `resolve_reserve_oracle_address` reads `conn` fresh per event.
+        for event in events {
+            if let AaveChunkEvent::ContractAddressChanged {
+                name, new_address, ..
+            } = event
+            {
+                if name == "POOL" {
+                    self.pool_address = new_address.parse().map_err(|_| {
+                        DbError::Decode(format!(
+                            "POOL rotation target {new_address} is not an address"
+                        ))
+                    })?;
+                }
+            }
+        }
+        Ok(report)
     }
 
     /// Read `sig` on `target` at `block_number` through the memo — one of the

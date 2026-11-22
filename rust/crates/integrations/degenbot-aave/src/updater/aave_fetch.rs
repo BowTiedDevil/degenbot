@@ -27,11 +27,14 @@
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
 
+use std::collections::HashSet;
+
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
 use alloy::sol_types::SolValue;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::{ProviderError, ProviderResult};
+use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_decoders::aave_event_decoder::{
     AAVE_ADDRESS_SET_TOPIC, AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
     AAVE_ASSET_SOURCE_UPDATED_TOPIC, AAVE_BALANCE_TRANSFER_TOPIC, AAVE_BORROW_TOPIC,
@@ -47,6 +50,8 @@ use degenbot_decoders::aave_event_decoder::{
     AAVE_UPGRADED_TOPIC, AAVE_USER_E_MODE_SET_TOPIC, AAVE_WITHDRAW_TOPIC, ERC20_TRANSFER_TOPIC,
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
+
+use super::config_dispatch::strip_trailing_nulls_from_ascii;
 
 /// The per-market addresses the 7 Aave V3 fetch passes need. Built by the
 /// orchestrator (`-3`) from the `degenbot-db` substrate (`fetch_aave_*`); the
@@ -236,6 +241,142 @@ pub async fn fetch_oracle_logs(
         .await
 }
 
+// ── the same-chunk endpoint replacement plan ──────────────────────────────
+
+/// The endpoint replacements the chunk's own logs announce: per fetch pass,
+/// the replacement emitter addresses an `AddressSet` rotation/registration or
+/// a `PriceOracleUpdated` inside the chunk points at and the pass's
+/// chunk-start address does not already cover.
+///
+/// The main pass fetched from the current DB endpoints (the chunk-start
+/// [`AaveFetchSpec`]); logs emitted by a replacement endpoint before its
+/// apply lands are only reachable through a supplemental pass over the same
+/// block range. A `PRICE_ORACLE` replacement while the spec address is
+/// `None` needs no supplement: the main pass was chain-wide (discovery).
+#[derive(Debug, Default)]
+pub struct ChunkEndpointReplacements {
+    pub address_provider: Vec<Address>,
+    pub configurator: Vec<Address>,
+    pub pool: Vec<Address>,
+    pub oracle: Vec<Address>,
+}
+
+impl ChunkEndpointReplacements {
+    /// Whether any pass needs a supplemental fetch.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.address_provider.is_empty()
+            && self.configurator.is_empty()
+            && self.pool.is_empty()
+            && self.oracle.is_empty()
+    }
+}
+
+/// Scan the chunk's fetched logs for endpoint replacement events and build
+/// the supplemental per-pass fetch targets. A replacement whose new address
+/// equals the pass's chunk-start address is already covered by the main pass;
+/// the oracle pass only replaces against a `Some` spec address.
+#[must_use]
+pub fn chunk_endpoint_replacements(
+    logs: &[Log],
+    spec: &AaveFetchSpec,
+) -> ChunkEndpointReplacements {
+    let mut plan = ChunkEndpointReplacements::default();
+    for log in logs {
+        let Some(decoded) = decode_aave_log(log) else {
+            continue;
+        };
+        match decoded {
+            DecodedAaveEvent::PriceOracleUpdated(ev) => {
+                push_replacement(spec.oracle_address, ev.new_address, &mut plan.oracle);
+            }
+            DecodedAaveEvent::AddressSet(ev) => {
+                let name = strip_trailing_nulls_from_ascii(&ev.id);
+                match name.as_str() {
+                    "POOL" => {
+                        push_replacement(Some(spec.pool_address), ev.new_address, &mut plan.pool);
+                    }
+                    "POOL_CONFIGURATOR" => {
+                        push_replacement(
+                            Some(spec.configurator_address),
+                            ev.new_address,
+                            &mut plan.configurator,
+                        );
+                    }
+                    "POOL_ADDRESS_PROVIDER" => {
+                        push_replacement(
+                            Some(spec.address_provider_address),
+                            ev.new_address,
+                            &mut plan.address_provider,
+                        );
+                    }
+                    "PRICE_ORACLE" => {
+                        push_replacement(spec.oracle_address, ev.new_address, &mut plan.oracle);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    plan
+}
+
+fn push_replacement(covered: Option<Address>, new_address: Address, out: &mut Vec<Address>) {
+    if covered.is_none_or(|c| c == new_address) || out.contains(&new_address) {
+        return;
+    }
+    out.push(new_address);
+}
+
+/// Whether the log is an endpoint replacement event for a tracked fetch
+/// endpoint (`PriceOracleUpdated`, or an `AddressSet` naming one) — the
+/// events whose apply is the ONLY way the DB's endpoint rows change. The
+/// orchestrator uses this to scope the next chunk's DB endpoint refresh to
+/// the chunks that follow a replacement, so a no-replacement run issues no
+/// extra statements.
+#[must_use]
+pub fn is_endpoint_replacement_event(log: &Log) -> bool {
+    let Some(decoded) = decode_aave_log(log) else {
+        return false;
+    };
+    match decoded {
+        DecodedAaveEvent::PriceOracleUpdated(_) => true,
+        DecodedAaveEvent::AddressSet(ev) => {
+            let name = strip_trailing_nulls_from_ascii(&ev.id);
+            matches!(
+                name.as_str(),
+                "POOL" | "POOL_CONFIGURATOR" | "POOL_ADDRESS_PROVIDER" | "PRICE_ORACLE"
+            )
+        }
+        _ => false,
+    }
+}
+
+/// Fetch the endpoint replacement passes' logs over the chunk range — one
+/// `eth_getLogs` per uncovered replacement address, in pass order.
+pub async fn fetch_endpoint_replacement_logs(
+    fetcher: &LogFetcher,
+    from_block: u64,
+    to_block: u64,
+    replacements: &ChunkEndpointReplacements,
+) -> ProviderResult<Vec<Log>> {
+    let mut extra = Vec::new();
+    for address in &replacements.address_provider {
+        extra.extend(fetch_address_provider_logs(fetcher, from_block, to_block, *address).await?);
+    }
+    for address in &replacements.configurator {
+        extra.extend(fetch_reserve_init_logs(fetcher, from_block, to_block, *address).await?);
+    }
+    for address in &replacements.pool {
+        extra.extend(fetch_pool_logs(fetcher, from_block, to_block, *address).await?);
+    }
+    for address in &replacements.oracle {
+        extra.extend(fetch_oracle_logs(fetcher, from_block, to_block, Some(*address)).await?);
+    }
+    Ok(extra)
+}
+
 // ── the batch driver (calls all 7 + merges + re-sorts) ────────────────────
 
 /// Run all 7 Aave V3 fetch passes for the chunk + merge into one
@@ -285,6 +426,34 @@ pub async fn fetch_aave_chunk_logs(
 /// `ReserveInitialized`-derived synthetic event needs interleaving).
 pub fn sort_logs_by_block_and_index(logs: &mut [Log]) {
     logs.sort_by_key(|log| (log.block_number.unwrap_or(0), log.log_index.unwrap_or(0)));
+}
+
+/// Merge a supplemental fetch batch into the chunk's log set: de-duplicate by
+/// `(block_number, log_index)` against `logs`, extend, and restore the
+/// chronological sort. The ONE merge seam for every same-chunk supplemental
+/// fetch (scaled tokens, stkAAVE, endpoint replacements).
+pub fn merge_chunk_log_extension(logs: &mut Vec<Log>, extra: Vec<Log>) {
+    if extra.is_empty() {
+        return;
+    }
+    let existing: HashSet<(u64, u64)> = logs
+        .iter()
+        .filter_map(|l| Some((l.block_number?, l.log_index?)))
+        .collect();
+    let fresh: Vec<Log> = extra
+        .into_iter()
+        .filter(|l| {
+            !existing.contains(&(
+                l.block_number.unwrap_or(u64::MAX),
+                l.log_index.unwrap_or(u64::MAX),
+            ))
+        })
+        .collect();
+    if fresh.is_empty() {
+        return;
+    }
+    logs.extend(fresh);
+    sort_logs_by_block_and_index(logs);
 }
 
 // ── warm-boot substrate resolution (the chain-current reserve set) ──────
@@ -557,6 +726,171 @@ mod tests {
             log_index: Some(log_index),
             removed: false,
         }
+    }
+
+    /// A same-chunk `PriceOracleUpdated` A→B replacement must produce a
+    /// supplemental oracle-pass fetch against the NEW oracle address over the
+    /// chunk range — the main pass fetched only from A, so the replacement
+    /// endpoint's `AssetSourceUpdated` logs are otherwise unreachable.
+    #[test]
+    fn price_oracle_replacement_fetches_new_asset_source_logs() {
+        use degenbot_rpc::cassette::Cassette;
+        use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+
+        let old_oracle = Address::repeat_byte(0x5a);
+        let new_oracle = Address::repeat_byte(0xab);
+        let provider = Address::repeat_byte(0x77);
+        let spec = AaveFetchSpec {
+            oracle_address: Some(old_oracle),
+            ..AaveFetchSpec::default()
+        };
+        let log = make_log(
+            provider,
+            vec![
+                AAVE_PRICE_ORACLE_UPDATED_TOPIC,
+                old_oracle.into_word(),
+                new_oracle.into_word(),
+            ],
+            100,
+            0,
+            [0xaa; 32],
+        );
+        let replacements = chunk_endpoint_replacements(std::slice::from_ref(&log), &spec);
+        assert_eq!(replacements.oracle, vec![new_oracle]);
+        assert!(replacements.pool.is_empty());
+
+        // The supplemental oracle-pass filter: the NEW address, the chunk
+        // range, the AssetSourceUpdated topic — the canonical ledger-key form
+        // (lowercase emitter, decimal block tags, flat single topic group).
+        let key = format!(
+            "[\"eth_getLogs\",[{{\"address\":\"0x{:x}\",\"fromBlock\":\"100\",\"toBlock\":\"105\",\"topics\":[\"0x{}\"]}}]]",
+            new_oracle,
+            alloy::hex::encode(AAVE_ASSET_SOURCE_UPDATED_TOPIC)
+        );
+        let served_log = format!(
+            r#"{{"address":"0x{:x}","topics":["0x{}"],"data":"0x","blockNumber":"0x64","transactionHash":"0x{}","transactionIndex":"0x0","blockHash":"0x{}","logIndex":"0x1","removed":false}}"#,
+            new_oracle,
+            alloy::hex::encode(AAVE_ASSET_SOURCE_UPDATED_TOPIC),
+            "aa".repeat(32),
+            "bb".repeat(32),
+        );
+        let response_json = format!(r#"{{"result":[{served_log}]}}"#);
+        let digest = alloy::primitives::keccak256(response_json.as_bytes()).to_string();
+        let escaped_key = key.escape_default().to_string();
+        let json = format!(
+            "{{\"schema\":\"degenbot.cassette/v1\",\"chain_id\":1,             \"provenance\":{{\"source\":\"test\",\"recorded_at\":\"1970-01-01T00:00:00Z\",             \"span\":{{\"from_block\":0,\"to_block\":0}}}},\"entries\":{{\"{escaped_key}\": {{\"response\": {response_json}, \"digest\": \"{digest}\"}}}}}}"
+        );
+        let transport = CassetteReplayTransport::new(
+            Cassette::from_json_str(&json).expect("the in-memory test cassette parses"),
+        );
+        let fetcher = LogFetcher::new(Arc::new(transport.as_alloy_provider()), 1_000);
+
+        let extra = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_endpoint_replacement_logs(
+                &fetcher,
+                100,
+                105,
+                &replacements,
+            ))
+            .expect("the replacement pass serves its recorded filter");
+        assert_eq!(
+            extra.len(),
+            1,
+            "the new oracle's AssetSourceUpdated log arrives"
+        );
+        assert_eq!(extra[0].address(), new_oracle);
+
+        let served = transport.served_snapshot();
+        assert_eq!(served.requests, 1, "exactly one supplemental round trip");
+        assert_eq!(
+            served.per_method.get("eth_getLogs").map(|m| m.served),
+            Some(1)
+        );
+    }
+
+    /// The no-replacement wire shape: logs without endpoint replacement
+    /// events — and replacements whose new address equals the chunk-start
+    /// endpoint, and oracle replacements under a `None` spec address (the
+    /// main pass is chain-wide in discovery mode) — produce an EMPTY plan, so
+    /// an unchanged run issues no supplemental `eth_getLogs` and its request
+    /// set stays identical.
+    #[test]
+    fn unchanged_endpoint_fetch_plan_is_unchanged() {
+        let old_oracle = Address::repeat_byte(0x5a);
+        let old_pool = Address::repeat_byte(0x01);
+        let provider = Address::repeat_byte(0x77);
+        let spec = AaveFetchSpec {
+            pool_address: old_pool,
+            oracle_address: Some(old_oracle),
+            ..AaveFetchSpec::default()
+        };
+        let mut id_bytes = [0u8; 32];
+        id_bytes[..4].copy_from_slice(b"POOL");
+        let pool_id = B256::from(id_bytes);
+        let mut other_id_bytes = [0u8; 32];
+        other_id_bytes[..13].copy_from_slice(b"SOME_OTHER_ID");
+        let other_id = B256::from(other_id_bytes);
+        let logs = vec![
+            make_log(
+                provider,
+                vec![
+                    AAVE_PRICE_ORACLE_UPDATED_TOPIC,
+                    old_oracle.into_word(),
+                    old_oracle.into_word(),
+                ],
+                100,
+                0,
+                [0xaa; 32],
+            ),
+            make_log(
+                provider,
+                vec![
+                    AAVE_ADDRESS_SET_TOPIC,
+                    pool_id,
+                    old_pool.into_word(),
+                    old_pool.into_word(),
+                ],
+                100,
+                1,
+                [0xaa; 32],
+            ),
+            make_log(
+                provider,
+                vec![
+                    AAVE_ADDRESS_SET_TOPIC,
+                    other_id,
+                    Address::ZERO.into_word(),
+                    Address::repeat_byte(0x33).into_word(),
+                ],
+                100,
+                2,
+                [0xaa; 32],
+            ),
+        ];
+        assert!(
+            chunk_endpoint_replacements(&logs, &spec).is_empty(),
+            "no replacement event means no supplemental fetch"
+        );
+
+        let discovery_spec = AaveFetchSpec {
+            oracle_address: None,
+            ..spec
+        };
+        let registration = make_log(
+            provider,
+            vec![
+                AAVE_PRICE_ORACLE_UPDATED_TOPIC,
+                Address::ZERO.into_word(),
+                Address::repeat_byte(0x44).into_word(),
+            ],
+            100,
+            3,
+            [0xaa; 32],
+        );
+        assert!(
+            chunk_endpoint_replacements(&[registration], &discovery_spec).is_empty(),
+            "a chain-wide discovery pass already covers every oracle"
+        );
     }
 
     #[test]

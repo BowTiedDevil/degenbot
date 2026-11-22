@@ -84,7 +84,6 @@ pub(super) async fn process_chunk_on_conn(
     market_id: i64,
     chain_id: i64,
     pool_address: Address,
-    oracle_address: Option<Address>,
     tx_groups: &[TxGroup<'_>],
     chunk_start: u64,
     chunk_end: u64,
@@ -156,7 +155,6 @@ pub(super) async fn process_chunk_on_conn(
         market_id,
         chain_id,
         pool_address,
-        oracle_address,
         conn,
         &mut substrate,
     );
@@ -217,7 +215,7 @@ pub(super) async fn process_chunk_on_conn(
         let op_events = process_transaction(
             market_id,
             chain_id,
-            pool_address,
+            ctx.pool_address(),
             dispatch.gho_underlying_address,
             dispatch.gho_vtoken_address,
             conn,
@@ -537,7 +535,6 @@ mod tests {
                     1,
                     1,
                     Address::ZERO,
-                    None,
                     &[],
                     3_000,
                     3_000,

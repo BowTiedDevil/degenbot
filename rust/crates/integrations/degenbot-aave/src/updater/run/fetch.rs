@@ -188,3 +188,32 @@ pub(super) fn build_fetch_spec(
     };
     Ok((spec, gho_asset))
 }
+
+/// Refresh the four endpoint addresses of `spec` (the `POOL`/
+/// `POOL_CONFIGURATOR`/`POOL_ADDRESS_PROVIDER`/`PRICE_ORACLE` rows) from
+/// the DB at the START of each chunk. Prior chunks' committed `AddressSet`
+/// rotations and `PriceOracleUpdated` applies repoint those rows; the
+/// frozen run-start snapshot (`build_fetch_spec`) would fetch every later
+/// chunk from the previous endpoint generation. Only tracked rows present in
+/// the DB update their field — `PRICE_ORACLE` may legitimately be absent
+/// (pre-discovery).
+///
+/// # Errors
+///
+/// Propagates the substrate read failure.
+pub(super) fn refresh_chunk_fetch_spec(
+    db: &DegenbotDb,
+    market_id: i64,
+    spec: &mut AaveFetchSpec,
+) -> Result<(), RunError> {
+    for contract in db.fetch_aave_contracts(market_id)? {
+        match contract.name.as_str() {
+            "POOL" => spec.pool_address = contract.address,
+            "POOL_CONFIGURATOR" => spec.configurator_address = contract.address,
+            "POOL_ADDRESS_PROVIDER" => spec.address_provider_address = contract.address,
+            "PRICE_ORACLE" => spec.oracle_address = Some(contract.address),
+            _ => {}
+        }
+    }
+    Ok(())
+}

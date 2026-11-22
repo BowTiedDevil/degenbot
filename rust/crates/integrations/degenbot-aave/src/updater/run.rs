@@ -24,7 +24,7 @@ pub use apply::{
     apply_aave_chunk_writes_on_conn, apply_chunk_events_on_conn, AaveChunkEvent,
     AaveChunkWriteReport,
 };
-use fetch::{bootstrap_pool_contracts, build_fetch_spec};
+use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
 use process::{group_logs_by_tx, process_chunk_on_conn};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
 
@@ -46,8 +46,9 @@ use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::{Connection, Transaction};
 
 use crate::aave_fetch::{
-    fetch_aave_chunk_logs, fetch_scaled_token_logs, fetch_stk_aave_logs,
-    sort_logs_by_block_and_index,
+    chunk_endpoint_replacements, fetch_aave_chunk_logs, fetch_endpoint_replacement_logs,
+    fetch_scaled_token_logs, fetch_stk_aave_logs, is_endpoint_replacement_event,
+    merge_chunk_log_extension,
 };
 use crate::config_dispatch::ConfigDispatchError;
 use crate::transaction_processor::ProcessTxError;
@@ -630,12 +631,17 @@ async fn run_aave_update_driver(
     bootstrap_pool_contracts(db, &provider, &fetcher, market_id, from_block).await?;
 
     // Build the fetch spec + the GHO asset (chain-unique). The per-chunk
-    // loop's refresh re-reads `scaled_token_addresses` +
-    // `stk_aave_address` from the DB at the START of each chunk, so the
-    // frozen run-start snapshot here is just the seed for chunk 1.
+    // loop's refresh re-reads the scaled-token set, the stkAAVE address, AND
+    // the four endpoint addresses (POOL/POOL_CONFIGURATOR/
+    // POOL_ADDRESS_PROVIDER/PRICE_ORACLE) from the DB at the START of each
+    // chunk, so the frozen run-start snapshot here is just the seed for
+    // chunk 1.
     let (mut spec, _gho_asset) = build_fetch_spec(db, market_id, chain_id)?;
-    let pool_address = spec.pool_address;
-    let oracle_address = spec.oracle_address;
+    // The DB's endpoint rows change ONLY through a replacement event's apply;
+    // the flag scopes the per-chunk DB endpoint refresh to the chunk AFTER
+    // such a commit, so a no-replacement run issues no extra statements (the
+    // statement-ledger goldens stay byte-identical).
+    let mut endpoints_dirty = false;
 
     let mut report = AaveUpdateReport {
         chain_id,
@@ -718,6 +724,17 @@ async fn run_aave_update_driver(
             .as_ref()
             .and_then(|g| g.v_gho_discount_token.as_deref())
             .and_then(|s| s.parse().ok());
+        // (a)'' Refresh the four endpoint addresses (POOL/POOL_CONFIGURATOR/
+        //     POOL_ADDRESS_PROVIDER/PRICE_ORACLE) from the DB when a PRIOR
+        //     chunk committed a replacement event — its apply repointed the
+        //     rows; the run-start snapshot would fetch every later chunk from
+        //     the previous endpoint generation. Scoped by `endpoints_dirty`
+        //     so a no-replacement run stays statement-identical.
+        if endpoints_dirty {
+            refresh_chunk_fetch_spec(db, market_id, &mut spec)?;
+            endpoints_dirty = false;
+        }
+        let pool_address = spec.pool_address;
         // The fetch stage span wraps the same region the plain-`Instant`
         // `fetch_started` anchors time: the main pass + the same-chunk
         // staleness re-fetches below (the replay-bench baseline boundary).
@@ -762,28 +779,10 @@ async fn run_aave_update_driver(
             new_tokens.sort_unstable();
             new_tokens.dedup();
             let fetch_started = Instant::now();
-            let mut extra =
+            let extra =
                 fetch_scaled_token_logs(&fetcher, working_start, chunk_end, &new_tokens).await?;
             chunk_fetch_time += fetch_started.elapsed();
-            // De-dup by (block_number, log_index) — the re-fetch may overlap
-            // the frozen fetch for tokens partially known (rare). Logs
-            // missing either field sort last (shouldn't happen for fetched
-            // logs — the fetcher fills both).
-            let existing: HashSet<(u64, u64)> = logs
-                .iter()
-                .filter_map(|l| Some((l.block_number?, l.log_index?)))
-                .collect();
-            extra.retain(|l| {
-                let key = (
-                    l.block_number.unwrap_or(u64::MAX),
-                    l.log_index.unwrap_or(u64::MAX),
-                );
-                !existing.contains(&key)
-            });
-            if !extra.is_empty() {
-                logs.extend(extra);
-                sort_logs_by_block_and_index(&mut logs);
-            }
+            merge_chunk_log_extension(&mut logs, extra);
         }
         // (c) Same-chunk staleness for the discount token: a
         //     `DiscountTokenUpdated` event in tx N sets the new
@@ -807,24 +806,36 @@ async fn run_aave_update_driver(
         }
         if let Some(token) = discount_token_from_event.filter(|_| spec.stk_aave_address.is_none()) {
             let fetch_started = Instant::now();
-            let mut extra =
+            let extra =
                 fetch_stk_aave_logs(&fetcher, working_start, chunk_end, Some(token)).await?;
             chunk_fetch_time += fetch_started.elapsed();
-            let existing: HashSet<(u64, u64)> = logs
-                .iter()
-                .filter_map(|l| Some((l.block_number?, l.log_index?)))
-                .collect();
-            extra.retain(|l| {
-                let key = (
-                    l.block_number.unwrap_or(u64::MAX),
-                    l.log_index.unwrap_or(u64::MAX),
-                );
-                !existing.contains(&key)
-            });
-            if !extra.is_empty() {
-                logs.extend(extra);
-                sort_logs_by_block_and_index(&mut logs);
-            }
+            merge_chunk_log_extension(&mut logs, extra);
+        }
+        // (d) Same-chunk endpoint replacement: an `AddressSet` rotation or a
+        //     `PriceOracleUpdated` in tx N repoints a fetch endpoint (POOL/
+        //     POOL_CONFIGURATOR/POOL_ADDRESS_PROVIDER/PRICE_ORACLE)
+        //     mid-chunk — the main pass fetched the whole chunk from the
+        //     chunk-start endpoints, so the replacement endpoint's logs over
+        //     the same range are unreachable without a supplemental pass.
+        //     Pre-scan the frozen logs for the replacement events, fetch the
+        //     uncovered addresses' logs for the chunk range, + merge with
+        //     de-dup (the same seam as (b)/(c)). The tracking policy follows
+        //     the replacement (the contract permits it); a refusal would
+        //     abort in dispatch before the cursor can advance. The chunk's
+        //     committed apply is what repoints the DB rows, so any tracked
+        //     replacement event marks the endpoints dirty for the NEXT
+        //     chunk's DB refresh.
+        let replacements = chunk_endpoint_replacements(&logs, &spec);
+        if !replacements.is_empty() {
+            let fetch_started = Instant::now();
+            let extra =
+                fetch_endpoint_replacement_logs(&fetcher, working_start, chunk_end, &replacements)
+                    .await?;
+            chunk_fetch_time += fetch_started.elapsed();
+            merge_chunk_log_extension(&mut logs, extra);
+        }
+        if logs.iter().any(is_endpoint_replacement_event) {
+            endpoints_dirty = true;
         }
         drop(fetch_guard);
         fetch_span.record(
@@ -867,7 +878,6 @@ async fn run_aave_update_driver(
                 market_id,
                 chain_id,
                 pool_address,
-                oracle_address,
                 &tx_groups,
                 working_start,
                 chunk_end,
@@ -1063,8 +1073,54 @@ mod tests {
         assert_eq!(progress.write_lock_hold_time, Duration::ZERO);
     }
 
-    /// A chunk that never commits rolls back and reports the zeroed failure
-    /// progress exactly once, with the write-lock hold measured.
+    /// The helper under the driver-level `address_set_pool_rotation_fetches_
+    /// new_pool_logs_next_chunk` replay: a committed `AddressSet` POOL
+    /// rotation must be re-readable into the fetch spec — the row-level half
+    /// of the next-chunk repoint.
+    #[test]
+    fn refresh_chunk_fetch_spec_rereads_rotated_endpoint_rows() {
+        use crate::aave_fetch::AaveFetchSpec;
+
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let old_pool = Address::repeat_byte(0x11);
+        let new_pool = Address::repeat_byte(0x22);
+        let checksummed = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (market_id, name, address) \
+                 VALUES (1, 'POOL', ?1)",
+                [checksummed(old_pool)],
+            )
+            .unwrap();
+        }
+        let mut spec = AaveFetchSpec::default();
+        fetch::refresh_chunk_fetch_spec(&db, 1, &mut spec).unwrap();
+        assert_eq!(spec.pool_address, old_pool);
+        {
+            let conn = db.lock();
+            DegenbotDb::apply_contract_address_changed_on_conn(
+                &conn,
+                1,
+                "POOL",
+                &checksummed(old_pool),
+                &checksummed(new_pool),
+            )
+            .unwrap();
+        }
+        fetch::refresh_chunk_fetch_spec(&db, 1, &mut spec).unwrap();
+        assert_eq!(
+            spec.pool_address, new_pool,
+            "chunk N+1's fetch plan must target the rotated POOL"
+        );
+    }
+
     #[test]
     fn dropping_the_guard_reports_the_rolled_back_chunk() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();

@@ -188,22 +188,17 @@ pub(crate) async fn dispatch_config_events(
 }
 
 /// Resolve the `PRICE_ORACLE` contract address for `ReserveInitialized`
-/// dispatch. The spec's `cached` `oracle_address` is
-/// captured once before the chunk loop (`build_fetch_spec`) + can be `None`
-/// when the `PRICE_ORACLE` row is registered mid-loop via a
-/// `PriceOracleUpdated` event (mainnet: block 16291126, chunk 1) — AFTER
-/// `build_fetch_spec` ran. When `None`, look it up FRESH on `conn`
-/// (read-your-own-writes within the chunk + prior chunks' committed writes).
-/// The `PRICE_ORACLE` row, once registered, is durable across chunks; the
-/// stale spec cache is the only gap.
+/// dispatch, FRESH from `conn` on EVERY event: the row is registered OR
+/// replaced by a `PriceOracleUpdated` apply (mainnet: block 16291126,
+/// chunk 1 registers it mid-loop; a supported replacement updates it in
+/// place) — mid-chunk and cross-chunk — so a run-start or chunk-start
+/// snapshot would serve a stale oracle. Read-your-own-writes within the
+/// chunk + prior chunks' committed writes are both visible on `conn`;
+/// initial absence (no row yet) stays the loud error.
 fn resolve_reserve_oracle_address(
     conn: &Connection,
     market_id: i64,
-    cached: Option<Address>,
 ) -> Result<Address, ConfigDispatchError> {
-    if let Some(o) = cached {
-        return Ok(o);
-    }
     DegenbotDb::fetch_aave_oracle_address_on_conn(conn, market_id)?
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| {
@@ -252,8 +247,7 @@ async fn dispatch_single_config_event(
             Some(resolve_collateral_configuration(ctx, ev).await?)
         }
         DecodedAaveEvent::ReserveInitialized(ev) => {
-            let oracle =
-                resolve_reserve_oracle_address(ctx.conn(), ctx.market_id(), ctx.oracle_address())?;
+            let oracle = resolve_reserve_oracle_address(ctx.conn(), ctx.market_id())?;
             Some(resolve_reserve_initialized(ctx, ev, oracle).await?)
         }
         // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
@@ -529,7 +523,7 @@ fn discount_to_i64(v: U256) -> i64 {
 /// ASCII-decode a bytes32 + strip the trailing NUL bytes (the `AddressSet`
 /// event's `id` topic). The bytes2 is left-aligned ASCII (the protocol writes the
 /// contract name into the bytes32 + right-pads with zeros).
-fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
+pub(crate) fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
     let bytes = id.as_slice();
     let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |p| p + 1);
     String::from_utf8_lossy(&bytes[..end]).into_owned()
@@ -620,7 +614,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(Address::repeat_byte(0x99)),
             conn,
             substrate,
         )
@@ -901,7 +894,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(Address::repeat_byte(0x99)),
             &conn,
             &mut substrate,
         );
@@ -1143,6 +1135,54 @@ mod tests {
                 assert_eq!(new_oracle_address.len(), 42);
             }
             other => panic!("expected PriceOracleUpdated, got {other:?}"),
+        }
+    }
+
+    /// The `Some(A) -> Some(B)` regression, driven through the REAL
+    /// `ReserveInitialized` dispatch: a mid-run `PriceOracleUpdated`
+    /// replacement must repoint the NEXT event's `getSourceOfAsset` RPC at
+    /// the replacement oracle. The cassette answers `getSourceOfAsset` ONLY
+    /// on the replacement address — a resolution served from the stale
+    /// run-start cache is a loud fixture miss, never a silent success.
+    #[test]
+    fn price_oracle_updated_mid_run_repoints_the_next_reserve_initializeds_source_read() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let replacement_oracle = Address::repeat_byte(0xaa);
+        DegenbotDb::apply_price_oracle_updated_on_conn(&conn, 1, &checksum(&replacement_oracle))
+            .unwrap();
+
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries_oracle(
+            true,
+            &replacement_oracle,
+        )));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let decoded = DecodedAaveEvent::ReserveInitialized(reserve_initialized_event());
+        let ev = degenbot_core::runtime::get_runtime()
+            .block_on(super::dispatch_single_config_event(&decoded, &mut ctx))
+            .expect(
+                "the dispatch must resolve the oracle FRESH from conn; a stale run-start cache \
+                 would call the OLD oracle and miss the ledger loudly",
+            );
+        match ev {
+            Some(AaveChunkEvent::ReserveInitialized { price_source, .. }) => {
+                assert_eq!(
+                    price_source.as_deref(),
+                    Some(checksum(&Address::repeat_byte(0xc1)).as_str()),
+                    "the getSourceOfAsset answer came from the REPLACEMENT oracle's RPC"
+                );
+            }
+            other => panic!("expected ReserveInitialized, got {other:?}"),
         }
     }
 
@@ -1503,7 +1543,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(Address::repeat_byte(0x99)),
             &conn,
             &mut substrate,
         );
@@ -2096,7 +2135,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(Address::repeat_byte(0x99)),
             &conn,
             &mut substrate,
         );
@@ -2134,7 +2172,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(Address::repeat_byte(0x99)),
             &conn,
             &mut substrate,
         );
@@ -2243,7 +2280,11 @@ mod tests {
 
     /// The ledger entries one resolution needs BESIDES the metadata reads: the
     /// EIP-1967 slot pair, the two implementation revisions, and the source.
-    fn reserve_init_aux_entries(a_token: &Address, v_token: &Address) -> Vec<(String, String)> {
+    fn reserve_init_aux_entries(
+        a_token: &Address,
+        v_token: &Address,
+        oracle: &Address,
+    ) -> Vec<(String, String)> {
         let a_impl = Address::repeat_byte(0xb2);
         let v_impl = Address::repeat_byte(0xb3);
         let asset = reserve_init_tokens()[0].0;
@@ -2269,7 +2310,7 @@ mod tests {
             (
                 eth_call_key(
                     &address_arg_input("getSourceOfAsset(address)", &asset),
-                    &format!("0x{}", alloy::hex::encode(reserve_init_oracle())),
+                    &format!("0x{}", alloy::hex::encode(oracle)),
                     100,
                 ),
                 address_word_hex(&Address::repeat_byte(0xc1)),
@@ -2280,6 +2321,13 @@ mod tests {
     /// One resolution's ledger entries: the three tokens' metadata (the
     /// `with_metadata` arm) plus the auxiliary reads.
     fn reserve_init_entries(with_metadata: bool) -> Vec<(String, String)> {
+        reserve_init_entries_oracle(with_metadata, &reserve_init_oracle())
+    }
+
+    /// The sibling with the `getSourceOfAsset` call keyed at a caller-chosen
+    /// oracle — the `Some(A) -> Some(B)` replacement regression answers only
+    /// the replacement address, so a stale-cache resolution is a loud miss.
+    fn reserve_init_entries_oracle(with_metadata: bool, oracle: &Address) -> Vec<(String, String)> {
         let t = reserve_init_tokens();
         let mut entries = Vec::new();
         if with_metadata {
@@ -2287,7 +2335,7 @@ mod tests {
                 entries.extend(metadata_entries(&addr, name, symbol, decimals));
             }
         }
-        entries.extend(reserve_init_aux_entries(&t[1].0, &t[2].0));
+        entries.extend(reserve_init_aux_entries(&t[1].0, &t[2].0, oracle));
         entries
     }
 
@@ -2339,7 +2387,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
@@ -2412,7 +2459,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
@@ -2481,7 +2527,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
@@ -2604,6 +2649,14 @@ mod tests {
                 params![checksum(&Address::repeat_byte(0x88))],
             )
             .unwrap();
+            // The `ReserveInitialized` dispatch resolves the oracle FRESH
+            // from `conn` — seed the row the tests' cassette answers assume.
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (3, 1, 'PRICE_ORACLE', ?1, NULL)",
+                params![checksum(&reserve_init_oracle())],
+            )
+            .unwrap();
         }
         db
     }
@@ -2629,7 +2682,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
@@ -2729,7 +2781,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
@@ -2777,7 +2828,6 @@ mod tests {
             1,
             1,
             Address::ZERO,
-            Some(reserve_init_oracle()),
             &conn,
             &mut substrate,
         );
