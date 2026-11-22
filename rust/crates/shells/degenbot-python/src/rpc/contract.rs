@@ -16,8 +16,6 @@ pub struct PyContract {
 
 #[pymethods]
 impl PyContract {
-    /// Create a new contract instance.
-    ///
     /// Args:
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (optional, defaults to localhost)
@@ -82,13 +80,11 @@ impl PyContract {
         let function_signature = function_signature.to_string();
         let contract = self.contract.clone();
 
-        // Extract args from Python list
         let args: Vec<String> = args
             .iter()
             .map(|a| a.extract::<String>())
             .collect::<Result<_, _>>()?;
 
-        // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime().block_on(async {
@@ -99,7 +95,6 @@ impl PyContract {
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Convert results to Python list
         let py_list = PyList::empty(py);
         for value in result {
             py_list.append(value)?;
@@ -138,13 +133,11 @@ impl PyContract {
         let function_signature = function_signature.to_string();
         let contract = self.contract.clone();
 
-        // Extract args from Python list
         let args: Vec<String> = args
             .iter()
             .map(|a| a.extract::<String>())
             .collect::<Result<_, _>>()?;
 
-        // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime().block_on(async {
@@ -155,7 +148,6 @@ impl PyContract {
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Convert AbiValue results to native Python types
         let py_list = PyList::empty(py);
         for value in result {
             let py_obj = abi_value_to_python(py, &value)?;
@@ -180,14 +172,13 @@ fn encode_function_call<'py>(
     function_signature: &str,
     args: &Bound<'_, PyList>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    // Extract args from Python list (copy before releasing GIL)
+    // Owned copies outlive the detached call.
     let args: Vec<String> = args
         .iter()
         .map(|a| a.extract::<String>())
         .collect::<Result<_, _>>()?;
     let function_signature = function_signature.to_string();
 
-    // Release GIL during pure Rust encoding work
     let calldata = py.detach(|| -> Result<Vec<u8>, crate::errors::ContractError> {
         let func = FunctionSignature::parse(&function_signature)?;
         let encoded_args = encode_arguments(&func.inputs, &args)?;
@@ -218,7 +209,7 @@ fn decode_return_data(
     use crate::abi_types::type_::AbiType;
     use crate::contract::decode_return_data as decode_impl;
 
-    // Extract types from Python list (copy before releasing GIL)
+    // Owned copies outlive the detached call.
     let output_types: Vec<String> = output_types
         .iter()
         .map(|t| t.extract::<String>())
@@ -233,10 +224,9 @@ fn decode_return_data(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Copy data before releasing GIL
+    // Copied before the GIL is released.
     let data = data.to_vec();
 
-    // Release GIL during pure Rust decoding work
     let result = py.detach(|| decode_impl(&data, &types))?;
 
     Ok(result)
@@ -257,16 +247,6 @@ fn get_function_selector(function_signature: &str) -> PyResult<Vec<u8>> {
     Ok(func.selector.to_vec())
 }
 
-/// Convert an `AbiValue` to a native Python object.
-///
-/// Maps each `AbiValue` variant to the most natural Python type:
-/// - `Address` → `str` (checksummed hex)
-/// - `Bool` → `bool`
-/// - `Uint` → `int`
-/// - `Int` → `int`
-/// - `FixedBytes` / `Bytes` → `bytes`
-/// - `String` → `str`
-/// - `Array` → `list`
 fn abi_value_to_python<'py>(
     py: Python<'py>,
     value: &AbiValue,

@@ -5,15 +5,14 @@
 //! returns) + a `dict[int, bool]` config map + an optional `dict[str, int]`
 //! price map, releases the GIL across the pure `U256` math, and returns a
 //! `#[pyclass]` `PyUserPositionSummary` exposing the same attribute names the
-//! Python `UserPositionSummary` dataclass defined (so the CLI's
-//! `_display_user_risk` + the parity test read attributes unchanged).
+//! Python `UserPositionSummary` dataclass defined, so the CLI and the parity
+//! test read attributes unchanged.
 //!
 //! The position collections (`collateral_positions` / `debt_positions`) are
 //! exposed as `#[pyclass]` wrappers (`PyCollateralPositionData` /
 //! `PyDebtPositionData`) — NOT plain dicts — because the CLI reads attributes
 //! (`collateral_pos.actual_balance`, `collateral_pos.asset_symbol`, …) on each
-//! position. Wrapping preserves that attribute-access shape so the Step C
-//! cutover (`delete analysis/core.py`) needs no CLI rewrite.
+//! position.
 //!
 //! No business logic (ADR-005 three-layer architecture): the Python
 //! `analyze_user_position` is a delegating shell over this seam.
@@ -34,15 +33,10 @@ use degenbot_aave::analysis::{
 };
 use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 
-// =========================================================================
-// #[pyclass] wrappers — attribute access keeps the analysis record's field names
-// =========================================================================
-
 /// A user's Aave V3 position summary (health factor, LTV, position lists).
 ///
-/// Rust-backed mirror of the Python `UserPositionSummary` dataclass. The
-/// Step C cutover swaps the Python dataclass for this `#[pyclass]` — the CLI
-/// + the parity test read the same attribute names.
+/// Rust-backed mirror of the Python `UserPositionSummary` dataclass: the CLI
+/// and the parity test read the same attribute names.
 #[pyclass(name = "UserPositionSummary", frozen, module = "degenbot._ffi.db")]
 pub struct PyUserPositionSummary {
     inner: UserPositionSummary,
@@ -261,10 +255,6 @@ impl PyDebtPositionData {
     }
 }
 
-// =========================================================================
-// dict → Rust record extraction (under the GIL — touches Python)
-// =========================================================================
-
 /// Extract an [`AaveUserRecord`] from a Python `dict` (the
 /// `PyDatabasePositionQuery.get_users_with_debt` row shape).
 fn extract_user_record(obj: &Bound<'_, PyAny>) -> PyResult<AaveUserRecord> {
@@ -451,10 +441,6 @@ fn missing_key(key: &str) -> PyErr {
     PyValueError::new_err(format!("missing required key '{key}' in position dict"))
 }
 
-// =========================================================================
-// the #[pyfunction]
-// =========================================================================
-
 /// `degenbot._ffi.db.analyze_aave_user_position(user, collateral_positions,
 /// debt_positions, collateral_config_map, price_map=None) ->
 /// PyUserPositionSummary`
@@ -492,8 +478,6 @@ pub(crate) fn analyze_aave_user_position(
     collateral_config_map: &Bound<'_, PyDict>,
     price_map: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<Py<PyUserPositionSummary>> {
-    // Extract all args under the GIL (touches Python), then release the GIL
-    // for the pure U256 math.
     let user_record = extract_user_record(user)?;
     let collateral = extract_collateral_records(collateral_positions)?;
     let debt = extract_debt_records(debt_positions)?;
@@ -506,15 +490,6 @@ pub(crate) fn analyze_aave_user_position(
 
     Py::new(py, PyUserPositionSummary { inner: summary })
 }
-
-// =========================================================================
-// registration
-// =========================================================================
-
-// The Aave analysis seam members (`analyze_aave_user_position` + the three
-// `#[pyclass]` wrappers) are exported declaratively from the `db`
-// `#[pymodule]` in the parent `mod.rs`, gated on `aave-updater` (the
-// feature that brings in the `degenbot-aave` dep).
 
 #[cfg(all(test, feature = "auto-initialize"))]
 #[expect(clippy::unwrap_used)]

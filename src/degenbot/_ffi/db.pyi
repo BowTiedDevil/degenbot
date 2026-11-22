@@ -3,10 +3,10 @@
 
 """
 The `degenbot._ffi.db` Python submodule (declarative `#[pymodule]`),
-registering all ~45 `db_*` pyfunctions + ~11 pyclasses. The `db_` prefix
-is retained on the submodule names (unlike the math submodules which
-dropped their prefix) because (a) the blast radius is much larger (5 Rust
-files, ~45 fns) and (b) `db_` functions as a functional namespace marker
+registering 21 `db_*` pyfunctions + 12 pyclasses. The `db_` prefix
+is retained on the submodule names (unlike the math submodules'
+unprefixed names) because (a) the blast radius is much larger (8 Rust
+files) and (b) `db_` functions as a functional namespace marker
 is clearer than bare `backup_database` on a `db` submodule.
 
 `degenbot._ffi.db` IS the stable import path: a Python consumer names the
@@ -166,8 +166,8 @@ class DatabaseSnapshot:
         """
         V3 `get_liquidity_map(pool_address)` → `LiquidityMap`-shaped dict or
         `None`. Returns `{"tick_data": {tick: {"liquidity_gross": int,
-        "liquidity_net": int}}}` — no `tick_bitmap` key (the DB knows no words;
-        the retired word-VALUE tables are gone).
+        "liquidity_net": int}}}` — no `tick_bitmap` key (the DB stores no
+        per-word bitmap).
         """
     def get_liquidity_map_v4(self, /, pool_manager: str, pool_id: Any) -> dict | None:
         """
@@ -375,9 +375,8 @@ class UserPositionSummary:
     """
     A user's Aave V3 position summary (health factor, LTV, position lists).
 
-    Rust-backed mirror of the Python `UserPositionSummary` dataclass. The
-    Step C cutover swaps the Python dataclass for this `#[pyclass]` — the CLI
-    + the parity test read the same attribute names.
+    Rust-backed mirror of the Python `UserPositionSummary` dataclass: the CLI
+    and the parity test read the same attribute names.
     """
     @property
     def collateral_positions(self, /) -> list:
@@ -591,12 +590,10 @@ def db_fetch_exchange(database_path: str, exchange_id: SupportsIndex) -> Exchang
     """
     `degenbot._ffi.db.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
 
-    Module-level exchange-row read by FK id. The `cli/pool.py::pool_update`
-    discovery loop reads `last_update_block` ground-truth here (a fresh
-    `DegenbotDb::open` per call → a fresh WAL snapshot) rather than trusting
-    the long-lived `SQLAlchemy` session's stale ORM cache: the stamp is written
-    by the Rust `db_set_exchange_last_update_block` seam on its own
-    connection, which the `SQLAlchemy` read snapshot cannot see. Mirrors
+    Module-level exchange-row read by FK id. A fresh `DegenbotDb::open` per
+    call reads `last_update_block` from a fresh WAL snapshot — the stamp is
+    written by the `db_set_exchange_last_update_block` seam on its own
+    connection, so a longer-lived reader's snapshot would not see it. Mirrors
     [`db_fetch_pool_row`] (same `database_path` + fresh-open pattern).
     """
 
@@ -608,9 +605,9 @@ def db_fetch_exchange_by_name(
     -> ExchangeRow | None`
 
     The by-name companion to [`db_fetch_exchange`] — the `(chain_id, name)`
-    lookup the `cli/exchange.py` `deactivate` commands use to resolve the row
-    to flip `active=False` on. Same fresh-open read path (`DegenbotDb::open` →
-    a fresh WAL snapshot). Raises ``ValueError`` on a DB failure.
+    lookup a caller uses to resolve the row whose `active` flag it will flip.
+    Same fresh-open read path (`DegenbotDb::open` → a fresh WAL snapshot).
+    Raises `ValueError` on a DB failure.
     """
 
 def db_fetch_graph_edition(
@@ -628,7 +625,6 @@ def db_fetch_pool_row(
     database_path: str, chain_id: SupportsIndex, address: str
 ) -> LiquidityPoolRow | None:
     """
-
     Module-level pool-row read by `(chain_id, address)` — the typed row a
     driver keys its own scope decision on.
     """
@@ -647,7 +643,7 @@ def db_heal_database(database_path: str) -> dict:
 
     Returns a dict:
       `{"old_state": str, "rows_copied": dict[str, int], "bak_path": str,
-        "new_state": str, "warnings": list[str]}``
+        "new_state": str, "warnings": list[str]}`
     - `old_state` / `new_state`: `schema_state_label` of the `HealReport` fields.
     - No-op if old is already `rust_owned` (returns `old_state == new_state ==
       "rust_owned"`, empty `rows_copied`, `bak_path == database_path`).
@@ -722,9 +718,8 @@ def db_set_exchange_last_update_block(
     `degenbot._ffi.db.db_set_exchange_last_update_block(database_path, chain_id,
     exchange_id, block) -> None`
 
-    Stamp an `ExchangeTable.last_update_block`. Port of the
-    `exchange.last_update_block = working_end_block` trajectory in
-    `cli/pool.py::pool_update` (the discovery-writer close-out stamp).
+    Stamp an `ExchangeTable.last_update_block` — the discovery-writer
+    close-out marker every pool row written by the run is read against.
     """
 
 def db_upgrade_database(path: str) -> str:
@@ -752,8 +747,7 @@ def db_upsert_exchange(
     step). If a row already exists it is returned UNCHANGED — `active` is NOT
     touched here (flipping active is a separate concern, see
     [`db_set_exchange_active`]). `exchanges` has no unique index on
-    `(chain_id, name)` so this uses the explicit SELECT-then-INSERT dedup the
-    Python `cli/exchange.py` trajectory uses (no Alembic migration forced). The
+    `(chain_id, name)` so this uses an explicit SELECT-then-INSERT dedup. The
     `factory` / `deployer` are stored EIP-55-checksummed. Raises `ValueError`
     on a parse or DB failure.
     """

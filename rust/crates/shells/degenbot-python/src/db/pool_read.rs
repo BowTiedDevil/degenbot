@@ -5,12 +5,10 @@
 //! its per-DEX subclass kind row, the `exchange` / `token0` / `token1` FK rows,
 //! and the V4 pool-manager row. Each is a thin `#[pyclass]` over the
 //! corresponding `degenbot-db` row type — attribute access matches the ORM
-//! attributes the builders read, so the cutover is a mechanical replacement of
-//! the `SQLAlchemy` lazy-load with a per-FK fetch through `PyBotIo`.
+//! attributes the builders read, with each FK row fetched per attribute
+//! access through `PyBotIo`.
 
 use pyo3::prelude::*;
-
-// ── pool + subclass rows ─────────────────────────────────────────────
 
 /// A typed `pools` table row.
 ///
@@ -74,8 +72,6 @@ impl PyLiquidityPoolRow {
     }
 }
 
-// ── FK companion rows ────────────────────────────────────────────────
-
 /// A typed `exchanges` row (`exchange` relationship hydration).
 #[pyclass(name = "ExchangeRow", module = "degenbot._ffi.db")]
 pub struct PyExchangeRow {
@@ -134,8 +130,6 @@ impl PyExchangeRow {
     }
 }
 
-// ── V4 pool-manager row ───────────────────────────────────────────────
-
 /// A `pool_managers` row (V4). The V4 builder resolves its pool manager by
 /// `(address, chain)` to obtain the `id` (for the V4 pool join) + the
 /// `state_view` contract address.
@@ -192,12 +186,10 @@ impl PyPoolManagerRow {
 
 /// `degenbot._ffi.db.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
 ///
-/// Module-level exchange-row read by FK id. The `cli/pool.py::pool_update`
-/// discovery loop reads `last_update_block` ground-truth here (a fresh
-/// `DegenbotDb::open` per call → a fresh WAL snapshot) rather than trusting
-/// the long-lived `SQLAlchemy` session's stale ORM cache: the stamp is written
-/// by the Rust `db_set_exchange_last_update_block` seam on its own
-/// connection, which the `SQLAlchemy` read snapshot cannot see. Mirrors
+/// Module-level exchange-row read by FK id. A fresh `DegenbotDb::open` per
+/// call reads `last_update_block` from a fresh WAL snapshot — the stamp is
+/// written by the `db_set_exchange_last_update_block` seam on its own
+/// connection, so a longer-lived reader's snapshot would not see it. Mirrors
 /// [`db_fetch_pool_row`] (same `database_path` + fresh-open pattern).
 #[pyfunction]
 pub(crate) fn db_fetch_exchange(
@@ -225,9 +217,9 @@ pub(crate) fn db_fetch_exchange(
 /// -> ExchangeRow | None`
 ///
 /// The by-name companion to [`db_fetch_exchange`] — the `(chain_id, name)`
-/// lookup the `cli/exchange.py` `deactivate` commands use to resolve the row
-/// to flip `active=False` on. Same fresh-open read path (`DegenbotDb::open` →
-/// a fresh WAL snapshot). Raises ``ValueError`` on a DB failure.
+/// lookup a caller uses to resolve the row whose `active` flag it will flip.
+/// Same fresh-open read path (`DegenbotDb::open` → a fresh WAL snapshot).
+/// Raises `ValueError` on a DB failure.
 #[pyfunction]
 pub(crate) fn db_fetch_exchange_by_name(
     py: Python<'_>,
@@ -250,7 +242,6 @@ pub(crate) fn db_fetch_exchange_by_name(
         None => Ok(None),
     }
 }
-///
 /// Module-level pool-row read by `(chain_id, address)` — the typed row a
 /// driver keys its own scope decision on.
 #[pyfunction]

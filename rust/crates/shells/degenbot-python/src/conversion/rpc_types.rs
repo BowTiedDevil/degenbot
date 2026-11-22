@@ -1,8 +1,8 @@
 //! Python object converters for Ethereum RPC types.
 //!
 //! Converts Alloy RPC response types (blocks, transactions, logs) and JSON-RPC
-//! responses into Python dicts with field-aware `HexBytes`, checksummed addresses,
-//! and integer conversion.
+//! responses into Python dicts with per-field decode kinds (plain `bytes`,
+//! checksummed addresses, integers).
 //!
 //! # GIL Requirement
 //!
@@ -38,7 +38,7 @@ use alloy::rpc::types::eth::Header as RpcHeader;
 /// How one JSON-RPC response field decodes into Python.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldKind {
-    /// `0x`-hex byte string → `HexBytes`.
+    /// `0x`-hex byte string → plain `bytes`.
     HexBytes,
     /// 20-byte `0x` address → EIP-55 checksummed `str`.
     Address,
@@ -210,8 +210,6 @@ impl FieldSchema {
     }
 }
 
-/// Check if a string value should be converted to `HexBytes`.
-/// Returns true if the string starts with "0x" and contains valid hex characters.
 fn is_hex_string(s: &str) -> bool {
     if s.len() < 3 {
         return false;
@@ -219,7 +217,6 @@ fn is_hex_string(s: &str) -> bool {
     s.starts_with("0x") && s[2..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Convert a hex string to a `HexBytes` object.
 fn hex_to_hexbytes<'py>(py: Python<'py>, hex_str: &str) -> PyResult<Bound<'py, PyAny>> {
     let bytes = decode_hex(hex_str)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid hex string: {e}")))?;
@@ -243,17 +240,14 @@ fn hex_to_checksum_address(hex_str: &str) -> PyResult<String> {
 
 /// Convert a single Alloy `Log` to a Python dict.
 ///
-/// This is the shared implementation used by both sync and async provider log conversion.
-/// Accesses raw bytes directly from Alloy types (no hex decode round-trip).
+/// Reads raw bytes directly from the Alloy types — no hex decode round-trip.
 #[expect(clippy::missing_errors_doc)]
 pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
-    // address: convert to checksummed string
     let address = log.address();
     dict.set_item("address", address_to_checksum_string(&address))?;
 
-    // topics: list of B256 hashes as HexBytes
     let topics_list = PyList::empty(py);
     for topic in log.topics() {
         let topic_hb = to_py_bytes(py, topic.as_ref())?;
@@ -261,15 +255,12 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
     }
     dict.set_item("topics", topics_list)?;
 
-    // data: dynamic bytes as HexBytes
     let data = &log.data().data;
     let data_hb = to_py_bytes(py, data)?;
     dict.set_item("data", data_hb)?;
 
-    // blockNumber as int
     dict.set_item("blockNumber", log.block_number)?;
 
-    // blockHash as HexBytes (optional)
     if let Some(block_hash) = log.block_hash {
         let block_hash_hb = to_py_bytes(py, block_hash.as_ref())?;
         dict.set_item("blockHash", block_hash_hb)?;
@@ -277,7 +268,6 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
         dict.set_item("blockHash", py.None())?;
     }
 
-    // transactionHash as HexBytes (optional)
     if let Some(tx_hash) = log.transaction_hash {
         let tx_hash_hb = to_py_bytes(py, tx_hash.as_ref())?;
         dict.set_item("transactionHash", tx_hash_hb)?;
@@ -285,13 +275,11 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
         dict.set_item("transactionHash", py.None())?;
     }
 
-    // transactionIndex as int (optional)
     dict.set_item("transactionIndex", log.transaction_index)?;
 
-    // logIndex as int
     dict.set_item("logIndex", log.log_index)?;
 
-    // removed (Geth compatibility: whether the reorg removed this log)
+    // Geth compatibility: whether the reorg removed this log
     dict.set_item("removed", log.removed)?;
 
     Ok(dict)
@@ -308,7 +296,7 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
 /// - `null` → `None`
 /// - `bool` → `bool`
 /// - `number` → `int` or `float`
-/// - `string` → `str`, or `HexBytes`/checksummed address/`int` where the
+/// - `string` → `str`, or plain `bytes`/checksummed address/`int` where the
 ///   schema declares that field kind and the value is a hex string
 /// - `array` → `list` (elements inherit the array's field name, so a declared
 ///   list of hashes decodes element-wise)
@@ -325,7 +313,6 @@ pub fn json_to_py_with_hexbytes(
     json_to_py_inner(py, value, schema, None)
 }
 
-/// Single-pass recursive JSON-to-Python conversion with field-aware hex handling.
 fn json_to_py_inner<'py>(
     py: Python<'py>,
     value: serde_json::Value,
@@ -351,16 +338,13 @@ fn json_to_py_inner<'py>(
         }
         serde_json::Value::String(s) => {
             let kind = field_name.and_then(|name| schema.kind(name));
-            // Address fields decode to a checksummed string.
             if kind == Some(FieldKind::Address) && is_hex_string(&s) {
                 let checksummed = hex_to_checksum_address(&s)?;
                 return Ok(checksummed.into_pyobject(py)?.into_any());
             }
-            // Hash/data fields decode to `HexBytes`.
             if kind == Some(FieldKind::HexBytes) && is_hex_string(&s) {
                 return hex_to_hexbytes(py, &s).map(Bound::into_any);
             }
-            // Quantity fields decode to `int`.
             if kind == Some(FieldKind::Numeric) && is_hex_string(&s) {
                 // Use the odd-length-tolerant decode_hex (JSON-RPC QUANTITY
                 // values routinely drop leading zeros, producing single-digit
@@ -368,15 +352,12 @@ fn json_to_py_inner<'py>(
                 let bytes = decode_hex(&s).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Invalid hex number: {e}"))
                 })?;
-                // For values up to 32 bytes, use U256 conversion
-                // For larger values, use Python's int.from_bytes
                 if bytes.len() <= 32 {
                     let mut arr = [0u8; 32];
                     arr[32 - bytes.len()..].copy_from_slice(&bytes);
                     let u256 = U256::from_be_bytes(arr);
                     return crate::conversion::alloy::u256_to_py(py, &u256);
                 }
-                // Fall back to Python's int.from_bytes for very large values
                 return crate::conversion::cache::bytes_to_int(py, &bytes).map(Bound::into_any);
             }
             Ok(s.into_pyobject(py)?.into_any())
@@ -398,9 +379,6 @@ fn json_to_py_inner<'py>(
     }
 }
 
-/// Convert U256 to Python int.
-///
-/// # Errors
 fn set_opt_u64(dict: &Bound<'_, PyDict>, key: &str, val: Option<u64>) -> PyResult<()> {
     val.map_or_else(
         || dict.set_item(key, dict.py().None()),
@@ -664,8 +642,7 @@ fn transaction_to_py_dict<'py>(
         TxEnvelope::Eip7702(signed_tx) => {
             set_eip7702_tx_fields(&dict, signed_tx.tx())?;
             set_signature_fields(&dict, signed_tx.signature(), 4)?;
-        } // NOTE: When alloy adds new TxEnvelope variants, add match arms here.
-          // The compiler will error on exhaustive match to alert you.
+        }
     }
 
     Ok(dict)
@@ -843,7 +820,6 @@ mod tests {
             let status = first.get_item("status").unwrap().unwrap();
             assert_eq!(status.extract::<i64>().unwrap(), 1);
 
-            // status "0x0" -> 0
             let value = serde_json::json!({"status": "0x0"});
             let py_obj = json_to_py_with_hexbytes(py, value, FieldSchema::SIMULATION).unwrap();
             let d = py_obj.cast::<PyDict>().unwrap();

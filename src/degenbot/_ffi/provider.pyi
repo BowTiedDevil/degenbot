@@ -38,8 +38,6 @@ class AlloyProvider:
         chain_id: SupportsIndex | None = None,
     ) -> AlloyProvider:
         """
-        Create a new provider.
-
         Automatically detects connection type from URL:
         - HTTP/HTTPS URLs use HTTP transport with connection pooling
         - WS/WSS URLs use WebSocket transport
@@ -340,9 +338,8 @@ class AsyncAlloyProvider:
         """
         Create a new async provider from an existing sync provider.
 
-        This constructor takes a `PyAlloyProvider` and creates an async wrapper
-        around it. The async provider uses Python's asyncio event loop instead
-        of creating its own runtime.
+        The async provider uses Python's asyncio event loop instead of creating
+        its own runtime.
         """
     def call(
         self, /, to: str, data: bytes, block_number: SupportsIndex | None = None

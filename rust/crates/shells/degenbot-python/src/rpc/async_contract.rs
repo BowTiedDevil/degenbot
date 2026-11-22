@@ -1,7 +1,4 @@
 //! Async contract interface with ABI encoding/decoding.
-//!
-//! Provides async variants of contract calls for non-blocking
-//! smart contract interactions.
 
 use crate::ambient_runtime::future_into_py;
 use crate::contract::Contract;
@@ -17,8 +14,6 @@ pub struct PyAsyncContract {
 
 #[pymethods]
 impl PyAsyncContract {
-    /// Create a new async contract instance.
-    ///
     /// Args:
     ///     address: Contract address (hex string)
     ///     `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)

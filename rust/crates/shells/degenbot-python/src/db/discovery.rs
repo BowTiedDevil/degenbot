@@ -1,13 +1,13 @@
-//! `PyO3` seam for the pool discovery writers — (split out of the discovery writers).
+//! `PyO3` seam for the pool discovery writers.
 //!
 //! Wraps `degenbot-db`'s `discovery` substrate
 //! ([`degenbot_db::DegenbotDb::upsert_v2_pools`] / [`upsert_v3_pools`] /
 //! [`upsert_v4_pools`] / [`set_exchange_last_update_block`]) as module-level
 //! `#[pyfunction]`s taking a `database_path` (same pattern as the discovery
 //! `db_apply_v3/v4_liquidity_updates` seam). The Python
-//! `cli/pool_updater_configs.py::update_v2/v3/v4_pools` shells decode the raw
-//! `PoolCreated` `LogReceipt`s (topics/data → addresses/fee/tick-spacing) + do
-//! the RPC fee lookup, then build [`PyV2PoolRowInput`] / [`PyV3PoolRowInput`]
+//! `update_v2/v3/v4_pools` shells decode the raw `PoolCreated` `LogReceipt`s
+//! (topics/data → addresses/fee/tick-spacing) + do the RPC fee lookup, then
+//! build [`PyV2PoolRowInput`] / [`PyV3PoolRowInput`]
 //! / [`PyV4PoolRowInput`] lists + delegate here — the `Rust` core owns the
 //! `erc20_tokens` get-or-create escalate + the polymorphic pool-row insert +
 //! the `ExchangeTable.last_update_block` stamp.
@@ -23,10 +23,6 @@ use pyo3::prelude::*;
 use crate::address_utils::parse_address;
 use crate::db::db_err_to_py;
 use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Python row-input pyclasses (the arg-extraction boundary)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// One V2 pool-row to upsert — the Python constructor surface over
 /// [`degenbot_db::V2PoolRowInput`]: the `(address, token0_address,
@@ -160,10 +156,6 @@ impl PyV4PoolRowInput {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PyO3 wrapper functions
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// `degenbot._ffi.db.db_upsert_v2_pools(database_path, chain_id, kind, exchange_id,
 /// fee_denominator, rows) -> None`
 ///
@@ -256,9 +248,8 @@ pub(crate) fn db_upsert_v4_pools(
 /// `degenbot._ffi.db.db_set_exchange_last_update_block(database_path, chain_id,
 /// exchange_id, block) -> None`
 ///
-/// Stamp an `ExchangeTable.last_update_block`. Port of the
-/// `exchange.last_update_block = working_end_block` trajectory in
-/// `cli/pool.py::pool_update` (the discovery-writer close-out stamp).
+/// Stamp an `ExchangeTable.last_update_block` — the discovery-writer
+/// close-out marker every pool row written by the run is read against.
 #[pyfunction]
 pub(crate) fn db_set_exchange_last_update_block(
     py: Python<'_>,
@@ -285,8 +276,7 @@ pub(crate) fn db_set_exchange_last_update_block(
 /// step). If a row already exists it is returned UNCHANGED — `active` is NOT
 /// touched here (flipping active is a separate concern, see
 /// [`db_set_exchange_active`]). `exchanges` has no unique index on
-/// `(chain_id, name)` so this uses the explicit SELECT-then-INSERT dedup the
-/// Python `cli/exchange.py` trajectory uses (no Alembic migration forced). The
+/// `(chain_id, name)` so this uses an explicit SELECT-then-INSERT dedup. The
 /// `factory` / `deployer` are stored EIP-55-checksummed. Raises `ValueError`
 /// on a parse or DB failure.
 #[pyfunction]
@@ -377,11 +367,3 @@ pub(crate) fn db_upsert_pool_manager(
     })?;
     Py::new(py, PyPoolManagerRow::from(row))
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Module registration
-// ═══════════════════════════════════════════════════════════════════════════
-
-// The discovery seam members (the upsert/write pyfunctions + the pool-row
-// input builders) are exported declaratively from the `db` `#[pymodule]` in
-// the parent `mod.rs`.

@@ -1,17 +1,8 @@
-//! Cached Python module references for zero-overhead conversions.
+//! Cached Python function references for fast repeated conversions.
 //!
 //! `PyO3`'s `py.import()` has non-trivial overhead even when the module is cached
 //! in `sys.modules`. This module stores function references in `PyOnceLock`
 //! for one-time initialization and subsequent fast access.
-//!
-//! # Performance
-//!
-//! - First call: Full module import + attribute lookup
-//! - Subsequent calls: Single `PyOnceLock` lookup + `Bind::bind()` (no Python import machinery)
-//!
-//! # Thread Safety
-//!
-//! All cached items use `PyOnceLock` which is GIL-aware and thread-safe.
 //!
 //! # GIL Safety
 //!
@@ -25,8 +16,6 @@ use pyo3::types::{PyAnyMethods, PyBytes, PyDictMethods};
 use pyo3::{Bound, Py, PyAny, PyResult, Python};
 
 /// Cached Python `int.from_bytes` function.
-///
-/// Used for U256/I256 to Python int conversion without intermediate allocations.
 static INT_FROM_BYTES: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
 
 /// Get the cached `int.from_bytes` function, initializing if needed.
@@ -52,8 +41,6 @@ pub fn bytes_to_int<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound<'py, P
     let from_bytes = get_int_from_bytes(py)?;
     let py_bytes = PyBytes::new(py, bytes);
 
-    // Use tuple arguments for vectorcall: (bytes, "big")
-    // This is faster than creating a kwargs dict
     from_bytes.call1((py_bytes, "big"))
 }
 
@@ -68,7 +55,6 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
     let from_bytes = get_int_from_bytes(py)?;
     let py_bytes = PyBytes::new(py, bytes);
 
-    // `byteorder` is positional, `signed` is keyword-only
     let kwargs = pyo3::types::PyDict::new(py);
     kwargs.set_item("signed", true)?;
 
@@ -77,9 +63,7 @@ pub fn bytes_to_int_signed<'py>(py: Python<'py>, bytes: &[u8]) -> PyResult<Bound
 
 /// Convert raw bytes to a plain Python `bytes` object.
 ///
-/// The `HexBytes` wrapper type was abolished: the
-/// boundary container crosses FFI as plain `bytes`, and the `py.import`
-/// class-lookup machinery this helper used to need is gone.
+/// The boundary crosses byte data as plain `bytes` — no hex-wrapper type.
 ///
 /// # Errors
 ///
@@ -99,23 +83,19 @@ mod tests {
     #[test]
     fn test_bytes_to_int() {
         pyo3::Python::attach(|py| {
-            // Test zero
             let zero_bytes = [0u8; 32];
             let py_zero = bytes_to_int(py, &zero_bytes).unwrap();
             let val: u64 = py_zero.extract().unwrap();
             assert_eq!(val, 0);
 
-            // Test small value
             let mut small_bytes = [0u8; 32];
             small_bytes[31] = 42;
             let py_small = bytes_to_int(py, &small_bytes).unwrap();
             let val: u64 = py_small.extract().unwrap();
             assert_eq!(val, 42);
 
-            // Test max U256 (all 0xFF bytes)
             let max_bytes = [0xFFu8; 32];
             let py_max = bytes_to_int(py, &max_bytes).unwrap();
-            // Verify it's a large positive number
             let is_positive: bool = py_max
                 .call_method1("__gt__", (0,))
                 .unwrap()
@@ -128,14 +108,12 @@ mod tests {
     #[test]
     fn test_bytes_to_int_signed() {
         pyo3::Python::attach(|py| {
-            // Test positive
             let mut pos_bytes = [0u8; 32];
             pos_bytes[31] = 42;
             let py_pos = bytes_to_int_signed(py, &pos_bytes).unwrap();
             let val: i64 = py_pos.extract().unwrap();
             assert_eq!(val, 42);
 
-            // Test negative (-1 in two's complement)
             let neg_bytes = [0xFFu8; 32];
             let py_neg = bytes_to_int_signed(py, &neg_bytes).unwrap();
             let val: i64 = py_neg.extract().unwrap();
@@ -146,7 +124,6 @@ mod tests {
     #[test]
     fn test_to_py_bytes() {
         pyo3::Python::attach(|py| {
-            // Plain `bytes` objects: round-trip the bytes through the boundary.
             let empty_hb = to_py_bytes(py, &[]).unwrap();
             let empty_vec: Vec<u8> = empty_hb.extract().unwrap();
             assert!(empty_vec.is_empty());
@@ -156,7 +133,6 @@ mod tests {
             let roundtrip: Vec<u8> = hb.extract().unwrap();
             assert_eq!(roundtrip, test_bytes);
 
-            // It is a plain `bytes` instance (not a subclass, not str).
             let is_bytes: bool = hb.is_instance_of::<PyBytes>();
             assert!(is_bytes);
         });
@@ -165,13 +141,10 @@ mod tests {
     #[test]
     fn test_caching_works() {
         pyo3::Python::attach(|py| {
-            // First call initializes cache
             let _first = bytes_to_int(py, &[0u8; 32]).unwrap();
 
-            // Get the cached reference
             let cached_ref = INT_FROM_BYTES.get(py).unwrap();
 
-            // Second call should use same cached object
             let from_bytes = get_int_from_bytes(py).unwrap();
             assert!(from_bytes.is(cached_ref.bind(py)));
         });

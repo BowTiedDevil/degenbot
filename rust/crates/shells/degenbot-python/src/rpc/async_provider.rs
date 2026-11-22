@@ -48,9 +48,8 @@ impl PyAsyncAlloyProvider {
 impl PyAsyncAlloyProvider {
     /// Create a new async provider from an existing sync provider.
     ///
-    /// This constructor takes a `PyAlloyProvider` and creates an async wrapper
-    /// around it. The async provider uses Python's asyncio event loop instead
-    /// of creating its own runtime.
+    /// The async provider uses Python's asyncio event loop instead of creating
+    /// its own runtime.
     #[new]
     fn new(sync_provider: &PyAlloyProvider) -> Self {
         Self {
@@ -82,7 +81,6 @@ impl PyAsyncAlloyProvider {
         burst: Option<u32>,
         chain_id: Option<u64>,
     ) -> PyResult<Bound<'_, PyAny>> {
-        /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
 
         let rate_limit = match (requests_per_second, burst) {
@@ -167,8 +165,6 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            // Convert logs to Python list of dicts with HexBytes for appropriate fields
-            // Use Python::attach to get GIL for Python object creation
             let result = Python::attach(|py| {
                 let py_logs = PyList::empty(py);
 
@@ -482,8 +478,8 @@ impl PyAsyncAlloyProvider {
 
     /// Close the provider.
     const fn close(&self) {
-        // No-op for now - provider connection is managed internally
-        // This method exists for API compatibility
+        // No-op: the connection pool is released when the Arc drops; the
+        // method exists for the Python context-manager protocol.
         let _ = self;
     }
 

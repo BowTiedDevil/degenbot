@@ -37,11 +37,10 @@ fn ev_to_dict(py: Python<'_>, ev: &PendingTx) -> PyResult<Py<PyAny>> {
     Ok(d.into_any().unbind())
 }
 
-/// Live `MEVBlocker` searcher feed handle (RSUB-2).
+/// Live `MEVBlocker` searcher feed handle.
 ///
 /// The struct keeps the Rust-internal `Py` prefix; the Python-facing name is
-/// the ADR-032 clean form (`BackrunFeed`) — the naming gate extends no
-/// grandfather list.
+/// the ADR-032 clean form (`BackrunFeed`).
 #[pyclass(name = "BackrunFeed", module = "degenbot._ffi")]
 pub struct PyBackrunFeed {
     inner: EagerBackrunFeed,
@@ -127,11 +126,6 @@ impl PyBackrunFeed {
     }
 }
 
-/// Register the `degenbot._ffi.backrun` submodule (the feed pump).
-///
-/// # Errors
-///
-/// Propagates any `PyResult` failure from the module add calls.
 /// The `degenbot._ffi.backrun` Python submodule (declarative
 /// `#[pymodule]`), carrying the backrun pipeline feed pyclass. The parent
 /// module registers the submodule itself and its `sys.modules` entry.

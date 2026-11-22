@@ -70,8 +70,6 @@ class AsyncContract:
     @staticmethod
     def create(address: str, provider_url: str, max_retries: SupportsIndex | None = None) -> Any:
         """
-        Create a new async contract instance.
-
         Args:
             address: Contract address (hex string)
             `provider_url`: RPC provider URL (HTTP/HTTPS or IPC path)
@@ -94,8 +92,6 @@ class Contract:
     """
     def __new__(cls, /, address: str, provider_url: str | None = None) -> Contract:
         """
-        Create a new contract instance.
-
         Args:
             address: Contract address (hex string)
             `provider_url`: RPC provider URL (optional, defaults to localhost)

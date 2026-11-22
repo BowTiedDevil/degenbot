@@ -2,11 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the `degenbot._ffi.backrun` submodule (the feed pump).
-
-# Errors
-
-Propagates any `PyResult` failure from the module add calls.
 The `degenbot._ffi.backrun` Python submodule (declarative
 `#[pymodule]`), carrying the backrun pipeline feed pyclass. The parent
 module registers the submodule itself and its `sys.modules` entry.
@@ -19,11 +14,10 @@ __all__ = ["BackrunFeed"]
 @final
 class BackrunFeed:
     """
-    Live `MEVBlocker` searcher feed handle (RSUB-2).
+    Live `MEVBlocker` searcher feed handle.
 
     The struct keeps the Rust-internal `Py` prefix; the Python-facing name is
-    the ADR-032 clean form (`BackrunFeed`) — the naming gate extends no
-    grandfather list.
+    the ADR-032 clean form (`BackrunFeed`).
     """
     def __new__(
         cls,

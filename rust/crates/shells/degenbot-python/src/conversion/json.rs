@@ -1,7 +1,6 @@
-//! Python to JSON conversion utilities.
+//! Python-object → `serde_json::Value` conversion for JSON-RPC requests.
 //!
-//! Provides functions to convert Python objects to `serde_json::Value` for
-//! JSON-RPC requests. Used by both sync and async provider implementations.
+//! Used by both the sync and async provider implementations.
 //!
 //! # GIL Safety
 //!
@@ -39,32 +38,28 @@ pub fn python_list_to_json(list: &Bound<'_, PyList>) -> PyResult<serde_json::Val
 /// - Other → JSON `string` (via `str()`, with warning)
 #[expect(clippy::missing_errors_doc)]
 pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
-    // None -> null
     if obj.is_none() {
         return Ok(serde_json::Value::Null);
     }
 
-    // bool (check before int since bool is subclass of int in Python)
+    // bool before int: bool is an int subclass in Python
     if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(serde_json::Value::Bool(b.is_true()));
     }
 
-    // int - try i64 first (covers most cases efficiently)
     if let Ok(i) = obj.extract::<i64>() {
         return Ok(serde_json::Value::Number(i.into()));
     }
 
-    // Large int - only use str() for values that don't fit i64
     if let Ok(int_type) = obj.py().import("builtins")?.getattr("int") {
         if obj.is_instance(&int_type)? {
-            // Get string representation for large integers
             if let Ok(s) = obj.str() {
                 let s = s.to_string();
-                // Try to fit in i64 again (might be a large negative)
+                // JSON numbers cannot carry arbitrary precision, so an
+                // out-of-i64 integer crosses as its decimal string.
                 if let Ok(n) = s.parse::<i64>() {
                     return Ok(serde_json::Value::Number(n.into()));
                 }
-                // For larger numbers, return as string (JSON doesn't support arbitrary precision)
                 return Ok(serde_json::Value::String(s));
             }
         }
@@ -75,26 +70,23 @@ pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         if let Some(n) = serde_json::Number::from_f64(f) {
             return Ok(serde_json::Value::Number(n));
         }
-        return Ok(serde_json::Value::Null); // NaN/Inf -> null
+        // NaN/Inf have no JSON number form.
+        return Ok(serde_json::Value::Null);
     }
 
-    // string
     if let Ok(s) = obj.extract::<String>() {
         return Ok(serde_json::Value::String(s));
     }
 
-    // bytes -> hex string
     if let Ok(b) = obj.cast::<PyBytes>() {
         let hex = alloy::hex::encode_prefixed(b.as_bytes());
         return Ok(serde_json::Value::String(hex));
     }
 
-    // list
     if let Ok(list) = obj.cast::<PyList>() {
         return python_list_to_json(list);
     }
 
-    // dict
     if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (key, val) in dict.iter() {
@@ -105,7 +97,6 @@ pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         return Ok(serde_json::Value::Object(map));
     }
 
-    // Fallback: convert to string with warning
     let s = obj.str()?.to_string();
     op_warn!(domain = state, %s, "Converting unexpected Python type to string in JSON conversion");
     Ok(serde_json::Value::String(s))

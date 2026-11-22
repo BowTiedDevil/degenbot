@@ -1,16 +1,15 @@
 //! `PyO3` seam for the Aave V3 position read-back.
 //!
 //! A thin `#[pyclass]` `PyDatabasePositionQuery` (Python-visible name
-//! `RustDatabasePositionQuery`) holding a [`DegenbotDb`] read handle,
+//! `DatabasePositionQuery`) holding a [`DegenbotDb`] read handle,
 //! exposing the [`degenbot_db::aave`] read fns to Python.
 //!
 //! The core owns the joinedload graph materialization; these extract args,
 //! release the GIL via `py.detach()` for the `SQLite` I/O, call core, then
 //! wrap the flat records into Python `dict`s whose keys match the Python
 //! `UserRecord` / `CollateralPositionRecord` / `DebtPositionRecord` field
-//! names, so the Python `DatabasePositionQuery` callers (and the pure
-//! `aave/analysis/core.py`) are unchanged. No business logic (three-layer
-//! architecture, ADR-005).
+//! names, so the Python `DatabasePositionQuery` callers are unchanged.
+//! No business logic (three-layer architecture, ADR-005).
 //!
 //! The Python `src/degenbot/aave/analysis/orchestrator.py::DatabasePositionQuery`
 //! class is a delegating shell over this seam.

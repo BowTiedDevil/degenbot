@@ -31,14 +31,10 @@ use crate::subscription::{
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
 use std::sync::Arc;
 
-// =============================================================================
-// GIL-bound conversion (the binding-side half of the drain)
-// =============================================================================
-//
 // [`SubscriptionHandle::drain_raw`], [`RawDrain`], [`DrainNotice`], and
-// [`TerminalNotice`] live in the `degenbot-rpc` crate (pure Rust, no `pyo3`). The
-// GIL-bound conversion layer stays here because it constructs Python objects via
-// `conversion::rpc_types`.
+// [`TerminalNotice`] live in the `degenbot-rpc` crate (pure Rust, no `pyo3`).
+// The GIL-bound conversion layer stays here because it constructs Python
+// objects via `conversion::rpc_types`.
 
 use crate::conversion::rpc_types::{block_to_py_dict, header_to_py_dict, log_to_py_dict};
 
@@ -97,10 +93,6 @@ fn drain_buffer(
     let raw = handle.drain_raw();
     Ok((convert_all(py, raw.items)?, raw.notice))
 }
-
-// =============================================================================
-// Terminal translation: the wrapper's whole lifecycle vocabulary
-// =============================================================================
 
 /// The Python exception a terminal notice raises.
 ///

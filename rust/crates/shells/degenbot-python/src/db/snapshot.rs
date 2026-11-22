@@ -14,7 +14,7 @@
 //! architecture, ADR-005).
 //!
 //! The Python `src/degenbot/uniswap/{v3,v4}_snapshot.py::DatabaseSnapshot`
-//! classes are converted to delegating shells over this seam.
+//! classes are delegating shells over this seam.
 
 use hashbrown::HashMap;
 use std::path::Path;
@@ -57,8 +57,8 @@ impl PyDatabaseSnapshot {
 
     /// V3 `get_liquidity_map(pool_address)` → `LiquidityMap`-shaped dict or
     /// `None`. Returns `{"tick_data": {tick: {"liquidity_gross": int,
-    /// "liquidity_net": int}}}` — no `tick_bitmap` key (the DB knows no words;
-    /// the retired word-VALUE tables are gone).
+    /// "liquidity_net": int}}}` — no `tick_bitmap` key (the DB stores no
+    /// per-word bitmap).
     fn get_liquidity_map_v3<'py>(
         &self,
         py: Python<'py>,

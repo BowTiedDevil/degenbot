@@ -6,9 +6,9 @@
 //!
 //! - [`alloy`] — U256/I256 ↔ Python `int` newtypes + extractors (`PyU256`,
 //!   `PyI256`, `extract_python_u256`, `u256_to_py`, …)
-//! - [`cache`] — cached Python function/class refs via `PyOnceLock`
-//!   (`int.from_bytes`, `HexBytes`, `bytes_to_int`, `to_py_bytes`, …)
-//! - [`json`] — JSON-to-Python converters feeding RPC result wrapping
+//! - [`cache`] — cached Python function refs via `PyOnceLock`
+//!   (`int.from_bytes`, `bytes_to_int`, `to_py_bytes`, …)
+//! - [`json`] — Python-to-JSON converters building JSON-RPC requests
 //! - [`rpc_types`] — block / transaction / log RPC types → Python dicts
 
 pub mod alloy;

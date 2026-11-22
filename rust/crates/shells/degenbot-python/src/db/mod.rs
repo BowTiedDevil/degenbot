@@ -113,7 +113,7 @@ fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<Stri
 ///
 /// Returns a dict:
 ///   `{"old_state": str, "rows_copied": dict[str, int], "bak_path": str,
-///     "new_state": str, "warnings": list[str]}``
+///     "new_state": str, "warnings": list[str]}`
 /// - `old_state` / `new_state`: `schema_state_label` of the `HealReport` fields.
 /// - No-op if old is already `rust_owned` (returns `old_state == new_state ==
 ///   "rust_owned"`, empty `rows_copied`, `bak_path == database_path`).
@@ -165,8 +165,8 @@ fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
 /// Python exception.
 ///
 /// - `Db` variant → delegates to [`db_err_to_py`] (a `ValueError`).
-/// - `Chain` variant → `RuntimeError` (Decision 8 (A) loud-failure posture —
-///   RPC failures surface as a typed exception, not swallowed into a silent
+/// - `Chain` variant → `RuntimeError` (loud-failure posture: RPC failures
+///   surface as a typed exception, not swallowed into a silent
 ///   degrade-to-sparse path).
 pub(crate) fn assembly_err_to_py(
     err: &degenbot_substrate::tick_assembly::TickMapAssemblyError,
@@ -204,10 +204,10 @@ pub(crate) fn db_open_err_to_py(path: &std::path::Path, err: &degenbot_db::DbErr
 }
 
 /// The `degenbot._ffi.db` Python submodule (declarative `#[pymodule]`),
-/// registering all ~45 `db_*` pyfunctions + ~11 pyclasses. The `db_` prefix
-/// is retained on the submodule names (unlike the math submodules which
-/// dropped their prefix) because (a) the blast radius is much larger (5 Rust
-/// files, ~45 fns) and (b) `db_` functions as a functional namespace marker
+/// registering 21 `db_*` pyfunctions + 12 pyclasses. The `db_` prefix
+/// is retained on the submodule names (unlike the math submodules'
+/// unprefixed names) because (a) the blast radius is much larger (8 Rust
+/// files) and (b) `db_` functions as a functional namespace marker
 /// is clearer than bare `backup_database` on a `db` submodule.
 ///
 /// `degenbot._ffi.db` IS the stable import path: a Python consumer names the

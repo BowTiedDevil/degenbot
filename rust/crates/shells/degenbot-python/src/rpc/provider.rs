@@ -84,8 +84,6 @@ pub struct PyAlloyProvider {
 
 #[pymethods]
 impl PyAlloyProvider {
-    /// Create a new provider.
-    ///
     /// Automatically detects connection type from URL:
     /// - HTTP/HTTPS URLs use HTTP transport with connection pooling
     /// - WS/WSS URLs use WebSocket transport
@@ -124,7 +122,6 @@ impl PyAlloyProvider {
         burst: Option<u32>,
         chain_id: Option<u64>,
     ) -> PyResult<Self> {
-        /// Default burst size for rate limiting (guaranteed non-zero)
         const DEFAULT_BURST: std::num::NonZeroU32 = std::num::NonZeroU32::new(1).unwrap();
 
         let rate_limit = match (requests_per_second, burst) {
@@ -189,11 +186,7 @@ impl PyAlloyProvider {
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
     ) -> PyResult<Py<PyList>> {
-        let fetcher = LogFetcher::new(
-            // Clone the Arc to share the provider (cheap - just increments ref count)
-            Arc::clone(&self.provider),
-            self.max_blocks_per_request,
-        );
+        let fetcher = LogFetcher::new(Arc::clone(&self.provider), self.max_blocks_per_request);
 
         // Release GIL during RPC calls to allow parallel execution
         let logs = py
@@ -206,7 +199,6 @@ impl PyAlloyProvider {
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Convert logs to Python list of dicts with HexBytes for appropriate fields
         let py_logs = PyList::empty(py);
         for log in logs {
             let dict = log_to_py_dict(py, &log)?;
@@ -225,15 +217,13 @@ impl PyAlloyProvider {
         data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        // Parse the address (input validation → ValueError)
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
-        // Get the data bytes (copy before releasing GIL)
+        // Copied before the GIL is released.
         let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let result = py.detach(|| {
             get_runtime().block_on(async {
                 provider
@@ -250,7 +240,6 @@ impl PyAlloyProvider {
             Err(e) => return Err(e.into()),
         };
 
-        // Create HexBytes from result
         let result_hb = to_py_bytes(py, &result)?;
 
         Ok(result_hb.into())
@@ -264,20 +253,17 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        // Parse the address (input validation → ValueError)
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime().block_on(async { provider.get_code(&addr, block_number).await })
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Create HexBytes from result
         let result_hb = to_py_bytes(py, &result)?;
 
         Ok(result_hb.into())
@@ -287,7 +273,6 @@ impl PyAlloyProvider {
     fn get_block_number(&self, py: Python<'_>) -> PyResult<u64> {
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let block_number = py
             .detach(|| get_runtime().block_on(async { provider.get_block_number().await }))
             .map_err(Into::<PyErr>::into)?;
@@ -299,7 +284,6 @@ impl PyAlloyProvider {
     fn get_chain_id(&self, py: Python<'_>) -> PyResult<u64> {
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let chain_id = py
             .detach(|| get_runtime().block_on(async { provider.get_chain_id().await }))
             .map_err(Into::<PyErr>::into)?;
@@ -318,7 +302,6 @@ impl PyAlloyProvider {
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let block = py
             .detach(|| get_runtime().block_on(async { provider.get_block(block_number).await }))
             .map_err(Into::<PyErr>::into)?;
@@ -390,7 +373,6 @@ impl PyAlloyProvider {
     fn get_gas_price(&self, py: Python<'_>) -> PyResult<u128> {
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let gas_price = py
             .detach(|| get_runtime().block_on(async { provider.get_gas_price().await }))
             .map_err(Into::<PyErr>::into)?;
@@ -409,7 +391,6 @@ impl PyAlloyProvider {
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> PyResult<u64> {
-        // Parse addresses (input validation → ValueError)
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid 'to' address: {e}")))?;
 
@@ -418,11 +399,10 @@ impl PyAlloyProvider {
             .transpose()
             .map_err(|e| PyValueError::new_err(format!("Invalid 'from' address: {e}")))?;
 
-        // Get the data bytes (copy before releasing GIL)
+        // Copied before the GIL is released.
         let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let gas = py
             .detach(|| {
                 get_runtime().block_on(async {
@@ -451,7 +431,6 @@ impl PyAlloyProvider {
         let tx_hash = tx_hash.to_string();
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let tx = py
             .detach(|| get_runtime().block_on(async { provider.get_transaction(&tx_hash).await }))
             .map_err(Into::<PyErr>::into)?;
@@ -484,7 +463,6 @@ impl PyAlloyProvider {
         let tx_hash = tx_hash.to_string();
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let receipt = py
             .detach(|| {
                 get_runtime().block_on(async { provider.get_transaction_receipt(&tx_hash).await })
@@ -518,16 +496,14 @@ impl PyAlloyProvider {
         position: &Bound<'_, PyAny>,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        // Parse the address (input validation → ValueError)
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
-        // Extract position as U256 (supports large integers like mapping slots)
+        // Mapping slots need full-width U256 positions.
         let pos = crate::conversion::alloy::extract_python_u256(position)?;
 
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime()
@@ -535,7 +511,6 @@ impl PyAlloyProvider {
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Create HexBytes from result (32-byte storage slot)
         let result_hb = to_py_bytes(py, result.as_slice())?;
 
         Ok(result_hb.into())
@@ -549,20 +524,17 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<Py<PyAny>> {
-        // Parse the address (input validation → ValueError)
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let balance = py
             .detach(|| {
                 get_runtime().block_on(async { provider.get_balance(&addr, block_number).await })
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Convert U256 to Python int
         let py_int = crate::conversion::alloy::u256_to_py(py, &balance)?;
 
         Ok(py_int.into())
@@ -576,13 +548,11 @@ impl PyAlloyProvider {
         address: &str,
         block_number: Option<u64>,
     ) -> PyResult<u64> {
-        // Parse the address (input validation → ValueError)
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let count = py
             .detach(|| {
                 get_runtime()
@@ -609,7 +579,6 @@ impl PyAlloyProvider {
         method: &str,
         params: &Bound<'_, PyList>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // Convert Python list to JSON array using shared converter
         let params_json = crate::conversion::json::python_list_to_json(params)?;
 
         let method = method.to_string();
@@ -618,30 +587,23 @@ impl PyAlloyProvider {
         let schema = FieldSchema::for_method(&method);
         let provider = Arc::clone(&self.provider);
 
-        // Release GIL during RPC call
         let result = py
             .detach(|| {
                 get_runtime().block_on(async { provider.make_request(&method, params_json).await })
             })
             .map_err(Into::<PyErr>::into)?;
 
-        // Convert JSON result back to Python
         let py_obj = json_to_py_with_hexbytes(py, result, schema)
             .map_err(|e| PyValueError::new_err(format!("Failed to convert result: {e}")))?;
 
         Ok(py_obj)
     }
 
-    // -----------------------------------------------------------------------
-    // Subscription methods (require WS or IPC transport)
-    // -----------------------------------------------------------------------
-
     /// Close the underlying connection pool and release resources.
     #[expect(clippy::unused_self, clippy::missing_const_for_fn)]
     fn close(&self) {
-        // AlloyProvider doesn't have an explicit close method,
-        // but the connection pool is released when the Arc is dropped.
-        // This is a no-op for now to satisfy the Python context manager protocol.
+        // No-op: the connection pool is released when the Arc drops; the
+        // method exists for the Python context-manager protocol.
     }
 
     /// Subscribe to new block headers.
@@ -768,10 +730,9 @@ impl PyAlloyProvider {
         let flag = Arc::clone(&gil_acquired_by_other);
 
         py.detach(|| {
-            // GIL is released here. Spawn an OS thread that tries Python::attach().
-            // If py.detach() actually released the GIL, Python::attach() will succeed
-            // (it re-acquires the GIL). If not, Python::attach() would deadlock
-            // waiting for the GIL — but detach is documented to release it.
+            // Non-vacuity: the spawned thread's successful `Python::attach`
+            // proves `py.detach()` released the GIL — had it not, the attach
+            // would deadlock the probe.
             let handle = std::thread::spawn(move || {
                 Python::attach(|_py| {
                     flag.store(true, Ordering::SeqCst);
