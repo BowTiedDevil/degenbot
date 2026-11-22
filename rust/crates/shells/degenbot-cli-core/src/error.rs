@@ -3,7 +3,7 @@
 //!
 //! The workspace lint `exit = "deny"` forbids a library from aborting the host
 //! process: `run` returns codes. `EX_CONFIG` (78, sysexits) is the typed fleet
-//! boot refusal lifted out of `DegenbotCLI.invoke`.
+//! boot refusal.
 
 use std::fmt;
 
@@ -18,16 +18,14 @@ pub enum ExitCode {
     /// `0`: the command completed (including a `--dry-run`, which writes nothing,
     /// and a cooperative `Cancelled` run, whose committed chunks stay durable).
     Success,
-    /// `1`: a typed command failure, including a declined confirmation (the click
-    /// `Abort` arm).
+    /// `1`: a typed command failure, including a declined confirmation.
     Failure,
     /// `78` (sysexits `EX_CONFIG`): the typed fleet boot refusal — the host cannot
-    /// host the fleet configuration (FF-T1).
+    /// host the fleet configuration.
     Config,
 }
 
 impl ExitCode {
-    /// The numeric process exit code.
     #[must_use]
     pub const fn code(self) -> i32 {
         match self {
@@ -141,10 +139,9 @@ impl PoolUpdateFailure {
     /// `Connection failed` / `Request timeout` variants, which is what the
     /// updater surfaces inside `PoolRunError::Provider`.
     ///
-    /// The provider error's type is not nameable at this console layer (it
-    /// lives in `degenbot-core`, which the console does not depend on), so the
-    /// class is read off the stable `#[error]` prefixes that layer renders;
-    /// the variant boundary is still matched structurally.
+    /// The class is read off the stable `#[error]` prefixes
+    /// `degenbot-core`'s `ProviderError` renders; the variant boundary is
+    /// still matched structurally.
     fn is_rpc_connection_failure(&self, error_text: &str) -> bool {
         matches!(&self.error, PoolRunError::Provider(_))
             && (error_text.starts_with("rpc error: Connection failed: ")
@@ -215,9 +212,9 @@ impl PoolUpdateFailure {
 /// facade's job (ADR-051 Q1).
 #[derive(Debug)]
 pub enum CliError {
-    /// The typed fleet boot refusal (FF-T1). Exits `EX_CONFIG` 78.
+    /// The host cannot host the fleet configuration; exits `EX_CONFIG` 78.
     BootRefused(String),
-    /// The operator declined a confirmation prompt — the click `Abort` arm.
+    /// The operator declined a confirmation prompt.
     Aborted,
     /// The `database upgrade` subcommand is retired: the database upgrades itself
     /// at open (ADR-052), and `database heal` is the explicit repair.
@@ -243,38 +240,29 @@ pub enum CliError {
     /// The deployments registry has no record for the resolved
     /// `(chain_id, name)` pair.
     UnknownDeployment {
-        /// The resolved chain id.
         chain_id: u64,
         /// The DEX name slug (the `--name` value).
         name: String,
     },
     /// A malformed block identifier — the exact `Invalid block tag: {tag}`
-    /// refusal the Python `_resolve_to_block` raises.
+    /// refusal.
     InvalidBlockTag(String),
     /// The RPC read that resolves a `tag:offset` block identifier failed.
     BlockResolution(String),
-    /// The supplied address does not parse (the click `Abort` arm of
-    /// `aave position show`).
+    /// The supplied address does not parse (`aave position show`).
     InvalidAddress(String),
     /// A required command argument is missing or malformed (`--pool-manager`
     /// on `--family v4`, an out-of-range chain id).
     InvalidArgument(String),
-    /// `aave update` found no active Aave markets (the Python
-    /// `DegenbotValueError`).
+    /// `aave update` found no active Aave markets.
     NoActiveAaveMarkets,
     /// An `aave reset` target that no `aave_v3_markets` row matches. The reset
     /// refuses rather than registering one: a mistyped market name must not
     /// silently create a market to then wipe.
-    UnknownAaveMarket {
-        /// The resolved chain id.
-        chain_id: u64,
-        /// The requested market name.
-        market_name: String,
-    },
+    UnknownAaveMarket { chain_id: u64, market_name: String },
     /// An `aave reset` target that another process may be mid-update. The reset
     /// refuses rather than racing a concurrent writer's chunk.
     AaveMarketMidUpdate {
-        /// The market id.
         market_id: i64,
         /// The distributor lock path another process holds.
         lock_path: String,
@@ -395,7 +383,6 @@ impl From<DbError> for CliError {
     }
 }
 
-/// Map a config-resolution error onto its typed console failure.
 impl From<ConfigError> for CliError {
     fn from(err: ConfigError) -> Self {
         Self::Config(err)
@@ -406,7 +393,7 @@ impl From<ConfigError> for CliError {
 impl From<&CliError> for ExitCode {
     fn from(err: &CliError) -> Self {
         match err {
-            // FF-T1: the typed fleet boot refusal is the lone `EX_CONFIG` arm.
+            // The typed fleet boot refusal is the lone `EX_CONFIG` arm.
             CliError::BootRefused(_) => Self::Config,
             CliError::Aborted
             | CliError::DatabaseUpgradeRetired

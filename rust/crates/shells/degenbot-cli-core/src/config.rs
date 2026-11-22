@@ -28,16 +28,12 @@ use crate::prompt::{PromptPlan, Prompter};
 use crate::report::{ConfigReport, ConfigValue};
 use crate::strategy::MutationOutcome;
 
-/// The `config` command group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigCommand {
     /// `config show`: the driver-domain values. `--resolved` renders every
     /// key with the layer that supplied it; without it the report is the file
     /// layer alone — what the operator wrote.
-    Show {
-        /// Whether to render the winning layer per key.
-        resolved: bool,
-    },
+    Show { resolved: bool },
     /// `config path`: the config file the mutating arms read and write.
     Path,
     /// `config get <key>`: the resolved value of one declared key (or one
@@ -51,7 +47,6 @@ pub enum ConfigCommand {
     Set {
         /// The dotted key or `table.entry` path.
         key: String,
-        /// The raw value.
         value: String,
         /// Skip the confirmation prompt.
         force: bool,
@@ -238,7 +233,6 @@ fn resolve_target(path: &str) -> Result<ConfigTarget, CliError> {
     )))
 }
 
-/// Ask before mutating unless `--force` was given.
 fn confirm_mutation(prompter: &dyn Prompter, force: bool, message: &str) -> Result<(), CliError> {
     if force || prompter.confirm(message, false) {
         Ok(())
@@ -358,7 +352,6 @@ fn nodes(
     }
 }
 
-/// The loaded entries of one transport's endpoint table.
 fn table(loaded: &LoadedConfig, transport: NodeTransport) -> &BTreeMap<String, String> {
     static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
     match transport {

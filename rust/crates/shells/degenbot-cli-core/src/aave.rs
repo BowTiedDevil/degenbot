@@ -1,6 +1,4 @@
-//! The `aave` command arms (ADR-051 D1;).
-//!
-//! Ports `cli/aave.py`:
+//! The `aave` command arms (ADR-051 D1).
 //!
 //! - `aave activate` — [`activate_aave_market`] (the one-time market seed).
 //! - `aave deactivate` — the `(chain, name)` market read + the
@@ -8,7 +6,7 @@
 //! - `aave update` — the active-market walk over
 //!   [`run_aave_update`], with the post-run zero-balance cleanup and the
 //!   opt-in completion backup.
-//! - `aave position show` — the market/user scalar row reads ported onto the
+//! - `aave position show` — the market/user scalar row reads over the
 //!   `degenbot-db::aave` read surface.
 //! - `aave reset` — the market-scoped purge and the cold-boot substrate
 //!   re-seed committed in ONE transaction through the market-reset module,
@@ -46,31 +44,23 @@ use degenbot_db::AaveMarketPurgeCount;
 /// (mirrors `crate::pool`'s budget).
 const RPC_MAX_RETRIES: u32 = 5;
 
-/// An Aave V3 deployment (the Python `aave/deployments.py` constants).
+/// An Aave V3 deployment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AaveDeployment {
-    /// The chain id.
     pub chain_id: u64,
-    /// The human chain label.
     pub chain_label: &'static str,
     /// The on-chain `getMarketId()` return — the name the auto-registration
     /// seam keys the bare inactive row on (and `aave activate` resolves via
     /// RPC; the two must match for the completion path to reuse the row).
     pub market_name: &'static str,
-    /// The `PoolAddressProvider` contract.
     pub pool_address_provider: Address,
-    /// The chain's GHO token.
     pub gho_token_address: Address,
 }
 
-/// The shipped Aave V3 deployments (Ethereum mainnet only, mirroring Python).
+/// The shipped Aave V3 deployments (Ethereum mainnet only).
 pub const AAVE_DEPLOYMENTS: &[AaveDeployment] = &[AaveDeployment {
     chain_id: 1,
     chain_label: "Ethereum",
-    // The on-chain `getMarketId()` return — the static name the auto-
-    // registration seam keys the bare inactive row on (the RPC-fetched name
-    // `aave activate` resolves must match for the completion path to reuse
-    // the row instead of creating a second one).
     market_name: "Aave Ethereum Market",
     pool_address_provider: address!("2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"),
     gho_token_address: address!("40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f"),
@@ -79,23 +69,15 @@ pub const AAVE_DEPLOYMENTS: &[AaveDeployment] = &[AaveDeployment {
 /// The `aave` command group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AaveCommand {
-    /// Activate (or re-activate) the chain's Aave V3 market.
     Activate {
-        /// The chain id.
         chain_id: u64,
     },
-    /// Deactivate a market by chain + name.
     Deactivate {
-        /// The chain id.
         chain_id: u64,
         /// The `aave_v3_markets.name` to flip.
         market_name: String,
     },
-    /// Emit one market's completed-market record: per-table row counts +
-    /// digests over the market tables, rendered as the manifest JSON a
-    /// drive pins.
     Digest {
-        /// The chain id.
         chain_id: u64,
         /// The `aave_v3_markets.name` to digest; `None` resolves the
         /// chain's only registered market.
@@ -105,7 +87,6 @@ pub enum AaveCommand {
         /// drive's own bookkeeping, not DB state).
         drive_manifest: Option<std::path::PathBuf>,
     },
-    /// Update positions for every active market.
     Update {
         /// Max blocks per chunk before committing.
         chunk_size: u64,
@@ -127,10 +108,7 @@ pub enum AaveCommand {
         /// Back up the DB once per market at the end of the run.
         enable_backup: bool,
     },
-    /// Purge one market's populated state, then take the cold-boot path a
-    /// fresh empty database takes for it.
     Reset {
-        /// The chain id.
         chain_id: u64,
         /// The `aave_v3_markets.name` to reset; `None` resolves the chain's
         /// only registered market.
@@ -138,19 +116,15 @@ pub enum AaveCommand {
         /// Preview the purge's per-relation counts and re-init without writing.
         dry_run: bool,
     },
-    /// Display a user's collateral + debt positions.
     PositionShow {
-        /// The user address.
         address: String,
-        /// The market name.
         market: String,
-        /// The chain id.
         chain_id: u64,
     },
 }
 
 impl AaveCommand {
-    /// The arm's confirmation policy: no Python aave handler prompts.
+    /// No aave arm prompts.
     #[must_use]
     pub const fn prompt_plan(&self, _ctx: &CliContext<'_>) -> PromptPlan {
         PromptPlan::None
@@ -358,7 +332,6 @@ fn carried_drive(path: &std::path::Path) -> Result<CompletedMarketDrive, CliErro
     })
 }
 
-/// The `aave update` flag bundle.
 #[expect(clippy::struct_excessive_bools)]
 struct UpdateArgs<'a> {
     chunk_size: u64,
@@ -451,9 +424,8 @@ fn update(
                 continue;
             }
             // The thin live-provider wrapper (ADR-068 D5): one build per
-            // market run on the shared runtime — the same transport count the
-            // core's old internal `AlloyProvider::new` site produced — and
-            // the core only injects it. A build failure surfaces as the same
+            // market run on the shared runtime, and the core only injects
+            // it. A build failure surfaces as the same
             // `CliError::AaveUpdate` the run's own failures use.
             let run = match crate::pool::shared_runtime_block_on(async {
                 AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
@@ -583,8 +555,9 @@ impl Drop for ResetLock {
 
 /// `aave reset`.
 ///
-/// Resolves the market the way `deactivate` does, reads and prints the purge's
-/// per-relation counts as the plan, then — under the reset lock — purges the
+/// Resolves the market by name, defaulting to the shipped deployment's market
+/// when none is given; reads and prints the purge's per-relation counts as the
+/// plan, then — under the reset lock — purges the
 /// market and re-seeds its cold-boot substrate in ONE transaction through
 /// [`reset_market_to_cold_boot`]: the purge and the activate seam's completion
 /// commit together, so nothing can land between them. The report renders the
@@ -724,7 +697,7 @@ fn cleanup_zero_balance_positions(
     Ok(())
 }
 
-/// The `<stem>-<to_block>.db.bak` sibling the Python completion backup writes.
+/// The `<stem>-<to_block>.db.bak` sibling the completion backup writes.
 fn backup_for_block(
     database_path: &std::path::Path,
     to_block: u64,

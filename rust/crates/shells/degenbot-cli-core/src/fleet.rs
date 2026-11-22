@@ -1,10 +1,10 @@
-//! The `fleet` command arms (ADR-051 D6;).
+//! The `fleet` command arms (ADR-051 D6).
 //!
-//! Ports `cli/fleet.py`: both verbs are thin clients of a LIVE bot's
+//! Both verbs are thin clients of a LIVE bot's
 //! `OperatorServer` over the JSON-lines wire protocol in
 //! [`crate::operator`]. The socket is resolved through the same cascade the
 //! rest of the console uses (`--socket` > `DEGENBOT_OPERATOR_SOCKET` > the
-//! `~/.config/degenbot/operator.sock` plugin default); no local config or
+//! `~/.config/degenbot/operator.sock` console default); no local config or
 //! database work happens here.
 //!
 //! - `fleet posture show` sends `get_fleet_posture` and renders the echoed

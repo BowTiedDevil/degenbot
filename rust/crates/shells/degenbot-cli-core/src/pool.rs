@@ -1,6 +1,4 @@
-//! The `pool` command arms (ADR-051 D1;).
-//!
-//! Ports `cli/pool.py` arm for arm:
+//! The `pool` command arms (ADR-051 D1).
 //!
 //! - `pool update` — the chunk-loop hand-off to
 //!   [`run_pool_update`](degenbot_pool_updater::run_pool_update), with the
@@ -8,7 +6,7 @@
 //!   1:1. The per-chunk on-chain-truth gate is not a flag: every chunk is
 //!   verified before its persist commits. Progress stays a no-op sink here
 //!   (ADR-051 D9: the bin paints it); a cooperative cancel returns a friendly
-//!   cancelled report (exit 0), matching the Python `RuntimeError` guard.
+//!   cancelled report (exit 0).
 //! - `pool verify` — the read-only, ad-hoc sibling: fetch the COMMITTED
 //!   liquidity map, compare against on-chain truth at `--block`, and render
 //!   GREEN / the named divergence list.
@@ -74,15 +72,12 @@ pub enum PoolCommand {
     },
     /// Verify a committed pool's liquidity map against on-chain truth.
     Verify {
-        /// The HTTP RPC endpoint.
         rpc_url: String,
-        /// The chain the pool lives on.
         chain_id: i64,
         /// The block number to read on-chain truth at.
         block_number: u64,
         /// V3 pool address, or V4 `PoolId` (bytes32 hex).
         pool: String,
-        /// The pool family.
         family: PoolFamily,
         /// (V4 only) the `PoolManager` singleton.
         pool_manager: Option<String>,
@@ -90,7 +85,6 @@ pub enum PoolCommand {
 }
 
 impl PoolCommand {
-    /// The arm's confirmation policy: neither pool arm prompts.
     #[must_use]
     pub const fn prompt_plan(&self, _ctx: &CliContext<'_>) -> PromptPlan {
         PromptPlan::None
@@ -178,8 +172,7 @@ fn update(
     let cursors = read_exchange_cursors(database_path.as_path(), chain).unwrap_or_default();
     let from_block = initial_run_start_block(&cursors, resolved);
     // The thin live-provider wrapper (ADR-068 D5): the CLI owns the transport
-    // construction — ONE build per run on the shared runtime, exactly where
-    // the core's old internal `AlloyProvider::new` site sat — and the core
+    // construction — ONE build per run on the shared runtime — and the core
     // only injects it. A build failure flows through the SAME
     // [`PoolUpdateFailure`] report as a mid-run failure (endpoint + chain +
     // the committed resume cursors), since it IS the run's transport dying.
@@ -348,9 +341,7 @@ pub(crate) fn shared_runtime_block_on<F: Future>(fut: F) -> Result<F::Output, Cl
 /// The process-lifetime count of `pool verify` transport builds (the
 /// `for_chain` site above). The lifecycle contract to pin: ONE build per
 /// verify run — zero when the arm fails before the node is needed, and
-/// never one per target family. The companion counter lives at the chunk
-/// loop's own build site (`degenbot-pool-updater`'s
-/// `run_provider_build_count`).
+/// never one per target family.
 static VERIFY_PROVIDER_BUILDS: AtomicU64 = AtomicU64::new(0);
 
 fn note_verify_provider_build() {

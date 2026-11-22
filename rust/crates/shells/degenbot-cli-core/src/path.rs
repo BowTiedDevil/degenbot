@@ -1,10 +1,10 @@
-//! The `path` command arms (ADR-051 D6;).
+//! The `path` command arms (ADR-051 D6).
 //!
-//! Ports `cli/path.py`: both verbs are thin clients of a LIVE bot's
+//! Both verbs are thin clients of a LIVE bot's
 //! `OperatorServer` over the JSON-lines wire protocol in
 //! [`crate::operator`]. The socket is resolved through the same cascade the
 //! rest of the console uses (`--socket` > `DEGENBOT_OPERATOR_SOCKET` > the
-//! `~/.config/degenbot/operator.sock` plugin default); no local pool or
+//! `~/.config/degenbot/operator.sock` console default); no local pool or
 //! database work happens here.
 //!
 //! - `path add` parses each `FAMILY:ADDRESS[:HASH]` hop

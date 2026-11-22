@@ -1,22 +1,19 @@
 //! The `exchange` command arms (ADR-051 D5) — data, not 34 verbs.
 //!
-//! The Python-era click tree declared one verb per `(chain, DEX)` pair
-//! (`base_aerodrome_v2`, `ethereum_uniswap_v3`, … — 17 pairs, each with an
-//! activate + deactivate handler). Those verbs are now ONE constructor-parsed
-//! command, `exchange activate|deactivate --chain <slug|id> --name <dex>`,
-//! resolving `(chain, name)` through the [`RetiredExchange`] table and the
-//! CREATE2 identity (factory/deployer) through
-//! [`degenbot_uniswap::deployments`] — the byte-compared single source.
+//! ONE constructor-parsed command, `exchange activate|deactivate --chain
+//! <slug|id> --name <dex>`, resolving `(chain, name)` through the
+//! [`RetiredExchange`] table and the CREATE2 identity (factory/deployer)
+//! through [`degenbot_uniswap::deployments`] — the byte-compared single source.
 //!
 //! The write path is `degenbot-db`'s discovery primitives:
 //! [`upsert_exchange`](degenbot_db::DegenbotDb::upsert_exchange) (get-or-create,
 //! `active = false`), [`set_exchange_active`](degenbot_db::DegenbotDb::set_exchange_active),
 //! and — for the Uniswap V4 singleton — [`upsert_pool_manager`](degenbot_db::DegenbotDb::upsert_pool_manager).
 //!
-//! The V4 `pool_manager`/`state_view` are the SAME literals the Python module
-//! carries (`deployments.py` documents them as "singleton addresses with no
-//! factory path in the registry yet"); they are the only table entries that do
-//! not resolve to a registry record.
+//! The V4 `pool_manager`/`state_view` are singleton addresses, not CREATE2
+//! factories: neither has a `(chain, factory)` row in the registry, so both
+//! stay literals here — the only table entries that do not resolve to a
+//! registry record.
 
 use alloy::primitives::{address, Address};
 use degenbot_db::DegenbotDb;
@@ -78,20 +75,16 @@ impl ExchangeCommand {
 pub struct PoolManagerDeployment {
     /// The `PoolManager` address (the DB `exchanges.factory`).
     pub address: Address,
-    /// The companion `StateView` contract.
     pub state_view: Address,
 }
 
 /// A resolved exchange deployment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExchangeDeployment {
-    /// The resolved chain id.
     pub chain_id: u64,
-    /// The human chain label (`Base`, `Ethereum`).
     pub chain_label: &'static str,
     /// The DEX name slug stored in the DB `exchanges.name`.
     pub dex_slug: &'static str,
-    /// The human DEX label used in the report lines.
     pub display_name: &'static str,
     /// The DB `exchanges.factory` value.
     pub factory: Address,
@@ -118,26 +111,19 @@ pub enum DeploymentSource {
     },
 }
 
-/// One retired Python verb pair's `(chain, DEX)` identity.
+/// One retired console verb's `(chain, DEX)` identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetiredExchange {
-    /// The Python verb's chain prefix (`base`, `ethereum`).
     pub chain_slug: &'static str,
-    /// The resolved chain id.
     pub chain_id: u64,
-    /// The human chain label.
     pub chain_label: &'static str,
-    /// The DEX name slug.
     pub dex_slug: &'static str,
-    /// The human DEX label.
     pub display_name: &'static str,
-    /// The identity source.
     pub source: DeploymentSource,
 }
 
-/// Every retired `exchange activate|deactivate` verb, collapsed to its
-/// `(chain, dex)` identity. This is the data-driven replacement for the 34
-/// click handlers; the coverage test asserts each entry resolves.
+/// Every retired `(chain, dex)` exchange identity; the coverage test asserts
+/// each entry resolves.
 pub const RETIRED_EXCHANGES: &[RetiredExchange] = &[
     // ── Base mainnet ─────────────────────────────────────────────────────
     RetiredExchange {
@@ -387,7 +373,6 @@ pub(crate) fn execute(
     }
 }
 
-/// Resolve an activate/deactivate arm's `(chain, name)` pair to its deployment.
 fn deployment_for(chain: &str, name: &str) -> Result<ExchangeDeployment, CliError> {
     let chain_id = crate::block::resolve_chain_selector(chain)?;
     resolve_deployment(chain_id, name)
@@ -478,7 +463,6 @@ fn activate(
     })
 }
 
-/// Deactivate (resolve by name, flip active false).
 fn deactivate(
     deployment: &ExchangeDeployment,
     path: &std::path::Path,

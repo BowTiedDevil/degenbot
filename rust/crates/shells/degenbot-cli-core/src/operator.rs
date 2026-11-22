@@ -1,5 +1,5 @@
 //! The operator command-channel client: JSON-lines over a Unix domain socket
-//! (ADR-051 D6;).
+//! (ADR-051 D6).
 //!
 //! `degenbot fleet posture [show|set]` and `degenbot path [add|discover]` are
 //! clients of a LIVE bot's `OperatorServer`. The versioned wire protocol is
@@ -41,7 +41,7 @@
 //!
 //! `--socket` > `DEGENBOT_OPERATOR_SOCKET` (the shell-environment layer, read
 //! through the `degenbot-config` `EnvVars` seam) > `~/.config/degenbot/operator.sock`
-//! (the example driver's plug-in default). No typed config-file key exists for
+//! (the console's default). No typed config-file key exists for
 //! the operator socket, so the env layer is the only config surface; a future
 //! typed key would slot in above the env layer at exactly one site.
 
@@ -64,8 +64,8 @@ use crate::error::{CliError, UnknownVariant};
 /// layer of the cascade). Empty is treated exactly like unset.
 pub const SOCKET_ENV: &str = "DEGENBOT_OPERATOR_SOCKET";
 
-/// The plug-in default socket path (the settlement-bot example's
-/// `--operator-socket` default family). The leading `~` expands against `HOME`.
+/// The console's default socket path, the cascade's last layer. The leading
+/// `~` expands against `HOME`.
 pub const SOCKET_DEFAULT: &str = "~/.config/degenbot/operator.sock";
 
 /// The `HOME` layer used to expand a leading `~` in the default.
@@ -144,7 +144,6 @@ pub fn path_family_from_wire(raw: &str) -> Result<PathFamily, UnknownVariant> {
 /// One hop in an `add_path` `steps` array.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathStep {
-    /// The hop's pool family.
     pub family: PathFamily,
     /// The pool address (`0x` + 40 hex).
     pub address: String,
@@ -176,7 +175,6 @@ impl PathDirection {
         }
     }
 
-    /// The per-hop wire bit.
     #[must_use]
     pub const fn is_zfo(self) -> bool {
         matches!(self, Self::Zfo)
@@ -204,9 +202,9 @@ impl TryFrom<&str> for PathDirection {
     }
 }
 
-/// Parse one `FAMILY:ADDRESS[:HASH]` hop token into a wire [`PathStep`]
-/// (mirrors `_parse_hop`). Family is case-insensitive; the V4 hash is carried
-/// only for V4 and only when non-empty.
+/// Parse one `FAMILY:ADDRESS[:HASH]` hop token into a wire [`PathStep`].
+/// Family is case-insensitive; the V4 hash is carried only for V4 and only
+/// when non-empty.
 ///
 /// # Errors
 ///
@@ -275,12 +273,10 @@ impl PosturePatchValue {
 pub struct PosturePatchEntry {
     /// One of [`FLEET_POSTURE_THRESHOLD_KEYS`].
     pub key: String,
-    /// The threshold value.
     pub value: PosturePatchValue,
 }
 
 impl PosturePatchEntry {
-    /// Build an entry from a key + typed value.
     #[must_use]
     pub fn new(key: impl Into<String>, value: PosturePatchValue) -> Self {
         Self {
@@ -289,13 +285,11 @@ impl PosturePatchEntry {
         }
     }
 
-    /// Build an integer entry.
     #[must_use]
     pub fn int(key: impl Into<String>, value: u64) -> Self {
         Self::new(key, PosturePatchValue::Int(value))
     }
 
-    /// Build a float entry.
     #[must_use]
     pub fn float(key: impl Into<String>, value: f64) -> Self {
         Self::new(key, PosturePatchValue::Float(value))
@@ -357,29 +351,24 @@ pub fn validate_posture_patch(patch: &[PosturePatchEntry]) -> Result<(), CliErro
 /// The four ops the live host serves, encoded as one request line.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WireRequest {
-    /// `add_path`: enqueue one specific path.
     AddPath {
         /// The hop steps, in path order.
         steps: Vec<PathStep>,
         /// Per-hop direction bits, or `None` to let the host auto-resolve.
         directions: Option<Vec<bool>>,
     },
-    /// `discover`: one bounded on-demand discovery sweep.
     Discover {
         /// Maximum paths to process, or `None` for the host's default.
         bound: Option<u64>,
     },
-    /// `set_fleet_posture`: a partial patch over the six `cordon_*` keys.
     SetFleetPosture {
         /// The patch entries (must already pass [`validate_posture_patch`]).
         patch: Vec<PosturePatchEntry>,
     },
-    /// `get_fleet_posture`: read the live thresholds + posture.
     GetFleetPosture,
 }
 
 impl WireRequest {
-    /// The wire op name.
     #[must_use]
     pub const fn op_name(&self) -> &'static str {
         match self {
@@ -390,7 +379,6 @@ impl WireRequest {
         }
     }
 
-    /// The request payload object.
     #[must_use]
     pub fn payload(&self) -> Value {
         match self {
@@ -456,7 +444,6 @@ pub enum WireResponse {
 }
 
 impl WireResponse {
-    /// Whether the host accepted the command.
     #[must_use]
     pub const fn is_ok(&self) -> bool {
         matches!(self, Self::Ok { .. })
@@ -539,11 +526,10 @@ pub fn decode_response(line: &str) -> Result<WireResponse, CliError> {
 }
 
 /// Render an `effective` object as one compact JSON object with its top-level
-/// keys sorted - the Python CLI's `json.dumps(effective, sort_keys=True)`.
-/// `None` renders `{}` (the Python `response.get("effective", {})` default).
+/// keys sorted. `None` renders `{}`.
 ///
 /// The effective policy is a flat object by protocol, so sorting the top level
-/// is equivalent to Python's recursive `sort_keys`.
+/// is equivalent to sorting recursively.
 #[must_use]
 pub fn render_json_sorted(value: Option<&Value>) -> String {
     match value {
@@ -658,8 +644,7 @@ async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError>
 ///
 /// Every phase spends the *remaining* budget, never a fresh copy of it, so a
 /// peer that stalls any single phase cannot stretch the whole exchange past
-/// `request_timeout` (the old three-phase shape let a stalling peer spend the
-/// bound three times over).
+/// `request_timeout`.
 ///
 /// The read side is additionally **resumable**. `read_until` appends into the
 /// CALLER-OWNED `buffer`, and a `timeout` that fires drops only the in-flight
@@ -675,8 +660,7 @@ async fn exchange(socket: &Path, line: String) -> Result<WireResponse, CliError>
 /// future drops only the in-flight read — never the bytes it already pushed
 /// into that buffer. So cancellation mid-read leaves the accumulated prefix
 /// intact and a resumed loop re-arms against the same buffer under the same
-/// deadline (this is exactly the resumability the phased-body doc documents).
-/// The `connect`/`write_all`/`flush` arms are single `await`s that lose
+/// deadline. The `connect`/`write_all`/`flush` arms are single `await`s that lose
 /// nothing on drop; each surfaces a terminal `CliError::OperatorProtocol` on
 /// timeout or I/O failure rather than a partial success.
 ///

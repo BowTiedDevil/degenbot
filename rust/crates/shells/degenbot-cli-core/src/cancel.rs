@@ -10,25 +10,21 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// A shareable cooperative cancel flag.
 #[derive(Debug, Clone, Default)]
 pub struct CancelHandle {
     flag: Arc<AtomicBool>,
 }
 
 impl CancelHandle {
-    /// A fresh, un-cancelled handle.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the cancel flag (the SIGINT handler's job).
     pub fn cancel(&self) {
         self.flag.store(true, Ordering::Release);
     }
 
-    /// Whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.flag.load(Ordering::Acquire)

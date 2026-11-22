@@ -5,8 +5,9 @@
 //! `database upgrade` is retired — the database upgrades itself at open
 //! (ADR-052); `database heal` is the explicit repair.
 //!
-//! These arms never call heal on another command's behalf; schema self-healing
-//! lives inside `ensure_schema`.
+//! These arms never call heal on another command's behalf; the open path
+//! (`ensure_schema_at_open`) owns the heal decision and the forward
+//! version-lock that upgrades a Rust-owned DB at open.
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +48,7 @@ pub(crate) fn execute(
 }
 
 /// `backup`: write the `.db.bak` sibling, confirming replacement when the target
-/// already exists (the click handler's `BackupExists` policy).
+/// already exists (the `backup-target-exists` condition).
 fn backup(
     path: &Path,
     plan: PromptPlan,

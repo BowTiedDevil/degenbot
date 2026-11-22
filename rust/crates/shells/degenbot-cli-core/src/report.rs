@@ -13,24 +13,15 @@ use crate::error::{CliError, ExitCode};
 use crate::pool::PoolFamily;
 use crate::strategy::StrategyFacetDescriptor;
 
-/// The typed result of one command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandReport {
-    /// A `database` command report.
     Database(DatabaseReport),
-    /// An `exchange` command report.
     Exchange(ExchangeReport),
-    /// A `pool` command report.
     Pool(PoolReport),
-    /// An `aave` command report.
     Aave(AaveReport),
-    /// A `fleet` command report.
     Fleet(FleetReport),
-    /// A `path` command report.
     Path(PathReport),
-    /// A `strategy` command report (ADR-055 facets).
     Strategy(StrategyReport),
-    /// A `config` command report.
     Config(ConfigReport),
 }
 
@@ -68,7 +59,6 @@ pub struct ConfigValue {
 }
 
 impl ConfigValue {
-    /// A value with its winning layer.
     #[must_use]
     pub fn new(key: &str, value: String, source: degenbot_config::Source) -> Self {
         Self {
@@ -117,23 +107,16 @@ impl ConfigValue {
     }
 }
 
-/// The typed result of a `config` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigReport {
-    /// `config show`: the driver-domain values, annotated with their winning
-    /// layer when `resolved` was asked for.
     Shown {
         /// The config file in play, absent when no location resolves.
         file: Option<PathBuf>,
         /// The values, in the operator's key order.
         values: Vec<ConfigValue>,
-        /// Whether each line carries its winning layer (`--resolved`).
         resolved: bool,
     },
-    /// `config path`: the config file the mutating arms read and write.
     Path(PathBuf),
-    /// `config get <key>`: one resolved value and its winning layer (or the
-    /// absent layer for an unresolved key).
     Got {
         /// The key as the operator spelled it.
         key: String,
@@ -142,20 +125,16 @@ pub enum ConfigReport {
         /// The layer that supplied it, or `None` when none did.
         source: Option<degenbot_config::Source>,
     },
-    /// `config set <key> <value>`: the override was written.
     Set {
         /// The key as the operator spelled it.
         key: String,
         /// The value written, verbatim (redacted at render time).
         value: String,
-        /// Whether the write applies or an env var shadows it.
         outcome: crate::strategy::MutationOutcome,
     },
-    /// `config unset <key>`: the override was dropped.
     Unset {
         /// The key as the operator spelled it.
         key: String,
-        /// Whether an env var still supplies the key at load time.
         outcome: crate::strategy::MutationOutcome,
     },
 }
@@ -209,7 +188,6 @@ impl ConfigReport {
     }
 }
 
-/// The typed result of the execution entry.
 #[derive(Debug)]
 pub struct CommandOutcome {
     result: Result<CommandReport, CliError>,
@@ -218,19 +196,16 @@ pub struct CommandOutcome {
 }
 
 impl CommandOutcome {
-    /// Bundle a result with its derived exit code.
     #[must_use]
     pub(crate) const fn new(result: Result<CommandReport, CliError>, exit_code: ExitCode) -> Self {
         Self { result, exit_code }
     }
 
-    /// The typed report, when the command completed.
     #[must_use]
     pub fn report(&self) -> Option<&CommandReport> {
         self.result.as_ref().ok()
     }
 
-    /// The typed failure, when the command did not complete.
     #[must_use]
     pub fn error(&self) -> Option<&CliError> {
         self.result.as_ref().err()
@@ -240,13 +215,10 @@ impl CommandOutcome {
 /// Which dry-run arm produced a [`DatabaseReport::DryRun`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DryRunKind {
-    /// `database cutover --dry-run`.
     Cutover,
-    /// `database heal --dry-run`.
     Heal,
 }
 
-/// The outcome of a successful `database cutover` (pre-state derived).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CutoverOutcome {
     /// The DB was Alembic-stamped and is now Rust-owned.
@@ -255,62 +227,42 @@ pub enum CutoverOutcome {
     AlreadyRustOwned,
 }
 
-/// The typed result of a `database` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseReport {
-    /// `backup` completed.
     BackedUp {
-        /// The source database path.
         source: PathBuf,
-        /// The written backup path.
         backup: PathBuf,
     },
-    /// `reset` recreated the database.
     Reset {
-        /// The database path.
         path: PathBuf,
     },
-    /// `compact` vacuumed the database.
     Compacted {
-        /// The database path.
         path: PathBuf,
     },
-    /// `inspect` read the schema state (writes nothing).
     Inspected {
-        /// The database path.
         path: PathBuf,
-        /// The observed schema state.
         state: SchemaState,
     },
-    /// `cutover` flipped schema ownership.
     Cutover {
-        /// The database path.
         path: PathBuf,
         /// The observed pre-cutover schema state.
         state: SchemaState,
-        /// Whether the cutover converted or no-op'd.
         outcome: CutoverOutcome,
     },
-    /// `heal` rebuilt the database out-of-place.
     Healed {
-        /// The database path.
         path: PathBuf,
-        /// The heal report (rows copied, `.bak` path, warnings).
         report: HealReport,
     },
     /// A `--dry-run` observed the schema state and wrote nothing.
     DryRun {
-        /// The database path.
         path: PathBuf,
-        /// The observed schema state.
         state: SchemaState,
-        /// Which dry-run arm ran.
         kind: DryRunKind,
     },
 }
 
 impl DatabaseReport {
-    /// The operator-facing lines for this report (the ported click `echo` text).
+    /// The operator-facing lines for this report.
     #[must_use]
     pub fn render_lines(&self) -> Vec<String> {
         match self {
@@ -358,7 +310,6 @@ pub enum ActivateOutcome {
     AlreadyActive,
 }
 
-/// Whither an `exchange deactivate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeactivateOutcome {
     /// The row was newly deactivated.
@@ -395,50 +346,31 @@ impl ExchangeActiveState {
 /// One `exchange list` row: a supported `(chain, DEX)` pair and its DB state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExchangeListRow {
-    /// The chain id.
     pub chain_id: u64,
-    /// The human chain label.
     pub chain_label: &'static str,
-    /// The human DEX label.
     pub display_name: &'static str,
-    /// The DEX name slug.
     pub dex_slug: &'static str,
     /// The exchange factory (V4: the `PoolManager`), checksummed.
     pub factory: String,
-    /// The DB active state.
     pub state: ExchangeActiveState,
 }
 
-/// The typed result of an `exchange` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExchangeReport {
-    /// `exchange activate`.
     Activated {
-        /// The resolved chain id.
         chain_id: u64,
-        /// The human chain label.
         chain_label: &'static str,
-        /// The human DEX label.
         display_name: &'static str,
-        /// The DEX name slug.
         dex_slug: &'static str,
-        /// Whether the row flipped or was already active.
         outcome: ActivateOutcome,
     },
-    /// `exchange deactivate`.
     Deactivated {
-        /// The resolved chain id.
         chain_id: u64,
-        /// The human chain label.
         chain_label: &'static str,
-        /// The human DEX label.
         display_name: &'static str,
-        /// The DEX name slug.
         dex_slug: &'static str,
-        /// The deactivation outcome.
         outcome: DeactivateOutcome,
     },
-    /// `exchange list`.
     Listed {
         /// One row per supported `(chain, DEX)` pair, in declaration order.
         rows: Vec<ExchangeListRow>,
@@ -498,34 +430,20 @@ impl ExchangeReport {
     }
 }
 
-/// The typed result of a `pool` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoolReport {
-    /// `pool update` advanced the chain.
     Updated {
-        /// The chain advanced.
         chain_id: i64,
-        /// The first block processed.
         from_block: u64,
-        /// The last block advanced to.
         to_block: u64,
-        /// Chunks committed.
         chunks_committed: usize,
-        /// Pool rows written.
         total_pools_written: usize,
-        /// Per-pool liquidity applies.
         total_liquidity_applies: usize,
     },
     /// `pool update` was cooperatively cancelled; committed chunks stay durable.
-    UpdateCancelled {
-        /// The chain.
-        chain_id: i64,
-    },
-    /// `pool verify` compared the committed map against on-chain truth.
+    UpdateCancelled { chain_id: i64 },
     Verified {
-        /// The pool identifier.
         pool: String,
-        /// The family.
         family: PoolFamily,
         /// The block the truth was read at.
         block_number: u64,
@@ -564,12 +482,10 @@ impl PoolReport {
     }
 }
 
-/// The typed result of a `fleet` command (ADR-051 D6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FleetReport {
     /// The live posture echo: the six `cordon_*` values plus `posture`,
-    /// rendered as one compact JSON object with sorted keys (the Python
-    /// `json.dumps(effective, sort_keys=True)` line).
+    /// rendered as one compact JSON object with sorted keys.
     Posture {
         /// The rendered effective policy (`{}` when the host echoed none).
         effective: String,
@@ -586,19 +502,10 @@ impl FleetReport {
     }
 }
 
-/// The typed result of a `path` command (ADR-051 D6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathReport {
-    /// `path add` enqueued the path.
-    Added {
-        /// The host's `detail` receipt.
-        detail: String,
-    },
-    /// `path discover` completed a bounded sweep.
-    Discovered {
-        /// The host's `detail` receipt.
-        detail: String,
-    },
+    Added { detail: String },
+    Discovered { detail: String },
 }
 
 impl PathReport {
@@ -611,53 +518,36 @@ impl PathReport {
     }
 }
 
-/// The typed result of a `strategy` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrategyReport {
-    /// `strategy list`: every declared facet.
     Listed {
         /// One descriptor per facet, in declaration order.
         rows: Vec<StrategyFacetDescriptor>,
     },
-    /// `strategy show`: one facet's descriptor plus its activation posture.
     Shown {
-        /// The facet descriptor.
         descriptor: StrategyFacetDescriptor,
         /// The facet's activation + endpoint posture (`None` when no config
         /// file could be read).
         activation: Option<crate::strategy::EndpointSummary>,
     },
-    /// `strategy activate`: the facet was activated with the settled posture.
     Activated {
-        /// The activated facet.
         facet: crate::strategy::StrategyFacet,
-        /// The settled endpoint posture.
         summary: crate::strategy::EndpointSummary,
-        /// Whether the write applies or an env var shadows it.
         outcome: crate::strategy::MutationOutcome,
     },
-    /// `strategy deactivate`: the facet was deactivated.
     Deactivated {
-        /// The deactivated facet.
         facet: crate::strategy::StrategyFacet,
-        /// Whether the write applies or an env var shadows it.
         outcome: crate::strategy::MutationOutcome,
     },
-    /// `strategy set`: a facet key's override was written.
     Set {
-        /// The mutated facet.
         facet: crate::strategy::StrategyFacet,
-        /// The written key's field name.
         key: &'static str,
-        /// Whether the write applies or an env var shadows it.
         outcome: crate::strategy::MutationOutcome,
     },
     /// `strategy default` / `strategy remove`: the override was dropped so the
     /// schema default applies again.
     Defaulted {
-        /// The mutated facet.
         facet: crate::strategy::StrategyFacet,
-        /// The restored key's field name.
         key: &'static str,
     },
 }
@@ -803,27 +693,19 @@ fn verification_lines(
     lines
 }
 
-/// One `aave update` market's outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AaveUpdateOutcome {
-    /// The market advanced.
     Advanced {
-        /// First block processed.
         from_block: u64,
-        /// Last block advanced to.
         to_block: u64,
-        /// Chunks committed.
         chunks_committed: usize,
-        /// Events applied.
         total_events_applied: usize,
     },
-    /// The market's run was cooperatively cancelled.
     Cancelled,
     /// The market has no `last_update_block`; it is skipped (must be bootstrapped).
     NeedsBootstrap,
     /// `--dry-run`: the would-be advance, with nothing committed.
     DryRun {
-        /// The market's `last_update_block`.
         last_update_block: i64,
         /// The resolved target (`None` = chain tip).
         to_block: Option<u64>,
@@ -847,16 +729,11 @@ pub struct AaveReinit {
     pub last_update_block: Option<i64>,
 }
 
-/// One `aave update` market row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AaveUpdateEntry {
-    /// The chain.
     pub chain_id: i64,
-    /// The market id.
     pub market_id: i64,
-    /// The market name.
     pub market_name: String,
-    /// The outcome.
     pub outcome: AaveUpdateOutcome,
 }
 
@@ -869,50 +746,34 @@ pub struct AavePositionLine {
     pub balance: U256,
 }
 
-/// The typed result of an `aave` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AaveReport {
-    /// `aave activate`.
     Activated {
-        /// The chain id.
         chain_id: u64,
-        /// The human chain label.
         chain_label: &'static str,
-        /// The market id.
         market_id: i64,
         /// The on-chain market name.
         market_name: String,
-        /// Whether the market was newly created.
         created: bool,
     },
-    /// `aave deactivate`.
     Deactivated {
-        /// The chain id.
         chain_id: u64,
         /// The market id, when a row was found.
         market_id: Option<i64>,
-        /// The outcome.
         outcome: DeactivateOutcome,
     },
-    /// `aave digest`.
     Digest {
         /// The typed completed-market record; the facade renders its
         /// canonical manifest bytes (one JSON document the operator
         /// redirects stdout to pin).
         manifest: CompletedMarketManifest,
     },
-    /// `aave update`.
     Updated {
-        /// Per-market outcomes.
         entries: Vec<AaveUpdateEntry>,
     },
-    /// `aave reset`.
     Reset {
-        /// The chain id.
         chain_id: u64,
-        /// The market id.
         market_id: i64,
-        /// The market name.
         market_name: String,
         /// The per-relation row counts the purge removed, or would remove on a
         /// preview.
@@ -922,33 +783,24 @@ pub enum AaveReport {
         /// The facts the reset transaction verified; `None` on a preview.
         reinit: Option<AaveReinit>,
     },
-    /// `aave position show`.
     Position {
         /// The user address (checksummed).
         user_address: String,
-        /// The market name.
         market: String,
-        /// The chain id.
         chain_id: u64,
-        /// Collateral positions.
         collateral: Vec<AavePositionLine>,
-        /// Debt positions.
         debt: Vec<AavePositionLine>,
     },
     /// `aave position show` found no market.
     PositionNoMarket {
-        /// The market name.
         market: String,
-        /// The chain id.
         chain_id: u64,
     },
     /// `aave position show` found no user row.
     PositionNoUser {
         /// The user address (checksummed).
         user_address: String,
-        /// The market name.
         market: String,
-        /// The chain id.
         chain_id: u64,
     },
 }
@@ -1117,12 +969,11 @@ fn reset_lines(
     lines
 }
 
-/// Render an optional resolved block the way Python's `{value!r}` does.
 fn render_opt_block(block: Option<u64>) -> String {
     block.map_or_else(|| "None".to_string(), |n| n.to_string())
 }
 
-/// The ported `aave position show` body.
+/// The `aave position show` body.
 fn position_lines(
     user_address: &str,
     market: &str,
@@ -1159,7 +1010,7 @@ fn position_lines(
     lines
 }
 
-/// The ported `heal` success / no-op text.
+/// The `heal` success / no-op text.
 fn healed_lines(path: &std::path::Path, report: &HealReport) -> Vec<String> {
     if matches!(report.old_state, SchemaState::RustOwned { .. }) {
         return vec![format!(
@@ -1182,7 +1033,7 @@ fn healed_lines(path: &std::path::Path, report: &HealReport) -> Vec<String> {
     lines
 }
 
-/// The ported `database cutover --dry-run` line for `state`.
+/// The `database cutover --dry-run` line for `state`.
 #[must_use]
 pub fn cutover_dry_run_line(state: &SchemaState) -> String {
     let label = schema_state_label(state);
@@ -1203,7 +1054,7 @@ pub fn cutover_dry_run_line(state: &SchemaState) -> String {
     }
 }
 
-/// The ported `database heal --dry-run` line for `state`.
+/// The `database heal --dry-run` line for `state`.
 #[must_use]
 pub fn heal_dry_run_line(state: &SchemaState) -> String {
     let label = schema_state_label(state);

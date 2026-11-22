@@ -2,11 +2,10 @@
 //! ADR-062 D7).
 //!
 //! The database path / chain id / node URIs are resolved through the
-//! `degenbot-config` resolvers — the SAME cascades the Python console reads —
-//! over a config loaded ONCE from the context's injectable [`EnvVars`] seam
-//! (never `std::env`) plus the CLI override values the argv facade threaded
-//! in. One load, four layers, every value tagged with the layer that supplied
-//! it.
+//! `degenbot-config` resolvers over a config loaded ONCE from the context's
+//! injectable [`EnvVars`] seam (never `std::env`) plus the CLI override values
+//! the argv facade threaded in. One load, four layers, every value tagged with
+//! the layer that supplied it.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

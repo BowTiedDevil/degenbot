@@ -1,5 +1,5 @@
-//! The supported-registration seam (ADR-051 D5 extension): the console no
-//! longer requires the operator to CREATE rows. Every supported `(chain, DEX)`
+//! The supported-registration seam (ADR-051 D5 extension): the operator never
+//! has to CREATE rows. Every supported `(chain, DEX)`
 //! pair ([`RETIRED_EXCHANGES`]) and every supported Aave V3 market
 //! ([`AAVE_DEPLOYMENTS`]) that is NOT found in the DB is registered
 //! **inactive** by [`ensure_supported_registrations`] — the operator then
@@ -28,7 +28,6 @@ use crate::aave::AAVE_DEPLOYMENTS;
 use crate::error::CliError;
 use crate::exchange::{resolve_deployment, RETIRED_EXCHANGES};
 
-/// How many rows one ensure pass registered (created).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegistrationReport {
     /// Newly registered `(chain, DEX)` exchange pairs.

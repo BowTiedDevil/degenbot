@@ -1,6 +1,4 @@
-//! The `--to-block` block-identifier port .
-//!
-//! Mirrors `cli/pool.py::_resolve_to_block` and its `cli/aave.py` twin exactly:
+//! The `--to-block` block-identifier semantics.
 //!
 //! - a concrete integer is used as-is;
 //! - a pure tag (`latest`, `safe`, …) with no offset resolves to `None` — the
@@ -20,21 +18,14 @@ use degenbot_rpc::provider::AlloyProvider;
 
 use crate::error::{CliError, UnknownVariant};
 
-/// The `--chunk` default (`10_000`), ported from `cli/pool.py`.
 pub const DEFAULT_CHUNK_SIZE: u64 = 10_000;
-
-/// The `--to-block` default (`latest:-64`), ported from `cli/pool.py`.
 pub const DEFAULT_TO_BLOCK: &str = "latest:-64";
-
-/// The `--verify-all-interval` default (`1_000_000`), ported from `cli/pool.py`.
 pub const DEFAULT_VERIFY_ALL_INTERVAL: u64 = 1_000_000;
 
-/// The `--max-block-range` default (`10_000`): the widest block range a single
-/// `eth_getLogs` request may span.
-///
-/// The per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
-/// which caps the RPC request range independently
-/// of the `--chunk` commit granularity. Exposing it lets an operator point the
+/// The widest block range a single `eth_getLogs` request may span: the
+/// per-request clamp the chunk loop builds `degenbot-rpc`'s `LogFetcher`
+/// with, capping the RPC request range independently of the `--chunk` commit
+/// granularity. Exposing it lets an operator point the
 /// updater at a public RPC whose `eth_getLogs` range limit is tighter than the
 /// default `--chunk` (e.g. dRPC's free plan) without shrinking the commit chunk.
 /// The core rejects `0`.
@@ -46,15 +37,10 @@ const RPC_MAX_RETRIES: u32 = 5;
 /// A block tag accepted by `--to-block`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockTag {
-    /// `latest`.
     Latest,
-    /// `earliest`.
     Earliest,
-    /// `pending`.
     Pending,
-    /// `safe`.
     Safe,
-    /// `finalized`.
     Finalized,
 }
 
@@ -69,7 +55,6 @@ impl BlockTag {
         Self::Finalized,
     ];
 
-    /// The tag's wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -81,7 +66,6 @@ impl BlockTag {
         }
     }
 
-    /// The alloy tag.
     #[must_use]
     pub const fn to_alloy(self) -> BlockNumberOrTag {
         match self {
@@ -97,13 +81,10 @@ impl BlockTag {
 impl TryFrom<&str> for BlockTag {
     type Error = UnknownVariant;
 
-    /// Parse one of the five accepted tags (`_BLOCK_TAGS` in the Python CLI).
-    ///
     /// # Errors
     ///
     /// [`UnknownVariant`] for a tag outside the closed set, naming the raw
-    /// input and the known tags: a tag the Python CLI would refuse is refused
-    /// here too, never silently dropped.
+    /// input and the known tags.
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         match raw {
             "latest" => Ok(Self::Latest),
@@ -122,16 +103,13 @@ impl TryFrom<&str> for BlockTag {
 /// A parsed `--to-block` value, before the tag's block number is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToBlockSpec {
-    /// A concrete block number.
     Number(u64),
     /// A pure tag (or the empty effect of `offset == 0`): the core resolves the
     /// chain tip.
     Tip,
     /// A tag plus a signed offset: the tag's block number plus `offset`.
     TagOffset {
-        /// The block tag.
         tag: BlockTag,
-        /// The signed offset.
         offset: i64,
     },
 }
@@ -140,8 +118,8 @@ pub enum ToBlockSpec {
 ///
 /// # Errors
 ///
-/// [`CliError::InvalidBlockTag`] for a malformed tag or offset — the Python
-/// `ValueError("Invalid block tag: …")` refusal.
+/// [`CliError::InvalidBlockTag`] for a malformed tag or offset, rendering the
+/// exact `Invalid block tag: {tag}` refusal.
 pub fn parse_to_block(raw: &str) -> Result<ToBlockSpec, CliError> {
     if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
         return raw

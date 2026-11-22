@@ -16,10 +16,9 @@
 //!   returning a typed [`CommandReport`].
 //! - [`CliError`] → [`ExitCode`]: declared at exactly one `From` site; the
 //!   workspace `exit = "deny"` lint stands, so `run` returns codes and never
-//!   aborts the process. The typed fleet boot refusal (FF-T1) maps to
-//!   `EX_CONFIG` 78 (lifted out of `DegenbotCLI.invoke`).
-//! - [`PromptPlan`] + [`Prompter`]: interactive policy is declared data, ported
-//!   verbatim from the click handlers and audited, never redesigned (D4).
+//!   aborts the process. The typed fleet boot refusal maps to `EX_CONFIG` 78.
+//! - [`PromptPlan`] + [`Prompter`]: interactive policy is declared data
+//!   (ADR-051 D4).
 //! - [`CancelHandle`]: the cooperative cancel carrier the updater arms thread
 //!   into `run_pool_update` / `run_aave_update` (the facade owns the SIGINT
 //!   policy, ADR-051 D7).
@@ -27,9 +26,9 @@
 //! # Groups
 //!
 //! - `database` ([`DatabaseCommand`]): the template group.
-//! - `exchange` ([`ExchangeCommand`]): the 34 Python click verbs collapse to
-//!   one data-driven command resolving `(chain, name)` through the
-//!   `degenbot-uniswap` deployments registry (ADR-051 D5).
+//! - `exchange` ([`ExchangeCommand`]): one data-driven command resolving
+//!   `(chain, name)` through the `degenbot-uniswap` deployments registry
+//!   (ADR-051 D5).
 //! - `pool` ([`PoolCommand`]): the `degenbot-pool-updater` chunk loop +
 //!   on-chain-truth verify.
 //! - `aave` ([`AaveCommand`]): the `degenbot-aave` market run + row flips.

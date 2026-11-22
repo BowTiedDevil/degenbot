@@ -3,8 +3,8 @@
 //!
 //! A strategy **facet** is one typed per-strategy config section
 //! (`strategy.settlement`, `strategy.mevblocker_backrun`, `strategy.txpool_backrun`); each facet's `active` key
-//! selects it (the retired single-arm selector could not express a
-//! two-strategy host). Activation settles an endpoint posture: EITHER an
+//! selects it (one host runs any subset of facets). Activation settles an
+//! endpoint posture: EITHER an
 //! explicit `--endpoints` set OR the explicit `--endpoints-default` choice,
 //! and the typed readiness validation is the single authority for what
 //! counts as settled.
@@ -38,7 +38,6 @@ pub enum StrategyFacet {
 }
 
 impl StrategyFacet {
-    /// Every facet, in declaration order.
     pub const ALL: [Self; 3] = [
         Self::Settlement,
         Self::MevblockerBackrun,
@@ -64,7 +63,6 @@ impl StrategyFacet {
         }
     }
 
-    /// The facet's dotted TOML section path.
     #[must_use]
     pub const fn config_section(self) -> &'static str {
         match self {
@@ -74,13 +72,11 @@ impl StrategyFacet {
         }
     }
 
-    /// The facet's activation key.
     #[must_use]
     pub fn activation_key(self) -> &'static degenbot_config::KeyDecl {
         facet_key(self.config_section(), "active")
     }
 
-    /// The facet's explicit-endpoints key.
     #[must_use]
     pub fn endpoints_key(self) -> &'static degenbot_config::KeyDecl {
         facet_key(self.config_section(), "endpoints")
@@ -137,11 +133,8 @@ fn facet_key(section: &str, field: &str) -> &'static degenbot_config::KeyDecl {
 /// (the one declaration site), so the descriptor cannot drift from the config.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyFacetDescriptor {
-    /// The facet this entry describes.
     pub facet: StrategyFacet,
-    /// The facet's dotted TOML section path.
     pub config_section: &'static str,
-    /// The facet's reaction kind.
     pub trigger_kind: &'static str,
     /// The declared config fields under this facet, sourced from the schema
     /// registry.
@@ -151,7 +144,6 @@ pub struct StrategyFacetDescriptor {
     pub envs: Vec<&'static str>,
 }
 
-/// Build the descriptor for one facet from the schema registry.
 #[must_use]
 pub fn descriptor(facet: StrategyFacet) -> StrategyFacetDescriptor {
     let section = facet.config_section();
@@ -172,7 +164,6 @@ pub fn descriptor(facet: StrategyFacet) -> StrategyFacetDescriptor {
     }
 }
 
-/// Build the descriptor for every facet, in declaration order.
 #[must_use]
 pub fn descriptors() -> Vec<StrategyFacetDescriptor> {
     StrategyFacet::ALL.into_iter().map(descriptor).collect()
@@ -191,15 +182,10 @@ pub enum EndpointSummary {
     Explicit(Vec<String>),
 }
 
-/// The `strategy` command group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrategyCommand {
-    /// `strategy list`: every declared facet with its section and trigger kind.
     List,
-    /// `strategy show <facet>`: one facet's descriptor, activation, and
-    /// resolved endpoint posture.
     Show {
-        /// The facet to show.
         facet: StrategyFacet,
     },
     /// `strategy activate <facet>`: activate the facet and settle its endpoint
@@ -207,7 +193,6 @@ pub enum StrategyCommand {
     /// neither is allowed only when the facet already carries a settled
     /// choice).
     Activate {
-        /// The facet to activate.
         facet: StrategyFacet,
         /// The explicit endpoint set (comma-separated).
         endpoints: Option<String>,
@@ -217,32 +202,24 @@ pub enum StrategyCommand {
     /// `strategy deactivate <facet>`: deactivate the facet; its recorded
     /// endpoint choice stays put for a later re-activation.
     Deactivate {
-        /// The facet to deactivate.
         facet: StrategyFacet,
     },
     /// `strategy set <facet> <key> <value>`: write one declared facet key.
     Set {
-        /// The facet to mutate.
         facet: StrategyFacet,
-        /// The config key name.
         key: String,
-        /// The raw value.
         value: String,
     },
     /// `strategy default <facet> <key>`: drop one key's override so the
     /// declared schema default applies again.
     Default {
-        /// The facet to mutate.
         facet: StrategyFacet,
-        /// The config key name.
         key: String,
     },
     /// `strategy remove <facet> <key>`: the `default` verb's traditional
     /// spelling (`strategy default` reads clearer; both behave identically).
     Remove {
-        /// The facet to mutate.
         facet: StrategyFacet,
-        /// The config key name.
         key: String,
     },
 }
@@ -255,7 +232,6 @@ impl StrategyCommand {
     }
 }
 
-/// The write outcome a mutation renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MutationOutcome {
     /// The write took effect.
@@ -523,7 +499,6 @@ fn facet_lookup(
     Ok(key)
 }
 
-/// Surface a write refusal with its facet context.
 fn strategy_write_error(error: &degenbot_config::ConfigError) -> CliError {
     CliError::InvalidArgument(error.to_string())
 }

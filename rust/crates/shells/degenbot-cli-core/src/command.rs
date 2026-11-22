@@ -17,29 +17,19 @@ use crate::prompt::{PromptPlan, Prompter};
 use crate::report::CommandReport;
 use crate::strategy::{self, StrategyCommand};
 
-/// A console command.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    /// The `database` command group.
     Database(DatabaseCommand),
-    /// The `exchange` command group.
     Exchange(ExchangeCommand),
-    /// The `pool` command group.
     Pool(PoolCommand),
-    /// The `aave` command group.
     Aave(AaveCommand),
-    /// The `fleet` command group (ADR-051 D6).
     Fleet(FleetCommand),
-    /// The `path` command group (ADR-051 D6).
     Path(PathCommand),
-    /// The `strategy` command group (ADR-055 facets).
     Strategy(StrategyCommand),
-    /// The `config` command group (ADR-062 D6).
     Config(ConfigCommand),
 }
 
 impl Command {
-    /// The command's declared confirmation policy (ADR-051 D4).
     #[must_use]
     pub fn prompt_plan(&self, ctx: &CliContext<'_>) -> PromptPlan {
         match self {
@@ -109,8 +99,7 @@ impl Command {
     }
 }
 
-/// The `database` command group — the template group the other groups' shape
-/// follows.
+/// The template group the other command groups' shape follows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseCommand {
     /// Back up the database to its `.db.bak` sibling. Confirms replacement only
@@ -121,8 +110,8 @@ pub enum DatabaseCommand {
         /// Skip the confirmation prompt.
         force: bool,
     },
-    /// RETIRED: render the pointed-retirement error and exit 1. The database
-    /// upgrades itself at open (ADR-052).
+    /// Retired: the arm returns the typed retirement error (exit 1). The
+    /// database upgrades itself at open (ADR-052).
     Upgrade {
         /// Accepted for argv parity; the retirement error fires before any prompt.
         force: bool,
@@ -148,9 +137,8 @@ pub enum DatabaseCommand {
 }
 
 impl DatabaseCommand {
-    /// The arm's declared confirmation policy — ported verbatim from the click
-    /// handlers (backup: replace-target-exists; reset/cutover/heal: unless-force;
-    /// compact/inspect: none).
+    /// The arm's declared confirmation policy (backup: `backup-target-exists`;
+    /// reset/cutover/heal: unless-force; compact/inspect: none).
     ///
     /// `upgrade` reports [`PromptPlan::UnlessForce`] for argv parity with the
     /// retired handler, but its arm returns [`CliError::DatabaseUpgradeRetired`]
