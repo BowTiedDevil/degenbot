@@ -94,7 +94,7 @@ time):
 | `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
 | LLVM 23 | `llvm-devel` | llvm-config + headers + libs for evm2-jit's LLVM backend. ADR-089. |
-| mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; analysis lived in `rust/PERF_RESULTS.md`, dropped in `f082db7a7`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
+| lld         | `lld`                                     | The cargo linker inside the devcontainer, selected by the user-level `~/.cargo/config.toml` baked in the Dockerfile. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
 | `patchelf`  | `patchelf`                                | maturin's rpath tool for the `degenbot_rs` cdylib. Without it `just dev` warns "Failed to set rpath" and installs a rpath-less `.so` that only loads with the venv's `LD_LIBRARY_PATH` shim. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
@@ -187,15 +187,14 @@ tmux show -gv terminal-overrides         # expect *:Tc present
   distro rebuild is not the binary CI installs, one more local/CI codegen
   divergence. rustup enforces the pin, provides the MSRV toolchain behind
   `just check-msrv`, and matches CI's toolchain.
-- **mold linker is the devcontainer default** via the user-level
+- **lld is the one devcontainer linker** via the user-level
   `~/.cargo/config.toml` baked into the image (NOT a committed
   `rust/.cargo/config.toml`). This is deliberate: a repo-local config would
-  force mold on CI (ubuntu-latest, no mold → link failures) and on
-  non-devcontainer cloners. Scoping it to the image keeps the repo buildable
-  anywhere with the default linker while giving the devcontainer the
-  measured build/link speedups (see `rust/PERF_RESULTS.md`, dropped in `f082db7a7`, lever #1). To
-  disable mold locally, delete or edit `~/.cargo/config.toml`; to try lld
-  instead, swap `-fuse-ld=mold` for `-fuse-ld=lld` (lld is also installed).
+  force lld on CI and non-devcontainer cloners, which may not provide lld.
+  Scoping it to the image keeps the repo buildable anywhere with the default
+  linker. lld avoids mold 2.41.0's undefined-symbol / invalid-PC32 failures
+  on valid objects. To disable lld locally, delete or edit
+  `~/.cargo/config.toml`.
 - **Python follows `fedora:latest`** (currently 3.14). The project declares
   `requires-python >= 3.12`, so this is in-spec. `tool.ty.environment
   python-version = "3.12"` is the type-checker's analysis target only — it

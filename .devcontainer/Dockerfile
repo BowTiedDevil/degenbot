@@ -20,7 +20,7 @@ RUN dnf install -y \
         git \
         just \
         ripgrep \
-        mold lld patchelf \
+        lld patchelf \
         llvm-devel libffi-devel zlib-devel libzstd-devel libxml2-devel \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
@@ -201,27 +201,23 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # a major boundary), used by `just update-deps`.
 RUN cargo install --locked cargo-edit cargo-nextest
 
-# User-level cargo config: use `mold` as the linker for all cargo builds
-# inside the container (dev-only perf; see rust/PERF_RESULTS.md (dropped in `f082db7a7`) lever #1).
-# Lives at ~/.cargo/config.toml (cargo's home config, read in ADDITION to
-# any repo-local .cargo/config.toml) so it travels with the image and
-# applies to every cargo invocation — including rust-analyzer, just recipes,
-# and the uv/maturin PyO3 extension rebuild — regardless of entry path
-# (VSCode 'Reopen in Container' OR attach.sh's `podman start`+`exec`).
+# User-level cargo config: use `lld` as the one linker for all cargo builds
+# inside the container. Lives at ~/.cargo/config.toml (cargo's home config,
+# read in ADDITION to any repo-local .cargo/config.toml) so it travels with
+# the image and applies to every cargo invocation — including rust-analyzer,
+# just recipes, and the uv/maturin PyO3 extension rebuild — regardless of
+# entry path (VSCode 'Reopen in Container' OR attach.sh's `podman start`+`exec`).
 #
 # This is INTENTIONALLY NOT committed as rust/.cargo/config.toml: that would
-# force mold on CI (runs on ubuntu-latest without mold → link failures) and
-# on non-devcontainer cloners. Scoping mold to the devcontainer image keeps
-# the repo buildable anywhere with the default system linker. mold was
-# measured to cut the clean build 59→51s, the test-binary build 64→48s, and
-# the degenbot_rs cdylib link 27→19.5s. To try lld instead, swap
-# `-fuse-ld=mold` for `-fuse-ld=lld` (lld is installed above as a fallback).
+# force lld on CI and non-devcontainer cloners, which may not provide lld.
+# Scoping lld to the devcontainer image keeps the repo buildable anywhere
+# with the default system linker. lld is required because mold 2.41.0
+# produces undefined-symbol / invalid-PC32 diagnostics on valid objects.
 RUN mkdir -p "${HOME}/.cargo" \
     && printf '%s\n' \
-        '# Devcontainer-only: use mold linker for faster cargo links.' \
-        '# Perf analysis lived in rust/PERF_RESULTS.md (dropped in f082db7a7). Remove or swap to lld if mold breaks.' \
+        '# Devcontainer-only: use the lld linker for cargo links.' \
         '[target.x86_64-unknown-linux-gnu]' \
-        'rustflags = ["-C", "link-arg=-fuse-ld=mold"]' \
+        'rustflags = ["-C", "link-arg=-fuse-ld=lld"]' \
         > "${HOME}/.cargo/config.toml"
 
 # Generate shell completions for the four curl/npm/go-installed CLIs into
