@@ -328,6 +328,7 @@ fn dispatch_operation(
             gho_ctx,
             liq_patterns,
             events,
+            gho_running_state,
             substrate,
         ),
         OperationType::GhoLiquidation => dispatch_gho_liquidation(
@@ -1238,6 +1239,24 @@ fn dispatch_gho_standard(
     }
     Ok(())
 }
+/// The single bad-debt reset owner shared by both liquidation dispatch
+/// paths: emit the `DebtPositionReset` AND synchronize the per-tx GHO
+/// running state, so reset emission and the tuple a later same-tx GHO event
+/// reads cannot diverge (the apply buffer lands only after
+/// `process_transaction` returns — the map is the only fresh state).
+fn emit_bad_debt_reset(
+    position_id: i64,
+    new_index: U256,
+    events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+) {
+    events.push(AaveChunkEvent::DebtPositionReset {
+        position_id,
+        new_index,
+    });
+    gho_running_state.insert(position_id, (U256::ZERO, new_index));
+}
+
 #[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
 /// Dispatch the GHO `LiquidationCall`. Mirrors the GHO branch of
 /// `_process_debt_burn_with_match` (the bad-debt override) + the GHO branch of
@@ -1287,15 +1306,12 @@ fn dispatch_gho_liquidation(
                     &asset.underlying_token_address,
                     substrate,
                 )?;
-                let new_index = ev.index.unwrap_or_default();
-                events.push(AaveChunkEvent::DebtPositionReset {
+                emit_bad_debt_reset(
                     position_id,
-                    new_index,
-                });
-                // Sync the running-state map (the bad-debt reset zeros the
-                // balance + advances `last_index`); a subsequent event in
-                // the same tx must read zero, not the stale pre-tx balance.
-                gho_running_state.insert(position_id, (U256::ZERO, new_index));
+                    ev.index.unwrap_or_default(),
+                    events,
+                    gho_running_state,
+                );
                 continue;
             }
             let (chunk_event, refresh) = build_gho_chunk_event(
@@ -1354,10 +1370,12 @@ fn dispatch_gho_liquidation(
                     &asset.underlying_token_address,
                     substrate,
                 )?;
-                events.push(AaveChunkEvent::DebtPositionReset {
+                emit_bad_debt_reset(
                     position_id,
-                    new_index: ev.index.unwrap_or_default(),
-                });
+                    ev.index.unwrap_or_default(),
+                    events,
+                    gho_running_state,
+                );
                 continue;
             }
             // The collateral leg (or a non-bad-debt stranded debt burn) →
@@ -1586,6 +1604,7 @@ fn lookup_gho_debt_asset(
 /// burn attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
 /// single-liquidation "collect all burns" branch) never reaches
 /// `dispatch_gho_liquidation`, so the reset here is the only zeroing path.
+#[expect(clippy::too_many_arguments)]
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
@@ -1593,6 +1612,7 @@ fn dispatch_liquidation(
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
     events: &mut Vec<AaveChunkEvent>,
+    gho_running_state: &mut HashMap<i64, (U256, U256)>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -1660,10 +1680,12 @@ fn dispatch_liquidation(
                 &asset.underlying_token_address,
                 substrate,
             )?;
-            events.push(AaveChunkEvent::DebtPositionReset {
+            emit_bad_debt_reset(
                 position_id,
-                new_index: ev.index.unwrap_or_default(),
-            });
+                ev.index.unwrap_or_default(),
+                events,
+                gho_running_state,
+            );
             continue;
         }
         // The per-event-type raw-amount extractor resolves debt burn/transfer
@@ -2867,6 +2889,7 @@ mod tests {
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
+            &mut HashMap::new(),
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("op0 dispatch");
@@ -2877,6 +2900,7 @@ mod tests {
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
+            &mut HashMap::new(),
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("op1 dispatch");
@@ -3152,6 +3176,7 @@ mod tests {
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
+            &mut HashMap::new(),
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("dispatch");
@@ -3187,6 +3212,374 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt)),
             "the GHO bad-debt burn must NOT also emit a ScaledTokenBurn (would double-apply)",
+        );
+    }
+
+    // ── bad-debt reset ↔ GHO running-state synchronization ───────────────
+    // A `DEFICIT_CREATED` bad-debt reset emitted by `dispatch_liquidation`
+    // (a NON-GHO `LiquidationCall` carrying an attached GHO debt burn — the
+    // parser's `collect_debt_burns` single-liquidation branch) must
+    // synchronize the per-tx `gho_running_state` map, exactly like
+    // `dispatch_gho_liquidation`'s own reset does. The apply buffer lands
+    // only after `process_transaction` returns, so a later-sorted GHO
+    // operation for the same position in the same tx reads the map — if the
+    // reset didn't write it, the later event computes from the pre-reset
+    // (balance, index) tuple: the discount accrual (`accrue_debt_on_action`)
+    // burns a share off the pre-reset balance the contract already wrote
+    // off.
+
+    /// WBTC liquidation asset + GHO vToken asset (revision 1 — the discount
+    /// surface is active) + a user whose GHO debt position exists in the DB,
+    /// mirroring `dispatch_liquidation_resets_gho_debt_burn_on_bad_debt`'s
+    /// fixture. Returns (db, `gho_vtoken`, user, gho debt position id).
+    fn bad_debt_running_state_fixture() -> (DegenbotDb, Address, Address, i64) {
+        use degenbot_core::address_utils::address_to_checksum_string;
+        use rusqlite::params;
+
+        let db = fresh_db_with_asset();
+        let gho_underlying = Address::from([0xA1; 20]);
+        let gho_vtoken = Address::from([0x99; 20]);
+        let user = Address::from([0x4A; 20]);
+        let gho_pid = {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 1",
+                params![address_to_checksum_string(&Address::from([0xA0; 20]))],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE erc20_tokens SET address = ?1 WHERE id = 3",
+                params![address_to_checksum_string(&Address::from([0x72; 20]))],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (4, 1, ?1), (5, 1, ?2), (6, 1, ?3)",
+                params![
+                    address_to_checksum_string(&gho_underlying),
+                    address_to_checksum_string(&gho_vtoken),
+                    address_to_checksum_string(&Address::from([0x77; 20])),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (2, 1, 4, 6, 1, 5, 1, '0', '0', '0', '0')",
+                [],
+            )
+            .unwrap();
+            let user_id = DegenbotDb::get_or_create_user_on_conn(
+                &conn,
+                1,
+                &address_to_checksum_string(&user),
+                0,
+            )
+            .unwrap();
+            DegenbotDb::get_or_create_debt_position_on_conn(&conn, user_id, 2).unwrap()
+        };
+        (db, gho_vtoken, user, gho_pid)
+    }
+
+    // One tx: a WBTC `LiquidationCall` whose attached GHO debt burn is a
+    // bad-debt write-off (`DEFICIT_CREATED`), then a later-sorted GHO borrow
+    // for the same position. The reset must seed the running-state map with
+    // (0, reset_index); the borrow's discount accrual is a pure function of
+    // the tuple it reads — from the reset tuple the mint delta is exactly
+    // `ray_div(value, index)`, from the pre-reset tuple it loses
+    // `discount_scaled` (here 100_000 scaled wei).
+    #[test]
+    fn bad_debt_reset_in_non_gho_liquidation_syncs_running_state_for_later_gho_event() {
+        use alloy::primitives::I256;
+        use degenbot_decoders::aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC;
+
+        let (db, gho_vtoken, user, gho_pid) = bad_debt_running_state_fixture();
+
+        let ray = U256::from(1_000_000_000_000_000_000_000_000_000u128);
+        let pre_reset_index = ray;
+        let reset_index = U256::from(3u8) * ray / U256::from(2u8);
+        let later_index = U256::from(2u8) * ray;
+        let pre_reset_balance = U256::from(1_000_000u64);
+        let discount_percent = U256::from(2_000u64);
+        let mint_value = U256::from(1_000u64) * U256::from(10u8).pow(U256::from(18u8));
+
+        let liq = Box::leak(Box::new(make_liquidation_call_log(
+            665,
+            Address::from([0xC0; 20]),
+            Address::from([0xA0; 20]),
+            user,
+            U256::from(142u64),
+        )));
+        let mut gho_burn = make_debt_burn_event(
+            661,
+            gho_vtoken,
+            user,
+            U256::from(1_282_800_003_371_564u64),
+            reset_index,
+        );
+        gho_burn.event_type = ScaledTokenEventType::GhoDebtBurn;
+        let op_liq = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq),
+            scaled_events: vec![gho_burn],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(U256::from(142u64)),
+            validation_errors: Vec::new(),
+        };
+
+        let mut gho_mint =
+            make_debt_mint_repay_event(670, gho_vtoken, user, mint_value, U256::ZERO, later_index);
+        gho_mint.event_type = ScaledTokenEventType::GhoDebtMint;
+        let op_borrow = Operation {
+            operation_id: 1,
+            operation_type: OperationType::GhoBorrow,
+            pool_revision: 9,
+            pool_event: None,
+            scaled_events: vec![gho_mint],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: None,
+            validation_errors: Vec::new(),
+        };
+
+        let deficit_log = make_log(
+            666,
+            Address::from([0xAB; 20]),
+            vec![
+                AAVE_DEFICIT_CREATED_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        );
+        let logs: Vec<&Log> = vec![&deficit_log];
+        let mut discounts = HashMap::new();
+        discounts.insert(user, discount_percent);
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        assert!(
+            gho_ctx.is_bad_debt(user),
+            "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
+        );
+
+        let conn = db.lock();
+        let mut substrate = ChunkSubstrate::lazy(1);
+        // The pre-tx snapshot: the DB row holds the tuple as of the reset
+        // event (balance before the write-off, index before the burn) because
+        // events apply only after `process_transaction` returns — the
+        // running-state map is the only state a later same-tx GHO op reads.
+        substrate.record_position_write(
+            ScaledTokenPosition::Debt,
+            gho_pid,
+            pre_reset_balance,
+            Some(pre_reset_index),
+        );
+
+        let mut liq_patterns = LiquidationPatternContext::default();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        dispatch_operation(
+            &op_liq,
+            1,
+            &conn,
+            Some(gho_vtoken),
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+            &mut gho_running_state,
+            &mut substrate,
+        )
+        .expect("liquidation dispatch");
+        dispatch_operation(
+            &op_borrow,
+            1,
+            &conn,
+            Some(gho_vtoken),
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+            &mut gho_running_state,
+            &mut substrate,
+        )
+        .expect("GHO borrow dispatch");
+
+        let (reset_pid, reset_idx) = events
+            .iter()
+            .find_map(|e| match e {
+                AaveChunkEvent::DebtPositionReset {
+                    position_id,
+                    new_index,
+                } => Some((*position_id, *new_index)),
+                _ => None,
+            })
+            .expect("bad-debt GHO burn must emit a DebtPositionReset");
+        assert_eq!(
+            reset_pid, gho_pid,
+            "the reset targets the GHO debt position"
+        );
+        assert_eq!(reset_idx, reset_index, "the reset advances last_index");
+
+        let mint_delta = events
+            .iter()
+            .find_map(|e| match e {
+                AaveChunkEvent::ScaledTokenMint {
+                    position: ScaledTokenPosition::Debt,
+                    position_id,
+                    balance_delta,
+                    ..
+                } if *position_id == gho_pid => Some(*balance_delta),
+                _ => None,
+            })
+            .expect("the later GHO borrow emits a debt ScaledTokenMint");
+        let expected_from_zero = I256::try_from(500_000_000_000_000_000_000u128).unwrap();
+        assert_eq!(
+            mint_delta, expected_from_zero,
+            "the later GHO borrow must compute from the reset zero balance + reset index — a delta short of ray_div(value, index) means it read the pre-reset tuple",
+        );
+        assert_eq!(
+            gho_running_state.get(&gho_pid),
+            Some(&(U256::from(500_000_000_000_000_000_000u128), later_index)),
+            "the running state must reflect the zero-based computation",
+        );
+    }
+
+    // The burn variant: the later-sorted GHO event is a repayment burn. From
+    // the reset tuple the V1 burn delta is exactly -amount_scaled (the
+    // discount accrual is zero against a zero balance); off the pre-reset
+    // tuple it burns an extra `discount_scaled` share.
+    #[test]
+    fn second_gho_event_after_bad_debt_reset_reads_zero_balance() {
+        use alloy::primitives::I256;
+        use degenbot_decoders::aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC;
+
+        let (db, gho_vtoken, user, gho_pid) = bad_debt_running_state_fixture();
+
+        let ray = U256::from(1_000_000_000_000_000_000_000_000_000u128);
+        let pre_reset_index = ray;
+        let reset_index = U256::from(3u8) * ray / U256::from(2u8);
+        let later_index = U256::from(2u8) * ray;
+        let pre_reset_balance = U256::from(1_000_000u64);
+        let discount_percent = U256::from(2_000u64);
+        let burn_value = U256::from(200u64) * U256::from(10u8).pow(U256::from(18u8));
+
+        let liq = Box::leak(Box::new(make_liquidation_call_log(
+            665,
+            Address::from([0xC0; 20]),
+            Address::from([0xA0; 20]),
+            user,
+            U256::from(142u64),
+        )));
+        let mut gho_burn = make_debt_burn_event(
+            661,
+            gho_vtoken,
+            user,
+            U256::from(1_282_800_003_371_564u64),
+            reset_index,
+        );
+        gho_burn.event_type = ScaledTokenEventType::GhoDebtBurn;
+        let op_liq = Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(liq),
+            scaled_events: vec![gho_burn],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(U256::from(142u64)),
+            validation_errors: Vec::new(),
+        };
+
+        let mut later_burn = make_debt_burn_event(670, gho_vtoken, user, burn_value, later_index);
+        later_burn.event_type = ScaledTokenEventType::GhoDebtBurn;
+        let op_repay = Operation {
+            operation_id: 1,
+            operation_type: OperationType::GhoRepay,
+            pool_revision: 9,
+            pool_event: None,
+            scaled_events: vec![later_burn],
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: None,
+            validation_errors: Vec::new(),
+        };
+
+        let deficit_log = make_log(
+            666,
+            Address::from([0xAB; 20]),
+            vec![
+                AAVE_DEFICIT_CREATED_TOPIC,
+                B256::left_padding_from(user.as_slice()),
+            ],
+            Bytes::default(),
+        );
+        let logs: Vec<&Log> = vec![&deficit_log];
+        let mut discounts = HashMap::new();
+        discounts.insert(user, discount_percent);
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        assert!(
+            gho_ctx.is_bad_debt(user),
+            "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
+        );
+
+        let conn = db.lock();
+        let mut substrate = ChunkSubstrate::lazy(1);
+        substrate.record_position_write(
+            ScaledTokenPosition::Debt,
+            gho_pid,
+            pre_reset_balance,
+            Some(pre_reset_index),
+        );
+
+        let mut liq_patterns = LiquidationPatternContext::default();
+        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        dispatch_operation(
+            &op_liq,
+            1,
+            &conn,
+            Some(gho_vtoken),
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+            &mut gho_running_state,
+            &mut substrate,
+        )
+        .expect("liquidation dispatch");
+        dispatch_operation(
+            &op_repay,
+            1,
+            &conn,
+            Some(gho_vtoken),
+            &gho_ctx,
+            &mut liq_patterns,
+            &mut events,
+            &mut gho_running_state,
+            &mut substrate,
+        )
+        .expect("GHO repay dispatch");
+
+        let burn_delta = events
+            .iter()
+            .find_map(|e| match e {
+                AaveChunkEvent::ScaledTokenBurn {
+                    position: ScaledTokenPosition::Debt,
+                    position_id,
+                    balance_delta,
+                    ..
+                } if *position_id == gho_pid => Some(*balance_delta),
+                _ => None,
+            })
+            .expect("the later GHO repay emits a debt ScaledTokenBurn");
+        let expected_from_zero = -I256::try_from(100_000_000_000_000_000_000u128).unwrap();
+        assert_eq!(
+            burn_delta, expected_from_zero,
+            "the second GHO event must read the reset zero balance — an extra discount share in the burn means it read the pre-reset tuple",
         );
     }
 
@@ -3280,6 +3673,7 @@ mod tests {
             &GhoDiscountContext::new(&[], &HashMap::new(), None),
             &mut liq_patterns,
             &mut events,
+            &mut HashMap::new(),
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("dispatch");
