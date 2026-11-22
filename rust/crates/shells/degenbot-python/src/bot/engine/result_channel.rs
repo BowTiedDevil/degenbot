@@ -11,8 +11,6 @@ use degenbot_pools::solve::MixedPoolRef;
 
 #[pymethods]
 impl PyArbEngine {
-    /// Read the last solved results and block number.
-    ///
     /// Inspect a registered path by ID.
     ///
     /// Returns a dict with:
@@ -41,8 +39,9 @@ impl PyArbEngine {
         Self::render_hops(py, path_id, &hops).map(Some)
     }
 
-    /// Returns (`results`, `block_number`) where results is a flat list:
-    /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
+    /// Returns (`results`, `block_number`) where `results` is one tuple per
+    /// solved path: (`path_id`, `optimal_input`, `profit`, `hop_outputs`,
+    /// `consumed_inputs`).
     fn latest_results(&self, py: Python<'_>) -> PyResult<(Py<PyList>, u64)> {
         // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
         let (results, block_num) = self.with_stages(py, EngineStages::latest_results);
@@ -55,7 +54,7 @@ impl PyArbEngine {
             let profit_py =
                 crate::conversion::alloy::PyU256(solve_result.profit).into_pyobject(py)?;
 
-            // Build hop_outputs as a Python tuple
+            // Build hop_outputs as a Python list
             let hop_outputs_py = PyList::empty(py);
             for hop_out in &solve_result.hop_outputs {
                 let hop_py = crate::conversion::alloy::PyU256(*hop_out).into_pyobject(py)?;
@@ -63,7 +62,7 @@ impl PyArbEngine {
             }
             let hop_tuple = hop_outputs_py.into_pyobject(py)?;
 
-            // Build consumed_inputs as a Python tuple
+            // Build consumed_inputs as a Python list
             let consumed_inputs_py = PyList::empty(py);
             for consumed in &solve_result.consumed_inputs {
                 let consumed_py = crate::conversion::alloy::PyU256(*consumed).into_pyobject(py)?;
@@ -126,7 +125,7 @@ impl PyArbEngine {
     ///
     /// ADR-003: V2 state lives in `BotState` as a single entry per address
     /// (orientation is selected at solve time via `zero_for_one`, not by a
-    /// separate reverse key). The former forward/reverse dual keys are gone.
+    /// separate reverse key).
     #[pyo3(signature = (address_hex))]
     fn diag_v2_pool(
         &self,

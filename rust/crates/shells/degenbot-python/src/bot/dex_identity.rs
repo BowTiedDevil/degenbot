@@ -73,7 +73,7 @@ impl PyDexIdentity {
             factory: address_to_checksum_string(&ident.factory),
             deployer: address_to_checksum_string(&ident.deployer),
             init_hash: ident.init_hash.map(|hash| format!("{hash:#x}")),
-            // The Python view keeps the historical `(gamma, denominator)` tuple;
+            // The Python view keeps the `(gamma, denominator)` tuple;
             // a per-pool marker projects as its own `(0, denominator)` shape.
             fee_token0: ident.fee_token0.as_pair(),
             fee_token1: ident.fee_token1.as_pair(),
@@ -90,9 +90,9 @@ impl PyDexIdentity {
     /// Construct a custom `DexIdentity` view from explicit Python args.
     ///
     /// Intended for tests + ad-hoc identities (production should resolve
-    /// presets via `dex_identity` or the `pool_type_registry`). Mirrors Polars'
-    /// builder pattern for codec options — presets are the canonical source,
-    /// but custom identities are constructable when needed.
+    /// presets via `dex_identity` or the `pool_type_registry`): presets are
+    /// the canonical source, but custom identities are constructable when
+    /// needed.
     ///
     /// `init_hash=None` declares a variant with no CREATE2 init-hash budget
     /// (Aerodrome's EIP-1167 clones); a zero digest is refused rather than
@@ -161,9 +161,8 @@ impl PyDexIdentity {
 impl PyDexIdentity {
     /// Construct a custom `DexIdentity` view from explicit Python args.
     ///
-    /// Mirrors Polars' builder pattern for codec options — presets are the
-    /// canonical source (resolve via `dex_identity`), but custom identities
-    /// are constructable for tests / ad-hoc deployments.
+    /// Presets are the canonical source (resolve via `dex_identity`), but
+    /// custom identities are constructable for tests / ad-hoc deployments.
     ///
     /// # Examples
     ///

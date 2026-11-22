@@ -1,5 +1,4 @@
-//! `PyArbEngine` — `payload_path_info` render-accessor slice (SIMPIPE2
-//! T3).
+//! `PyArbEngine` — `payload_path_info` render-accessor slice.
 //!
 //! The inline-sim payload entries bypass the FFI dispatch entirely (Python
 //! constructs `SubmitCandidate`s straight from the payload dicts), so the
@@ -19,11 +18,8 @@ use super::PyArbEngine;
 impl PyArbEngine {
     /// The `[profit]`-render `path_infos` dict for ONE registered path (the
     /// same shape the batch seam's `path_info_dict()` carries) or `None` when
-    /// the path is unregistered/unresolvable. SIMPIPE2 T3: payload entries
-    /// skip the FFI sim, so the driver enriches merged outcomes per entry.
-    ///
-    /// GIL hygiene: the engine Mutex is acquired inside `with_stages` (the
-    /// accessor's `py.detach`, same pattern as `inspect_path`).
+    /// the path is unregistered/unresolvable: payload entries skip the FFI
+    /// sim, so the driver enriches merged outcomes per entry.
     #[must_use]
     fn payload_path_info(&self, path_id: u64, py: Python<'_>) -> Option<Py<PyDict>> {
         let resolved = self

@@ -7,7 +7,7 @@
 //! `PyBotIo` as their `io` parameter; it exposes the 7-method
 //! [`PoolIO`] surface (`get_block_number`, `get_block`, `get_block_timestamp`,
 //! `get_code`, `get_balance`, `call`, `call_raw`) by routing through the core
-//! [`ConstructionIo`] trait (ADR-023 D1/D3), plus ~50 `fetch_*` / `probe_*`
+//! [`ConstructionIo`] trait (ADR-023 D1/D3), plus the `fetch_*`
 //! encode→call→decode choreography helpers that compose over the same trait's
 //! `call` + DB primitives.
 //!
@@ -110,18 +110,11 @@ impl PyPoolIdentity {
     }
 }
 
-/// The Rust I/O façade for pool builders.
-///
-/// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
-/// ```python
-/// io = PyBotIo(provider=bot.provider, database_path=str(bot.database_path))
-/// ```
-/// then pass `io` where a builder expects an `io: PoolIO`.
-/// A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
-///. Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
+/// A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`].
+/// Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
 /// attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
 /// `.decimals`) so the builder's downstream attribute reads stay unchanged
-/// after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
+/// in place of the `session.scalar(select(Erc20TokenTable)...)` read.
 #[cfg(feature = "db")]
 #[pyclass(name = "Erc20TokenRow", module = "degenbot._ffi")]
 pub struct PyErc20TokenRow {
@@ -182,9 +175,15 @@ impl PyErc20TokenRow {
 }
 
 /// The Rust `#[pyclass]` I/O façade pool builders receive in place of the
-/// Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface to
-/// the held Python `provider` (see module docs). Exposed to Python as
-/// `degenbot._ffi.BotIo`.
+/// Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface
+/// through the core `ConstructionIo` handle (see module docs). Exposed to
+/// Python as `degenbot._ffi.BotIo`.
+///
+/// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
+/// ```python
+/// io = PyBotIo(provider=bot.provider, database_path=str(bot.database_path))
+/// ```
+/// then pass `io` where a builder expects an `io: PoolIO`.
 #[pyclass(name = "BotIo", module = "degenbot._ffi")]
 pub struct PyBotIo {
     /// Native Rust `AlloyProvider` extracted from the held Python provider
@@ -280,24 +279,22 @@ impl PyBotIo {
         Ok(())
     }
 
-    /// The on-disk `SQLite` database path, if any. The DB-query methods
-    /// open a `degenbot_db::DegenbotDb` handle from this path; `None` when the
-    /// `Bot` has no DB.
+    /// The on-disk `SQLite` database path, if any. The file is opened ONCE,
+    /// at construction, into the construction handle's DB half; `None` when
+    /// the session declared no database.
     #[getter]
     fn database_path(&self) -> Option<String> {
         self.database_path.clone()
     }
 
     /// Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
-    /// construction-time read in `Erc20Builder.build`. Replaces the
-    /// `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
+    /// construction-time read in `Erc20Builder.build`.
     ///
     /// Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
     /// decimals)`, or `None` when the row is absent. Returns `None` (no error)
-    /// when no `database_path` is configured (the `Bot` has no DB — matches
-    /// the prior `contextlib.suppress(Exception)` skip). DB failures propagate
-    /// as `ValueError` (the Python caller wraps the read in
-    /// `contextlib.suppress(Exception)`).
+    /// when no `database_path` is configured — the session declared no DB,
+    /// the shape the caller's `contextlib.suppress(Exception)` arm expects.
+    /// DB failures propagate as `ValueError`.
     #[pyo3(signature = (chain_id, address))]
     #[cfg(feature = "db")]
     fn fetch_erc20_token(
@@ -325,10 +322,8 @@ impl PyBotIo {
 
     /// Write back an ERC-20 token row's metadata (`name` / `symbol` / `decimals`)
     /// by `(chain_id, address)` — the construction-time write-back in
-    /// `Erc20Builder.build`. Replaces the `SQLAlchemy`
-    /// `token_from_db.decimals = …; token_from_db.name = …;
-    /// token_from_db.symbol = …; session.commit()` block. Each `None` field
-    /// writes `NULL` (matches the ORM attribute assignment).
+    /// `Erc20Builder.build`. Each `None` field
+    /// writes `NULL` (matching the ORM attribute assignment).
     ///
     /// No-op when no `database_path` is configured. DB failures propagate as
     /// `ValueError`. A no-row match is a benign no-op (the caller
@@ -355,15 +350,12 @@ impl PyBotIo {
     }
 
     /// Fetch a `pools` row by `(chain_id, address)` — the pool builder's
-    /// construction-time read. Replaces the `SQLAlchemy`
-    /// `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
+    /// construction-time read. Returns a
     /// [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
-    /// (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
-    /// the relationships via [`Self::fetch_pool_kind`] / [`Self::fetch_token_by_id`]
-    /// / [`Self::fetch_exchange`].
+    /// (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller
+    /// hydrates the relationships by those FK ids.
     ///
-    /// `None` when the row is absent or no `database_path` is configured (mirrors
-    /// the prior `contextlib.suppress(Exception)` skip).
+    /// `None` when the row is absent or no `database_path` is configured.
     #[pyo3(signature = (chain_id, address))]
     #[cfg(feature = "db")]
     fn fetch_pool_row(
@@ -1144,7 +1136,7 @@ impl PyBotIo {
 impl PyBotIo {
     /// The native Rust `AlloyProvider` behind this facade's RPC half.
     ///
-    /// Used by the Chain-arm wiring ) to construct an
+    /// Used by the Chain-arm wiring to construct an
     /// [`AlloyTickWordSource`] without a GIL round-trip per RPC call — the
     /// pure-Rust impl owns the tick-bitmap + tick-data choreography directly.
     #[must_use]

@@ -411,8 +411,6 @@ mod tests {
         });
     }
 
-    // ---- the protocol arc (`run`) ------------------------------------------
-
     /// A claim source replaying a scripted election. Every subscription it
     /// hands out is a genuine slot minted by the driver's real table — a `Lead`
     /// plus a `Peer` handle, then a publication — so the arc a test observes is

@@ -250,8 +250,6 @@ fn receipt_to_py(py: Python<'_>, receipt: &CrawlReceipt) -> PyResult<Py<PyAny>> 
     Ok(dict.into_any().unbind())
 }
 
-// ── the boot entry ──────────────────────────────────────────────────────────
-
 #[pymethods]
 impl PyArbEngine {
     /// Configure and boot the engine's crawl.
@@ -326,8 +324,7 @@ impl PyArbEngine {
 /// reason it must be the sole holder). This arm is that slot, never a handle: a
 /// unit clones for its own run and drops it on resolution, so the close finds
 /// the bot's `Arc` alone and every ask after the close answers `None` — the
-/// no-DB arm, chain reads. The retired Python pipeline held the same contract by
-/// calling `PyBot::db_handle()` per use; a session-scoped clone would pin the
+/// no-DB arm, chain reads. A session-scoped clone would pin the
 /// read transaction past the close and keep reading a stale DB view.
 struct PySnapshotArm {
     slot: Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>>,
@@ -342,8 +339,6 @@ impl SnapshotArm for PySnapshotArm {
             .map(|db| db as Arc<dyn TickMapDb>)
     }
 }
-
-// ── the configuration adapter ───────────────────────────────────────────────
 
 /// The bounded retry policy the driver's `retry` value declares.
 ///
@@ -685,8 +680,6 @@ fn candidate_to_py(py: Python<'_>, candidate: &PolicyCandidate) -> PyResult<Py<P
     Ok(dict.into_any().unbind())
 }
 
-// ── the shape adapters ──────────────────────────────────────────────────────
-
 /// Read a boundary/profit address list, each entry a `0x`-hex string.
 fn config_addresses(
     value: &Bound<'_, PyAny>,
@@ -822,8 +815,6 @@ fn discovered_hop_from_py(py: Python<'_>, step: &Bound<'_, PyAny>) -> PyResult<D
     })
 }
 
-// ── the error translators ───────────────────────────────────────────────────
-
 /// A configuration refusal: a bad value is the caller's `ValueError`; a missing
 /// construction I/O, an existing crawl, or a refused receipt sink is a runtime
 /// precondition failure.
@@ -839,9 +830,9 @@ fn map_crawl_config_error(error: &CrawlConfigError) -> PyErr {
 
 /// Map a crawl ATTACH refusal.
 ///
-/// The pose arm is the new one (a crawl cannot be booted over a session that is
-/// gone or tearing down), and it is a `RuntimeError` like the other wiring
-/// mistakes; the configuration vocabulary keeps its historical split.
+/// The pose arm (a crawl cannot be booted over a session that is gone or
+/// tearing down) is a `RuntimeError` like the other wiring mistakes;
+/// configuration refusals keep their split through [`map_crawl_config_error`].
 fn map_crawl_boot_refusal(refusal: CrawlRefusal) -> PyErr {
     match refusal {
         CrawlRefusal::Config(error) => map_crawl_config_error(&error),

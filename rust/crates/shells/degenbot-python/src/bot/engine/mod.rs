@@ -1,7 +1,7 @@
 //! `PyO3` wrapper for the arbitrage engine stage surface.
 //!
 //! [`PyArbEngine`] holds the shared [`EngineStages`] handle — the ONE
-//! external seam . The core engine type is crate-private
+//! external engine seam. The core engine type is crate-private
 //! machinery behind that seam; every Python-facing method crosses the stage
 //! surface and never names the engine.
 
@@ -12,8 +12,6 @@
 //!   [`verify`], [`solve`], [`result_channel`] (`PyO3` permits multiple
 //!   `#[pymethods] impl PyArbEngine` blocks). [`errors`] holds the
 //!   `#[create_exception]` types.
-//! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
-//!   existing `crates/engine/degenbot-bot/src/arb_engine/` core split.
 
 mod crawl;
 mod errors;
@@ -59,7 +57,7 @@ pub(crate) use degenbot_pools::solve::{HopType, PoolHop};
     module = "degenbot._ffi"
 )]
 pub struct PyArbEngine {
-    /// The ONE external engine seam .
+    /// The ONE external engine seam.
     stages: Arc<EngineStages>,
 
     /// The booted engine session: the shared driver the pump session runs on
@@ -79,7 +77,7 @@ pub struct PyArbEngine {
     /// `Batch(N)` because the header producer writes both arms.
     handoff: parking_lot::Mutex<Option<EventHandoff>>,
     /// The cross-block persistent bytecode + account-existence cache
-    /// (`WarmCodeCacheInner`, the Option-A layer). Held for the
+    /// (`WarmCodeCacheInner`). Held for the
     /// engine's life; cloned into each per-block `Evm2BlockSimHandle::build` so
     /// the per-block cold `basic`/code RPCs stop repeating across blocks
     /// (first block warms; later blocks hit until TTL expiry). Constructed
@@ -224,7 +222,7 @@ impl PyArbEngine {
         self.settlement.scope().clone()
     }
 
-    /// The cross-block warm bytecode cache arc (Option A) — the
+    /// The cross-block warm bytecode cache arc — the
     /// persistent `Arc<RwLock<WarmCodeCacheInner>>` held for the engine's life.
     /// The batch executor's sim stage clones this into the per-block
     /// `Evm2BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
@@ -267,10 +265,9 @@ impl PyArbEngine {
     /// The snapshot seed block `S` — set at `Bot.__init__` time by
     /// `Bot::load_snapshot_from_db` for the DB path, OR via
     /// [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
-    /// non-DB (file/memory) path (the pyo3 `backfill_from_snapshot`
-    /// is retired; the core auto-backfill inside `BlockPump::resume_from_subscribe`
-    /// reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
-    /// loaded).
+    /// non-DB (file/memory) path (the core auto-backfill inside
+    /// `BlockPump::resume_from_subscribe` reads `S` from the shared
+    /// `BotState`). `None` = cold-start (no snapshot loaded).
     #[getter]
     fn snapshot_seed_block(&self, py: Python<'_>) -> Option<u64> {
         // GIL hygiene: guards acquired inside the accessor's py.detach.
@@ -286,10 +283,9 @@ impl PyArbEngine {
     /// min(newest_block_v3, newest_block_v4)` — the seed the core
     /// auto-backfill closes the snapshot→WS gap from.
     ///
-    /// `None` clears the seed (cold-start resume); `Some(b)` overrides the
-    /// stored seed (used only when no snapshot has set it yet — the DB path's
-    /// already-set seed takes precedence on the production path because the
-    /// non-DB path does not call this setter).
+    /// `None` clears the seed (cold-start resume); `Some(b)` replaces the
+    /// stored seed. On the production path the DB path sets `S` itself, so
+    /// this setter is only the non-DB path's door — the two never contend.
     #[setter]
     fn set_snapshot_seed_block(&self, py: Python<'_>, block: Option<u64>) {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.

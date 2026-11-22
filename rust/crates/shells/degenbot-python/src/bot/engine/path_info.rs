@@ -1,18 +1,15 @@
 //! `PyArbEngine` — `path_info_for` core accessor.
 //!
-//! [`PyArbEngine::path_info_for_core`] exposes the core
-//! the stage-surface `path_info_for` projection as a `pub(crate)` accessor so
+//! [`PyArbEngine::path_info_for_core`] exposes the stage-surface
+//! `path_info_for` projection as a `pub(crate)` accessor so
 //! the batch executor's enqueue path (`crate::simulation::batch`) and the
 //! payload seam (`crate::simulation::dispatch`) can resolve a path's
 //! `PathInfo` from a registered `path_id` without a Python
 //! `PathInfo` dataclass round-trip.
 //!
 //! No `#[pymethod]` mirror is exposed: `PathInfo` is not a pyclass
-//! (it's the Rust encode-side type), and the cockpit never calls this from
-//! Python — only the Rust enqueue/payload paths reach it via the core
-//! accessor. A future Python-visible resolver (if the cockpit ever needs to
-//! introspect a path's hops outside those seams) would wrap the `PathInfo` in
-//! a pyclass first.
+//! (it's the Rust encode-side type) — only the Rust enqueue/payload paths
+//! reach this accessor.
 
 use degenbot_execution::PathInfo;
 use pyo3::Python;

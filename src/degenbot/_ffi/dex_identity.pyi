@@ -42,9 +42,8 @@ class DexIdentity:
         """
         Construct a custom `DexIdentity` view from explicit Python args.
 
-        Mirrors Polars' builder pattern for codec options — presets are the
-        canonical source (resolve via `dex_identity`), but custom identities
-        are constructable for tests / ad-hoc deployments.
+        Presets are the canonical source (resolve via `dex_identity`), but
+        custom identities are constructable for tests / ad-hoc deployments.
 
         # Examples
 

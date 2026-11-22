@@ -1,9 +1,8 @@
 //! `PyO3` wrapper for the engine stage surface — verify `#[pymethods]` slice.
 //!
-//! Split out of the former monolithic `py_binding.rs` ,
-//! mirroring `crates/engine/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
-//! blocks per type, so each concern file contributes one slice.
+//! `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }` blocks per
+//! type, so each concern file contributes one slice, mirroring the core
+//! `arb_engine` module's per-concern layout.
 
 use super::PyArbEngine;
 use crate::prelude::*;

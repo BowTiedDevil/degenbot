@@ -1,4 +1,4 @@
-//! Python seam for the Rust-core deployment-identity lookup (Fork A).
+//! Python seam for the Rust-core deployment-identity lookup.
 //!
 //! Two thin `#[pyfunction]` views over
 //! [`degenbot_uniswap::deployments`]: the embedded canonical `deployments.json`
@@ -69,7 +69,7 @@ fn deployer_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
 
 /// Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
 /// with the `None -> factory` convention applied. Returns the factory itself
-/// when the ``(chain, factory)`` is not in the shipped JSON (Fork A).
+/// when the ``(chain, factory)`` is not in the shipped JSON.
 #[pyfunction]
 fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -141,7 +141,7 @@ fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 /// `degenbot._ffi.deployments` submodule.
 /// The `degenbot._ffi.deployments` Python submodule (declarative
 /// `#[pymodule]`), carrying the deployment-identity lookup over the
-/// embedded deployments.json (Fork A). The parent module registers
+/// embedded deployments.json. The parent module registers
 /// the submodule itself and its `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
@@ -152,35 +152,20 @@ pub mod deployments {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Registration-time verification wrappers (Fork A)
-// ---------------------------------------------------------------------------
-//
-// Thin `PyResult` wrappers over the pure `degenbot_uniswap::deployments::
-// verify_{v2,v3}_pool_address` checks. Called from the `register_v2_pool` /
-// `register_v3_pool` Python seams: before registering, recomputes the CREATE2
-// address from the JSON-sourced deployer + init hash and rejects a mismatch
-// with a clear `ValueError`. Verification is skipped (returns `Ok(())`) when
-// the `(chain, factory)` is not in the shipped JSON (manual/ad-hoc
-// registration) or the row has no CREATE2 — so only JSON-registered pools are
-// enforced.
+// Thin `PyResult` wrapper over the pure `degenbot_uniswap::deployments::
+// verify_aerodrome_v3_pool_address` check: before registering, recomputes
+// the CREATE2 address from the JSON-sourced deployer + init hash and rejects
+// a mismatch with a clear `ValueError`.
 
 fn map_mismatch(m: AddressMismatch) -> pyo3::PyErr {
     pyo3::exceptions::PyValueError::new_err(m.to_string())
 }
 
-// The V2 / V3 / Aerodrome-V2 registration-time verify wrappers retired with
-// the registration cluster's move onto the `Bot` facade: the
-// core `register_*_pool` methods call
-// `degenbot_uniswap::deployments::verify_*_pool_address` directly and the
-// shell maps the typed `Create2` arm to the same bare `ValueError`.
-
 /// Verify an Aerodrome V3 (Slipstream) pool registration's declared address
 /// against the JSON-sourced EIP-1167 deployer + implementation address (the
 /// V3 salt includes the `tick_spacing`). `Ok(())` if it matches or is not
 /// applicable; `Err(PyValueError)` on a verified mismatch.
-/// (Fork A follow-on.)
-#[expect(dead_code)] // wired when a tick_spacing-aware register_aerodrome_v3 lands
+#[expect(dead_code)]
 pub(crate) fn verify_aerodrome_v3(
     chain_id: u64,
     factory: alloy::primitives::Address,

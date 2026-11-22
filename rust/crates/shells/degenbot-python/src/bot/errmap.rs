@@ -1,7 +1,7 @@
-//! Core-error → historical-Python-exception translation for the bot shell.
+//! Core-error → Python-exception translation for the bot shell.
 //!
 //! One home for every mapper the `PyBot` / `PyArbEngine` / `PyLiquidityPool`
-//! pymethods raise through. The historical Python message vocabulary is a
+//! pymethods raise through. The Python message vocabulary is a
 //! behavioral contract: each mapper's output text is pinned by the tests in
 //! this module, and `build_paths`' exception classification rides the typed
 //! hierarchy these constructors produce.
@@ -23,7 +23,7 @@
 //! Address parsing shares the same contract:
 //! [`degenbot_bot::bot_core::parse_address_str`] owns the
 //! `Invalid address '<input>': <source>` vocabulary; the shell only wraps
-//! its error in the historical `ValueError`.
+//! its error in a `ValueError`.
 //!
 //! Other domains keep their own mappers: `db::db_err_to_py`, `abi/*`,
 //! `fork/*`, and `engine/strategy.rs` are out of scope here.
@@ -50,7 +50,7 @@ use crate::bot::engine::{
 ///
 /// A pose refusal and a transport refusal are different answers ("you called
 /// this at the wrong time" versus "the endpoint refused us"), so the text names
-/// which one it is while the exception type stays the shell's historical
+/// which one it is while the exception type stays the shell's
 /// `RuntimeError`.
 #[expect(
     clippy::needless_pass_by_value,
@@ -64,7 +64,7 @@ pub(crate) fn map_connect_err(err: ConnectRefusal) -> PyErr {
 ///
 /// Every registration-phase refusal — the register, build, identity, verify,
 /// lifecycle, and snapshot-load families — is a [`RefusalKind`] variant, and
-/// this function is the single home of the historical Python exception
+/// this function is the single home of the pinned Python exception
 /// vocabulary each one surfaces as. The pymethod-prefixed no-`ConstructionIo`
 /// arm is supplied by [`map_build_refusal`] (the build entries own their
 /// method name).
@@ -118,7 +118,7 @@ pub(crate) fn map_refusal(kind: RefusalKind) -> PyErr {
 }
 
 /// The build-entry variant of [`map_refusal`]: the no-`ConstructionIo` arm's
-/// historical message carries the pymethod prefix, which only the build call
+/// message carries the pymethod prefix, which only the build call
 /// sites own.
 pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyErr {
     if matches!(kind, RefusalKind::MissingConstructionIo { .. }) {
@@ -128,8 +128,8 @@ pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyEr
 }
 
 /// The typed builder-failure vocabulary's ONE Python renderer (the
-/// historical `map_builder_err` rendering, plus the construction route's
-/// taxonomy arms): the FINAL message is rendered HERE and nowhere else, and
+/// construction route's taxonomy arms included): the FINAL message is
+/// rendered HERE and nowhere else, and
 /// every instance carries the closed `kind` / structured `detail`
 /// attributes, so a caller reads the refusal as data instead of parsing
 /// prose.
@@ -138,11 +138,9 @@ pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyEr
 /// retry-worthy) and `Decoding` (the read succeeded with a value no pool can
 /// hold — permanent for that state) ride their own `PoolRegistrationError`
 /// subclasses, so a caller can skip-by-type without parsing the message —
-/// and their reason is the whole caller-facing message (the historical
-/// `pool build RPC error:` / `pool build decode failure:` prefixes died with
-/// the Python strip step they existed for). The DB and transient arms map
-/// to [`PoolRegistrationError`] with distinct kinds — never a plain
-/// `RuntimeError`. Every other arm keeps its historical text unchanged.
+/// and their reason is the whole caller-facing message. The DB and transient
+/// arms map to [`PoolRegistrationError`] with distinct kinds — never a plain
+/// `RuntimeError`. Every other arm keeps its pinned text unchanged.
 fn map_build_failure(failure: &BuildFailure) -> PyErr {
     let (kind, detail) = PyBuildFailureKind::read(failure);
     match failure {
@@ -207,8 +205,7 @@ fn map_build_failure(failure: &BuildFailure) -> PyErr {
     }
 }
 
-/// The registry-insert refusal's Python surface (the historical
-/// `map_register_v*_err` rendering).
+/// The registry-insert refusal's Python surface.
 fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRefusal) -> PyErr {
     match reason {
         RegisterRefusal::AlreadyRegistered {
@@ -241,8 +238,7 @@ fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRe
     }
 }
 
-/// The V4 admission refusals' Python surface (the historical register
-/// refusal's rendering, now the shared `map_refusal` path).
+/// The V4 admission refusals' Python surface (the shared `map_refusal` path).
 fn map_admission(failure: &BuildFailure, hook_flags: Option<u16>, fee: Option<u32>) -> PyErr {
     let (kind, detail) = PyBuildFailureKind::read(failure);
     match failure {
@@ -293,8 +289,7 @@ fn family_subject(family: Option<RegisteredPoolFamily>) -> String {
     }
 }
 
-/// A verify failure's Python surface (the historical `map_verify_err` /
-/// `map_liquidity_verify_error` rendering): a mismatch is the fatal
+/// A verify failure's Python surface: a mismatch is the fatal
 /// `VerificationMismatchError`; a transport or provider-construction refusal
 /// is the retryable `VerificationRpcError`; everything else is a
 /// `RuntimeError`.
@@ -308,7 +303,7 @@ fn map_verify_failure(origin: VerifyOrigin, detail: String) -> PyErr {
     }
 }
 
-/// The snapshot-load reason's historical rendering.
+/// The snapshot-load reason's rendering.
 fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
     match reason {
         SnapshotLoadReason::Db { detail }
@@ -316,8 +311,6 @@ fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
         | SnapshotLoadReason::OutOfRange { detail } => detail,
     }
 }
-
-// --- Pool registration (admission) ---
 
 /// Map the typed path-registration refusal: a full registry is the benign
 /// `PathRegistryFullError` stop signal; every `Invalid` refusal keeps the
@@ -335,9 +328,7 @@ pub(crate) fn map_path_registration_err(
     }
 }
 
-// --- Builder / build families ---
-
-/// Map the typed no-`ConstructionIo` refusal to the historical
+/// Map the typed no-`ConstructionIo` refusal to the
 /// method-prefixed `RuntimeError` (each pymethod owns its prefix).
 pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
     PyRuntimeError::new_err(format!(
@@ -345,10 +336,8 @@ pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
     ))
 }
 
-// --- Swap calculation ---
-
-/// Map a core [`SwapOpError`] from an exact-input calc op to its historical
-/// Python surface (`op` is the pymethod name the fetch/mislabel surfaces
+/// Map a core [`SwapOpError`] from an exact-input calc op to its Python
+/// surface (`op` is the pymethod name the fetch/mislabel surfaces
 /// name). The overflow/on-chain-revert class is the typed
 /// [`SwapMathOverflowError`]; the unknown-pool, unsupported-family, and
 /// miss-recovery refusals keep their `ValueError` vocabulary. Every arm is
@@ -369,8 +358,8 @@ pub(crate) fn map_calc_tokens_out_err(
     }
 }
 
-/// Map a core [`SwapOpError`] from an exact-output calc op to its historical
-/// Python surface (`op` is the pymethod name the surfaces name). The
+/// Map a core [`SwapOpError`] from an exact-output calc op to its Python
+/// surface (`op` is the pymethod name the surfaces name). The
 /// request-amount overflow keeps the overflow text while the not-computable
 /// overdraw is named its own class ([`SwapNotComputableError`]); the
 /// unknown-pool, exact-output family gap, and miss-recovery refusals keep
@@ -392,14 +381,10 @@ pub(crate) fn map_calc_tokens_in_err(
     }
 }
 
-// --- Registration wrappers (CREATE2 verify → admission) ---
-
-// --- Pool swap-sim surfaces (`bot_core::pool_ops`) ---
-
 /// The on-chain `getAmountOut` SafeMath-parity overflow `ValueError` — the
 /// shared surface for a request amount that did not fit the signed
 /// user-perspective delta and a constant-product `uint256` intermediate
-/// overflow (byte-identical historical text).
+/// overflow (the pinned text).
 pub(crate) fn swap_math_overflow() -> PyErr {
     SwapMathOverflowError::new_err(
         "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
@@ -463,7 +448,7 @@ pub(crate) fn pool_unregistered(pool_id: u64) -> PyErr {
     PyValueError::new_err(format!("pool {pool_id} is not registered"))
 }
 
-/// The archived V4 hooked-pool approximation exception — an amount-modifying
+/// The V4 hooked-pool approximation exception — an amount-modifying
 /// hook may have invalidated the standard math, so the approximate deltas
 /// ride the exception text instead of a silently wrong number.
 pub(crate) fn hooked_pool_approximation(
@@ -482,7 +467,7 @@ pub(crate) fn encode_swap_failed(detail: &str) -> PyErr {
 
 #[cfg(test)]
 mod tests {
-    //! Pin the historical message vocabulary per mapper. The Python seam and
+    //! Pin the pinned message vocabulary per mapper. The Python seam and
     //! its fixtures classify on the exact text (or the typed exception) these
     //! constructors produce, so the strings below are a behavioral contract.
     //! Addresses used in pins are all-digit hex so their rendering is
@@ -908,8 +893,7 @@ mod tests {
                 "expected a SpecViolationError"
             );
         });
-        // The reason rides the MESSAGE: two refusals that used to render one
-        // undifferentiated string now name their own mechanism.
+        // The reason rides the MESSAGE: each refusal names its own mechanism.
         assert_eq!(
             message(&mapped(&PoolBuilderError::Spec(
                 SpecRefusal::CurveBrokenPool

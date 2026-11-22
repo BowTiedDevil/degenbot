@@ -262,11 +262,11 @@ class ArbitrageEngine:
         the bot builders (`py_bot.register_v3_pool`, tick data seeded inline),
         NOT via the engine's verify-gated `register_v3_pool`. That builder path
         seeds the snapshot tick map but never drains the backfill/pump buffer —
-        so Mint/Burn events that fired during `backfill_from_snapshot` (before
+        so Mint/Burn events that fired during the backfill window (before
         the pool was registered) sit undrained, leaving phantom/missing
         liquidity that fails on-chain verification. This drains both the
-        backfill and the pump buffer in order (backfill first, then pump),
-        matching what the orphaned `register_v3_pool` path did. Safe to call on
+        backfill and the pump buffer in order (backfill first, then pump).
+        Safe to call on
         an already-registered pool; a no-op if the pool is unregistered or has no
         buffered events.
         """
@@ -360,7 +360,7 @@ class ArbitrageEngine:
 
         ADR-003: V2 state lives in `BotState` as a single entry per address
         (orientation is selected at solve time via `zero_for_one`, not by a
-        separate reverse key). The former forward/reverse dual keys are gone.
+        separate reverse key).
         """
     def diagnostic_inspect_path(self, /, path_id: SupportsIndex, rpc_url: str | None = None) -> Any:
         """
@@ -370,12 +370,9 @@ class ArbitrageEngine:
         Snapshots the engine-owned pool state for every hop in `path_id` (no
         RPC calls — pure engine-state read under the engine lock).
 
-        `rpc_url` is accepted for forward compatibility but currently ignored;
-        the on-chain recompute half (`fetch_onchain`) was retired when
-        `[sim-diag]` moved onto the inspector's captured swaps: captured
-        swaps ARE byte-exact ground truth (proven via
-        the `swap_capture_correctness` mainnet probe), so no onchain re-fetch
-        is needed to classify a revert.
+        `rpc_url` is accepted for forward compatibility but ignored: captured
+        swaps ARE byte-exact ground truth, so no on-chain re-fetch is needed
+        to classify a revert.
 
         Returns a Python `dict` containing `path_id`, `path_type`, `solve_block`,
         `engine_processed_block`, and a `hops` list with per-hop engine state.
@@ -412,8 +409,6 @@ class ArbitrageEngine:
         """
     def inspect_path(self, /, path_id: SupportsIndex) -> dict | None:
         """
-        Read the last solved results and block number.
-
         Inspect a registered path by ID.
 
         Returns a dict with:
@@ -450,19 +445,19 @@ class ArbitrageEngine:
     def last_processed_block(self, /) -> int | None:
         """
         Last block number processed by the pump's drain phase. Routes through
-        the engine's stage surface (`EngineStages`): the engine's own
-        cursor. The dissolved coordinator cursor (`last_drained_block` under
-        `drain_lock`) is gone — solve/finalize/publish work runs INLINE in the
-        single-writer pump driver, so the engine cursor IS the drained cursor
-        by construction (no Rust/Python race over a mid-drain read).
+        the engine's stage surface (`EngineStages`): the engine's own cursor.
+        Solve/finalize/publish work runs INLINE in the single-writer pump
+        driver, so the engine cursor IS the drained cursor by construction
+        (no Rust/Python race over a mid-drain read).
 
         Returns `None` if no block has been processed yet (before the first
         solve / before resume).
         """
     def latest_results(self, /) -> tuple[list, int]:
         """
-        Returns (`results`, `block_number`) where results is a flat list:
-        [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
+        Returns (`results`, `block_number`) where `results` is one tuple per
+        solved path: (`path_id`, `optimal_input`, `profit`, `hop_outputs`,
+        `consumed_inputs`).
         """
     def path_count(self, /) -> int:
         """
@@ -471,7 +466,7 @@ class ArbitrageEngine:
     @property
     def path_dedups(self, /) -> int:
         """
-        PRG-4: dedup hits counted engine-side — a duplicate registration
+        Dedup hits counted engine-side — a duplicate registration
         returns the existing id and never surfaces to the driver as a skip,
         so the `dup` telemetry needs this witness.
         """
@@ -479,11 +474,8 @@ class ArbitrageEngine:
         """
         The `[profit]`-render `path_infos` dict for ONE registered path (the
         same shape the batch seam's `path_info_dict()` carries) or `None` when
-        the path is unregistered/unresolvable. SIMPIPE2 T3: payload entries
-        skip the FFI sim, so the driver enriches merged outcomes per entry.
-
-        GIL hygiene: the engine Mutex is acquired inside `with_stages` (the
-        accessor's `py.detach`, same pattern as `inspect_path`).
+        the path is unregistered/unresolvable: payload entries skip the FFI
+        sim, so the driver enriches merged outcomes per entry.
         """
     def pool_id_for_pool(self, /, family_tag: str, address: str) -> int | None:
         """
@@ -515,8 +507,8 @@ class ArbitrageEngine:
         """
         Register a mixed arbitrage path.
 
-        Each entry is (`hop_type_str`, `pool_key`, `zero_for_one`) where
-        `hop_type_str` is "V2" or "V3".
+        Each entry is a (`pool_id`, `zero_for_one`) pair: the engine pool id of
+        a registered pool and the hop's trade direction.
         """
     def release_all_v3_v4_quarantined(self, /) -> None:
         """
@@ -578,23 +570,9 @@ class ArbitrageEngine:
         """
     def set_path_cap(self, /, cap: SupportsIndex | None = None) -> None:
         """
-        Subscribe phase: open WS connections and observe until first complete block.
-
-        Returns the first observed block number. Python should:
-        1. Run backfill up to the returned block number
-        2. Call `resume()` to begin normal processing
-
-        A "complete" block is one where both a `newHeads` notification and at
-        least one log for the same block have been received. This guarantees
-        the logs subscription did not miss the start of the block.
-        No events are buffered during subscribe — the backfill is the sole
-        authority for the gap between snapshot and WS start.
-
-        Raises `RuntimeError` if the pump is already started or subscribed.
-        PRG-4: the registered-path cap owned by the engine path
-        registry. The Python driver sets it once at boot from the typed
-        config value; `None` = unlimited. `None` clears any set cap
-        (operator override).
+        The registered-path cap owned by the engine path registry. The Python
+        driver sets it once at boot from the typed config value; `None` =
+        unlimited. `None` clears any set cap (operator override).
         """
     def set_profit_thresholds(self, /, min_profit: Any, max_profit: Any | None = None) -> None:
         """
@@ -618,8 +596,8 @@ class ArbitrageEngine:
         """
         Transition a V3 pool from `Quarantined` to `Live`: flush the
         retained in-progress-block pump tail via the unguarded `drain_pump`
-        in insertion order, then mark `Live`. Call after step-2 post-drain
-        verify passes. No-op for unregistered / already-`Live` pools.
+        in insertion order, then mark `Live`. Call after the post-drain
+        verification passes. No-op for unregistered / already-`Live` pools.
         """
     def set_v3_pool_quarantined(self, /, pool_address: str) -> None:
         """
@@ -635,7 +613,7 @@ class ArbitrageEngine:
     def set_v4_pool_live(self, /, pool_manager: str, pool_id_hex: str) -> None:
         """
         Transition a V4 pool from `Quarantined` to `Live`. V4 twin
-        of [`set_v3_pool_live`]. Call after step-2 post-drain verify passes.
+        of [`set_v3_pool_live`]. Call after the post-drain verification passes.
         """
     def set_v4_pool_quarantined(self, /, pool_manager: str, pool_id_hex: str) -> None:
         """
@@ -673,10 +651,9 @@ class ArbitrageEngine:
         The snapshot seed block `S` — set at `Bot.__init__` time by
         `Bot::load_snapshot_from_db` for the DB path, OR via
         [`set_snapshot_seed_block`](Self::set_snapshot_seed_block) for the
-        non-DB (file/memory) path (the pyo3 `backfill_from_snapshot`
-        is retired; the core auto-backfill inside `BlockPump::resume_from_subscribe`
-        reads `S` from the shared `BotState`). `None` = cold-start (no snapshot
-        loaded).
+        non-DB (file/memory) path (the core auto-backfill inside
+        `BlockPump::resume_from_subscribe` reads `S` from the shared
+        `BotState`). `None` = cold-start (no snapshot loaded).
         """
     @snapshot_seed_block.setter
     def snapshot_seed_block(self, /, block: SupportsIndex | None) -> None:
@@ -690,17 +667,15 @@ class ArbitrageEngine:
         min(newest_block_v3, newest_block_v4)` — the seed the core
         auto-backfill closes the snapshot→WS gap from.
 
-        `None` clears the seed (cold-start resume); `Some(b)` overrides the
-        stored seed (used only when no snapshot has set it yet — the DB path's
-        already-set seed takes precedence on the production path because the
-        non-DB path does not call this setter).
+        `None` clears the seed (cold-start resume); `Some(b)` replaces the
+        stored seed. On the production path the DB path sets `S` itself, so
+        this setter is only the non-DB path's door — the two never contend.
         """
     def solve_all_paths(self, /, block_number: SupportsIndex) -> None:
         """
         Resolve and solve all registered paths.
 
-        Called to populate results for the first time (replaces the
-        removed `freeze()` + `initial_solve()`). Subsequent `process_logs`
+        Populates results for the first time. Subsequent `process_logs`
         calls use dependency tracking to only re-solve affected paths.
         """
     def start(self, /, node_http: str, node_ws: str, verify_state_view: str | None = None) -> int:
@@ -1897,9 +1872,15 @@ class Bot:
 class BotIo:
     """
     The Rust `#[pyclass]` I/O façade pool builders receive in place of the
-    Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface to
-    the held Python `provider` (see module docs). Exposed to Python as
-    `degenbot._ffi.BotIo`.
+    Python `SyncPoolIO` adapter — delegates the 7-method `PoolIO` surface
+    through the core `ConstructionIo` handle (see module docs). Exposed to
+    Python as `degenbot._ffi.BotIo`.
+
+    Construct with an existing `ProviderAdapter` (the `Bot.provider`):
+    ```python
+    io = PyBotIo(provider=bot.provider, database_path=str(bot.database_path))
+    ```
+    then pass `io` where a builder expects an `io: PoolIO`.
     """
     def __new__(cls, /, provider: Any, database_path: str | None = None) -> BotIo:
         """
@@ -1938,9 +1919,9 @@ class BotIo:
     @property
     def database_path(self, /) -> str | None:
         """
-        The on-disk `SQLite` database path, if any. The DB-query methods
-        open a `degenbot_db::DegenbotDb` handle from this path; `None` when the
-        `Bot` has no DB.
+        The on-disk `SQLite` database path, if any. The file is opened ONCE,
+        at construction, into the construction handle's DB half; `None` when
+        the session declared no database.
         """
     def fetch_balancer_amp(self, /, address: str, block: Any | None = None) -> Any:
         """
@@ -2027,15 +2008,13 @@ class BotIo:
     def fetch_erc20_token(self, /, chain_id: SupportsIndex, address: str) -> Erc20TokenRow | None:
         """
         Fetch an ERC-20 token row from the DB by `(chain_id, address)` — the
-        construction-time read in `Erc20Builder.build`. Replaces the
-        `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
+        construction-time read in `Erc20Builder.build`.
 
         Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
         decimals)`, or `None` when the row is absent. Returns `None` (no error)
-        when no `database_path` is configured (the `Bot` has no DB — matches
-        the prior `contextlib.suppress(Exception)` skip). DB failures propagate
-        as `ValueError` (the Python caller wraps the read in
-        `contextlib.suppress(Exception)`).
+        when no `database_path` is configured — the session declared no DB,
+        the shape the caller's `contextlib.suppress(Exception)` arm expects.
+        DB failures propagate as `ValueError`.
         """
     def fetch_exchange(self, /, exchange_id: SupportsIndex) -> ExchangeRow | None:
         """
@@ -2046,15 +2025,12 @@ class BotIo:
     def fetch_pool_row(self, /, chain_id: SupportsIndex, address: str) -> LiquidityPoolRow | None:
         """
         Fetch a `pools` row by `(chain_id, address)` — the pool builder's
-        construction-time read. Replaces the `SQLAlchemy`
-        `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
+        construction-time read. Returns a
         [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
-        (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
-        the relationships via [`Self::fetch_pool_kind`] / [`Self::fetch_token_by_id`]
-        / [`Self::fetch_exchange`].
+        (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller
+        hydrates the relationships by those FK ids.
 
-        `None` when the row is absent or no `database_path` is configured (mirrors
-        the prior `contextlib.suppress(Exception)` skip).
+        `None` when the row is absent or no `database_path` is configured.
         """
     def fetch_tick_bitmap(
         self, /, pool_address: str, word_position: SupportsIndex, block: Any | None = None
@@ -2211,10 +2187,8 @@ class BotIo:
         """
         Write back an ERC-20 token row's metadata (`name` / `symbol` / `decimals`)
         by `(chain_id, address)` — the construction-time write-back in
-        `Erc20Builder.build`. Replaces the `SQLAlchemy`
-        `token_from_db.decimals = …; token_from_db.name = …;
-        token_from_db.symbol = …; session.commit()` block. Each `None` field
-        writes `NULL` (matches the ORM attribute assignment).
+        `Erc20Builder.build`. Each `None` field
+        writes `NULL` (matching the ORM attribute assignment).
 
         No-op when no `database_path` is configured. DB failures propagate as
         `ValueError`. A no-row match is a benign no-op (the caller
@@ -3259,18 +3233,11 @@ class Erc20Token:
 @final
 class Erc20TokenRow:
     """
-    The Rust I/O façade for pool builders.
-
-    Construct with an existing `ProviderAdapter` (the `Bot.provider`):
-    ```python
-    io = PyBotIo(provider=bot.provider, database_path=str(bot.database_path))
-    ```
-    then pass `io` where a builder expects an `io: PoolIO`.
-    A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`]
-    . Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
+    A typed ERC-20 token DB row returned by [`PyBotIo::fetch_erc20_token`].
+    Mirrors the `SQLAlchemy` `Erc20TokenTable` ORM object's
     attributes (`.id` / `.chain` / `.address` / `.name` / `.symbol` /
     `.decimals`) so the builder's downstream attribute reads stay unchanged
-    after the cutover from `session.scalar(select(Erc20TokenTable)...)`.
+    in place of the `session.scalar(select(Erc20TokenTable)...)` read.
     """
     @property
     def address(self, /) -> str: ...

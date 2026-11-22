@@ -418,7 +418,7 @@ impl PyBot {
 #[cfg(test)]
 mod tests {
     //! The value's own contract: a family/mode/target the core cannot use is
-    //! refused with the historical target vocabulary, before any driver call.
+    //! refused with the target vocabulary, before any driver call.
 
     #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 

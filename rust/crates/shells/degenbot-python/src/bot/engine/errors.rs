@@ -13,11 +13,9 @@ use pyo3::{create_exception, PyErr, PyTypeInfo};
 // Distinct Python exception types for the two verification failure
 // categories. Both subclass `RuntimeError` so existing
 // `except RuntimeError` handlers keep catching them, but they let callers
-// classify by *type* instead of fragile string matching on "tick data
-// mismatch". `build_paths` previously swallowed any `RuntimeError` lacking
-// that substring — masking RPC/transport errors that should also surface
-// loudly (an unverifiable pool is no safer to operate on than a mismatched
-// one).
+// classify by *type* instead of string matching on "tick data mismatch" —
+// a string match masks RPC/transport errors that should surface loudly
+// (an unverifiable pool is no safer to operate on than a mismatched one).
 //
 // - `VerificationMismatchError`: the engine's tick data does NOT match
 //   on-chain. Fatal — the bot must shut down rather than trade on stale data.
@@ -27,9 +25,9 @@ use pyo3::{create_exception, PyErr, PyTypeInfo};
 //   caller can choose retry/backoff vs abort without re-introducing the
 //   swallowing bug.
 //
-// per-call RPC transport failures inside `liquidity_verifier` are now the
+// Per-call RPC transport failures inside `liquidity_verifier` are the
 // one refusal vocabulary's `VerifyOrigin::Transport` class, mapped to
-// `VerificationRpcError` (NOT flattened to a mismatch). The distinction here
+// `VerificationRpcError` (never flattened to a mismatch). The distinction here
 // covers the `VerifyOrigin::ProviderConstruction` category AND the
 // `VerifyOrigin::Transport` (per-call transport) category the seam routes to
 // the retryable `VerificationRpcError`.
@@ -46,7 +44,7 @@ create_exception!(
     "An RPC/transport error during on-chain verification (e.g. provider construction failed)."
 );
 
-// The construction route's LOUD refusal (ADR-055 D4, pool-construction card):
+// The construction route's LOUD refusal (ADR-055 D4):
 // a family-level stable construction refusal — no route rung serves the
 // pool's factory, the factory has no built-in DEX preset, no identity
 // selector answered, or CREATE2 verification failed. The registration unit
@@ -166,9 +164,7 @@ create_exception!(
 );
 
 // ADR-037: hooked V4 pools are admitted but their simulations use
-// standard concentrated liquidity math that hooks may invalidate — ported from the archived
-// Python `PossibleInaccurateResult` (archive/main-20260721
-// src/degenbot/exceptions/liquidity_pool.py:94). Raised by the pool-handle
+// standard concentrated liquidity math that hooks may invalidate. Raised by the pool-handle
 // sim seams with the APPROXIMATE consumed/delivered magnitudes attached so
 // callers can decide whether a possibly-wrong number is usable.
 create_exception!(
@@ -187,7 +183,7 @@ create_exception!(
 // - `SwapMathOverflowError`: the on-chain `getAmountOut`/`getAmountIn`
 //   `SafeMath` revert parity — a request amount that did not fit the signed
 //   delta or a constant-product `uint256` intermediate overflow. On the
-//   exact-input ops this is the whole not-computable surface (one historical
+//   exact-input ops this is the whole not-computable surface (one shared
 //   text, two typed causes); on exact-output it is the request-amount overflow
 //   alone.
 // - `SwapNotComputableError`: a swap the sim ran but could not compute on the
@@ -207,9 +203,8 @@ create_exception!(
     "The exact-output swap is not computable: an overdraw of the output reserve, an exhausted range, or a non-computable invariant."
 );
 
-// PRG-4: the registered-path cap refusal. A BENIGN stop signal, not
-// an error: the crawl catches it and stops discovery (it replaces the Python
-// DiscoveryCrawlComplete pre-count unwind). Deliberately NOT under
+// The registered-path cap refusal. A BENIGN stop signal, not
+// an error: the crawl catches it and stops discovery. Deliberately NOT under
 // PoolRegistrationError — a full registry is a state, not a pool-admission
 // refusal.
 create_exception!(
@@ -220,11 +215,8 @@ create_exception!(
 );
 
 // The fleet boot refusal is a TYPED error —
-// the library never aborts the host process on the boot-refusal arm. The
-// 2026-09-11 CI failures made the gap concrete: on 4-vCPU runners the
-// fleet budget refusal (fractional quota below the pinned-role floor)
-// reached the seat-host materializer's abort and SIGABRT'd pytest-xdist
-// workers inside the extension. Both refusal families surface HERE as
+// the library never aborts the host process on the boot-refusal arm. Both
+// refusal families surface HERE as
 // the same exception: the budget floor family (BudgetError's
 // QuotaTooSmallForPinnedRoles / Oversubscribed / TooFewSolverCpus) and
 // the boot invariants (SlotLayout's dead-station refusals). Reuse, not a
@@ -240,7 +232,7 @@ create_exception!(
     "The fleet host refused to boot: the detected CPU budget is below the pinned-role floor, or a boot invariant failed. The library never aborts the host process on this arm; the message carries the detected budget, the floor, and one operator hint."
 );
 
-/// FF-T1: map the workers' typed `BootError` family onto the
+/// Map the workers' typed `BootError` family onto the
 /// `BootRefused` exception — the ONE owner of the message shape (detected
 /// budget + floor + one operator hint), so the wording cannot drift per
 /// seam. Every pyo3 surface that can surface a fleet boot refusal maps

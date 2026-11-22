@@ -1,6 +1,6 @@
 //! Strategy-host operator verbs on `PyArbEngine`.
 //!
-//! The engine boot attaches to a host-minted hub (the C2 attach signature) and
+//! The engine boot attaches to a host-minted hub and
 //! registers the backrun lane's spawn factory; the engine's start flow boots
 //! the enabled drivers and supervises their lane boundaries. These are the
 //! operator's runtime verbs over the host's driver FSM. The Python surface is
@@ -272,9 +272,8 @@ pub(crate) fn boot_session(
     let nonce = Arc::new(NonceAuthority::new(0));
 
     // Register every strategy under its plane name, in plane order, derived
-    // from its `strategy.<facet>.active` key — including settlement, whose
-    // retired boot-time waiver ("a dry-run boot must still enable the arm")
-    // is gone: activation isn't a live-only concern. The loop each facet's
+    // from its `strategy.<facet>.active` key — including settlement:
+    // activation isn't a live-only concern. The loop each facet's
     // driver runs is a value here too: settlement's block clock is the engine
     // pump session, whose lifetime the host boots and folds like any other
     // driver, while a backrun facet's factory travels with its hosted arm.
@@ -1054,9 +1053,8 @@ mod tests {
 
     /// The stance-independent posture rule at the host's facet table: every
     /// strategy — settlement included — registers configured iff its
-    /// `strategy.<facet>.active` key is on. The boot-time settlement waiver
-    /// (a dry-run boot must still enable the arm) is retired: activation
-    /// isn't a live-only concern, and the stance-independent runner gate
+    /// `strategy.<facet>.active` key is on. Activation isn't a live-only
+    /// concern, and the stance-independent runner gate
     /// refuses the boot in both stances before the host serves a session.
     #[test]
     fn each_facet_is_configured_iff_its_active_key_is_on() {

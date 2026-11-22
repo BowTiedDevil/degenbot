@@ -6,7 +6,7 @@ Register the `init_hash_for` / `deployer_for` free functions on the
 `degenbot._ffi.deployments` submodule.
 The `degenbot._ffi.deployments` Python submodule (declarative
 `#[pymodule]`), carrying the deployment-identity lookup over the
-embedded deployments.json (Fork A). The parent module registers
+embedded deployments.json. The parent module registers
 the submodule itself and its `sys.modules` entry.
 """
 
@@ -54,7 +54,7 @@ def resolve_deployer(chain_id: SupportsIndex, factory: str) -> str:
     """
     Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
     with the `None -> factory` convention applied. Returns the factory itself
-    when the ``(chain, factory)`` is not in the shipped JSON (Fork A).
+    when the ``(chain, factory)`` is not in the shipped JSON.
     """
 
 def resolve_v2_init_hash(chain_id: SupportsIndex, factory: str) -> str:

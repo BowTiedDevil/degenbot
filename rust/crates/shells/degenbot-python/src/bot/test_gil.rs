@@ -1,8 +1,7 @@
-//! Test-only helper for the GIL/BotState concurrency contract (incident
-//! 2026-08-20: a sync FFI pymethod took the `BotState` WRITE while holding the
-//! GIL and parked behind the dispatch fan-out's long-held READ guard; the
-//! reader then wanted the GIL -> permanent inversion; every other thread
-//! froze on the GIL futex = the observed 'GIL deadlock').
+//! Test-only helper for the GIL/`BotState` concurrency contract: the inversion
+//! cycle where a sync FFI pymethod takes the `BotState` WRITE while holding the
+//! GIL and parks behind a long-held READ guard whose reader then wants the GIL
+//! — permanent inversion, every other thread frozen on the GIL.
 //!
 //! Rust-callable only (not exported to Python); gated on `auto-initialize`
 //! like the integration tests that use it.
@@ -11,10 +10,10 @@ use pyo3::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-/// Arm the incident cycle around the REAL `unregister_pool` pymethod and
+/// Arm the inversion cycle around the real `unregister_pool` pymethod and
 /// call it from a GIL-held thread.
 ///
-/// Ordering (matches the incident): the READER (fan-out shape) holds the
+/// Ordering (the inversion shape): the READER (fan-out shape) holds the
 /// `BotState` read end FIRST; the writer (the pymethod, GIL-held by the
 /// caller) then parks behind it. While parked, the reader wants the GIL
 /// (`Python::attach`).
@@ -50,18 +49,14 @@ pub fn state_write_park_cycle(
         Python::attach(|_p| ());
         drop(guard);
     });
-    // Let the reader settle on the read end before the writer arrives
-    // (incident ordering: fan-out mid-sim, writer arrives late).
     thread::sleep(Duration::from_millis(150));
     let _ = bot.unregister_pool(py, address, None)?;
     Ok(holder)
 }
 
-/// Incident 2026-08-20 #2: the same cycle around `update_v3_pool` (the T2
-/// re-audit found the build_/register_/update_ pymethods carried the same
-/// GIL-held `state_arc().write()` shape; the frozen V3 cold-build was
-/// parked in `build_v3_pool`'s registration write).
-/// GIL-held: the write parks behind the reader while holding the GIL;
+/// The same cycle around `update_v3_pool` — the build_/register_/update_
+/// pymethods carry the same GIL-held `state_arc().write()` shape this cycle
+/// pins. GIL-held: the write parks behind the reader while holding the GIL;
 /// inside `py.detach`: parks GIL-released.
 ///
 /// # Errors

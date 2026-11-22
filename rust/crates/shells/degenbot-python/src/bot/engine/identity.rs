@@ -1,8 +1,7 @@
 //! `PyO3` wrapper for the engine stage surface — the pool-identity
 //! `#[pymethods]` slice.
 //!
-//! The Python registration pipeline used to keep its own address → engine
-//! `pool_id` maps per family. Those mirrors are gone: a caller that holds a
+//! A caller that holds a
 //! pool's IDENTITY (a family tag plus an address, or a V4 `PoolManager` plus
 //! pool id) asks the shared `BotState` here, through
 //! `EngineDriver::pool_id_for_identity`, and gets the id the engine hops on —

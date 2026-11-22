@@ -1,9 +1,8 @@
 //! `PyO3` wrapper for the engine stage surface — register `#[pymethods]` slice.
 //!
-//! Split out of the former monolithic `py_binding.rs` ,
-//! mirroring `crates/engine/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
-//! blocks per type, so each concern file contributes one slice.
+//! `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }` blocks per
+//! type, so each concern file contributes one slice, mirroring the core
+//! `arb_engine` module's per-concern layout.
 
 use super::{Arc, Bot, EngineStages, PoolHop, PyArbEngine, PyBot, PyList};
 use crate::bot::errmap::{map_connect_err, map_path_registration_err};
@@ -23,8 +22,7 @@ impl PyArbEngine {
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
         // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — and clone its `Arc<Bot>`
         // so `BlockPump`'s `dispatch_log` writes flow through to the engine's
-        // reads (dissolving the dual-`BotState` split —
-        // `rust-owned-bot.md` §17 stale-state root cause). Without one, allocate
+        // reads (dissolving the dual-`BotState` split). Without one, allocate
         // a standalone core + wrap it in a fresh `Bot` (no-pyo3 / legacy path).
         let (core, bot) = if let Some(bot) = py_bot_ref {
             let bot = bot.borrow(py).bot_arc();
@@ -43,7 +41,7 @@ impl PyArbEngine {
             let bot = Arc::new(Bot::with_core(Arc::clone(&core), registry));
             (core, bot)
         };
-        // The cross-block warm bytecode cache (Option A) — one
+        // The cross-block warm bytecode cache — one
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
         // cloned into each per-block `Evm2BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
@@ -97,8 +95,8 @@ impl PyArbEngine {
         // pure-Rust consumer. The hand-off leaves through `claim_consumer` and
         // travels into the Python `SessionConsumer` whole.
         //
-        // The driver attaches to a host-minted hub (the C2 attach signature)
-        // rather than minting a private one, so one `StrategyHost` owns the
+        // The driver attaches to a host-minted hub rather than minting a
+        // private one, so one `StrategyHost` owns the
         // hub, the frozen route registry, and the nonce authority per engine.
         // For a settlement-only boot the host is otherwise inert: no driver is
         // enabled and no lane namespace is named. The core session boot owns
@@ -148,8 +146,8 @@ impl PyArbEngine {
 
     /// Register a mixed arbitrage path.
     ///
-    /// Each entry is (`hop_type_str`, `pool_key`, `zero_for_one`) where
-    /// `hop_type_str` is "V2" or "V3".
+    /// Each entry is a (`pool_id`, `zero_for_one`) pair: the engine pool id of
+    /// a registered pool and the hop's trade direction.
     #[pyo3(signature = (pool_refs))]
     fn register_path(
         &self,
@@ -185,7 +183,7 @@ impl PyArbEngine {
         // loop keep making GIL progress. `PoolHop` is `Send`; the error maps
         // to a `PyErr` OUTSIDE the closure (GIL-held).
         //
-        // PRG-4: the refusal is TYPED — a full registry surfaces as the
+        // The refusal is TYPED — a full registry surfaces as the
         // benign `PathRegistryFullError` stop; everything else stays a
         // `ValueError` with the legacy message. The `created` flag derives
         // from the path-count delta inside the stage surface (dedup returns
@@ -196,9 +194,9 @@ impl PyArbEngine {
                 .register_path(hops)
                 .map_err(map_path_registration_err)
         })?;
-        // No engine-side registration. Touched-pool dirty tracking
-        // is a BYPRODUCT of log application (`Bot::dispatch_log` records the
-        // block's `EpochDelta`, which `on_resolve` consumes).
+        // No separate engine-side subscription: touched-pool dirty
+        // tracking is a BYPRODUCT of log application (`Bot::dispatch_log`
+        // records the block's `EpochDelta`, which `on_resolve` consumes).
         Ok((path_id, created))
     }
 
@@ -250,30 +248,16 @@ impl PyArbEngine {
         Ok((path_id, created))
     }
 
-    /// Subscribe phase: open WS connections and observe until first complete block.
-    ///
-    /// Returns the first observed block number. Python should:
-    /// 1. Run backfill up to the returned block number
-    /// 2. Call `resume()` to begin normal processing
-    ///
-    /// A "complete" block is one where both a `newHeads` notification and at
-    /// least one log for the same block have been received. This guarantees
-    /// the logs subscription did not miss the start of the block.
-    /// No events are buffered during subscribe — the backfill is the sole
-    /// authority for the gap between snapshot and WS start.
-    ///
-    /// Raises `RuntimeError` if the pump is already started or subscribed.
-    /// PRG-4: the registered-path cap owned by the engine path
-    /// registry. The Python driver sets it once at boot from the typed
-    /// config value; `None` = unlimited. `None` clears any set cap
-    /// (operator override).
+    /// The registered-path cap owned by the engine path registry. The Python
+    /// driver sets it once at boot from the typed config value; `None` =
+    /// unlimited. `None` clears any set cap (operator override).
     #[pyo3(signature = (cap=None))]
     fn set_path_cap(&self, cap: Option<u64>) {
         self.stages
             .set_path_cap(cap.map(|c| usize::try_from(c).unwrap_or(usize::MAX)));
     }
 
-    /// PRG-4: dedup hits counted engine-side — a duplicate registration
+    /// Dedup hits counted engine-side — a duplicate registration
     /// returns the existing id and never surfaces to the driver as a skip,
     /// so the `dup` telemetry needs this witness.
     #[getter]

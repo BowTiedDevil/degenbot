@@ -1,9 +1,8 @@
 //! `PyO3` wrapper for the engine stage surface — solve `#[pymethods]` slice.
 //!
-//! Split out of the former monolithic `py_binding.rs` ,
-//! mirroring `crates/engine/degenbot-bot/src/arb_engine/`'s per-concern
-//! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
-//! blocks per type, so each concern file contributes one slice.
+//! `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }` blocks per
+//! type, so each concern file contributes one slice, mirroring the core
+//! `arb_engine` module's per-concern layout.
 
 use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList};
 use crate::bot::pool::TickData;
@@ -18,17 +17,16 @@ use std::sync::Arc;
 #[pymethods]
 impl PyArbEngine {
     /// Last block number processed by the pump's drain phase. Routes through
-    /// the engine's stage surface (`EngineStages`): the engine's own
-    /// cursor. The dissolved coordinator cursor (`last_drained_block` under
-    /// `drain_lock`) is gone — solve/finalize/publish work runs INLINE in the
-    /// single-writer pump driver, so the engine cursor IS the drained cursor
-    /// by construction (no Rust/Python race over a mid-drain read).
+    /// the engine's stage surface (`EngineStages`): the engine's own cursor.
+    /// Solve/finalize/publish work runs INLINE in the single-writer pump
+    /// driver, so the engine cursor IS the drained cursor by construction
+    /// (no Rust/Python race over a mid-drain read).
     ///
     /// Returns `None` if no block has been processed yet (before the first
     /// solve / before resume).
     fn last_processed_block(&self) -> Option<u64> {
-        // route through the PumpControl trait (the inherent
-        // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
+        // Routed through the PumpControl trait; the trait cursor is
+        // Epoch-typed.
         use degenbot_bot::bot_core::PumpControl;
         PumpControl::last_processed_block(self.session.driver().stages().as_ref())
             .map(degenbot_substrate::Epoch::block)
@@ -42,8 +40,7 @@ impl PyArbEngine {
 
     /// Resolve and solve all registered paths.
     ///
-    /// Called to populate results for the first time (replaces the
-    /// removed `freeze()` + `initial_solve()`). Subsequent `process_logs`
+    /// Populates results for the first time. Subsequent `process_logs`
     /// calls use dependency tracking to only re-solve affected paths.
     fn solve_all_paths(&self, py: Python<'_>, block_number: u64) {
         self.with_stages(py, |e| e.solve_all_paths(block_number));
@@ -93,11 +90,11 @@ impl PyArbEngine {
     /// the bot builders (`py_bot.register_v3_pool`, tick data seeded inline),
     /// NOT via the engine's verify-gated `register_v3_pool`. That builder path
     /// seeds the snapshot tick map but never drains the backfill/pump buffer —
-    /// so Mint/Burn events that fired during `backfill_from_snapshot` (before
+    /// so Mint/Burn events that fired during the backfill window (before
     /// the pool was registered) sit undrained, leaving phantom/missing
     /// liquidity that fails on-chain verification. This drains both the
-    /// backfill and the pump buffer in order (backfill first, then pump),
-    /// matching what the orphaned `register_v3_pool` path did. Safe to call on
+    /// backfill and the pump buffer in order (backfill first, then pump).
+    /// Safe to call on
     /// an already-registered pool; a no-op if the pool is unregistered or has no
     /// buffered events.
     #[pyo3(signature = (pool_address))]
@@ -109,8 +106,7 @@ impl PyArbEngine {
         // release the GIL across the `core.write()` hold so the live
         // pump + asyncio loop keep making GIL progress while the main thread
         // awaits the lock. The SINGLE `core.write()` hold across both drains
-        // AND the post-drain pin is PRESERVED (the step-2 rolling-start race
-        // fix — see `pin_v3_post_drain_snapshot`); `py.detach` wraps the
+        // AND the post-drain pin is PRESERVED; `py.detach` wraps the
         // OUTSIDE, it does NOT split the hold. The GIL carried across this
         // widened hold would be the worst park in `build_paths` (engine.lock() +
         // core.write() across drain+pin). The closure touches no Python
@@ -141,8 +137,8 @@ impl PyArbEngine {
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         let stages = Arc::clone(&self.stages);
         // release the GIL across the `core.write()` hold (V4 twin of
-        // `apply_buffer_v3`). The single-write-hold invariant (the step-2
-        // race fix) is preserved — `py.detach` wraps the OUTSIDE.
+        // `apply_buffer_v3`). The single-write-hold invariant is preserved —
+        // `py.detach` wraps the OUTSIDE.
         py.detach(move || {
             let core = stages.core();
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
@@ -212,8 +208,8 @@ impl PyArbEngine {
 
     /// Transition a V3 pool from `Quarantined` to `Live`: flush the
     /// retained in-progress-block pump tail via the unguarded `drain_pump`
-    /// in insertion order, then mark `Live`. Call after step-2 post-drain
-    /// verify passes. No-op for unregistered / already-`Live` pools.
+    /// in insertion order, then mark `Live`. Call after the post-drain
+    /// verification passes. No-op for unregistered / already-`Live` pools.
     #[pyo3(signature = (pool_address))]
     fn set_v3_pool_live(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
         let addr = pool_address.parse::<Address>().map_err(|e| {
@@ -227,7 +223,7 @@ impl PyArbEngine {
     }
 
     /// Transition a V4 pool from `Quarantined` to `Live`. V4 twin
-    /// of [`set_v3_pool_live`]. Call after step-2 post-drain verify passes.
+    /// of [`set_v3_pool_live`]. Call after the post-drain verification passes.
     #[pyo3(signature = (pool_manager, pool_id_hex))]
     fn set_v4_pool_live(
         &self,
@@ -345,12 +341,9 @@ impl PyArbEngine {
     /// Snapshots the engine-owned pool state for every hop in `path_id` (no
     /// RPC calls — pure engine-state read under the engine lock).
     ///
-    /// `rpc_url` is accepted for forward compatibility but currently ignored;
-    /// the on-chain recompute half (`fetch_onchain`) was retired when
-    /// `[sim-diag]` moved onto the inspector's captured swaps: captured
-    /// swaps ARE byte-exact ground truth (proven via
-    /// the `swap_capture_correctness` mainnet probe), so no onchain re-fetch
-    /// is needed to classify a revert.
+    /// `rpc_url` is accepted for forward compatibility but ignored: captured
+    /// swaps ARE byte-exact ground truth, so no on-chain re-fetch is needed
+    /// to classify a revert.
     ///
     /// Returns a Python `dict` containing `path_id`, `path_type`, `solve_block`,
     /// `engine_processed_block`, and a `hops` list with per-hop engine state.
@@ -364,7 +357,7 @@ impl PyArbEngine {
         path_id: u64,
         rpc_url: Option<String>,
     ) -> PyResult<pyo3::Py<pyo3::PyAny>> {
-        let _ = rpc_url; // retained for API stability; onchain fetch retired.
+        let _ = rpc_url; // retained for API stability.
                          // GIL hygiene: engine Mutex acquired inside the accessor's py.detach.
         let snapshot = self.with_stages(py, |e| e.diagnostic_path_state(path_id));
 
@@ -406,7 +399,7 @@ impl PyArbEngine {
         v3_sync_updates: &Bound<'_, PyList>,
         block_number: u64,
     ) -> PyResult<()> {
-        // GIL hygiene (incident 2026-08-20 class): extract ALL Python data
+        // GIL hygiene: extract ALL Python data
         // first, under the GIL with no locks held; then apply the writes in
         // one py.detach scope. A write guard must never be held across Python
         // API calls, and the GIL must never be held while parked on the lock.
