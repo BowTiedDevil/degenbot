@@ -1,7 +1,4 @@
 //! Per-domain binding-crate modules.
-//!
-//! `engine/` is the first inhabitant of the split binding layer; the
-//! other `bot` / `bot::pool` wrappers live alongside it.
 
 use degenbot_core::op_warn;
 pub mod build_flights;
@@ -17,15 +14,6 @@ pub mod session_registry;
 #[cfg(feature = "auto-initialize")]
 pub mod test_gil;
 pub mod token;
-
-// === PyBot (moved from the former root `py_bot.rs`) ===
-//
-// `PyO3` wrappers for `BotState` — thin Python handle over Rust-owned state.
-// Implements the Polars-inspired three-layer topology (ADR-005): Rust [`BotState`]
-// core → `PyBot` `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<BotState>>`
-// → Python `BotState` session. `PyLiquidityPool`/`PyErc20Token` clone the same
-// `Arc` so many Python handles reference one Rust-owned `BotState`.
-// See: `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 
 use crate::prelude::*;
 use std::sync::Arc;
@@ -136,35 +124,31 @@ pub(crate) fn construction_db_half(
     }
 }
 
-// ---------------------------------------------------------------------------
-// PyBot — owns the Bot orchestrator; hands out shared BotState Arcs
-// ---------------------------------------------------------------------------
-
 /// Python handle to the per-chain `Bot` orchestrator (ADR-006 D4).
 ///
 /// Python constructs a `PyBot` (or receives a shared handle), registers
 /// pools/tokens, then reads results. `PyBot` owns a [`Bot`] via `Arc` and hands
 /// out clones of its shared `Arc<RwLock<BotState>>` (`state_arc`) so
 /// `PyLiquidityPool` / `PyErc20Token` / the engine wrapper all reach ONE
-/// Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
-/// `dispatch_log` writes flow through to the engine's reads (N handles → one
-/// state — the Polars three-layer invariant, preserved + generalized by D4).
+/// Rust-owned `BotState`; the engine's pump clones the same `Arc<Bot>` so its
+/// `dispatch_log` writes flow through to the solve slices' reads (N handles →
+/// one state — the Polars three-layer invariant, preserved + generalized by
+/// D4).
 #[pyclass(name = "Bot", module = "degenbot._ffi")]
 pub struct PyBot {
     bot: Arc<Bot>,
-    /// ADR-006 D4: the pump lifecycle state, shared with the
-    /// `PyArbEngine` this bot owns. `None` until an engine is
-    /// constructed against this bot (the engine attaches its `Arc<PumpState>`
-    /// back here during `new()`). Once attached, the three pump methods —
-    /// `subscribe`, `backfill_from_snapshot`, `resume` — are drivable from
-    /// `PyBot` (the D4 owner) and read/write the SAME `EngineDriver` the
-    /// engine's snapshot/solve slices read.
+    /// ADR-006 D4: the pump lifecycle driver, shared with the `PyArbEngine`
+    /// this bot owns. `None` until an engine is constructed against this bot
+    /// (the engine attaches its `Arc<EngineDriver>` back here). Once
+    /// attached, the pump verbs — `connect` and `close` — are drivable from
+    /// `PyBot` and drive the SAME `EngineDriver` the engine's
+    /// snapshot/solve slices read.
     pump: parking_lot::Mutex<Option<Arc<degenbot_bot::arb_engine::EngineDriver>>>,
     /// Cached read-only `SnapshotDb` handle armed at `load_snapshot_from_db`
     /// time (Decisions 5 (B) + 9 (A)). `None` for cold-start
     /// (no DB) or before the snapshot load is attempted. The registration-path
     /// `PyO3` functions clone this Arc to feed `&dyn TickMapDb` to the tick-map
-    /// assembly helper's Db arm (`bot_core::tick_assembly`).
+    /// assembly helper's Db arm (`degenbot_substrate::tick_assembly`).
     ///
     /// The slot is shared (`Arc<Mutex<…>>`) because a consumer that runs its own
     /// loop asks it per use instead of taking a handle at boot — see
@@ -187,9 +171,8 @@ pub struct PyBot {
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
 impl PyBot {
-    /// Hand out a clone of the shared `Arc<Bot>` so `BlockPump` (and other
-    /// sibling consumers) drive the SAME `Bot`'s `dispatch_log` + state that
-    /// `PyBot` owns (ADR-006 D4: pump lifecycle relocation onto `Bot`).
+    /// Hand out a clone of the shared `Arc<Bot>` so the engine wrapper drives
+    /// the SAME `Bot`'s `dispatch_log` + state that `PyBot` owns (ADR-006 D4).
     #[must_use]
     pub(crate) fn bot_arc(&self) -> Arc<Bot> {
         Arc::clone(&self.bot)
@@ -201,9 +184,9 @@ impl PyBot {
     /// load hasn't run, or `close_snapshot_tx()` dropped it). The registration-
     /// path `PyO3` functions (`assemble_v3_tick_map` / `assemble_v4_tick_map`)
     /// clone this Arc and pass `&*arc as &dyn TickMapDb` to
-    /// `bot_core::tick_assembly::assemble_*`'s `db` param. Returns a fresh
-    /// `Arc` clone — the caller owns the lifetime of the borrow; `PyBot`
-    /// retains its own Arc so subsequent callers still get `Some`.
+    /// `degenbot_substrate::tick_assembly::assemble_*`'s `db` param. Returns a
+    /// fresh `Arc` clone; `PyBot` retains its own Arc so subsequent callers
+    /// still get `Some`.
     #[must_use]
     pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
         self.db.lock().as_ref().and_then(|tx| tx.acquire())
@@ -222,8 +205,6 @@ impl PyBot {
     ) -> Arc<parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::RetainedSnapshotTx>>>> {
         Arc::clone(&self.db)
     }
-
-    // ===================== the build-flight seam ==================
 
     /// Run one pool build under the single flight, whose table is the core's:
     /// `precheck` answers from the `BotState` registry of record, `lead` runs
@@ -616,7 +597,8 @@ impl PyBot {
         // so it passes its ``config.default_chain_id`` here. The ``chain_id = 0``
         // default keeps the bare ``PyBot()`` lower-level test fixtures (which
         // only exercise the Rust core) working without a chain invariant.
-        // `Arc<Bot>` so `BlockPump` clones the same orchestrator (ADR-006 D4).
+        // `Arc<Bot>` so the engine wrapper clones the same orchestrator
+        // (ADR-006 D4).
         Self {
             bot: Arc::new(Bot::new(chain_id)),
             pump: parking_lot::Mutex::new(None),
@@ -625,22 +607,21 @@ impl PyBot {
         }
     }
 
-    /// Load the V3 + V4 DB snapshot into the core `BotState` .
+    /// Load the snapshot seed block `S` from the DB into the core `BotState`.
     ///
     /// Called at Python `Bot.__init__` time when a DB path is configured
-    /// (Shape 2: eager construction-time load). Opens a read-only
-    /// `DegenbotDb` handle from `db_path`, then calls the core
+    /// (eager construction-time load). Opens a read-only `SnapshotDb`
+    /// handle from `db_path`, then calls the core
     /// `Bot::load_snapshot_from_db` — the single Rust entry point that
-    /// `stream_liquidity_maps`-loads V3+V4 pools into the core `SnapshotStore`s
-    /// + records `S = min(fetch_newest_update_block(V3), V4)`. After this,
-    /// pool registration consumes the store via `take()` — the
-    /// Python builder passes `tick_data=None, coverage=Tracked` and lets the
-    /// store decide Tracked-vs-Sparse per pool.
+    /// records `S = min(fetch_newest_update_block(V3), V4)` on `BotState`.
+    /// No tick rows are copied here: pool construction resolves them per
+    /// pool from the retained snapshot handle (the tick-map assembly's Db
+    /// arm), answering `Tracked` coverage on a hit.
     ///
     /// `None`/cold-start (no pools) is NOT an error — the pump anchors on
-    /// `first_observed_block` at resume. Idempotent across the two families,
-    /// but a second call after a successful load will `begin_load` a store
-    /// that's already loaded (panics) — call exactly once at construction.
+    /// `first_observed_block` at resume. Call exactly once, at construction:
+    /// the retained read transaction and the snapshot seed block are armed
+    /// here.
     ///
     /// # Errors
     /// `PyRuntimeError` on a DB open/read failure or a liquidity value
@@ -652,10 +633,9 @@ impl PyBot {
         // deferred read transaction — and reads `S =
         // min(fetch_newest_update_block(V3), V4)` INSIDE the held tx so `S`
         // and every per-pool `fetch_liquidity_map` read share one frozen DB
-        // snapshot across `build_paths` (the consistency replacement for the
-        // retired `SnapshotStore`); the STILL-OPEN handle comes back for the
-        // shell to retain. `PyBot.close_snapshot_tx()` commits the tx at end
-        // of `build_paths` to release the WAL snapshot.
+        // snapshot across `build_paths`; the STILL-OPEN handle comes back for
+        // the shell to retain. `PyBot.close_snapshot_tx()` commits the tx at
+        // end of `build_paths` to release the WAL snapshot.
         // GIL hygiene: the DB open + seed read run under this py.detach.
         let snap = py
             .detach(|| self.bot.load_snapshot_from_db_path(db_path, chain_id))
@@ -821,10 +801,11 @@ impl PyBot {
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4).
     ///
-    /// The Bot-owned pump entry point — delegates to the shared `PumpState`
-    /// attached when an engine wrapper was constructed against this bot.
-    /// Blocks (sync, via the shared tokio runtime) until the first block is
-    /// observed, then returns the first WS block number (the backfill target).
+    /// The Bot-owned pump entry point — delegates to the attached
+    /// `EngineDriver` (armed when an engine wrapper was constructed against
+    /// this bot). Blocks (sync, via the shared tokio runtime) until the first
+    /// block is observed, then returns the first WS block number (the
+    /// backfill target).
     ///
     /// # Errors
     /// `PyRuntimeError` if no engine is attached, the pump is already
@@ -840,34 +821,33 @@ impl PyBot {
             .map_err(map_connect_err)
     }
 
-    /// Resume the pump — begin normal WS processing (ADR-006 D4).
+    /// Refuse to run from the bot.
     ///
-    /// The snapshot→WS gap is closed automatically inside the core
-    /// `BlockPump::resume_from_subscribe`; the pyo3
-    /// `backfill_from_snapshot` method is retired. Delegates to the
-    /// shared `PumpState`.
+    /// The run move consumes the session's one consumer claim, and the engine
+    /// wrapper holds it (it owns the stream). Running from `Bot` would produce
+    /// batches for a consumer that is not this wrapper, so the refusal is loud
+    /// and names the door to use.
+    ///
+    /// # Errors
+    /// `PyRuntimeError` always — when no engine is attached, or as the
+    /// refusal naming the engine wrapper's `run()`.
     fn run(&self, _py: Python<'_>) -> PyResult<()> {
         let _driver = self.pump_state()?;
-        // The run move CONSUMES the session's one consumer claim, and the engine
-        // wrapper holds it (it owns the stream). Running from `Bot` would produce
-        // batches for a consumer that is not this wrapper, so the refusal is loud
-        // and names the door to use.
         Err(pyo3::exceptions::PyRuntimeError::new_err(
             "Cannot run from Bot: this session's event stream is claimed by the \n             engine wrapper. Call the engine wrapper's run() instead.",
         ))
     }
 
-    /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+    /// Stop the pump and tear the session down (ADR-006 D4).
     ///
-    /// The symmetric teardown half of the `subscribe` → `backfill_from_snapshot`
-    /// → `resume` lifecycle. Sets the shutdown flag and aborts the spawned
-    /// pump task so a Ctrl-C exits promptly (the pump loop otherwise blocks
-    /// up to 60s on a silent WS stream). Idempotent — safe to call from both
-    /// the `__aexit__` path and a signal handler. Delegates to the shared
-    /// `PumpState`.
+    /// The teardown half of the `connect` → run lifecycle: the driver's
+    /// total, idempotent close requests termination via the shutdown flag,
+    /// joins the pump and crawl loops under one grace window, and aborts a
+    /// loop that outlives the grace — so a Ctrl-C exits promptly instead of
+    /// parking on a silent WS stream. Safe to call from both the `__aexit__`
+    /// path and a signal handler.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         let driver = self.pump_state()?;
-        // The close blocks at this adapter boundary and is idempotent.
         let _report = py.detach(|| Bot::close(&driver));
         Ok(())
     }
@@ -1557,7 +1537,7 @@ impl PyBot {
                 echo.pool_id
             ))
         })?;
-        // The driver no longer re-reads the handle to cross-check the echo
+        // The driver never re-reads the handle to cross-check the echo
         // (ADR-085 D4): a divergence is this seam's bug, loud here.
         Self::assert_identity_parity(py, request, &echo, &pool)?;
         // The family the registry recorded, in the request vocabulary
@@ -1580,8 +1560,8 @@ impl PyBot {
 
 impl PyBot {
     /// The seam's identity-divergence guard: the identity echo the core
-    /// answered and the registered HANDLE must agree, because the driver no
-    /// longer re-reads the handle to check (ADR-085 D4). A divergence is the
+    /// answered and the registered HANDLE must agree, because the driver
+    /// never re-reads the handle to check (ADR-085 D4). A divergence is the
     /// seam's own bug and raises loudly.
     ///
     /// The variant half compares only two KNOWN variants — a spelling either
@@ -1704,19 +1684,18 @@ impl PyBot {
             // The registry-of-record pre-check for the address-keyed
             // families. A registered V4 pool is answered by the core door's
             // get half (the same typed result as the fresh build, and its
-            // PRG-2 admission-gate consult), so the pre-check answers nothing
+            // admission-gate consult), so the pre-check answers nothing
             // for that family.
             || Ok(self.registered_echo(py, family, variant, &addr)),
             || {
                 // The io fetch is core-owned; the failure maps to the
-                // method-prefixed legacy `RuntimeError`.
+                // method-prefixed `RuntimeError`.
                 let io = py
                     .detach(|| self.bot.require_construction_io())
                     .map_err(|_| map_no_construction_io("construct_pool"))?;
-                // The construction route (pool-construction card): the
-                // cockpit's resolved route (the ordered factory rungs) rides
-                // the call; an absent list is the generic-only route (the
-                // behavior-preserving default).
+                // The construction route: the cockpit's resolved route (the
+                // ordered factory rungs) rides the call; an absent list is
+                // the generic-only route.
                 let plan = degenbot_bot::bot_core::ConstructionRoute {
                     factories: factories
                         .clone()
@@ -2074,21 +2053,20 @@ impl PyBot {
         Ok(py.detach(|| self.bot.unregister_pool(PoolLookup::from_address(addr))))
     }
 
-    /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
-    /// precedence — Decision 6 (B)). Returns
-    /// `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch 3
-    /// sparse RPC and registers inline). Raises `RuntimeError` on a Db read
-    /// failure — Decision 8 (A): loud error over silent degrade.
+    /// Assemble a V3 pool's tick map with `Db → Chain` precedence (Decision 6
+    /// (B)). Returns `(tick_data, coverage)` on a hit, `None` on a miss (the
+    /// caller falls back to the sparse RPC arm and registers inline). Raises
+    /// `RuntimeError` on a Db read failure — Decision 8 (A): loud error over
+    /// silent degrade.
     ///
     /// `tick_data` has the same `{tick: (liquidity_gross, liquidity_net, block)}`
     /// shape as `register_v3_pool`'s `tick_data` arg, so the builder can pass
     /// the returned dict straight back into `register_v3_pool`. Coverage is
-    /// `"tracked"` on a hit (Store or Db).
+    /// `"tracked"` on a Db hit, `"sparse"` on a Chain-arm hit.
     ///
-    /// **Two-phase lock protocol**: `BotState`'s read guard is held only for
-    /// the `SnapshotStore::take` (brief `Mutex` lock); the Db read inside the
-    /// core helper runs with NO `BotState` lock held (the live pump's
-    /// `state.write()` is not blocked). The GIL is released across the Db read.
+    /// **Lock protocol**: the Db slot mutex is held only to clone the handle;
+    /// the core helper runs with NO `BotState` guard held (the live pump's
+    /// `state.write()` is not blocked), and the GIL is released across it.
     ///
     /// Args:
     ///   address: the V3 pool's contract address (checksummed or lowercase hex).
@@ -2236,21 +2214,20 @@ impl PyBot {
         Ok(Some((dict, cov_str.to_string())))
     }
 
-    /// Register a V3 pool by contract address.
+    /// Register a V3 pool by contract address, optionally seeding `tick_data`
+    /// inline.
     ///
     /// Returns the auto-assigned pool ID.
     #[expect(clippy::too_many_arguments)]
-    /// Register a V3 pool, optionally seeding `tick_data` inline.
     ///
-    /// ADR-006 rolling-start race closure: the builder previously registered
-    /// with an empty `tick_data` THEN seeded the snapshot through a separate
-    /// pool write. Because ``resume()`` runs before ``build_paths``, a pump
-    /// Mint/Burn landing between register and seed was applied to the empty
-    /// `tick_data` then CLOBBERED by the seed overwrite — a lost update the
-    /// on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
-    /// ``register_v3_pool`` (one ``BotState`` write lock) closes the window:
-    /// the pool is never visible to the pump in an unseeded state, so pump
-    /// events always land on top of the seed and are never overwritten.
+    /// ADR-006: the seed rides the one `BotState` write because `resume()`
+    /// runs before `build_paths`. Registering with an empty `tick_data` and
+    /// seeding through a separate pool write loses updates — a pump Mint/Burn
+    /// landing between register and seed is applied to the empty `tick_data`
+    /// and then clobbered by the seed overwrite (a lost update the on-chain
+    /// `verify_liquidity_maps` reproduces). With the seed folded into
+    /// `register_v3_pool`, the pool is never visible to the pump unseeded, so
+    /// pump events always land on top of the seed and are never overwritten.
     ///
     /// `tick_data` is ``{tick: (liquidity_gross, liquidity_net, block)}``
     /// (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
@@ -2363,24 +2340,26 @@ impl PyBot {
     /// `BotState::register_v4_pool`: pools with a STATIC fee exceeding the
     /// executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
     /// surfacing as the typed `HighFeePoolRejectedError` so Python classifies by
-    /// type, not string matching. Since ADR-037 amount-modifying hooked pools are
-    /// ADMITTED (the registered hook address drives the simulation caveat and
-    /// the finalist re-quote), and since F1 pools keyed at the dynamic-fee
-    /// sentinel (`fee == 0x0080_0000`) are ADMITTED too — their search-time fee
-    /// is the last measured hook charge per direction, so the
-    /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` raise sites are
-    /// reserved (no longer fire). The FULL `hook_address` rides into the
-    /// registered pool key so the identity round-trips
+    /// type, not string matching. Amount-modifying hooked pools are ADMITTED
+    /// (ADR-037): the registered hook address drives the simulation caveat
+    /// and the finalist re-quote. F1 pools keyed at the dynamic-fee sentinel
+    /// (`fee == 0x0080_0000`) are ADMITTED too — their search-time fee is the
+    /// last measured hook charge per direction. The FULL `hook_address` rides
+    /// into the registered pool key so the identity round-trips
     /// `keccak(abi.encode(pool_key))`.
     ///
-    /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
-    /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
-    /// never visible to the live pump (resumed before `build_paths`) in an
-    /// unseeded state. Registering with empty `tick_data` and seeding through a
-    /// separate pool write leaves a window where a pump `ModifyLiquidity`
-    /// lands, is applied, and is then CLOBBERED by the seed overwrite (lost
-    /// update → V4 tick-map desync → `verify_liquidity_maps` mismatch).
-    /// Mirrors the V3 closure.
+    /// ADR-006: the snapshot `tick_data` is seeded INLINE in
+    /// `register_v4_pool` (one `BotState` write lock) so the pool is never
+    /// visible to the live pump (resumed before `build_paths`) in an unseeded
+    /// state. Registering with empty `tick_data` and seeding through a
+    /// separate pool write loses updates — a pump `ModifyLiquidity` landing
+    /// in that window is applied and then clobbered by the seed overwrite
+    /// (V4 tick-map desync → `verify_liquidity_maps` mismatch), the same
+    /// invariant the V3 registration upholds.
+    ///
+    /// `known_bitmap_words` is the V4 twin of the V3 argument — the checked
+    /// (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
+    /// registration (Sparse pools only; Tracked pools ignore them).
     ///
     /// Raises:
     ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode;
@@ -2389,9 +2368,6 @@ impl PyBot {
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[expect(clippy::too_many_arguments)]
-    /// `known_bitmap_words`: V4 twin of the V3 argument — the checked
-    /// (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
-    /// registration (Sparse pools only; Tracked pools ignore them).
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None, known_bitmap_words=None, state_view=None))]
     fn register_v4_pool(
         &self,
@@ -2446,7 +2422,7 @@ impl PyBot {
         })?;
         let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         // Seed inline so the pool is never visible to the live pump unseeded
-        // (rolling-start race closure, ADR-006).
+        // (ADR-006).
         let rust_tick_data = TickData::from_py_optional(tick_data)?;
         let cov = match coverage {
             "tracked" => PoolTickCoverage::Tracked,
@@ -2497,7 +2473,7 @@ impl PyBot {
         // ADR-078 D3 step 3: the params ride the ONE door request and
         // dispatch through the engine verb ([`Bot::register`]); the
         // get-or-register key guard and the admission floor (which records
-        // the PRG-2 keyed verdicts) are core-owned behind it. The GIL is
+        // the keyed admission verdicts) are core-owned behind it. The GIL is
         // released across the verb (see `register_token`);
         // `RegisterV4PoolParams` is `Send`, and the refusal is mapped to a
         // `PyErr` OUTSIDE the closure via the one refusal mapper
@@ -2668,9 +2644,8 @@ impl PyBot {
         // ADR-078 D3 step 3: the params ride the ONE door request and
         // dispatch through the engine verb ([`Bot::register`]) — the
         // get-or-register reuse guard and the door's typed duplicate
-        // refusal (previously the state insert's loud panic) are core-owned
-        // behind it. The GIL is released while parked on the BotState
-        // write.
+        // refusal are core-owned behind it. The GIL is released while parked
+        // on the BotState write.
         py.detach(|| self.bot.register(PoolRegistration::Curve(Box::new(p))))
             .map_err(map_refusal)
     }
@@ -3261,14 +3236,6 @@ impl PyBot {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Parse one address string, raising the historical `ValueError`. The
-/// `Invalid address '<input>': <source>` vocabulary is core-owned
-/// ([`degenbot_bot::bot_core::parse_address_str`]); this
-/// adapter only crosses the error into Python.
 /// Extract checked tick-bitmap WORD positions from a Python iterable (a
 /// `list`/`set`/`tuple` of word ints, or a `dict` whose keys are the words) —
 /// the shape `register_v3_pool`'s `known_bitmap_words` argument accepts. `None`
@@ -3382,6 +3349,10 @@ fn account_query_error(
     }
 }
 
+/// Parse one address string, raising the historical `ValueError`. The
+/// `Invalid address '<input>': <source>` vocabulary is core-owned
+/// ([`degenbot_bot::bot_core::parse_address_str`]); this adapter only
+/// crosses the error into Python.
 fn parse_address(s: &str) -> PyResult<Address> {
     degenbot_bot::bot_core::parse_address_str(s).map_err(|kind| {
         pyo3::exceptions::PyValueError::new_err(kind.detail().unwrap_or_default().to_string())
@@ -3470,12 +3441,12 @@ mod tests {
         }
     }
 
-    /// PRG-1 registry unification: `construct_pool` answers an
+    /// Registry-of-record contract: `construct_pool` answers an
     /// address that is already registered in `BotState` (the registry of
     /// record) WITHOUT replaying the RPC choreography — proven by giving it
-    /// NO `ConstructionIo` at all: the legacy path raised
-    /// "no `ConstructionIo` attached" here; the pre-check answers identity
-    /// straight off the registered entry instead.
+    /// NO `ConstructionIo` at all. The registry-of-record pre-check answers
+    /// identity straight off the registered entry before the io fetch would
+    /// refuse with "no `ConstructionIo` attached".
     #[test]
     fn construct_pool_answers_registered_address_from_the_registry_of_record() {
         pyo3::Python::attach(|py| {
@@ -3530,8 +3501,8 @@ mod tests {
         });
     }
 
-    /// PRG-1: an UNREGISTERED address without an attached `ConstructionIo`
-    /// still raises the legacy `RuntimeError` (the pre-check only answers
+    /// An UNREGISTERED address without an attached `ConstructionIo`
+    /// still raises `RuntimeError` (the pre-check only answers
     /// registry hits; a fresh build still requires the choreography io).
     #[test]
     fn construct_pool_unregistered_address_requires_construction_io() {
@@ -3854,8 +3825,7 @@ mod tests {
     }
 
     /// A fresh `PyBot` has `db_handle() == None` (cold-start path — no
-    /// `load_snapshot_from_db` call yet). Acceptance criterion: "Cold-start
-    /// path (no `load_snapshot_from_db` call) leaves `db` as None".
+    /// `load_snapshot_from_db` call yet).
     #[test]
     fn cold_start_pybot_has_no_db_handle() {
         let py_bot = PyBot::new(1);
@@ -3866,8 +3836,7 @@ mod tests {
     }
 
     /// `assemble_v3_tick_map` on a fresh `PyBot` (cold-start, no DB loaded, empty
-    /// store) returns `Ok(None)` — the miss path. The AC: "Returns None on
-    /// miss".
+    /// store) returns `Ok(None)` — the miss path.
     #[test]
     fn assemble_v3_tick_map_cold_start_returns_none() {
         pyo3::Python::attach(|py| {
@@ -4121,14 +4090,13 @@ mod tests {
         let _ = std::fs::remove_file(&temp_path);
     }
 
-    /// Rewired to CHAIN truth: a Tracked snapshot's rows are reconciled
-    /// against the word bitmaps read from chain. With no chain transport the
-    /// gate refuses with a typed `RuntimeError` (never a silent pass); a chain
-    /// transport that disagrees refuses with a typed `ValueError`; and a chain
-    /// word that agrees with the rows is admitted. The DB stores no word
-    /// bitmap (BW3 dropped the value tables), so the retired snapshot-internal
-    /// bit<->row check would be a tautology over rows alone — chain truth owns
-    /// the reconciliation.
+    /// A Tracked snapshot's rows are reconciled against the word bitmaps read
+    /// from chain. With no chain transport the gate refuses with a typed
+    /// `RuntimeError` (never a silent pass); a chain transport that disagrees
+    /// refuses with a typed `ValueError`; and a chain word that agrees with
+    /// the rows is admitted. The DB stores no word bitmap, so a rows-only
+    /// check would be a tautology over rows alone — chain truth owns the
+    /// reconciliation.
     #[expect(clippy::too_many_lines)]
     #[test]
     fn assemble_v3_tick_map_chain_truth_gate() {
@@ -4241,8 +4209,7 @@ mod tests {
             );
 
             // (3) A chain word that agrees with the rows (bit 1 = tick 10) is
-            //     admitted — the retired snapshot-internal bit<->row tautology
-            //     no longer rejects it.
+            //     admitted.
             let agreeing = offline_v3_tick_word_io(
                 py,
                 Address::from([0xaa; 20]),
@@ -4270,8 +4237,7 @@ mod tests {
 
     /// Calling `load_snapshot_from_db` against a missing DB fails cleanly and
     /// leaves `db_handle() == None` (the snapshot load failed → the cached
-    /// handle is NOT armed). Acceptance criterion: "On failure, `self.db`
-    /// stays `None`".
+    /// handle is NOT armed).
     #[test]
     fn snapshot_load_failure_leaves_db_handle_none() {
         pyo3::Python::attach(|py| {
@@ -4289,8 +4255,7 @@ mod tests {
     }
 
     /// A successful `load_snapshot_from_db` arms `db_handle()` with the
-    /// read-only `DegenbotDb` used for the snapshot stream. Acceptance
-    /// criterion: "After successful load, `db_handle()` returns `Some`."
+    /// retained read-only `SnapshotDb` handle.
     /// Skipped if the parity fixture isn't reachable from this crate layout.
     #[test]
     fn snapshot_load_success_arms_db_handle() {
@@ -4321,8 +4286,6 @@ mod tests {
         });
     }
 
-    // ── the position seam's production wiring ────────────────────────────
-    //
     // `attach_construction_io` is the method Python's `Bot.__init__` calls
     // with the resolved provider and the session's database path
     // (`src/degenbot/bot/_bot.py`), and it is the only point in a bot boot
@@ -4605,8 +4568,6 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
     }
 
-    // ── the construction-DB half of the boot ─────────────────────────────
-    //
     // `attach_construction_io` is the one place a session's database is
     // opened, and its `database_path` contract has three shapes: no path at
     // all, a path whose file the cold start has not created yet, and a path the
@@ -4781,8 +4742,6 @@ mod tests {
         let _ = std::fs::remove_file(&foreign);
     }
 
-    // ── the boot's provider contract ─────────────────────────────────────
-    //
     // The construction-I/O handle is one DB half plus an `AlloyRpcConstruction`
     // RPC half, and there is no second `RpcConstruction` implementation to
     // delegate a Python-native provider to. A boot whose provider yields no

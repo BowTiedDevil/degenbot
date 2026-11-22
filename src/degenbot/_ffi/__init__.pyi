@@ -948,9 +948,10 @@ class Bot:
     pools/tokens, then reads results. `PyBot` owns a [`Bot`] via `Arc` and hands
     out clones of its shared `Arc<RwLock<BotState>>` (`state_arc`) so
     `PyLiquidityPool` / `PyErc20Token` / the engine wrapper all reach ONE
-    Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
-    `dispatch_log` writes flow through to the engine's reads (N handles → one
-    state — the Polars three-layer invariant, preserved + generalized by D4).
+    Rust-owned `BotState`; the engine's pump clones the same `Arc<Bot>` so its
+    `dispatch_log` writes flow through to the solve slices' reads (N handles →
+    one state — the Polars three-layer invariant, preserved + generalized by
+    D4).
     """
     def __new__(cls, /, chain_id: SupportsIndex = 0) -> Bot: ...
     def assemble_v3_tick_map(
@@ -963,21 +964,20 @@ class Bot:
         io: BotIo | None = None,
     ) -> tuple[dict, str] | None:
         """
-        Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`
-        precedence — Decision 6 (B)). Returns
-        `(tick_data, coverage)` on a hit, `None` on a miss (caller runs Branch 3
-        sparse RPC and registers inline). Raises `RuntimeError` on a Db read
-        failure — Decision 8 (A): loud error over silent degrade.
+        Assemble a V3 pool's tick map with `Db → Chain` precedence (Decision 6
+        (B)). Returns `(tick_data, coverage)` on a hit, `None` on a miss (the
+        caller falls back to the sparse RPC arm and registers inline). Raises
+        `RuntimeError` on a Db read failure — Decision 8 (A): loud error over
+        silent degrade.
 
         `tick_data` has the same `{tick: (liquidity_gross, liquidity_net, block)}`
         shape as `register_v3_pool`'s `tick_data` arg, so the builder can pass
         the returned dict straight back into `register_v3_pool`. Coverage is
-        `"tracked"` on a hit (Store or Db).
+        `"tracked"` on a Db hit, `"sparse"` on a Chain-arm hit.
 
-        **Two-phase lock protocol**: `BotState`'s read guard is held only for
-        the `SnapshotStore::take` (brief `Mutex` lock); the Db read inside the
-        core helper runs with NO `BotState` lock held (the live pump's
-        `state.write()` is not blocked). The GIL is released across the Db read.
+        **Lock protocol**: the Db slot mutex is held only to clone the handle;
+        the core helper runs with NO `BotState` guard held (the live pump's
+        `state.write()` is not blocked), and the GIL is released across it.
 
         Args:
           address: the V3 pool's contract address (checksummed or lowercase hex).
@@ -1143,14 +1143,14 @@ class Bot:
         """
     def close(self, /) -> None:
         """
-        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+        Stop the pump and tear the session down (ADR-006 D4).
 
-        The symmetric teardown half of the `subscribe` → `backfill_from_snapshot`
-        → `resume` lifecycle. Sets the shutdown flag and aborts the spawned
-        pump task so a Ctrl-C exits promptly (the pump loop otherwise blocks
-        up to 60s on a silent WS stream). Idempotent — safe to call from both
-        the `__aexit__` path and a signal handler. Delegates to the shared
-        `PumpState`.
+        The teardown half of the `connect` → run lifecycle: the driver's
+        total, idempotent close requests termination via the shutdown flag,
+        joins the pump and crawl loops under one grace window, and aborts a
+        loop that outlives the grace — so a Ctrl-C exits promptly instead of
+        parking on a silent WS stream. Safe to call from both the `__aexit__`
+        path and a signal handler.
         """
     def close_snapshot_tx(self, /) -> None:
         """
@@ -1174,10 +1174,11 @@ class Bot:
         """
         Subscribe to the WS `newHeads` + logs streams (ADR-006 D4).
 
-        The Bot-owned pump entry point — delegates to the shared `PumpState`
-        attached when an engine wrapper was constructed against this bot.
-        Blocks (sync, via the shared tokio runtime) until the first block is
-        observed, then returns the first WS block number (the backfill target).
+        The Bot-owned pump entry point — delegates to the attached
+        `EngineDriver` (armed when an engine wrapper was constructed against
+        this bot). Blocks (sync, via the shared tokio runtime) until the first
+        block is observed, then returns the first WS block number (the
+        backfill target).
 
         # Errors
         `PyRuntimeError` if no engine is attached, the pump is already
@@ -1409,22 +1410,21 @@ class Bot:
         """
     def load_snapshot_from_db(self, /, db_path: str, chain_id: SupportsIndex) -> None:
         """
-        Load the V3 + V4 DB snapshot into the core `BotState` .
+        Load the snapshot seed block `S` from the DB into the core `BotState`.
 
         Called at Python `Bot.__init__` time when a DB path is configured
-        (Shape 2: eager construction-time load). Opens a read-only
-        `DegenbotDb` handle from `db_path`, then calls the core
+        (eager construction-time load). Opens a read-only `SnapshotDb`
+        handle from `db_path`, then calls the core
         `Bot::load_snapshot_from_db` — the single Rust entry point that
-        `stream_liquidity_maps`-loads V3+V4 pools into the core `SnapshotStore`s
-        + records `S = min(fetch_newest_update_block(V3), V4)`. After this,
-        pool registration consumes the store via `take()` — the
-        Python builder passes `tick_data=None, coverage=Tracked` and lets the
-        store decide Tracked-vs-Sparse per pool.
+        records `S = min(fetch_newest_update_block(V3), V4)` on `BotState`.
+        No tick rows are copied here: pool construction resolves them per
+        pool from the retained snapshot handle (the tick-map assembly's Db
+        arm), answering `Tracked` coverage on a hit.
 
         `None`/cold-start (no pools) is NOT an error — the pump anchors on
-        `first_observed_block` at resume. Idempotent across the two families,
-        but a second call after a successful load will `begin_load` a store
-        that's already loaded (panics) — call exactly once at construction.
+        `first_observed_block` at resume. Call exactly once, at construction:
+        the retained read transaction and the snapshot seed block are armed
+        here.
 
         # Errors
         `PyRuntimeError` on a DB open/read failure or a liquidity value
@@ -1657,20 +1657,19 @@ class Bot:
         known_bitmap_words: Any | None = None,
     ) -> int:
         """
-        Register a V3 pool by contract address.
+        Register a V3 pool by contract address, optionally seeding `tick_data`
+        inline.
 
         Returns the auto-assigned pool ID.
-        Register a V3 pool, optionally seeding `tick_data` inline.
 
-        ADR-006 rolling-start race closure: the builder previously registered
-        with an empty `tick_data` THEN seeded the snapshot through a separate
-        pool write. Because ``resume()`` runs before ``build_paths``, a pump
-        Mint/Burn landing between register and seed was applied to the empty
-        `tick_data` then CLOBBERED by the seed overwrite — a lost update the
-        on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
-        ``register_v3_pool`` (one ``BotState`` write lock) closes the window:
-        the pool is never visible to the pump in an unseeded state, so pump
-        events always land on top of the seed and are never overwritten.
+        ADR-006: the seed rides the one `BotState` write because `resume()`
+        runs before `build_paths`. Registering with an empty `tick_data` and
+        seeding through a separate pool write loses updates — a pump Mint/Burn
+        landing between register and seed is applied to the empty `tick_data`
+        and then clobbered by the seed overwrite (a lost update the on-chain
+        `verify_liquidity_maps` reproduces). With the seed folded into
+        `register_v3_pool`, the pool is never visible to the pump unseeded, so
+        pump events always land on top of the seed and are never overwritten.
 
         `tick_data` is ``{tick: (liquidity_gross, liquidity_net, block)}``
         (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
@@ -1714,24 +1713,26 @@ class Bot:
         `BotState::register_v4_pool`: pools with a STATIC fee exceeding the
         executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
         surfacing as the typed `HighFeePoolRejectedError` so Python classifies by
-        type, not string matching. Since ADR-037 amount-modifying hooked pools are
-        ADMITTED (the registered hook address drives the simulation caveat and
-        the finalist re-quote), and since F1 pools keyed at the dynamic-fee
-        sentinel (`fee == 0x0080_0000`) are ADMITTED too — their search-time fee
-        is the last measured hook charge per direction, so the
-        `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` raise sites are
-        reserved (no longer fire). The FULL `hook_address` rides into the
-        registered pool key so the identity round-trips
+        type, not string matching. Amount-modifying hooked pools are ADMITTED
+        (ADR-037): the registered hook address drives the simulation caveat
+        and the finalist re-quote. F1 pools keyed at the dynamic-fee sentinel
+        (`fee == 0x0080_0000`) are ADMITTED too — their search-time fee is the
+        last measured hook charge per direction. The FULL `hook_address` rides
+        into the registered pool key so the identity round-trips
         `keccak(abi.encode(pool_key))`.
 
-        ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
-        INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
-        never visible to the live pump (resumed before `build_paths`) in an
-        unseeded state. Registering with empty `tick_data` and seeding through a
-        separate pool write leaves a window where a pump `ModifyLiquidity`
-        lands, is applied, and is then CLOBBERED by the seed overwrite (lost
-        update → V4 tick-map desync → `verify_liquidity_maps` mismatch).
-        Mirrors the V3 closure.
+        ADR-006: the snapshot `tick_data` is seeded INLINE in
+        `register_v4_pool` (one `BotState` write lock) so the pool is never
+        visible to the live pump (resumed before `build_paths`) in an unseeded
+        state. Registering with empty `tick_data` and seeding through a
+        separate pool write loses updates — a pump `ModifyLiquidity` landing
+        in that window is applied and then clobbered by the seed overwrite
+        (V4 tick-map desync → `verify_liquidity_maps` mismatch), the same
+        invariant the V3 registration upholds.
+
+        `known_bitmap_words` is the V4 twin of the V3 argument — the checked
+        (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
+        registration (Sparse pools only; Tracked pools ignore them).
 
         Raises:
             `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode;
@@ -1739,9 +1740,6 @@ class Bot:
                 static fee).
             `ValueError`: If `addresses/pool_id` are malformed or already
                 registered.
-        `known_bitmap_words`: V4 twin of the V3 argument — the checked
-        (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
-        registration (Sparse pools only; Tracked pools ignore them).
         """
     def resolve_session_pool(
         self,
@@ -1775,12 +1773,16 @@ class Bot:
         """
     def run(self, /) -> None:
         """
-        Resume the pump — begin normal WS processing (ADR-006 D4).
+        Refuse to run from the bot.
 
-        The snapshot→WS gap is closed automatically inside the core
-        `BlockPump::resume_from_subscribe`; the pyo3
-        `backfill_from_snapshot` method is retired. Delegates to the
-        shared `PumpState`.
+        The run move consumes the session's one consumer claim, and the engine
+        wrapper holds it (it owns the stream). Running from `Bot` would produce
+        batches for a consumer that is not this wrapper, so the refusal is loud
+        and names the door to use.
+
+        # Errors
+        `PyRuntimeError` always — when no engine is attached, or as the
+        refusal naming the engine wrapper's `run()`.
         """
     def run_registration_lifecycle(self, /, lifecycle: RegistrationLifecycle) -> Any:
         """
