@@ -72,6 +72,7 @@ pub struct PositionDivergence {
 }
 
 /// A row loaded from the DB for the verify pass.
+#[derive(Debug)]
 struct PositionRow {
     position_id: i64,
     user_address: Address,
@@ -99,9 +100,15 @@ fn positions_table(kind: PositionKind) -> &'static str {
 
 /// Load `{collateral,debt}_positions` joined to user (address) + asset →
 /// aToken/vToken erc20 token address, filtered by `market_id` (+ optional
-/// `user_addresses`). Rows whose address or balance columns don't parse are
-/// skipped (defensive — invalid rows are surfaced as parse errors via the
-/// divergence list elsewhere + shouldn't appear in a healthy writer state).
+/// `user_addresses`).
+///
+/// # Errors
+///
+/// A row whose address, balance, or `last_index` column does not parse is a
+/// [`DbError::Decode`] naming the table, the row id, the column, and the
+/// stored value. The load refuses rather than dropping the row: the verify
+/// pass would otherwise compare a position set the DB does not hold and
+/// report the dropped position as green.
 fn load_position_rows(
     conn: &Connection,
     market_id: i64,
@@ -175,16 +182,20 @@ fn load_position_rows(
     let mut rows: Vec<PositionRow> = Vec::new();
     for r in iter {
         let (pid, user_addr_str, token_addr_str, balance_str, last_index_str) = r?;
-        let Ok(user_address) = user_addr_str.parse() else {
-            continue;
+        let user_address = user_addr_str
+            .parse()
+            .map_err(|e| decode_position_row(table, pid, "address", &user_addr_str, e))?;
+        let token_address = token_addr_str
+            .parse()
+            .map_err(|e| decode_position_row(table, pid, "token_address", &token_addr_str, e))?;
+        let balance = parse_u256(&balance_str)
+            .map_err(|e| decode_position_row(table, pid, "balance", &balance_str, e))?;
+        let last_index = match last_index_str.as_deref() {
+            None => None,
+            Some(s) => Some(
+                parse_u256(s).map_err(|e| decode_position_row(table, pid, "last_index", s, e))?,
+            ),
         };
-        let Ok(token_address) = token_addr_str.parse() else {
-            continue;
-        };
-        let Ok(balance) = parse_u256(&balance_str) else {
-            continue;
-        };
-        let last_index = last_index_str.as_deref().and_then(|s| parse_u256(s).ok());
         rows.push(PositionRow {
             position_id: pid,
             user_address,
@@ -194,6 +205,20 @@ fn load_position_rows(
         });
     }
     Ok(rows)
+}
+
+/// The typed refusal for one unparseable position column: the table, the row,
+/// the column, and the stored value.
+fn decode_position_row(
+    table: &str,
+    position_id: i64,
+    column: &str,
+    value: &str,
+    why: impl std::fmt::Display,
+) -> DbError {
+    DbError::Decode(format!(
+        "{table} id={position_id}: {column} {value:?} does not parse: {why}"
+    ))
 }
 
 /// Parse a (decimal or `0x…` hex) U256 string from a DB TEXT/VARCHAR(78).
@@ -734,7 +759,7 @@ pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bo
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
@@ -852,6 +877,50 @@ mod tests {
         assert!(
             matches!(result, Err(RunError::Provider(_))),
             "an outage must abort verification instead of fabricating divergences, got {result:?}"
+        );
+    }
+
+    /// A stored row whose columns don't parse refuses the whole load. Skipping
+    /// it would verify a position set the DB does not hold and report the
+    /// dropped position as green.
+    #[test]
+    fn load_position_rows_refuses_an_unparseable_row_naming_it() {
+        let conn = seed_with_position(
+            "0x1111111111111111111111111111111111111111",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "1234x56789",
+            Some("1000000000000000000000000000"),
+        );
+        let err = load_position_rows(&conn, 1, PositionKind::Collateral, None)
+            .expect_err("an unparseable balance must refuse the load, not drop the row");
+        let DbError::Decode(message) = &err else {
+            panic!("expected a typed decode error, got {err:?}");
+        };
+        for named in [
+            "aave_v3_collateral_positions",
+            "id=1",
+            "balance",
+            "1234x56789",
+        ] {
+            assert!(
+                message.contains(named),
+                "the refusal names {named}: {message}"
+            );
+        }
+
+        conn.execute(
+            "UPDATE aave_v3_collateral_positions SET balance = '42', last_index = 'not-an-index' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        let err = load_position_rows(&conn, 1, PositionKind::Collateral, None)
+            .expect_err("an unparseable last_index must refuse the load too");
+        let DbError::Decode(message) = &err else {
+            panic!("expected a typed decode error, got {err:?}");
+        };
+        assert!(
+            message.contains("last_index") && message.contains("not-an-index"),
+            "the refusal names the column and the stored value: {message}"
         );
     }
 

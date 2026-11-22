@@ -444,11 +444,9 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 ///
 /// `discount_token` is the chain's (freshly-per-tx-resolved)
 /// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
-/// `market_id` is unused (the refresh target is `aave_v3_users.id`).
 pub(crate) async fn refresh_gho_discount(
     provider: &AlloyProvider,
     conn: &Connection,
-    #[expect(unused_variables)] market_id: i64,
     position_id: i64,
     block_number: u64,
     discount_token: Option<Address>,

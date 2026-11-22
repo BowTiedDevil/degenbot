@@ -537,10 +537,11 @@ async fn fetch_single_address_multi_topic(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog};
+    use std::sync::Arc;
 
     /// Build a minimal `alloy::rpc::types::Log` with the given emitter,
     /// topics, block number, log index, + transaction hash (the Aave fetchers
@@ -610,14 +611,22 @@ mod tests {
         assert_eq!(logs[1].block_number.unwrap(), 1);
     }
 
+    /// A dummy `AlloyProvider` pointing at a dead URL: every fetch that
+    /// reached the wire would fail, so an `Ok` is proof the guard answered
+    /// before any round trip.
+    fn dead_url_provider() -> AlloyProvider {
+        degenbot_core::runtime::get_runtime()
+            .block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
+            .expect("a dead-URL provider constructs without contact")
+    }
+
     #[test]
     fn fetch_scaled_token_logs_empty_addresses_returns_empty() {
-        // The Python guard `if not token_addresses: return []` — no RPC needed.
-        // We can't easily build a `LogFetcher` without a provider, so just
-        // assert the empty-input contract via the `is_empty` short-circuit.
-        // The non-empty path needs a live RPC node (integration test, -3).
-        let addrs: Vec<Address> = Vec::new();
-        assert!(addrs.is_empty(), "the empty-address guard short-circuits");
+        let fetcher = LogFetcher::new(Arc::new(dead_url_provider()), 1_000);
+        let logs = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_scaled_token_logs(&fetcher, 1, 1_000, &[]))
+            .expect("the empty-address guard short-circuits before any round trip");
+        assert!(logs.is_empty(), "no addresses means no logs");
     }
 
     #[test]
@@ -636,118 +645,78 @@ mod tests {
         assert!(spec.stk_aave_address.is_none());
     }
 
+    /// The golden capture records the `eth_getLogs` filter each pass issued for
+    /// one chunk: one checksummed emitter (or the scaled-token set), one
+    /// topic-position OR-set, and the chunk's block range. The cassette answers
+    /// an exact-semantics filter only, so a changed address set, a changed topic
+    /// set, a different block range, or an extra round trip is a red instead of
+    /// a passing fetch. The stkAAVE pass has no recorded entry because this
+    /// market's GHO row carries no discount token — its `None` answers
+    /// `Ok(empty)` before the wire.
     #[test]
-    fn topic_groups_match_event_fetchers_py() {
-        // Parity-gate pin: the topic OR-groups match the recorded topic census
-        // EXACTLY. This test fails if a topic
-        // is added/removed on one side but not the other — the single source
-        // of truth is `degenbot_decoders::aave_event_decoder`'s `*_TOPIC`
-        // constants + the Python `AaveV3*Event` enum. The counts are the
-        // Python list lengths (verified against `event_fetchers.py`).
+    fn each_fetch_pass_issues_the_recorded_log_filter() {
+        use degenbot_rpc::cassette::Cassette;
+        use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 
-        // fetch_pool_events: 11 topics.
-        let pool_topics = [
-            AAVE_BORROW_TOPIC,
-            AAVE_DEFICIT_CREATED_TOPIC,
-            AAVE_LIQUIDATION_CALL_TOPIC,
-            AAVE_MINTED_TO_TREASURY_TOPIC,
-            AAVE_REPAY_TOPIC,
-            AAVE_RESERVE_DATA_UPDATED_TOPIC,
-            AAVE_RESERVE_USED_AS_COLLATERAL_DISABLED_TOPIC,
-            AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC,
-            AAVE_SUPPLY_TOPIC,
-            AAVE_USER_E_MODE_SET_TOPIC,
-            AAVE_WITHDRAW_TOPIC,
-        ];
-        assert_eq!(pool_topics.len(), 11, "fetch_pool_events has 11 topics");
+        const CAPTURE: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json"
+        );
 
-        // fetch_reserve_initialization_events: 5 topics.
-        assert_eq!(
-            [
-                AAVE_ASSET_COLLATERAL_IN_EMODE_CHANGED_TOPIC,
-                AAVE_COLLATERAL_CONFIGURATION_CHANGED_TOPIC,
-                AAVE_EMODE_ASSET_CATEGORY_CHANGED_TOPIC,
-                AAVE_EMODE_CATEGORY_ADDED_TOPIC,
-                AAVE_RESERVE_INITIALIZED_TOPIC,
+        let bytes = std::fs::read(CAPTURE).expect("the committed chunk capture must exist");
+        let transport = CassetteReplayTransport::new(
+            Cassette::from_json_bytes(&bytes).expect("the committed capture is a v1 cassette"),
+        );
+        let fetcher = LogFetcher::new(Arc::new(transport.as_alloy_provider()), 1_000);
+        let spec = AaveFetchSpec {
+            pool_address: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2"
+                .parse()
+                .unwrap(),
+            configurator_address: "0x64b761d848206f447fe2dd461b0c635ec39ebb27"
+                .parse()
+                .unwrap(),
+            address_provider_address: "0x2f39d218133afab8f2b819b1066c7e434ad94e9e"
+                .parse()
+                .unwrap(),
+            oracle_address: Some(
+                "0x54586be62e3c3580375ae3723c145253060ca0c2"
+                    .parse()
+                    .unwrap(),
+            ),
+            scaled_token_addresses: [
+                "0x23878914efe38d27c4d67ab83ed1b93a74d4086a",
+                "0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8",
+                "0x6df1c1e379bc5a00a7b4c6e67a203333772f45a8",
+                "0x72e95b8931767c79ba4eee721354d6e99a61d004",
+                "0x98c23e9d8f34fefb1b7bd6a91b7ff122f4e16f5c",
+                "0xea51d7853eefb32b6ee06b1c12e6dcca88be0ffe",
             ]
-            .len(),
-            5,
-            "fetch_reserve_init has 5 topics"
+            .iter()
+            .map(|a| a.parse().unwrap())
+            .collect(),
+            stk_aave_address: None,
+        };
+
+        let logs = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_aave_chunk_logs(
+                &spec, &fetcher, 26_130_440, 26_130_445,
+            ))
+            .expect("every pass matches the filter the capture recorded for it");
+        assert!(
+            !logs.is_empty(),
+            "the capture carries logs for the passes it recorded"
         );
 
-        // fetch_scaled_token_events: 6 topics (incl ERC20 Transfer).
+        let served = transport.served_snapshot();
         assert_eq!(
-            [
-                AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
-                AAVE_UPGRADED_TOPIC,
-                AAVE_BALANCE_TRANSFER_TOPIC,
-                AAVE_BURN_TOPIC,
-                AAVE_MINT_TOPIC,
-                ERC20_TRANSFER_TOPIC,
-            ]
-            .len(),
-            6,
-            "fetch_scaled_token has 6 topics"
+            served.requests, 6,
+            "one round trip per recorded filter, and none the capture omits"
         );
-
-        // fetch_stk_aave_events: 3 topics.
         assert_eq!(
-            [AAVE_REDEEM_TOPIC, AAVE_STAKED_TOPIC, ERC20_TRANSFER_TOPIC].len(),
-            3,
-            "fetch_stk_aave has 3 topics"
+            served.per_method.get("eth_getLogs").map(|m| m.served),
+            Some(6),
+            "six passes reach the wire; the stkAAVE pass has no discount token"
         );
-
-        // fetch_address_provider_events: 6 topics.
-        assert_eq!(
-            [
-                AAVE_ADDRESS_SET_TOPIC,
-                AAVE_POOL_CONFIGURATOR_UPDATED_TOPIC,
-                AAVE_POOL_DATA_PROVIDER_UPDATED_TOPIC,
-                AAVE_POOL_UPDATED_TOPIC,
-                AAVE_PRICE_ORACLE_UPDATED_TOPIC,
-                AAVE_PROXY_CREATED_TOPIC,
-            ]
-            .len(),
-            6,
-            "fetch_address_provider has 6 topics"
-        );
-
-        // fetch_discount_config_events: 2 topics.
-        assert_eq!(
-            [
-                AAVE_DISCOUNT_RATE_STRATEGY_UPDATED_TOPIC,
-                AAVE_DISCOUNT_TOKEN_UPDATED_TOPIC,
-            ]
-            .len(),
-            2,
-            "fetch_discount_config has 2 topics"
-        );
-
-        // fetch_oracle_events: 1 topic.
-        assert_eq!(
-            [AAVE_ASSET_SOURCE_UPDATED_TOPIC].len(),
-            1,
-            "fetch_oracle has 1 topic"
-        );
-
-        let _ = pool_topics; // suppress unused-binding lint
-    }
-
-    #[test]
-    fn fetch_single_address_helper_builds_correct_filter_shape() {
-        // The helper builds `addresses = Some(vec![checksum_string])` +
-        // `topic_filter = Some(vec![vec![topic0_str, ...]])` (one topic-position
-        // group, the topic0 OR-positions). The shape is the
-        // `fetch_logs_chunked` contract — we can't call it here without a live
-        // RPC, but the construction is verified by the topic-count parity test
-        // above (the same `topic0` slices feed both). This test pins the
-        // address-checksumming: the helper uses
-        // `address_to_checksum_string`, NOT `Address::to_string` (the
-        // former is EIP-55 checksummed, the RPC node expects checksummed).
-        let addr = Address::from([0x01; 20]);
-        let s = address_to_checksum_string(&addr);
-        assert!(s.starts_with("0x"));
-        assert_eq!(s.len(), 42, "EIP-55 checksummed address is 42 chars");
     }
 
     /// The resolver seeds from the Pool's `getReservesList()`, not from a

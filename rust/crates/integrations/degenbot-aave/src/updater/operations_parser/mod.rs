@@ -85,7 +85,7 @@ use pool_events::extract_pool_events;
 // ── the parser struct ─────────────────────────────────────────────────────
 
 /// The Aave V3 per-tx operations parser. Holds the per-tx
-/// context (`market_id`, `pool_address`, `treasury_address`, the pre-resolved
+/// context (`market_id`, `pool_address`, the pre-resolved
 /// GHO token/vToken addresses) + a borrowed chunk-tx `&Connection`. The
 /// orchestrator constructs one fresh per Ethereum tx.
 ///
@@ -105,9 +105,6 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// The Pool contract address (for the `MintToTreasury`
     /// `caller_address == pool_address` test).
     pub pool_address: Address,
-    /// The treasury address (for `MintToTreasury` test-style fallbacks;
-    /// None if the market doesn't expose one).
-    pub treasury_address: Option<Address>,
     /// The GHO token (underlying) address — None for non-GHO markets.
     pub gho_token_address: Option<Address>,
     /// The GHO vToken address — None for non-GHO markets. The parser's
@@ -172,17 +169,15 @@ pub struct TransactionOperations<'a> {
 
 impl<'a, 's> TransactionOperationsParser<'a, 's> {
     /// Construct a parser with the per-tx context pre-resolved by the caller
-    /// (the orchestrator does the GHO-token / treasury resolution
-    /// before instantiation; the parser doesn't RPC).
+    /// (the orchestrator does the GHO-token resolution before instantiation;
+    /// the parser doesn't RPC).
     /// # Errors
     /// Returns [`ParseError::Substrate`] if the pool-revision lookup fails.
     #[expect(clippy::similar_names)] // gho_token vs gho_vtoken is intrinsic to the domain
-    #[expect(clippy::too_many_arguments)] // one arg per context input; a builder hides the required set
     pub fn new(
         market_id: i64,
         chain_id: i64,
         pool_address: Address,
-        treasury_address: Option<Address>,
         gho_token_address: Option<Address>,
         gho_vtoken_address: Option<Address>,
         conn: &'a rusqlite::Connection,
@@ -199,7 +194,6 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             market_id,
             chain_id,
             pool_address,
-            treasury_address,
             gho_token_address,
             gho_vtoken_address,
             conn,

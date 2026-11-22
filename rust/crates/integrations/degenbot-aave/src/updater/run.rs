@@ -345,9 +345,6 @@ pub struct RunSpec {
 ///
 /// # Parity-gate notes (flagged)
 ///
-/// - **`treasury_address` is `None`**: `process_transaction` accepts it but the
-///   current dispatch doesn't consume it (forward-compat). The Python resolves
-///   it via the Pool's `RESERVE_TREASURY_ADDRESS()` RPC — not wired here.
 /// - **`vtoken_revision`**: re-resolved per transaction — stage 1 of
 ///   `ChunkContext::dispatch_transaction` — so a transaction after an in-chunk
 ///   `Upgraded` apply reads the bumped revision; a chunk-start snapshot would

@@ -4,6 +4,7 @@ use super::{
     ParseError, ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType,
     TransactionOperationsParser, U256,
 };
+use crate::operations::TokenType;
 
 impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the decode wrappers (mint/burn/balance-transfer/ERC20-transfer) ──
@@ -122,10 +123,14 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         let event_type = if self.gho_vtoken_address == Some(token_address) {
             ScaledTokenEventType::GhoDebtTransfer
         } else {
-            let Some(event_type) = self.classify_token_type(token_address)? else {
+            let Some(kind) = self.classify_token_type(token_address)? else {
                 return Ok(None);
             };
-            event_type
+            match kind {
+                TokenType::Atoken => ScaledTokenEventType::Erc20CollateralTransfer,
+                TokenType::Vtoken => ScaledTokenEventType::Erc20DebtTransfer,
+                TokenType::GhoDiscount => ScaledTokenEventType::DiscountTransfer,
+            }
         };
         Ok(Some(ScaledTokenEvent {
             log,
@@ -147,10 +152,10 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         }))
     }
 
-    /// Classify a Mint/Burn event's emitter token address. Returns the matching
-    /// [`ScaledTokenEventType`]; the caller's match-arm on the
-    /// `event_category` ("mint"/"burn") maps to `CollateralMint` / `DebtMint` /
-    /// `GhoDebtMint` (and the corresponding burn variants).
+    /// Classify a Mint/Burn event's emitter: `(kind, event_category)` →
+    /// `CollateralMint`/`CollateralBurn` (aToken), `DebtMint`/`DebtBurn`
+    /// (vToken), `GhoDebtMint`/`GhoDebtBurn` (GHO vToken, matched first so that
+    /// address never reaches the asset-table lookups).
     ///
     /// # Panics
     /// Panics if the emitter is neither GHO-vToken, a known aToken, nor a
@@ -169,53 +174,29 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 _ => unreachable!("event_category is mint|burn"),
             });
         }
-        let market_id = self.market_id;
-        #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
-        let token_type = self.classify_token_type(token_address)?.unwrap_or_else(|| {
-            panic!("unexpected token at {token_address} for market {market_id}")
-        });
-        Ok(match (token_type, event_category) {
-            (
-                ScaledTokenEventType::CollateralMint
-                | ScaledTokenEventType::CollateralTransfer
-                | ScaledTokenEventType::Erc20CollateralTransfer,
-                "mint",
-            ) => ScaledTokenEventType::CollateralMint,
-            (
-                ScaledTokenEventType::CollateralBurn
-                | ScaledTokenEventType::CollateralTransfer
-                | ScaledTokenEventType::Erc20CollateralTransfer,
-                "burn",
-            ) => ScaledTokenEventType::CollateralBurn,
-            (
-                ScaledTokenEventType::DebtMint
-                | ScaledTokenEventType::DebtTransfer
-                | ScaledTokenEventType::Erc20DebtTransfer,
-                "mint",
-            ) => ScaledTokenEventType::DebtMint,
-            (
-                ScaledTokenEventType::DebtBurn
-                | ScaledTokenEventType::DebtTransfer
-                | ScaledTokenEventType::Erc20DebtTransfer,
-                "burn",
-            ) => ScaledTokenEventType::DebtBurn,
-            // classify_token_type returns a transfer variant on aToken/vToken;
-            // re-derive here (the Python's helper). The conversion is
-            // aToken → CollateralMint/Burn, vToken → DebtMint/Burn.
-            _ => {
-                #[expect(clippy::panic)] // non-token-type variant = invariant break (loud)
-                {
-                    panic!(
-                        "classify_token_type returned a non-token-type variant for token at {token_address} (event_category={event_category})"
+        Ok(
+            match (self.require_token_kind(token_address)?, event_category) {
+                (TokenType::Atoken, "mint") => ScaledTokenEventType::CollateralMint,
+                (TokenType::Atoken, "burn") => ScaledTokenEventType::CollateralBurn,
+                (TokenType::Vtoken, "mint") => ScaledTokenEventType::DebtMint,
+                (TokenType::Vtoken, "burn") => ScaledTokenEventType::DebtBurn,
+                // The discount token emits plain `Transfer`, never a scaled Mint/Burn.
+                (TokenType::GhoDiscount, _) => {
+                    #[expect(clippy::panic)] // impossible emitter = invariant break (loud)
+                    {
+                        panic!(
+                        "discount token {token_address} emitted a scaled {event_category} (market {})",
+                        self.market_id
                     )
+                    }
                 }
-            }
-        })
+                (_, _) => unreachable!("event_category is mint|burn"),
+            },
+        )
     }
 
     /// Classify a `BalanceTransfer` event's emitter → `CollateralTransfer` /
     /// `DebtTransfer` / `GhoDebtTransfer`.
-    #[expect(clippy::panic_in_result_fn)] // the invariant-break panic is the documented contract
     fn classify_transfer(
         &mut self,
         token_address: Address,
@@ -223,18 +204,28 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         if self.gho_vtoken_address == Some(token_address) {
             return Ok(ScaledTokenEventType::GhoDebtTransfer);
         }
-        let market_id = self.market_id;
-        #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
-        let token_type = self.classify_token_type(token_address)?.unwrap_or_else(|| {
-            panic!("unexpected token at {token_address} for market {market_id}")
-        });
-        // classify_token_type returned a transfer variant — re-derive.
-        Ok(match token_type {
-            ScaledTokenEventType::DebtTransfer | ScaledTokenEventType::Erc20DebtTransfer => {
-                ScaledTokenEventType::DebtTransfer
-            }
-            _ => ScaledTokenEventType::CollateralTransfer,
+        Ok(match self.require_token_kind(token_address)? {
+            TokenType::Atoken => ScaledTokenEventType::CollateralTransfer,
+            TokenType::Vtoken => ScaledTokenEventType::DebtTransfer,
+            TokenType::GhoDiscount => ScaledTokenEventType::DiscountTransfer,
         })
+    }
+
+    /// The emitter's asset-table kind. An address that is none of this
+    /// market's tokens is an invariant break: the caller pre-filters with
+    /// `classify_token_type` when a skip is wanted.
+    #[expect(clippy::panic_in_result_fn)] // the invariant-break panic is the documented contract
+    fn require_token_kind(&mut self, token_address: Address) -> Result<TokenType, ParseError> {
+        #[expect(clippy::panic)] // unexpected token = invariant break; fail loudly (documented)
+        match self.classify_token_type(token_address)? {
+            Some(kind) => Ok(kind),
+            None => {
+                panic!(
+                    "unexpected token at {token_address} for market {}",
+                    self.market_id
+                )
+            }
+        }
     }
 
     /// Classify a token-address by which asset-table column matches (aToken /
@@ -242,15 +233,10 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// succeeds and proves the address isn't any of those (the parser skips
     /// the log); a failed lookup is `Err` — the parse aborts loudly, never a
     /// silent skip.
-    ///
-    /// Returns a [`ScaledTokenEventType`] *transfer variant* as the
-    /// discriminator (the caller's match-arm maps mint/burn variants as
-    /// needed). This is a slight overloading of the enum but matches the
-    /// Python's three-way classification surface.
     fn classify_token_type(
         &mut self,
         token_address: Address,
-    ) -> Result<Option<ScaledTokenEventType>, ParseError> {
+    ) -> Result<Option<TokenType>, ParseError> {
         let addr_hex = addr_to_hex(token_address);
         // Try aToken first.
         if self
@@ -259,7 +245,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             .map_err(|e| ParseError::Substrate(format!("a_token lookup for {addr_hex}: {e}")))?
             .is_some()
         {
-            return Ok(Some(ScaledTokenEventType::Erc20CollateralTransfer));
+            return Ok(Some(TokenType::Atoken));
         }
         if self
             .substrate
@@ -267,7 +253,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             .map_err(|e| ParseError::Substrate(format!("v_token lookup for {addr_hex}: {e}")))?
             .is_some()
         {
-            return Ok(Some(ScaledTokenEventType::Erc20DebtTransfer));
+            return Ok(Some(TokenType::Vtoken));
         }
         // GHO-discount-token check (the v_gho_discount_token column on
         // aave_gho_tokens; only set if the discount mechanism is active).
@@ -288,7 +274,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             .flatten()
             .is_some_and(|s| s.eq_ignore_ascii_case(&addr_hex))
         {
-            return Ok(Some(ScaledTokenEventType::DiscountTransfer));
+            return Ok(Some(TokenType::GhoDiscount));
         }
         Ok(None)
     }

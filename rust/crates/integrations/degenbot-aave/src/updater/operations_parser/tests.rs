@@ -192,7 +192,6 @@ fn unrelated_transfer_skips_only_after_successful_classification() {
         Address::repeat_byte(0x99),
         None,
         None,
-        None,
         &conn,
         &mut substrate,
     )
@@ -225,7 +224,6 @@ fn parse_aborts_when_classification_db_lookup_fails() {
         1,
         1,
         Address::repeat_byte(0x99),
-        None,
         None,
         None,
         &conn,
@@ -1695,7 +1693,6 @@ fn refused_liquidation_payload(
         liquidation_fixture_pool(),
         None,
         None,
-        None,
         &conn,
         &mut substrate,
     )
@@ -2368,7 +2365,6 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
         1, // market_id
         1, // chain_id
         pool_address,
-        Some(treasury),
         None, // gho_token_address
         None, // gho_vtoken_address
         &conn,
@@ -2538,7 +2534,6 @@ fn deficit_coverage_triplet_claims_every_log_it_owns() {
         1,
         1,
         Address::repeat_byte(0x99),
-        None,
         None,
         None,
         &conn,

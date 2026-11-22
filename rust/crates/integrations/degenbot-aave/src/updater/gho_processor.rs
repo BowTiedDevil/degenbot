@@ -1281,23 +1281,27 @@ mod tests {
 
     #[test]
     fn parity_mint_v1_discounted_equality_burns_only_the_discount_scaled_share() {
-        // Recorded row: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
-        // contract's accrual edition. `_accrueDebtOnAction` settles the accrued
-        // interest, `_burn(user, discountScaled)` moves the scaled balance, and
-        // the token emits `Mint(address(0), user, balanceIncrease,
-        // balanceIncrease, index)`: value == balance_increase by construction,
-        // so the whole delta is the discount burn and no requested amount is
-        // implied.
+        // Recorded row: GHO vToken 0x786dbff3 (rev=1), block 17893923 logIdx
+        // 361 of tx 0xdaf7a4e911c3f5b1492fbc25b95137ca2db6766c56cbf2d8c855b5444fbeab27
+        // — the contract's accrual edition. `_accrueDebtOnAction` settles the
+        // accrued interest, `_burn(user, discountScaled)` moves the scaled
+        // balance, and the token emits `Mint(address(0), user, value,
+        // balanceIncrease, index)` carrying the net-of-discount increase:
+        // value == balance_increase by construction, so the whole delta is the
+        // discount burn and no requested amount is implied.
         //
-        // Inputs captured from the live tx 0xdaf7a4e9...
-        //   block 17893923  logIdx 361  vToken rev=1
-        //   prev_balance   = 299812144457223276709515  (299812.144457 GHO)
+        // Inputs, all read off chain:
+        //   prev_balance   = 299812144457223276709515  scaledBalanceOf(0x417afF82)
+        //                    at block 17893922 — also ray_div(300_000e18, prev_index)
         //   prev_index     = 1000626577496107821018090417  (1.000626577)
-        //   prev_discount = 1649 bps (the DPU at logIdx=359 carries old=1649)
+        //   prev_discount  = 1649 bps — DiscountPercentUpdated at logIdx 359 sets
+        //                    1725 → 1649 before this log
         //   value          = 123683949235110136664 (123.683949 GHO)
         //   balance_increase = 123683949235110136664 (123.683949 GHO)
         //   index          = 1001120576006523063100148152 (1.001120576)
-        // The expected result:
+        //   interest = 148106752766267676522, discount = 24422803531157539858,
+        //   net = 123683949235110136664 — the event's value, exactly.
+        // The recorded result:
         //   balance_delta   = -24395466556666203902 (-24.395467 GHO)
         //   discount_scaled = 24395466556666203902 (24.395467 GHO)
         //   user_operation  = GhoUserOperation::InterestAccrual
@@ -1308,7 +1312,7 @@ mod tests {
             index: U256::from(1_001_120_576_006_523_063_100_148_152u128),
             scaled_amount: None,
         };
-        let prev_balance = U256::from(299_812_144_457_223_226_709_515u128);
+        let prev_balance = U256::from(299_812_144_457_223_276_709_515u128);
         let prev_index = U256::from(1_000_626_577_496_107_821_018_090_417u128);
         let r = p1
             .process_gho_debt_mint(&ev, prev_balance, prev_index, U256::from(1_649u64), None)
@@ -1318,22 +1322,10 @@ mod tests {
             GhoUserOperation::InterestAccrual,
             "the accrual edition classifies as interest accrual"
         );
-        // The discount_scaled magnitude (≈24.395 GHO); allow a 10_000-wei
-        // tolerance for the upstream ray_mul/ray_div HALF_UP rounding
-        // implementation divergence under separate investigation. This row
-        // pins the RECORDED magnitude and delta, not the classification.
-        let expected_abs = U256::from(24_395_466_556_666_203_902u128);
-        let diff = if r.discount_scaled >= expected_abs {
-            r.discount_scaled - expected_abs
-        } else {
-            expected_abs - r.discount_scaled
-        };
-        assert!(
-            diff < U256::from(10_000u64),
-            "discount_scaled magnitude tolerance exceeded: got {}, expected {}, diff {}",
+        assert_eq!(
             r.discount_scaled,
-            expected_abs,
-            diff
+            U256::from(24_395_466_556_666_203_902u128),
+            "the discount's scaled share, exactly as the contract burned it"
         );
         assert_eq!(
             r.balance_delta,

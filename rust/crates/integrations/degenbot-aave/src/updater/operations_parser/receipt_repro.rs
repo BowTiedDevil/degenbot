@@ -225,7 +225,6 @@ fn every_collateral_leg_belongs_to_the_liquidation_that_emitted_it() {
         1,
         market.chain_id,
         market.pool,
-        None,
         Some(market.gho_token),
         Some(market.gho_vtoken),
         &conn,

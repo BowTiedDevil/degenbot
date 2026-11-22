@@ -219,7 +219,6 @@ pub(super) async fn process_chunk_on_conn(
             market_id,
             chain_id,
             pool_address,
-            /* treasury_address */ None,
             dispatch.gho_underlying_address,
             dispatch.gho_vtoken_address,
             conn,
@@ -371,7 +370,6 @@ pub(super) async fn process_chunk_on_conn(
                 crate::config_dispatch::refresh_gho_discount(
                     provider,
                     conn,
-                    market_id,
                     *position_id,
                     block_number,
                     discount_token_tx,

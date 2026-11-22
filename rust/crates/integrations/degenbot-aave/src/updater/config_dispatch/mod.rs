@@ -964,7 +964,6 @@ mod tests {
             .block_on(refresh_gho_discount(
                 &provider,
                 &conn,
-                1,
                 position_id,
                 100,
                 Some(discount_token),

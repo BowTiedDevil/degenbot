@@ -111,7 +111,6 @@ pub fn process_transaction(
     market_id: i64,
     chain_id: i64,
     pool_address: Address,
-    treasury_address: Option<Address>,
     gho_token_address: Option<Address>,
     gho_vtoken_address: Option<Address>,
     conn: &Connection,
@@ -124,7 +123,6 @@ pub fn process_transaction(
         market_id,
         chain_id,
         pool_address,
-        treasury_address,
         gho_token_address,
         gho_vtoken_address,
         conn,
@@ -335,7 +333,6 @@ fn dispatch_operation(
             op,
             market_id,
             conn,
-            gho_vtoken_address,
             gho_ctx,
             liq_patterns,
             events,
@@ -1603,7 +1600,6 @@ fn lookup_gho_debt_asset(
         })
 }
 
-#[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
 /// Dispatch the non-GHO `LiquidationCall`. Checks the bad-debt override FIRST:
 /// a `DEFICIT_CREATED` event for the user in this tx means the contract burned
 /// the ENTIRE remaining debt (`user_liquidation_count` is NOT consulted) → set
@@ -1614,14 +1610,10 @@ fn lookup_gho_debt_asset(
 /// burn attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
 /// single-liquidation "collect all burns" branch) never reaches
 /// `dispatch_gho_liquidation`, so the reset here is the only zeroing path.
-/// `gho_vtoken_address` is retained as a parameter for signature parity with
-/// the other dispatch fns (the former GHO-exclusion guard was removed — it
-/// caused the chunk-22122071 GHO bad-debt write-off to be skipped).
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    _gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
     events: &mut Vec<AaveChunkEvent>,
@@ -2913,7 +2905,6 @@ mod tests {
             &op0,
             1,
             &conn,
-            None,
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
@@ -2924,7 +2915,6 @@ mod tests {
             &op1,
             1,
             &conn,
-            None,
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
@@ -3202,7 +3192,6 @@ mod tests {
             &op,
             1,
             &conn,
-            Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
             &mut events,
@@ -3331,7 +3320,6 @@ mod tests {
             &op,
             1,
             &conn,
-            None,
             &GhoDiscountContext::new(&[], &HashMap::new(), None),
             &mut liq_patterns,
             &mut events,
