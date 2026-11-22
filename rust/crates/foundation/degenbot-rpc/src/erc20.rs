@@ -1,9 +1,8 @@
 //! ERC-20 metadata reads: `name()` / `symbol()` / `decimals()` over the one
 //! [`ContractRead`] call step.
 //!
-//! Two consumers read token metadata with genuinely different tolerances, and
-//! each used to carry its own selector/decode/fallback family. This module is
-//! that family's one home: [`read`] answers one token, [`read_batch`] folds an
+//! Two consumers read token metadata with genuinely different tolerances; this
+//! module is both families' one home: [`read`] answers one token, [`read_batch`] folds an
 //! ordered token list into one of the production batch contracts (eager
 //! Multicall3 wire shapes — or, for the shape with no eager request set, the
 //! exact per-token [`read`] sequence), and the closed [`MetadataShape`] names

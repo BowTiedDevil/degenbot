@@ -6,7 +6,7 @@ pre-pump startup ritual (``subscribe`` → ``backfill`` → verify config)
 and *stops before* ``resume()``, so the caller can attach its
 result consumer before any batches flow. It also registers pools and paths.
 
-It is a **thin adapter**: every decision it used to own now belongs to the
+It is a **thin adapter**: every decision belongs to the
 Rust core. Pool identity is derived, not mirrored — a pool's engine
 ``pool_id`` comes from the shared ``BotState`` through
 ``ArbitrageEngine.pool_id_for_pool`` / ``pool_id_for_v4_pool`` (or straight
@@ -17,7 +17,7 @@ likewise core-owned: ``run_registration_lifecycle`` enters the session's
 registration workers share one lifecycle run without a Python claim table.
 
 The name stays ``EngineRegistry`` because it remains the public registration
-interface for operators; the registration *state* it used to own is gone.
+interface for operators; it holds no registration *state*.
 """
 
 from __future__ import annotations
@@ -117,10 +117,9 @@ class EngineRegistry:
         # two-step verify (T6) to pass to the verify closures — NOT wired into
         # the orphaned engine.set_verify_*_block setters (deleted in T5).
         # `None` on a cold start (no DB seed) — T6 guards accordingly.
-        # (Pre-fix the registry also stashed a `_verify_backfill_block`
-        # constant for step-2 to compare against — removed 2026-06-29: the
-        # post-drain pin now carries its OWN block, captured atomically with
-        # the drain, so step-2 takes no `block` argument from the registry.)
+        # (The registry carries no `_verify_backfill_block`: the post-drain pin
+        # carries its OWN block, captured atomically with the drain, so step-2
+        # takes no `block` argument from the registry.)
         self._verify_snapshot_block: int | None = None
 
     def start(

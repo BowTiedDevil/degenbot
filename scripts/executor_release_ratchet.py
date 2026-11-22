@@ -191,7 +191,7 @@ def check(root: Path, base_index: Path | None) -> list[str]:
             release_id = previous["release_id"]
             present = current_by_id.get(release_id)
             if present is None:
-                complaints.append(f"{release_id}: accepted release package was removed")
+                complaints.append(f"{release_id}: accepted release package is missing")
             elif present != previous:
                 before = previous["files"]
                 after = present["files"]

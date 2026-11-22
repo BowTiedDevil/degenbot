@@ -413,7 +413,7 @@ impl Bot {
 
     /// Number of deltas in the reorg journal for a V2 pool. `0` when the id
     /// is unregistered or NOT a V2 pool — the per-family contract the `PyO3`
-    /// wrapper's inline guard used to carry.
+    /// wrapper's inline guard mirrors.
     #[must_use]
     pub fn v2_journal_len(&self, pool_id: u64) -> usize {
         let state = self

@@ -524,8 +524,8 @@ pub enum GateSkipCause {
     DomainOverflow,
 }
 
-/// The gate's per-call dependency value. Carries everything that used to be
-/// process-global: the solve-cycle epoch (the prefix cache drops entries
+/// The gate's per-call dependency value — the process-global state, owned
+/// per call: the solve-cycle epoch (the prefix cache drops entries
 /// from an older epoch on first touch), the cache opt-in, and the optional
 /// degenerate-path capture sink. One interface, no hidden state.
 #[derive(Clone, Copy, Debug, Default)]

@@ -91,7 +91,7 @@ fn bench_sweep(c: &mut Criterion) {
     });
 
     let grid = grid_4x4();
-    // The 5-deep all-`None` kind filter this bench used to carry is dropped
+    // The 5-deep all-`None` kind filter is dropped
     // along with its paired node_valid_depths table: post-floor (the core
     // floors the effective min depth at the filter length) it would have
     // silenced the 4-cycles this sweep measures. The grid is bipartite

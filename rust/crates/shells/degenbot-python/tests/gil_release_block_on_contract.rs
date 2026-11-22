@@ -48,7 +48,7 @@ fn gil_released_block_on(py: Python<'_>, park_ms: u64) -> PyResult<u64> {
 fn test_detach_releases_gil_during_block_on() {
     // Arm a background thread that tries to acquire the GIL WHILE the main
     // thread is parked inside `gil_released_block_on` (200 ms). If the call
-    // held the GIL (the pre-fix shape), `Python::attach` would block until
+    // held the GIL, `Python::attach` would block until
     // the 200 ms park ended, so `attach_during_park` would still be false by
     // the time the main thread returns - the assertion below catches that.
     let attach_during_park = Arc::new(AtomicBool::new(false));

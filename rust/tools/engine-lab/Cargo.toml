@@ -183,7 +183,7 @@ path = "src/bin/bal_delta_rounds_probe/main.rs"
 name = "bal_production_relevance_probe"
 path = "src/bin/bal_production_relevance_probe/main.rs"
 
-# The real-candidate read-set oracle replay: the post-fix soak's fanout-trace
+# The real-candidate read-set oracle replay: the BAL soak's fanout-trace
 # rows replayed through exact-anchor BAL generations, every recorded read
 # compared against an independent cold read, the one-wei plant the comparator's
 # negative control, and the expiry path proved to take the dynamic fallback. It

@@ -13,19 +13,19 @@
 //! block 25635461, path=97: amount_in = 13_576_418_983_678 wei WETH (ofz),
 //! on-chain actual_out = 25_885 USDC, solver predicted = 25_898 (off by +13).
 //!
-//! ## What this test proves (post-fix)
+//! ## What this test proves
 //!
 //! With `protocol_fee = 0x001f_41f4` stored on `V4PoolState` (the packed uint24
 //! read from `slot0.protocolFee` at registration), `v4_simulate_swap` AND the
 //! solver's crossing path (`compute_crossing` + `simulate_v3_range_swap`) both
 //! internally compute `calculateSwapFee(500, 3000) = 3499` pips and feed it as
 //! the swap-step fee. The result must be the ON-CHAIN ACTUAL (25_885), not the
-//! stale-feeling lpFee-only prediction (25_898). The two pre-fix sides —
+//! stale-feeling lpFee-only prediction (25_898). The two sides —
 //! solver vs `v4_simulate_swap` — still agree byte-for-byte (parity),
 //! now against the REAL bytecode answer.
 //!
 //! A `protocol_fee = 0` variant reproduces the OLD prediction (25_898) — the
-//! pre-fix behaviour — so the test pins BOTH sides of the protocol-fee coin
+//! lpFee-only behaviour — so the test pins BOTH sides of the protocol-fee coin
 //! in one place.
 //!
 //! ## On-chain state at block 25635461 (read via `cast storage` against
@@ -57,7 +57,7 @@ use degenbot_pools::solve::concentrated_liquidity::{
     simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
 };
 
-/// The on-chain actual + the pre-fix lpFee-only prediction for path=97.
+/// The on-chain actual + the lpFee-only prediction for path=97.
 const ONCHAIN_ACTUAL_OUT: u128 = 25_885;
 const PRE_FIX_LP_FEE_PREDICTION: u128 = 25_898;
 const PATH97_AMOUNT_IN_WETH: u128 = 13_576_418_983_678;
@@ -174,7 +174,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
 
     assert_eq!(
         sim_out, solver_out,
-        "v4_simulate_swap and the solver crossing path must agree (parity holds post-fix); \
+        "v4_simulate_swap and the solver crossing path must agree (parity); \
          sim={sim_out} solver={solver_out}",
     );
     assert_eq!(
@@ -184,9 +184,9 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
          ({ONCHAIN_ACTUAL_OUT}); got {sim_out} (the protocol-fee threading regressed)",
     );
 
-    // (2) `protocol_fee = 0` reproduces the PRE-FIX lpFee-only prediction —
+    // (2) `protocol_fee = 0` reproduces the lpFee-only prediction —
     // the over-prediction that caused `CurrencyNotSettled`. Pins the
-    // pre-fix→post-fix delta at the protocol fee and guards against
+    // with-vs-without delta at the protocol fee and guards against
     // accidentally defaulting `protocol_fee` back to 0 on the production
     // registration path.
     let state_no_proto = onchain_v4_state_at_block_25635461(0);
@@ -194,7 +194,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
     assert_eq!(
         sim_out_no_proto,
         U256::from(PRE_FIX_LP_FEE_PREDICTION),
-        "protocol_fee=0 must reproduce the pre-fix over-prediction \
+        "protocol_fee=0 must reproduce the lpFee-only over-prediction \
          ({PRE_FIX_LP_FEE_PREDICTION}); got {sim_out_no_proto}",
     );
     assert_ne!(
@@ -205,7 +205,7 @@ fn v4_protocol_fee_threading_reproduces_on_chain_actual() {
     eprintln!(
         "amount_in={amount_in} \
          swapFee_out={sim_out} (== on-chain actual {ONCHAIN_ACTUAL_OUT}) \
-         lpFee_out={sim_out_no_proto} (== pre-fix prediction {PRE_FIX_LP_FEE_PREDICTION}) \
+         lpFee_out={sim_out_no_proto} (== lpFee-only prediction {PRE_FIX_LP_FEE_PREDICTION}) \
          => protocol-fee fix threads calculateSwapFee into both v4_simulate_swap + solver"
     );
 }

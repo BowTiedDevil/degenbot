@@ -1,9 +1,9 @@
 """The verification retry policy is a declared key family, resolved once.
 
 The four ``verify.verify_retry_*`` keys carry the ``VERIFICATION_RETRY_*`` env
-names, so the schema's declared default is the only copy of the numbers. They
-used to be encoded in three places (the config factory, its parse helpers, and
-the policy dataclass), and only the dataclass agreed with the core.
+names, so the schema's declared default is the only copy of the numbers.
+Encoded in three places (the config factory, its parse helpers, and
+the policy dataclass), only the dataclass agreed with the core.
 
 ``build_paths`` reads the resolved policy off ``cfg.verification_retry_policy``
 and injects it into the core-owned bounded retry dance, which retries a

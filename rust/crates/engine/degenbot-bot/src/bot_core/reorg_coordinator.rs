@@ -564,8 +564,8 @@ mod tests {
     /// registration state — NOT fail-stop as "too-deep". V3 journals carry no
     /// genesis anchor: the first delta's `scalar_priors` ARE the registration
     /// scalars, so `restore_before_block(B)` pops it and returns registration
-    /// state. Pre-fix `has_state_prior_to` rejected `earliest >= block`
-    /// uniformly, so the pump shut down on the exact single-delta-at-target
+    /// state. A `has_state_prior_to` that rejects `earliest >= block`
+    /// uniformly shuts the pump down on the exact single-delta-at-target
     /// case `restore_before_block` handles correctly — the crash in
     /// `logs/perm-V3-V4-V3-reorg_crash.log` (pool 16, block 25350592).
     #[test]

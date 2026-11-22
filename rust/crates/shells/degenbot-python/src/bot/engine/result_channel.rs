@@ -84,7 +84,7 @@ impl PyArbEngine {
     /// Removes the path from the engine's internal state. The path's pools
     /// are **not** removed — other paths may still reference them.
     ///
-    /// Returns `true` if the path existed and was removed.
+    /// Returns `true` if the path existed and this call removed it.
     #[pyo3(signature = (path_id))]
     fn deregister_path(&self, py: Python<'_>, path_id: u64) -> bool {
         self.with_stages(py, |e| e.deregister_path(path_id))

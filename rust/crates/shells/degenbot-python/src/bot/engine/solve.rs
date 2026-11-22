@@ -111,8 +111,8 @@ impl PyArbEngine {
         // awaits the lock. The SINGLE `core.write()` hold across both drains
         // AND the post-drain pin is PRESERVED (the step-2 rolling-start race
         // fix — see `pin_v3_post_drain_snapshot`); `py.detach` wraps the
-        // OUTSIDE, it does NOT split the hold. Pre-fix this widened hold was
-        // the worst GIL-carrying park in `build_paths` (engine.lock() +
+        // OUTSIDE, it does NOT split the hold. The GIL carried across this
+        // widened hold would be the worst park in `build_paths` (engine.lock() +
         // core.write() across drain+pin). The closure touches no Python
         // objects.
         py.detach(move || {

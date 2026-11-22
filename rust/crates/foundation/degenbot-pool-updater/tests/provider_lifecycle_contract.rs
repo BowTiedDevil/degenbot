@@ -170,8 +170,8 @@ fn seeded_db(dir: &Path, file_name: &str) -> PathBuf {
 #[test]
 fn injected_provider_serves_a_multi_chunk_run_and_a_no_work_run() {
     let stub = StubNode::spawn(CHAIN as u64);
-    // The caller's construction site — the build the core's old internal
-    // `AlloyProvider::new` used to own (the shared runtime, no ambient
+    // The caller's construction site — the build the core's internal
+    // `AlloyProvider::new` performs (the shared runtime, no ambient
     // context on the test thread).
     let provider = get_runtime()
         .block_on(AlloyProvider::new(&stub.url, 5))

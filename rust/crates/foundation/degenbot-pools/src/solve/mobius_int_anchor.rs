@@ -48,7 +48,7 @@
 
 // The module is `pub(crate)` since the W2 demotion, so
 // `clippy::must_use_candidate` (a public-API pedantic lint) no longer applies
-// here; the former module-level expectation was removed with the door cut.
+// here; the door cut retired the former module-level expectation.
 
 use alloy::primitives::U256;
 
@@ -425,8 +425,8 @@ mod tests {
 
     #[test]
     fn test_deep_three_hop_discriminant_does_not_wrap() {
-        // 3-hop 1e24: bit_len(K) + bit_len(M) > 512, so the pre-fix U512
-        // product wrapped and collapsed the anchor to zero. The widened
+        // 3-hop 1e24: bit_len(K) + bit_len(M) > 512, so a U512
+        // product wraps and collapses the anchor to zero. The widened
         // discriminant must produce a real anchor, and the solver must
         // evaluate it rather than the 1-wei micro-profit fallback.
         let base = pow10(24);

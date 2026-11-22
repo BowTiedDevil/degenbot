@@ -399,7 +399,7 @@ fn build_fee1_tiny_state(
 /// re-inserts sqrt(current_tick) as the first interior boundary of range 0 for
 /// zfo=true, so the walk floors there like the on-chain. Verified on the real
 /// fee-1 pool (zfo=true, input 4728): on-chain = 4724, single-step collapse
-/// (pre-fix) = 4727.
+/// (the un-fixed walk) = 4727.
 #[test]
 fn v4_fee1_solver_path_matches_v4_simulate_swap() {
     // Reproduction scalars (paths 10234/10338): sq & liq of the fee-1 V4 hop.

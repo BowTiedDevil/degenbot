@@ -467,7 +467,7 @@ fn brent_helper_profit(sim: &ConcentratedLiquidityPathSim) -> U256 {
 /// actionable gap (`profit_delta_bps = 250`). The residual ties are wei-scale
 /// staircase plateaus — bounded Brent and the walk land on neighbouring points
 /// of an almost-flat top — so the regression guard also caps the worst residual
-/// below 10 bps (1000 ppm), far under the pre-fix 2.6-13 % forfeitures.
+/// below 10 bps (1000 ppm), far under the 2.6-13 % forfeitures of an unrefined walk.
 #[test]
 fn refine_window_matches_brent_helper_on_stress_books() {
     let cfg = SolveRuntimeConfig::default();

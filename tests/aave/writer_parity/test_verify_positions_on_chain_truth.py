@@ -361,9 +361,9 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
 # │      aWETH emits: ERC20 Transfer SENDER→0x0 (the burn-side pair) +      │
 # │      Burn event (value, balanceIncrease=0, index).                   │
 # │                                                                        │
-# │ RED (pre-fix): DB balance = supply_scaled − 2 × burn_scaled (over-   │
-# │   debited) ≠ on-chain truth (supply_scaled − burn_scaled).             │
-# │ GREEN (post-fix): DB balance = supply_scaled − burn_scaled == on-chain │
+# │ The bug: DB balance = supply_scaled − 2 × burn_scaled (over-debited) │
+# │   ≠ on-chain truth (supply_scaled − burn_scaled).                      │
+# │ The fix: DB balance = supply_scaled − burn_scaled == on-chain truth   │
 # │   truth — the burn-side Transfer-to-0x0 is filtered out by            │
 # │   `is_part_of_burn` INSIDE `collect_collateral_events`.               │
 # ─┘
@@ -371,7 +371,7 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
 # The burn-side fixture amounts: index = 2*RAY (scaled ≠ underlying), so   │
 # The burn-side fixture amounts: index = 2*RAY (scaled ≠ underlying), so  │
 # the divergence is the Burn's SCALED delta (NOT an even-multiples identity │
-# that could mask the bug). Burn one-third of the supply so the pre-fix     │
+# that could mask the bug). Burn one-third of the supply so the bug's       │
 # double-debit does not underflow the supply (the crash-gate would mask the │
 # divergence by rolling back the chunk).                                  │
 # Burn event's `value` field = the UNDERLYING collateral burned. The ERC20   │
@@ -397,7 +397,7 @@ _TX_LIQ = "0x" + b"s2".rjust(32, b"\x00").hex()
 def _liq_eth_call_responses() -> dict[str, str]:
     """Scaled-balance + last-index MockRpc responses for the SENDER position
     AFTER the LiquidationCall inlcurs the burn-side single-debit (the on-chain
-    truth the post-fix writer must match)."""
+    truth the writer must match)."""
     from tests.helpers.aave_logs import (
         ATOKEN_REVISION_SELECTOR,
         DEBT_TOKEN_REVISION_SELECTOR,
@@ -483,7 +483,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
     # `LiquidationCall` closes it (Pool `_executeLiquidationCall` emits the
     # event after the aToken legs).
     # The burn-side companion ERC20 Transfer SENDER→0x0 (the bug class —
-    # applied ALONGSIDE the Burn event by dispatch_liquidation pre-fix). The
+    # applied ALONGSIDE the Burn event by dispatch_liquidation in the bug). The
     # aToken's ERC20 Transfer carries the SCALED balance moved (the aToken
     # stores scaledBalanceOf, NOT underlying) — distinct from the Burn's value
     # (the underlying amount) which makes the double-debit visible when
@@ -531,12 +531,12 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
 def test_liquidation_burn_side_pair_single_debit(
     written_chunk: Callable[..., AbstractContextManager[_WrittenChunk]],
 ) -> None:
-    """RED pre-fix: `collect_collateral_events` includes the burn-side pair
+    """The bug: `collect_collateral_events` includes the burn-side pair
     ERC20 Transfer-to-0x0 in `op.scaled_events`; `dispatch_liquidation` applies
     both → the SENDER's balance is debited twice by the Burn delta → diverges
     from on-chain truth (the ScaledBalanceOf = supply_scaled − burn_scaled).
 
-    GREEN post-fix: `collect_collateral_events` calls `is_part_of_burn` to
+    The fix: `collect_collateral_events` calls `is_part_of_burn` to
     filter the paired ERC20 Transfer-to-0x0 out of `collateral_transfers` →
     `dispatch_liquidation` applies only the Burn event → single-debit ==
     on-chain truth → the gate reports no divergence.

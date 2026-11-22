@@ -557,9 +557,9 @@ mod tests {
     /// `_ = stop_rx.changed()` arm just above). `watch::Receiver::changed()`
     /// resolves to `Err` when the stop sender is dropped WITHOUT a send; the
     /// wildcard binding makes the arm fire on that `Err` too, so a closed stop
-    /// watch ends the session promptly as `SessionEnd::Stopped`. The pre-fix
-    /// `Ok(()) = stop_rx.changed()` pattern left the arm disabled in that case
-    /// and the session waited out `cfg.watchdog` (returning `Stall` here).
+    /// watch ends the session promptly as `SessionEnd::Stopped`. An
+    /// `Ok(()) = stop_rx.changed()` binding leaves the arm disabled in that
+    /// case and the session waits out `cfg.watchdog` (returning `Stall` here).
     ///
     /// Shape: this drives the real `session` directly against a silent mock WS,
     /// because the public `TxpoolFeed` API cannot drop the sender without a

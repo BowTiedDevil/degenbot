@@ -58,9 +58,9 @@ def test_register_v4_pool_seeds_tick_data_inline_without_update_tick_data(
     """``register_v4_pool`` accepts ``tick_data`` + ``coverage`` inline; the
     builder no longer needs a separate ``update_tick_data`` clobber.
 
-    Pre-fix: ``register_v4_pool`` registered with an empty map (Sparse) and the
-    builder's separate ``update_tick_data`` was the only seed — a pump
-    ModifyLiquidity in the register→seed window was lost. The inline seed
+    The failure this pins: ``register_v4_pool`` registering with an empty map
+    (Sparse), the builder's separate ``update_tick_data`` the only seed — a
+    pump ModifyLiquidity in the register→seed window is lost. The inline seed
     (one write lock) makes the pool visible to the pump only after seeding,
     closing the window.
     """

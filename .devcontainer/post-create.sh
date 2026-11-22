@@ -8,7 +8,7 @@
 # that CANNOT be baked into the image (it needs the bind-mounted repo):
 #   - venv + `just bootstrap` (installs dependencies and the dev extension)
 #   - commitlint git hooks
-# foundry/pi used to live here but were moved into the Dockerfile because the
+# foundry/pi are image-baked rather than wired here because the
 # entry point (attach.sh) does `podman start`+`exec`, which does NOT
 # run postCreateCommand — image-baking them guarantees availability.
 set -euo pipefail

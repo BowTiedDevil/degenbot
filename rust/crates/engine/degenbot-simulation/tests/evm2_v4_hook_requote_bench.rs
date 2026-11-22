@@ -414,7 +414,7 @@ fn setup_pools(
     (pools, skipped)
 }
 
-/// The post-fix seam's burst: one fresh scratch per quote, the block memo
+/// The shipped seam's burst: one fresh scratch per quote, the block memo
 /// shared across the whole burst (exactly what the production tier does now).
 fn burst_shipped_memo(
     rt: &tokio::runtime::Runtime,
@@ -791,7 +791,7 @@ fn requote_latency_envelope() {
     let shipped_interp = burst_shipped(&rt, &provider, &warm, &store, anchor, &pools, None, burst);
     Report::of("pre-memo, interpret", &shipped_interp).print();
 
-    // The post-fix seam — a fresh scratch per quote, the block's memo shared.
+    // The shipped seam — a fresh scratch per quote, the block's memo shared.
     let interp_memo = Arc::new(StorageMemo::new());
     let cold_memo = burst_shipped_memo(
         &rt,

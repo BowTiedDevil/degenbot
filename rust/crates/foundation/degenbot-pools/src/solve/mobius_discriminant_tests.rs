@@ -12,8 +12,8 @@
 //! This file pins the domain boundary on the all-V2 synthetic grid from
 //! `examples/all_v2_fastpath_ab.rs`, verifies that the widened (U2048)
 //! closed form lands within the floor jog of the unified walk on the
-//! diverging 3-hop paths, and checks bit-identity with the pre-fix formula
-//! everywhere the U512 discriminant does not wrap.
+//! diverging 3-hop paths, and checks bit-identity with
+//! [`prefix_model_anchor`] everywhere the U512 discriminant does not wrap.
 
 #![expect(clippy::unwrap_used, clippy::many_single_char_names)]
 
@@ -32,9 +32,9 @@ fn u512_product_fits(coeffs: &IntMobiusCoefficients) -> bool {
     coeffs.K.checked_mul(coeffs.M).is_some()
 }
 
-/// The pre-fix closed form verbatim: a U512 discriminant with wrapping `Mul`.
-/// Meaningful as a reference only inside [`u512_product_fits`], where the old
-/// multiply was exact.
+/// The wrapped-`Mul` U512 closed form verbatim.
+/// Meaningful as a reference only inside [`u512_product_fits`], where the
+/// wrapped multiply is exact.
 fn prefix_model_anchor(coeffs: &IntMobiusCoefficients) -> U256 {
     let km = coeffs.K * coeffs.M;
     let sqrt_km = isqrt_u512(km);
@@ -184,7 +184,7 @@ fn fixed_anchor_recovers_walk_optimum_on_diverging_three_hop_paths() {
 fn trustable_domain_fixed_anchor_is_bit_identical_to_prefix_formula() {
     // Grid over magnitudes that span the discriminant boundary. Inside the
     // U512 product budget the widened isqrt delegates to the 512-bit floor
-    // square root, so the anchor must be bit-identical to the pre-fix formula.
+    // square root, so the anchor must be bit-identical to [`prefix_model_anchor`].
     for (g, d) in FEES {
         for m in [12u32, 15, 18, 21, 24] {
             let base = pow10(m);

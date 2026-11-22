@@ -90,9 +90,9 @@ def _v2v2v2_filter():
 class TestPermutationFilterMinDepth:
     """Regress Bug B: a 3-depth filter must not leak 2-hop prefix cycles.
 
-    Before the fix, ``pool_type_per_depth`` floored ``max_depth`` at its
-    length but left ``min_depth`` at the caller default (2). A 2-hop cycle
-    whose edges matched depths 0+1 was yielded as a spurious path. This
+    Bug B: ``pool_type_per_depth`` floors ``max_depth`` at its
+    length but leaves ``min_depth`` at the caller default (2). A 2-hop cycle
+    whose edges match depths 0+1 is yielded as a spurious path. This
     deterministically reproduces that shape and asserts the leak is gone.
     """
 

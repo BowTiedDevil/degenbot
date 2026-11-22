@@ -192,12 +192,12 @@ fn self_fund_opts() -> EncodeOptions {
 /// The losing permutations that fall back to a Plan-BUILD decline instead of a
 /// typed deficit — **empty**, and the pin that keeps it that way.
 ///
-/// It used to hold the four terminal-V4 captures whose builder modelled the
-/// capture as `terminal_output − entry` (`checked_sub`), so a losing amount
-/// chain had no Plan representation and the builder declined before the ledger
-/// ran. That was a *Plan-vocabulary* gap, not a capital-policy one: a capture is
-/// signed, but only its positive half is a take. `PlanStep::CaptureShortfall`
-/// now carries the negative half, so the policy reaches all 27 and any
+/// A builder modelling the capture as `terminal_output − entry`
+/// (`checked_sub`) leaves a losing amount chain without a Plan
+/// representation and declines before the ledger runs — a *Plan-vocabulary*
+/// gap, not a capital-policy one: a capture is signed, but only its positive
+/// half is a take. `PlanStep::CaptureShortfall` carries the negative half, so
+/// the policy reaches all 27 and any
 /// regression that reintroduces a build-time decline shows up here by name.
 const BUILD_DECLINING_LOSING_PERMUTATIONS: [&str; 0] = [];
 

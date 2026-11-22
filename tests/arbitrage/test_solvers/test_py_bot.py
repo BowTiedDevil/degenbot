@@ -735,7 +735,7 @@ class TestV3PoolState:
         assert pool is not None
 
         # The seed landed inline — NO update_tick_data call was made. If the
-        # seed were lost (pre-fix: empty tick_data), this snapshot is empty.
+        # seed were lost (empty tick_data), this snapshot is empty.
         assert pool.concentrated_liquidity().tick_data == seed_rows
 
         # update_block advanced to the seed block (not the hardcoded 0).
@@ -779,7 +779,7 @@ class TestV3PoolState:
         snapshot = pool.concentrated_liquidity().tick_data
         # The burn SURVIVED — tick 0's gross halved from the seed's 1_000_000
         # to 500_000 at the burn's block (150). If the seed had been applied
-        # AFTER the burn (the pre-fix clobber), gross would still be 1_000_000
+        # AFTER the burn (the clobber shape), gross would still be 1_000_000
         # and the block would be the seed's 100.
         assert snapshot[0][0] == 500_000
         assert snapshot[0][2] == 150

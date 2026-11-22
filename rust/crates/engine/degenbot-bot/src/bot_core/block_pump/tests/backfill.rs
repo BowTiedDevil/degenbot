@@ -222,12 +222,13 @@ async fn a_failed_backfill_aborts_resume_and_starts_no_live_loop() {
 
 /// Race regression: `backfill_to_ws_block` is the
 /// synchronously-awaitable backfill that `PumpState::resume` `block_on`s
-/// BEFORE spawning the live loop. Pre-fix the backfill ran INSIDE the
-/// spawned `resume_from_subscribe` task, so `PumpState::resume` returned
-/// immediately and Python's `build_paths` drained an EMPTY backfill buffer
-/// (the burn for an active pool was not yet buffered) → the post-drain
-/// verify mismatched on-chain and crashed the settlement-arbitrage bot with
-/// `VerificationMismatchError`. This pins the contract: after
+/// BEFORE spawning the live loop. The backfill running INSIDE the
+/// spawned `resume_from_subscribe` task is the race this pins —
+/// `PumpState::resume` returns immediately, Python's `build_paths` drains
+/// an EMPTY backfill buffer (the burn for an active pool is not yet
+/// buffered), the post-drain verify mismatches on-chain and the
+/// settlement-arbitrage bot crashes with `VerificationMismatchError`. The
+/// contract: after
 /// `backfill_to_ws_block` returns, the V3 backfill buffer is populated —
 /// the event did NOT require the live loop to run first.
 #[tokio::test]
@@ -250,8 +251,8 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
         .expect("backfill_to_ws_block completes against the mock");
 
     // The burn was buffered (not applied — pool unregistered → buffer
-    // branch). Pre-fix: this method did not exist and `resume` returned
-    // before the spawned task buffered → count 0 → race.
+    // branch). Without this method, `resume` returns
+    // before the spawned task buffers → count 0 → race.
     assert_eq!(
         bot.state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Pump)
@@ -263,11 +264,10 @@ async fn backfill_to_ws_block_populates_buffer_before_return() {
 
 /// the resume-path backfill helper must drain
 /// the WS stream WHILE the snapshot backfill runs and re-inject the
-/// drained events ahead of the live tail. Pre-fix the pyo3
-/// `PumpState::resume` ran `backfill_to_ws_block` with the stream
-/// untouched, so alloy's capacity-16 subscription broadcast ring
-/// overflowed (unfiltered log sub → hundreds of messages per mainnet
-/// block) and silently dropped the OLDEST messages — the first live
+/// drained events ahead of the live tail. `backfill_to_ws_block` running
+/// with the stream untouched overflows alloy's capacity-16 subscription
+/// broadcast ring (unfiltered log sub → hundreds of messages per mainnet
+/// block) and silently drops the OLDEST messages — the first live
 /// block's logs — tripping the WS-completeness abort (observed live:
 /// `eth_getLogs=44 logs, WS delivered=0` at block 25800995). The helper
 /// returns the stream to hand to `run_with_stream`: drained events

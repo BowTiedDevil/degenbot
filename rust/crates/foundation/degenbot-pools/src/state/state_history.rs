@@ -93,7 +93,7 @@ pub trait FullStateDelta: BlockDelta {
 /// - `NoStateAtOrAfterBlock`: a discard asked to remove every known state, i.e.
 ///   the target is past the newest delta.
 ///
-/// These used to be `assert!` panics; surfaced as values so callers can map
+/// These are values, not `assert!` panics, so callers can map
 /// them to Python exceptions without catching a panic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalError {
@@ -1366,10 +1366,11 @@ mod v3_delta_priors_tests {
     /// `tick_priors` so the caller (`v3_restore_before_block`) writes nothing
     /// back and leaves the current (landed-at) state untouched.
     ///
-    /// Pre-fix the no-op branch returned `newest.scalar_priors` and
-    /// `newest.tick_priors` (the PRE-newest-delta state) and the caller
-    /// reverse-applied them, silently rolling back a delta that landed BEFORE
-    /// the reorg target. Mirrors the V2 bug fixed at line 317-323.
+    /// The no-op branch returning `newest.scalar_priors` and
+    /// `newest.tick_priors` (the PRE-newest-delta state) is the corruption
+    /// this pins: the caller reverse-applies them, silently rolling back a
+    /// delta that landed BEFORE the reorg target. Mirrors the V2 bug fixed at
+    /// line 317-323.
     #[test]
     fn restore_noop_when_newest_before_target_returns_no_priors() {
         let s1 = ScalarPriors {
@@ -1435,9 +1436,9 @@ mod v3_delta_priors_tests {
     }
 
     /// V3 same-block coalesce preserves the EARLIEST pre-block scalar
-    /// priors. Pre-fix `push_delta` wholesale-replaced the first Swap, so the
-    /// recorded `scalar_priors` became post-first-Swap; `restore_before_block`
-    /// then returned post-first-Swap instead of pre-block.
+    /// priors. A `push_delta` that wholesale-replaces the first Swap makes
+    /// the recorded `scalar_priors` post-first-Swap; `restore_before_block`
+    /// then returns post-first-Swap instead of pre-block.
     #[test]
     fn push_delta_same_block_coalesces_keeping_earliest_scalar_priors() {
         let pre_b = ScalarPriors {

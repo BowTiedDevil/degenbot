@@ -3,8 +3,8 @@
 //!
 //! The update path's ONE core entry. The PyO3 shell's `Pool.refresh_via`
 //! pymethod and the Python driver's `Bot.update` are thin calls onto this;
-//! the per-family choreography that used to live on the retired V2/V3/V4
-//! builder `update()` methods (and their Python twins) lives here instead, so
+//! the per-family choreography lives here instead of on the retired V2/V3/V4
+//! builder `update()` methods (and their Python twins), so
 //! a new family is a new arm in this dispatcher — never a new Python branch.
 //!
 //! Family dispatch keys on [`RegisteredPoolFamily`], read typed from the state

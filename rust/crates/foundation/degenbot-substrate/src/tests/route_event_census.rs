@@ -17,9 +17,9 @@
 //! formatter splits after `.concentrated_liquidity`, which would hide the call
 //! from a line-literal needle while the dispatch is still there.
 //!
-//! Scope is the orchestration source alone: `log_dispatcher.rs` used to be the
-//! deliberate exception (the bench-gated hot path), and now that its arms go
-//! through the door too, no caller outside this file asks the capability pair.
+//! Scope is the orchestration source alone: every arm — the bench-gated hot
+//! path included — goes through the door, so no caller outside this file asks
+//! the capability pair.
 //!
 //! The gate is a pure function over source text so its failure mode is
 //! testable: a synthetic fixture with a second caller must go red (the

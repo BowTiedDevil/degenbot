@@ -65,7 +65,7 @@ def test_env_override_governs_the_next_construction(
     get_provider_from_config(chain_id=1, provider_factory=_recording_provider)
     assert seen == [_ENV_A]
 
-    # The re-govern that used to be ignored: B now wins over A.
+    # The re-govern: B now wins over A.
     governed_holder({_WS_NODE_ENV: _ENV_B})
     assert resolved_node_uri_for_tests(1, "request") == _ENV_B
     assert resolve_http_rpc_uri(1) == _ENV_B

@@ -2,9 +2,9 @@
 
 Each of ``DEGENBOT_TRACEMALLOC_SECS`` / ``DEGENBOT_PROCMEM_SECS`` /
 ``DEGENBOT_PROCMEM_CSV`` / ``DEGENBOT_FAULTHANDLER_TIMEOUT_SECS`` is a
-``config_schema!`` key now. They used to be read off the example dotenv
-mapping alone, so an OS export never reached them and the defaults were
-written down twice — beside the reader and in the schema. One
+``config_schema!`` key now. Read off the example dotenv mapping alone,
+an OS export never reaches them and the defaults are written down
+twice — beside the reader and in the schema. One
 declaration answers for both, and the operator file reaches the probes as
 readily as the environment.
 """

@@ -1444,9 +1444,9 @@ mod tests {
     /// T2 RED-FIRST: the mandatory liveness input. A pooled host with a held
     /// (Backed) backlog under a cordon, driven through the REAL
     /// `HostPump::run` on a thread, must drain within the backstop after the
-    /// cordon lifts with ZERO further messages. Pre-fix `run` blocks in
-    /// `rx.recv()` forever here (the original 9,955-path deadlock); the
-    /// backstop tick re-runs the pump.
+    /// cordon lifts with ZERO further messages. A `run` blocked in
+    /// `rx.recv()` forever is the deadlock this pins (the original
+    /// 9,955-path one); the backstop tick re-runs the pump.
     #[test]
     fn backstop_drains_a_held_backlog_when_the_cordon_lifts_with_no_message() {
         let owner = hermetic_owner();

@@ -13,8 +13,8 @@
 //! - [`PyBatchPolicyOracle`] is the bulk-verdict escape: a foreign predicate the
 //!   core cannot evaluate as data, consulted through the core's
 //!   `BatchPolicyOracle` trait. A policy expressible as data never crosses.
-//! - [`PyCrawlSession`] is the trim-proof identity the retired
-//!   `ConstructionContext` used to be: the engine driver booted the crawl and
+//! - [`PyCrawlSession`] is the trim-proof identity: the engine driver boots
+//!   the crawl and
 //!   holds the run's join handle, and this session holds the controller, so
 //!   `enqueue_path`/`trigger_discovery` keep working after the main-loop trim.
 //!

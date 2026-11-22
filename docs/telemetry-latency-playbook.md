@@ -57,9 +57,10 @@ Incident shorthand: `f701ccd3` = trace `f701ccd36f4ecf80d671e798df218fa4`
 
 ### Trace continuity across the Python handoff
 
-The Rust→Python bridge (batch → `simulate.dispatch` fan-out) used to snap the
-OTel context: simulate/bundle spans exported as ROOT traces, correlated only
-by the `current_block` tag. The fix carries the ancestry as a VALUE:
+Without `telemetry::BlockLineage`, the Rust→Python bridge (batch →
+`simulate.dispatch` fan-out) snaps the OTel context: simulate/bundle spans
+export as ROOT traces, correlated only by the `current_block` tag. The fix
+carries the ancestry as a VALUE:
 `telemetry::BlockLineage` (the solve block plus the exporter span context of
 the block span it published under) is captured once at the publish, stamped on
 the `ResultBatch`, and travels through `BatchWork` / `FanOutInputs` into

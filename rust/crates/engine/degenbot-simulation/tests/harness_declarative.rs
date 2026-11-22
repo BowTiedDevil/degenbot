@@ -1256,8 +1256,8 @@ const LOSS_DEN: u64 = 10;
 /// The **full 27-permutation losing self-funded matrix**.
 ///
 /// A self-funded stream spends the entry capital the executor holds, so a losing
-/// money chain used to die INSIDE that spend: the WETH transfer ran against the
-/// path's short proceeds instead of the seeded capital and reverted with empty
+/// money chain dies INSIDE that spend: the WETH transfer runs against the
+/// path's short proceeds instead of the seeded capital and reverts with empty
 /// return data (`bucket=empty` on the live wire, no typed error anywhere). The
 /// Plan now declares the shortfall the ledger derives, the posture installs
 /// exactly that, and every row reaches the contract's terminal economic verdict:

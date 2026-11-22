@@ -136,8 +136,8 @@
   "shutdownAction": "none", // keep the container running if VSCode disconnects
   // No devcontainer features — python, rust, node, just, uv, tmux, git are all
   // baked into the Dockerfile via dnf (fedora:latest). foundry (foundryup)
-  // and pi (pi.dev install script) are ALSO baked into the image — they used to live in
-  // post-create.sh but were promoted into the Dockerfile because the 
+  // and pi (pi.dev install script) are ALSO baked into the image — post-create.sh
+  // installs nothing of the kind because the
   // entry point (attach.sh) does `podman start`+`exec`, which does NOT
   // run postCreateCommand, so post-create-installed tools went missing after
   // any container recreate.

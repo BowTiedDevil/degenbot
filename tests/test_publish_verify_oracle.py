@@ -2291,7 +2291,7 @@ def test_a_dirty_staging_directory_does_not_poison_a_rerun(tmp_path: Path) -> No
     second = _oracle(tree, "--no-verify", "--keep-overlay")
 
     assert second.returncode == 0, second.stdout + second.stderr
-    # the poisoned residue was removed before the round, not reused
+    # the poisoned residue is removed before the round, not reused
     assert not (staging / "tmp-crate" / "sentinel-stale.crate").exists()
     fresh = json.loads(
         (staging / "tmp-registry" / "index" / "pu" / "bf" / "pubfix-leaf").read_text(

@@ -124,8 +124,9 @@ required-features = ["sql-ledger"]
 
 # The two live Aave span recorders (`generate_aave_upgrade_windows` for the wave-4
 # upgrade spans, `generate_aave_config_windows` for the wave-5 config-dispatch spans)
-# used to live here as `sql-ledger` examples. They are fixture tooling, not consumer
-# starting points, so the fixture-tools migration moved them into
+# are fixture tooling, not consumer
+# starting points: the fixture-tools migration moved them out of the
+# `sql-ledger` examples into
 # `rust/tools/fixture-tools/src/bin/<name>/main.rs` as `[[bin]]` targets of
 # `degenbot-fixture-tools`, each still carrying `required-features = ["sql-ledger"]`
 # on the tool package's lane. They drove the live chunk loop and replayed their SQL
@@ -134,9 +135,9 @@ required-features = ["sql-ledger"]
 # E0432 (`sql_ledger` is cfg'd out of degenbot-db). Their usage blocks carry the
 # current invocation.
 #
-# The live updater cassette recorder (`record_updater_cassette`) used to live here as a
-# default-features example -- it reads no statement ledger, so it never carried a
-# feature requirement. The fixture-tools migration moved it into
+# The live updater cassette recorder (`record_updater_cassette`) reads no
+# statement ledger, so it never carried a feature requirement. The
+# fixture-tools migration moved it from a default-features example into
 # `rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs` as a `[[bin]]`
 # target of `degenbot-fixture-tools` with NO `required-features`, so
 # `just check-dev-tools default` builds it and its `--check` arm stays offline (no
@@ -146,10 +147,11 @@ required-features = ["sql-ledger"]
 # gone with the move, so the two dev-dependency edges below are the replay bench's
 # alone.
 #
-# The Python oracle corpus recorder (`record_py_oracle_corpus`) used to live here as a
-# default-features example too -- it reads no statement ledger, so it never carried a
-# feature requirement. It is fixture tooling for the fork-bound parity tests rather than
-# a consumer starting point, so the same migration moved it into
+# The Python oracle corpus recorder (`record_py_oracle_corpus`) reads no
+# statement ledger either, so it never carried a feature requirement. It is
+# fixture tooling for the fork-bound parity tests rather than
+# a consumer starting point: the same migration moved it from a
+# default-features example into
 # `rust/tools/fixture-tools/src/bin/record_py_oracle_corpus/main.rs` as a second
 # `[[bin]]` with NO `required-features` (it opens no operator DB either), which
 # `just check-dev-tools default` builds. Its scenario wiring, committed golden-key

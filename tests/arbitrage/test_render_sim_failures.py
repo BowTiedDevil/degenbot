@@ -576,7 +576,7 @@ def test_the_operator_file_can_arm_the_tripwire(tmp_path: Path) -> None:
 
 
 def test_the_operator_file_can_disarm_the_tripwire(tmp_path: Path) -> None:
-    """The file layer is honoured in the direction that used to be impossible.
+    """The file layer is honoured in the disarming direction too.
 
     An operator who wrote ``sim_exit_on_fail = false`` into the operator file
     -- the primary layer -- had it ignored, because the trap read only the

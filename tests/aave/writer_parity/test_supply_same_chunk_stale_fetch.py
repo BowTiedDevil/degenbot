@@ -24,8 +24,8 @@ Both fixes (required — see the orchestrator's direction):
   the new a_token's `Mint`/`Transfer` logs for the chunk range + merges them
   into the later tx's group → the `Supply` finds its `CollateralMint`.
 
-RED state (before the fix): the Rust raises `ValueError … missing
-CollateralMint`. GREEN (after (a)+(b)): the collateral position lands under
+The failure this pins: the Rust raises `ValueError … missing
+CollateralMint`. With (a)+(b): the collateral position lands under
 the onBehalfOf (`USER_ADDRESS`), NOT under the referralCode-as-address or a
 garbage slot — the same byte-IDENTITY guarantee as the parity test.
 

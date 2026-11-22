@@ -376,8 +376,8 @@ def base_log_level() -> int:
 
     ``DEGENBOT_DEBUG`` is a logging-plumbing signal, the same class as
     ``RUST_LOG``: it says where records go, not how the bot is configured. It
-    used to be read into a module constant, which left the level decided
-    before any caller could speak and no way to change it afterwards; reading
+    read into a module constant, the level is decided
+    before any caller can speak and no caller can change it afterwards; reading
     it here makes the answer belong to whoever applies the level.
 
     Returns:

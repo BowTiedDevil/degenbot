@@ -199,7 +199,7 @@ fn none_tick_ranges_cached_to_avoid_rewalk_on_both_adapters() {
         assert!(first.is_none(), "{tag}: empty tick data should yield None");
 
         // The cache slot must now reflect a computed Miss — NOT StillEmpty.
-        // Before the fix, the slot is StillEmpty because None was not
+        // Without the cache, the slot is StillEmpty because None is not
         // cached, meaning every subsequent call re-walks from scratch.
         assert!(
             matches!(state.cached_slot(true), CachedTickRanges::Miss),

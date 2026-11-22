@@ -51,8 +51,8 @@ venv:
 # argument quoting).
 py *args:
     # argv is forwarded word-for-word through "$@"; a text splice of the raw
-    # args would re-parse the joined text in bash (`just py python -c 'x=f(1)'`
-    # used to die at the paren).
+    # args would re-parse the joined text in bash (the paren in
+    # `just py python -c 'x=f(1)'` breaks a splice).
     {{ py_run }} "$@"
 
 # Print the project's single source-of-truth version (the [workspace.package]
@@ -630,7 +630,7 @@ bal-carry-probe *ARGS:
     cd rust && DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo run --locked --release -p degenbot-engine-lab --bin bal_carry_probe -- {{ ARGS }}
 
 
-# The real-candidate READ-SET oracle replay: the post-fix soak's own
+# The real-candidate READ-SET oracle replay: the BAL soak's own
 # `fanout-trace` rows replayed through exact-anchor BAL generations and compared
 # identity by identity against independent cold reads at the same block. A
 # bounded selection (`BAL_READ_ORACLE_ANCHORS`, default 6, x

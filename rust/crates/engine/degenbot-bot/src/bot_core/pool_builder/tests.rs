@@ -1922,10 +1922,10 @@ async fn build_v3_db_hit_yields_tracked() {
 
 /// a DB-seeded (`Tracked`) pool's LIQUIDITY clock
 /// (`tick_data_block`) must be the DB `liquidity_update_block`, NOT the
-/// caller-supplied head price clock. Before the fix the builder stamped
-/// `tick_data_block = update_block = head`, so the seed/post-drain verify
-/// compared stale DB seed data against on-chain at head and fabricated a
-/// mismatch (regression 8c50e0cd).
+/// caller-supplied head price clock. Stamping
+/// `tick_data_block = update_block = head` is the failure this pins: the
+/// seed/post-drain verify compares stale DB seed data against on-chain at head
+/// and fabricates a mismatch (regression 8c50e0cd).
 #[tokio::test]
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};

@@ -291,7 +291,7 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
     // logIndex as int
     dict.set_item("logIndex", log.log_index)?;
 
-    // removed (Geth compatibility: whether this log was removed via reorg)
+    // removed (Geth compatibility: whether the reorg removed this log)
     dict.set_item("removed", log.removed)?;
 
     Ok(dict)

@@ -437,7 +437,7 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
 /// The de-registered path ID is recorded and included in the next batch's
 /// `removed` field.
 ///
-/// Returns `true` if the path existed and was removed.
+/// Returns `true` if the path existed and this call removed it.
 pub(crate) fn deregister_path(engine: &mut ArbitrageEngine, path_id: u64) -> bool {
     // Remove from the registry: drops the entry, prunes the reverse rows it
     // emptied, and clears the dedup signature.

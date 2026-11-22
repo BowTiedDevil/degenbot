@@ -212,8 +212,8 @@ impl TickWordTransport for Arc<AlloyProvider> {
     }
 }
 
-/// The alloy transport: the same `eth_call` reads the source used to carry
-/// inline, now the [`TickWordTransport`] impl the shared loop drives.
+/// The alloy transport: the same `eth_call` reads, via the
+/// [`TickWordTransport`] impl the shared loop drives instead of inline sources.
 impl TickWordTransport for AlloyProvider {
     async fn read_bitmap(
         &self,

@@ -1,8 +1,8 @@
 //! T1:
 //! the cycle between a sync FFI pymethod that takes the BotState WRITE while
 //! holding the GIL and a long-held BotState READ whose holder then wants the
-//! GIL. Pre-fix: permanent inversion - everything freezes on the GIL futex
-//! (the observed 'GIL deadlock'). Fixed: the write is acquired via
+//! GIL. Without `py.detach`: permanent inversion - everything freezes on the
+//! GIL futex (the observed 'GIL deadlock'). The write is acquired via
 //! `py.detach`, the GIL is released while parked, the cycle cannot form.
 //!
 //! #2 (this incident's re-audit) extended coverage:

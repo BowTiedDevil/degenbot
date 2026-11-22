@@ -4,8 +4,8 @@
 //! `quarantine → seed verify → drain + pin → post-drain verify → live` is one
 //! machine ([`crate::bot_core::run_verify_lifecycle`]) over one [`PoolLookup`],
 //! and the *policy* around entering it — the at-most-once claim, the durable
-//! verified-pool fact, and the bounded retry of transient failures — used to be
-//! the session driver's. It is a property of the capability, not of a pump: a
+//! verified-pool fact, and the bounded retry of transient failures — is the
+//! capability's, not the session driver's. It is not a pump property: a
 //! process that never subscribes still verifies pools.
 //!
 //! So the provider, the `StateView` address, and the retry policy are

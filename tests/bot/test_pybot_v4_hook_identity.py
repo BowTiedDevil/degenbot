@@ -79,9 +79,9 @@ def test_incident_pool_key_hashes_to_recorded_id() -> None:
 def test_hooked_pool_round_trips_pool_id_through_identity() -> None:
     """The full incident path: register a hooked pool under its onchain ID.
 
-    Before the fix this raised AssertionError from `from_handle`: the
-    registered pool key carried hooks=0x0, so the companion's re-derived ID
-    missed the recorded one.
+    The failure this pins: `from_handle` raises AssertionError when the
+    registered pool key carries hooks=0x0 — the companion's re-derived ID
+    misses the recorded one.
     """
     pool = make_v4_pool(
         pool_id=_INCIDENT_POOL_ID,

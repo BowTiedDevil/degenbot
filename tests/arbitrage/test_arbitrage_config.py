@@ -187,9 +187,9 @@ class TestInjectExecutorCodeUnifiedResolution:
     def test_the_declared_key_reaches_the_operator_file_too(self) -> None:
         """File-layer reach is new: the typed name was OS-only before.
 
-        A declared key an operator wrote in their file used to be ignored
-        because only the OS environment carried the typed spelling, which is
-        the same class of defect as the dotenv-only divergence above.
+        A declared key an operator writes in their file is ignored when only
+        the OS environment carries the typed spelling — the same class of
+        defect as the dotenv-only divergence above.
 
         """
         with probe.operator_file("[simulation]\ninject_executor_code = true\n") as written:

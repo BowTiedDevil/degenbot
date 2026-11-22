@@ -33,7 +33,9 @@
 #   subprocesses.
 #   Deliberately out of scope here: markdown. It is where tracker
 #   discussion legitimately lives (docs/, this gate's own census/waiver
-#   files).
+#   files); and contract_reference/**, the vendored upstream reference
+#   corpus — its comments belong to the contract authors, not this repo's
+#   code.
 #   Waivers: one repo-relative path per line in
 #   scripts/hooks/comment-hygiene-waivers.txt. A waiver means "this file
 #   still carries pre-rule citations" — it NEVER licenses new ones; remove
@@ -134,7 +136,9 @@ scope_code=()
 if tree_scope; then
     # An empty list means rg defaults to the working tree, which keeps the
     # fixture seam's reported paths identical to a historical run.
-    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**')
+    # contract_reference/**: vendored upstream reference corpus — its
+    # comments belong to the contract authors, not this repo's code.
+    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**' -g '!contract_reference/**')
     scope_cite_glob=("${scope_glob[@]}" -g '!scripts/hooks/comment-hygiene*')
     scope_code=(src tests rust/crates run_bot.sh scripts examples justfile prek.toml rust/Cargo.toml .github tier3-oracle)
 else
@@ -142,12 +146,14 @@ else
     # searched whatever the glob list says.
     mapfile -d '' -t scope_all < <(git ls-files -z --cached -- \
         '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
-        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**')
+        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
+        ':(exclude)contract_reference/**')
     # Detector 3 exempts its own hook and censuses: the docstring above lists the
     # shapes it bans, so the file that spells them is not evidence against itself.
     mapfile -d '' -t scope_cite < <(git ls-files -z --cached -- \
         '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
         ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
+        ':(exclude)contract_reference/**' \
         ':(exclude)scripts/hooks/comment-hygiene*')
     # The bare-token ratchet covers the whole tree — crate tests/benches/
     # examples and inline src/**/tests modules included — so the index listing
@@ -189,7 +195,33 @@ label='(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)|(\b[Pp]lan([[:space:]]+|-)[0
 # belongs in the ADR or the commit. Each alternative is spelled with a
 # character class or a whitespace expression so this header cannot cite itself
 # (Detector 1 scans this hook like any other file).
-narr='(retired[[:space:]]+grab)|(twin-colla[p]se)|(grep[[:space:]]+compat)|(crash[[:space:]]+#[0-9]+)|(RED[[:space:]]+placeholders)'
+#
+# Counterfactual change narration — the change's voice rather than present-tense
+# prose; each band's rationale:
+#   - "must [S]TAY" / "the [g]uard [S]TAYS": a permanence assertion is a rule
+#     the code or a named test owns, not a line to the change's reviewer.
+#   - "the [p]rior constant": the value a change replaced is git history.
+#   - "deleted in [s]lice" / "later [s]lice": a deletion or a then-future dated
+#     to a migration slice; the digit-anchored label patterns miss the
+#     letter-only slice names.
+#   - "surfaces [f]ixed" and chunk + "'s change": the containing change's own
+#     play-by-play.
+#   - "[p]re-fix" / "[p]ost-fix" / "before the [f]ix": the fix's history voice;
+#     the pinned failure is restated in the present ("the failure this pins").
+#   - "[w]as [r]emoved": a past-voiced removal; present claims say "this call
+#     removed" or "is missing".
+#   - "[u]sed to" + live/exist/die/own: the unambiguous past-habitual verbs.
+#   Deliberate exclusions, each an unresolvable collision class:
+#   - bare "[U]NCHANGED" / "[S]TAYS": present-tense emphasis survives in live
+#     prose ("the pinned seed is UNCHANGED", "the mode STAYS WatchLive").
+#   - "is [r]emoved" / "lands its [o]wn": present passive mechanism ("returns
+#     whether the call removed a registration", "the telemetry chunk lands its
+#     own spans later").
+#   - the remaining "used to <verb>" forms: present-purpose ellipses share the
+#     surface form ("a hook used to drive the probe"), and one runtime refusal
+#     string (src/degenbot/runner/config.py) carries a "used to be" clause —
+#     strings are code; that verb joins the band only when it is rewritten.
+narr='(retired[[:space:]]+grab)|(twin-colla[p]se)|(grep[[:space:]]+compat)|(crash[[:space:]]+#[0-9]+)|(RED[[:space:]]+placeholders)|(must[[:space:]]+[S]TAY\b)|([g]uard[[:space:]]+[S]TAYS)|(the[[:space:]]+[p]rior[[:space:]]+constant)|(deleted[[:space:]]+in[[:space:]]+[s]lice\b)|(later[[:space:]]+[s]lice\b)|(surfaces[[:space:]]+[f]ixed)|(chunk'\''s[[:space:]]+change)|([w]as[[:space:]]+[Rr]emoved\b)|([Bb]efore[[:space:]]+the[[:space:]]+[f]ix\b)|([Pp]ost-fix\b)|([Pp]re-fix\b)|([u]sed[[:space:]]+to[[:space:]]+(live|exist|die|own)\b)'
 pat="(${narr})|(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
 
 fail=0

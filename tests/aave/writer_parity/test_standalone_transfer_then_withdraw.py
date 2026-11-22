@@ -25,8 +25,8 @@ user `0x872f…30995` received aWETH via a standalone Transfer (from
 `0xe4217…`) then withdrew — the credit wasn't applied → "balance would go
 negative (current=0, delta=-1000000000000000)".
 
-**RED (pre-fix):** the Rust raises `balance would go negative`.
-**GREEN (post-fix):** the standalone Transfer op is created → the recipient
+**The bug:** the Rust raises `balance would go negative`.
+**The fix:** the standalone Transfer op is created → the recipient
 is credited → the Withdraw debits → non-negative. The Python can't be the
 parity reference (crashes at 16496792); validated by on-chain-truth cast
 probes (the (ii) gate): the user's aWETH balanceOf was 0 at block 16496927,
@@ -157,7 +157,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
     # tx 3 (_TX_XFER): standalone aToken Transfer SENDER→USER + its
     # BalanceTransfer (the SCALED bookkeeping — the standalone BalanceTransfer
     # op pairs the ERC20 Transfer + the BalanceTransfer). NO paired burn — the
-    # deficit_coverage scavenger (pre-fix) steals these (marks assigned without
+    # deficit_coverage scavenger steals these (marks assigned without
     # creating an op) → USER's credit never lands.
     logs.append(
         make_erc20_transfer_log(
@@ -187,7 +187,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
 
     # tx 3 (continued): USER withdraws _WITHDRAW — Pool Withdraw + aWETH Burn
     # (CollateralBurn, debits USER) + the outgoing Transfer companion.
-    # Pre-fix: USER's balance=0 (the Transfer credit stolen) → the Burn →
+    # The bug: USER's balance=0 (the Transfer credit stolen) → the Burn →
     # negative → crash.
     logs.append(
         make_withdraw_log(
@@ -230,8 +230,8 @@ def _build_chunk_logs() -> list[dict[str, object]]:
 
 
 def test_standalone_transfer_credit_then_withdraw(tmp_path: Path) -> None:
-    """RED (pre-fix): the Rust raises `balance would go negative` because the
-    standalone aToken Transfer's credit was stolen by the deficit_coverage
+    """The bug: the Rust raises `balance would go negative` because the
+    standalone aToken Transfer's credit is stolen by the deficit_coverage
     scavenger (marked assigned without creating an op).
 
     GREEN: the standalone Transfer op is created → USER is

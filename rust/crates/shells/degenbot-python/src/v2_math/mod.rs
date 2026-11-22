@@ -5,8 +5,8 @@
 //! and convert results back to Python ints. Mirrors the `solidly_math`
 //! binding shape. The GIL is held during computation (cheap integer math,
 //! no I/O). The volatile V2 swap math (Uniswap V2 family + Aerodrome
-//! volatile) used to be a parallel pure-Python Fraction implementation;
-//! the companion layer now delegates here so Python and the Rust solver
+//! volatile) no longer live in a parallel pure-Python Fraction implementation:
+//! the companion layer delegates here so Python and the Rust solver
 //! round identically.
 
 pub mod lib; // nudge

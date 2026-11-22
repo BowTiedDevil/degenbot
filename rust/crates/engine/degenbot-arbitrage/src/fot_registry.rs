@@ -1016,8 +1016,8 @@ mod tests {
     fn registry_v4_distinct_pool_ids_flag_token() {
         // The spike's core acceptance — a synthetic V4 FoT token reaches
         // confirmation when it fails across TWO DISTINCT V4 poolIds (through
-        // the SAME PoolManager). Pre-fix each V4 pool keyed under the shared
-        // PoolManager address, collapsing `failing_pools` to {PoolManager}
+        // the SAME PoolManager). Keying each V4 pool under the shared
+        // PoolManager address collapses `failing_pools` to {PoolManager}
         // so the K=2 threshold could never fire.
         let mut reg = FeeOnTransferRegistry::new();
         reg.record_suspicion(TOKEN_IN, v4_key(V4_POOL_ID_A), 100);

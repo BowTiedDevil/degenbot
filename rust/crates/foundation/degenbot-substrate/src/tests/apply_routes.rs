@@ -324,10 +324,10 @@ fn calculate_tokens_out_realistic_amounts() {
 
 /// Bug-A regression (path-142603): a **backfill→Live** in-range
 /// `ModifyLiquidity` with block > seed must adjust the in-range `liquidity()`
-/// scalar. Pre-fix the backfill→Live branch applied the tick map via the
-/// low-level `apply_liquidity_to_tick_range` and NEVER adjusted the scalar,
-/// producing the staged-clock desync (fresh tick map, stale in-range
-/// liquidity). Now it routes through the shared, in-range-aware
+/// scalar. The backfill→Live branch applying the tick map via the
+/// low-level `apply_liquidity_to_tick_range` without adjusting the scalar
+/// is the staged-clock desync this pins (fresh tick map, stale in-range
+/// liquidity). It routes through the shared, in-range-aware
 /// `apply_liquidity_update`. (Sparse → Live registration.)
 #[test]
 fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
@@ -402,11 +402,11 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
 /// UNTOUCHED. This is the per-pool path `dispatch_reorg_log` hits for a
 /// `removed: true` log on an unrelated pool — totally normal reorg traffic.
 ///
-/// Pre-fix the journal returned the newest delta's own `scalar_priors` and
-/// `tick_priors` (the PRE-newest state) and `v3_restore_before_block`
-/// reverse-applied them, silently rolling back the newest delta's swap and
-/// deleting its freshly-initialized ticks. The engine then re-solved off
-/// the corrupted scalars + `tick_data`.
+/// The journal returning the newest delta's own `scalar_priors` and
+/// `tick_priors` (the PRE-newest state) — which `v3_restore_before_block`
+/// would reverse-apply, silently rolling back the newest delta's swap and
+/// deleting its freshly-initialized ticks — is the corruption this pins;
+/// the engine would re-solve off the corrupted scalars + `tick_data`.
 #[test]
 fn v3_restore_before_block_past_newest_leaves_state_untouched() {
     let mut core = BotState::new();
@@ -487,7 +487,7 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
     assert_eq!(state.update_block, landed_update_block);
     assert!(
         state.tick_data.contains_key(&100),
-        "tick 100 must survive — pre-fix it was deleted via the newest delta's tick_priors"
+        "tick 100 must survive — the newest delta's tick_priors must not delete it"
     );
     assert_eq!(
         state.journal.len(),
@@ -503,11 +503,11 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
 /// reversible by `restore_before_block` (roll the tick state back to the
 /// pre-buffer registration snapshot).
 ///
-/// Pre-fix `apply_backfill_buffer_v3` called `apply_liquidity_to_tick_range`
-/// and `invalidate_tick_range_cache()` and stopped — no journal, no
-/// `update_block` bump. A reorg landing inside the buffered range
-/// couldn't reverse the buffered events, and `v3_snapshot`/diagnostics
-/// reported a stale last-update block.
+/// `apply_backfill_buffer_v3` stopping right after
+/// `apply_liquidity_to_tick_range` and `invalidate_tick_range_cache()` — no
+/// journal, no `update_block` bump — is the gap this pins: a reorg landing
+/// inside the buffered range couldn't reverse the buffered events, and
+/// `v3_snapshot`/diagnostics reported a stale last-update block.
 #[test]
 fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
     let pool_addr = Address::from([0x88u8; 20]);
@@ -544,7 +544,7 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
         assert_eq!(
             s.journal.len(),
             1,
-            "buffered Mint must push one tick-only journal delta (pre-fix: 0)"
+            "buffered Mint must push one tick-only journal delta (not zero)"
         );
         let t60 = s.tick_data.get(&60).expect("tick 60 present");
         assert_eq!(t60.liquidity_gross, alloy::primitives::U128::from(600));
@@ -810,8 +810,8 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
         .register_v4_pool(&make_params())
         .expect("V4 pool B registers");
 
-    // Before the fix, this call was a silent no-op on A (routed to the
-    // V3-only method). Assert it now applies.
+    // The failure this pins: the call no-ops on A (routed to the
+    // V3-only method). Assert it applies.
     let _ =
         core_a.apply_swap_by_pool_id(id_a, U256::from(2u128) << 96, 2_000_000, -100, block_b, &[]);
     let s_a = core_a
@@ -910,7 +910,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     let mut core_b = BotState::new();
     let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
 
-    // Before the fix this no-op'd on A. Assert it now applies.
+    // The failure this pins: the call no-ops on A. Assert it applies.
     assert_eq!(
         core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 500, block_b),
         Ok(id_a),
@@ -1010,9 +1010,9 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
         .register_v4_pool(&make_params())
         .expect("V4 pool B registers");
 
-    // Before the fix, `get_v3_or_v4_pool` did not exist and the Python
-    // reader used `get_v3_pool` (None for V4). Assert the accessor now
-    // returns a non-None view of the post-apply state.
+    // The gap this accessor closes: a `get_v3_pool`-only reader returns
+    // None for V4. Assert the accessor returns a non-None view of the
+    // post-apply state.
     let _ =
         core_a.apply_swap_by_pool_id(id_a, U256::from(3u128) << 96, 9_000_000, -240, block_b, &[]);
     let view_a = core_a
@@ -1127,8 +1127,8 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         "the key-shaped door reports the direct apply, not a flattening"
     );
 
-    // Before the fix, the V4 view came back None → empty dict. Assert the
-    // accessor now yields the V4 tick map (non-empty, mutated) and the
+    // The failure this pins: a None V4 view → empty dict. Assert the
+    // accessor yields the V4 tick map (non-empty, mutated) and the
     // view matches the dedicated-path twin.
     let view_a = core_a
         .pool_slice::<dyn degenbot_pools::ConcentratedLiquidityPool>(id_a)
@@ -1226,9 +1226,9 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
         assert_eq!(s.sqrt_price_x96, U256::from(3u128) << 96);
     }
 
-    // Roll back block B. Pre-fix this returned post-first-Swap scalars
-    // (2<<96, 2_000_000, -10); the fix must land on the pre-B (registration)
-    // state (1<<96, 1_000_000, 0).
+    // Roll back block B. Post-first-Swap scalars (2<<96, 2_000_000, -10)
+    // are the corruption this pins; restore must land on the pre-B
+    // (registration) state (1<<96, 1_000_000, 0).
     let _ = core.restore_pool_before_block(pool_id, block_b);
     let s = core
         .pool_slice::<degenbot_pools::V3PoolState>(pool_id)

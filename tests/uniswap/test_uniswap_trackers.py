@@ -1,6 +1,6 @@
 """Derive -> build -> register: the by-tokens construction path (offline).
 
-The pool-tracker family was removed (P1 tracker-family removal). The surviving
+The pool-tracker family is retired (the P1 tracker-family removal); the surviving
 contract is the end-to-end flow the trackers wrapped: derive the CREATE2 pool
 address from the token pair (``generate_v2_pool_address`` /
 ``generate_v3_pool_address``), build through the one supported door

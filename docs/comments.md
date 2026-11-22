@@ -66,21 +66,34 @@ existing conventions.
 ## Mechanical check
 
 The enforced gate is `just lint-comment-hygiene` — Detector 1 (anchored
-citations, gate narration, and retirement/incident narration: a retired-artifact
-name, a label kept "for grep", an incident ordinal), Detector 2 (the bare-token
+citations, gate narration, retirement/incident narration: a retired-artifact
+name, a label kept "for grep", an incident ordinal, and counterfactual change
+narration: a permanence assertion like `must STAY`, the replaced value `the
+prior constant`, slice-dated deletion and then-future prose, the containing
+change's play-by-play, the fix's history voice (`pre-fix` / `post-fix` /
+`before the fix`), past-voiced removal (`was removed`), and the
+unambiguous past-habitual `used to` verbs), Detector 2 (the bare-token
 census ratchet), and Detector 3 (the citation census ratchet over the
 `TODO-<hex>` / `TODO(<word>)` / `Epic <token>` / `slice <token>` /
 `Phase <letter><digit>` / `pre-`/`post-epic` shapes the first two cannot see).
 See [gate ratchets](gates.md) for the censuses, the waiver file, and the entry
 recipe.
 
-The **counterfactual-prose gap**: Detector 1 does not match `pre-fix` /
-`post-fix` / `used to <verb>` prose, which the rules above ban but which still
-stands in the history-anchor comments of several simulation, RPC and solver
-tests (the shape names the behaviour a parity anchor pins, so each site wants a
-rewrite, not a deletion). Adding the alternation now would fail the gate on
-every grandfathered site, so it lands with the sweep that empties them —
-Detector 1's `narr` alternation is where it belongs.
+The **counterfactual-prose gate**: Detector 1's `narr` alternation matches
+change narration written in the voice of the change that produced it — a
+permanence assertion (`must STAY`, `the guard STAYS`), the value a change
+replaced (`the prior constant`), slice-dated deletion and then-future prose
+(`deleted in slice …`, `a later slice's …`), the containing change's
+play-by-play (`this chunk's change`, `… surfaces fixed`), the fix's
+history voice (`pre-fix`, `post-fix`, `before the fix`), past-voiced
+removal (`was removed`), and the unambiguous past-habitual `used to` verbs
+(`used to live/exist/die/own`) — since the 2026-11 comment sweep and its
+detector widening. A swept site states its claim in the present ("the failure
+this pins: …", "without the cache, …"). Three collision classes stay out by
+design, documented beside the regex: present-tense emphasis (`is UNCHANGED`,
+`the mode STAYS`), present passive mechanism (`is removed when`, `lands
+its own spans later`), and the present-purpose `used to <verb>` ellipses
+plus one runtime refusal string that still carries a `used to be` clause.
 
 The optional grep below is a quick manual check for the worst offender
 (tracker IDs):

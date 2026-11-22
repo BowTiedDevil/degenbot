@@ -576,9 +576,9 @@ impl V4PoolState {
             state_view: params.state_view,
         };
         // Seed the known-bitmap-word set from the tick_data keys for EVERY
-        // coverage (mirrors `sync_tick_data_by_pool_id`). Pre-fix this only ran
-        // for `Sparse`, so a `Tracked` inline seed (ADR-006 race closure)
-        // relied on a later separate `update_tick_data` — the clobber the
+        // coverage (mirrors `sync_tick_data_by_pool_id`). Seeding only for
+        // `Sparse` leaves a `Tracked` inline seed (ADR-006 race closure)
+        // relying on a later separate `update_tick_data` — the clobber the
         // closure removes. Seeding here makes the inline seed complete.
         state.seed_known_bitmap_words(tick_spacing);
         // Registration-supplied checked words (a caller's on-chain

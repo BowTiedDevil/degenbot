@@ -130,7 +130,7 @@ def make_v4_pool(
 
     # No separate ``update_tick_data`` — the inline seed is complete (tick
     # map + known bitmap words, atomically with registration). A separate
-    # REPLACE would clobber live pump events (the pre-fix V4 desync).
+    # REPLACE would clobber live pump events (the V4 desync this closes).
     # ADR-006: ERC-20 tokens must be in the same Bot as the pool; the
     # conceptual native token needs no registration (its metadata is chain
     # facts, and it has no address to register).

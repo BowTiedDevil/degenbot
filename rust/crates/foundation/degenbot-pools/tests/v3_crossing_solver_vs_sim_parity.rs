@@ -617,7 +617,8 @@ fn build_real_position_v3_state(base_liquidity: u128, tick_spacing: i32, fee: u3
 /// fix on the V3 side: with the current price strictly inside a word-boundary
 /// current tick (V4 fee-1 trigger, shared V3/V4 code path), the V3 solver
 /// int-solve path must equal `v3_simulate_swap` (the on-chain oracle) in BOTH
-/// directions. Pre-fix this over-predicted by a few wei at zfo=true.
+/// directions. Without the step-0 floor this over-predicts by a few wei at
+/// zfo=true.
 #[test]
 fn fee1_word_boundary_current_tick_v3_parity() {
     let liq = 1_000_000_000_000_000_000u128; // 1e18

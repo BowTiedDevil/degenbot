@@ -2523,7 +2523,7 @@ impl BotState {
     ///
     /// One effect, either key shape: the address names any address-keyed family,
     /// the `(pool_manager, pool_id)` pair names a V4 pool. Returns whether a
-    /// registration was removed.
+    /// the call removed a registration.
     pub fn unregister_pool(&mut self, key: PoolLookup) -> bool {
         match key {
             PoolLookup::Address(address) => self

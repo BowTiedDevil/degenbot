@@ -3,9 +3,9 @@
 ``degenbot-config`` owns the resolution: an explicit override, the environment,
 the operator file, then a declared default, with the winning layer reported.
 Python delegates to it, so these tests pin the delegation rather than a second
-implementation -- including the asymmetry that used to exist, where a Python
-cascade read an ``[rpc]`` spelling the typed loader refuses and therefore
-ignored ``DEGENBOT_CONFIG`` entirely.
+implementation -- pinning the asymmetry in the process: a Python cascade that
+reads an ``[rpc]`` spelling the typed loader refuses therefore
+ignores ``DEGENBOT_CONFIG`` entirely.
 
 The file and environment layers are resolution claims, so they are exercised
 through ``resolve_hypothetical`` over a captured environment + file; the

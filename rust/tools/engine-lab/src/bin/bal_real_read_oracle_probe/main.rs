@@ -4,7 +4,7 @@
     reason = "a live probe prints its report and fails loudly on a read-value disagreement"
 )]
 
-//! The real-candidate READ-SET oracle replay: the post-fix soak's own
+//! The real-candidate READ-SET oracle replay: the BAL soak's own
 //! `fanout-trace` rows replayed through exact-anchor BAL generations, every
 //! recorded read compared against an independent cold read of the same block.
 //!
@@ -81,7 +81,7 @@ use read_oracle::{
     ReadAnswer, ReadOrigin,
 };
 
-/// The post-fix soak's trace stream.
+/// The BAL soak's trace stream.
 const DEFAULT_TRACE: &str = "logs/bal_postfix_soak_trace.log";
 
 /// The cold leg's batch member bound (one packet per chunk).

@@ -81,12 +81,12 @@ class TestReleasePythonState:
 
         The mid-lifecycle handoff drops Python caches because Rust owns
         canonical pool state from here on — the live pump keeps writing V3
-        Mint/Burn/Swap through the shared ``BotState``. Pre-fix
-        ``PoolRegistry._reset`` called ``py_bot.unregister_pool`` for every
-        V2/V3 pool, wiping the exact Rust state it was handing ownership to:
-        after release, ``pool_count()`` dropped to 0, every live Mint/Burn hit
+        Mint/Burn/Swap through the shared ``BotState``. The regression this
+        pins: ``PoolRegistry._reset`` unregistering every V2/V3 pool from
+        ``py_bot``, wiping the exact Rust state it hands ownership to —
+        ``pool_count()`` at 0 after release, every live Mint/Burn hitting
         ``registered=false`` → stranded in the pump buffer (then discarded),
-        every Swap was dropped, and the tick map froze at its verify-time value
+        every Swap dropped, and the tick map frozen at its verify-time value
         (the V3 desync in the permutation run — e.g. 0x88e6A0c2 tick 201020).
         """
         session = bot_session(tmp_path)
@@ -118,11 +118,12 @@ class TestReleasePythonState:
 
         bot.release_python_state()
 
-        # Rust BotState MUST still hold the pool (pre-fix: 0 — unregistered).
+        # Rust BotState MUST still hold the pool (an unregistered pool is the
+        # regression).
         assert py_bot.pool_count() == 1, (
             "release_python_state must not unregister V3 pools from the Rust "
-            "BotState it is handing canonical ownership to (pre-fix: the pool "
-            "was unregistered, stranding every live Mint/Burn and dropping Swaps)."
+            "BotState it is handing canonical ownership to (the regression: the "
+            "pool unregistered, stranding every live Mint/Burn and dropping Swaps)."
         )
 
     def test_release_keeps_live_mint_applying_not_buffering(
@@ -181,13 +182,13 @@ class TestReleasePythonState:
 
         tick_data = engine.debug_v3_tick_data(address)
         assert tick_data is not None
-        # tickLower gross += amount (pre-fix: still 100 — the Mint was buffered
-        # because the pool was unregistered post-release, then discarded).
+        # tickLower gross += amount (the buffered-Mint regression leaves it at
+        # 100: the pool unregistered post-release strands + discards the Mint).
         assert tick_data[-201000][0] == 150, (
             "a live Mint dispatched after release_python_state must apply to the "
-            "tick map (registered=true), not strand in the pump buffer. Pre-fix "
-            "the pool was unregistered, so the Mint was buffered + discarded "
-            "and the seed (gross=100) never advanced."
+            "tick map (registered=true), not strand in the pump buffer. The "
+            "regression: the pool unregistered, the Mint buffered + discarded "
+            "and the seed (gross=100) never advancing."
         )
         # The Mint did not sit in the buffer.
         assert engine.debug_v3_buffer_count(address) == 0

@@ -752,8 +752,8 @@ mod tests {
     /// a DB-seeded (`Tracked`) pool whose liquidity clock (`tick_data_block`,
     /// stamps the builder at the DB `liquidity_update_block`) trails the
     /// aggregate snapshot-seed block `S` must have step-1 anchor at the pool's
-    /// OWN clock, NOT `S`. Before the fix step-1 always used `S`, fabricating a
-    /// seed mismatch on any stale-DB pool that moved on-chain in `(own, S]`.
+    /// OWN clock, NOT `S`. A step-1 anchor at `S` is the failure: it fabricates
+    /// a seed mismatch on any stale-DB pool that moved on-chain in `(own, S]`.
     #[tokio::test]
     async fn tracked_v3_seed_verify_anchors_at_pool_own_liquidity_clock_not_global_s() {
         let core = new_core();

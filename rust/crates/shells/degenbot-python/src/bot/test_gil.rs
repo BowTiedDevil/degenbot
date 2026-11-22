@@ -19,12 +19,12 @@ use std::time::Duration;
 /// caller) then parks behind it. While parked, the reader wants the GIL
 /// (`Python::attach`).
 ///
-/// - Pre-fix (write taken GIL-held): the writer parks behind the read while
+/// - Write taken GIL-held: the writer parks behind the read while
 ///   still holding the GIL; the reader's `attach` parks on that GIL ->
-///   permanent inversion; the test's outer deadline fires (RED).
-/// - Fixed (write acquired via `py.detach`): the writer parks GIL-released,
+///   permanent inversion; the test's outer deadline fires.
+/// - Write acquired via `py.detach`: the writer parks GIL-released,
 ///   the reader's attach proceeds, the reader drops the read, the write
-///   completes (GREEN).
+///   completes.
 ///
 /// Returns the holder's `JoinHandle` - join it OUTSIDE any GIL scope (the
 /// holder's final `Python::attach` needs the GIL the caller still holds).
@@ -46,7 +46,7 @@ pub fn state_write_park_cycle(
         let guard = arc.read_at(degenbot_substrate::state_lock::LockSite::Python);
         thread::sleep(Duration::from_millis(read_hold_ms));
         // The reader's next GIL touch (a Python-backed data source). Under
-        // the pre-fix shape this is where the cycle closes forever.
+        // the GIL-held shape this is where the cycle closes forever.
         Python::attach(|_p| ());
         drop(guard);
     });
@@ -61,8 +61,8 @@ pub fn state_write_park_cycle(
 /// re-audit found the build_/register_/update_ pymethods carried the same
 /// GIL-held `state_arc().write()` shape; the frozen V3 cold-build was
 /// parked in `build_v3_pool`'s registration write).
-/// Pre-fix: the write parks behind the reader while holding the GIL (RED);
-/// fixed (write inside `py.detach`): parks GIL-released (GREEN).
+/// GIL-held: the write parks behind the reader while holding the GIL;
+/// inside `py.detach`: parks GIL-released.
 ///
 /// # Errors
 ///

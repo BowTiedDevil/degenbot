@@ -1080,8 +1080,8 @@ mod tests {
     /// flagged, and both halves of the rule's necessity are asserted. Under
     /// the implemented rule the token is preserved verbatim
     /// (`canonical_hex_quantity` refuses it; the canonicalize ∘ wire round
-    /// trip is byte-exact). Under the pre-fix rule the same token
-    /// decimalized to `0` and replay re-hexed it to `0x0` — different
+    /// trip is byte-exact). Under a decimalizing rule the same token
+    /// decimalizes to `0` and replay re-hexes it to `0x0` — different
     /// bytes, in an odd-length form `Bytes` decoding rejects; that lossy
     /// decimalize-then-restore is asserted here as the counterfactual the
     /// rule exists to prevent.
@@ -1131,7 +1131,7 @@ mod tests {
             response_value
         );
 
-        // The counterfactual (what the pre-fix rule did to this token): the
+        // The counterfactual (what a decimalizing rule does to this token): the
         // lossy decimalize-then-restore that mangled such values —
         // 0x00000000 → "0" → replayed "0x0".
         let pre_fix_decimal = u64::from_str_radix("00000000", 16)
@@ -1142,7 +1142,7 @@ mod tests {
         assert_eq!(pre_fix_restored, "0x0");
         assert_ne!(
             pre_fix_restored, "0x00000000",
-            "the pre-fix decimalize-then-restore mangled this value class; \
+            "the decimalize-then-restore mangles this value class; \
              the precision rule must keep preserving it verbatim"
         );
     }

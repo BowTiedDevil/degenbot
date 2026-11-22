@@ -238,7 +238,7 @@ impl<Id: IdKey> OrderIndex<Id> for EnvelopeIndex<Id> {
             // A frontier vertex is gone: recompute the hull snapshot.
             self.rebuild_hull();
         }
-        // A non-hull point was removed: the snapshot hull already dominates every
+        // A non-hull point is removed: the snapshot hull already dominates every
         // remaining point, so no hull work is needed.
         true
     }

@@ -1,9 +1,9 @@
 """Configuration reads decided before anything could influence them.
 
-Four values used to be read at import time, so the only value a process could
-ever get was the one its import happened to see: a test could not set the
-knob, a boot could not, and — where the frozen value doubled as a default
-argument — every caller that omitted the argument silently inherited it
+Four values read at import time leave a process only the value its import
+happened to see: a test cannot set the
+knob, a boot cannot, and — where the frozen value doubles as a default
+argument — every caller that omits the argument silently inherits it
 through a second path to the same setting. Each test here names the TIMING
 property, not the value, so a correct-by-accident value still fails when the
 timing regresses.

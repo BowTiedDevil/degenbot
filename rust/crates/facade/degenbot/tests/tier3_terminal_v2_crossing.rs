@@ -13,8 +13,8 @@
 //! delivered → K reverts.
 //!
 //! This gate drives the committed captures through the PRODUCTION engine
-//! (register → resolve → solve → clamp seam) and asserts the post-fix
-//! invariants: every hop's `hop_outputs[i]` is byte-exact to the tier-3
+//! (register → resolve → solve → clamp seam) and asserts the invariants:
+//! every hop's `hop_outputs[i]` is byte-exact to the tier-3
 //! oracle twin at the solver's own consumed input, and the terminal V2
 //! hop's prediction round-trips through the exact-OUT inverse to NO MORE
 //! than the delivered input (the on-chain no-shortfall invariant). Each test
