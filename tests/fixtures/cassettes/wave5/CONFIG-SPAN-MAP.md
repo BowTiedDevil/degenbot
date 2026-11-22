@@ -31,9 +31,10 @@ config-dispatch topics (the keccak-quoted constants in
 | 16,291,130 | `POOL_CONFIGURATOR` (ASCII) | `0x64b761D848206f447Fe2dd461b0c635Ec39EbB27` | `0xfda7ffa872bdc906d43079ea134ebc9a511db0c2` |
 | 16,291,136 | `0x703c2c86...` (not ASCII) | `0x8164cc65827dcfe994ab23944cbc90e0aa80bfcb` | `0xe7b67f44ea304dd7f6d215b13686637ff64cd2b2` |
 
-The third id is not the right-padded ASCII `POOL`/`POOL_CONFIGURATOR`, so the
-resolver cannot name it; by the loud-abort policy it is fatal inside a chunk
-(the S2 arm). The chosen bootstrap window ends at 16,291,135 to exclude it.
+The third event creates Aave's `DEFAULT_INCENTIVES_CONTROLLER`, which is outside
+the updater's tracked contract rows, so dispatch ignores it. This focused
+bootstrap window ends at 16,291,135; the reset integration replay includes the
+third event and pins its no-op behavior.
 
 `AddressSet` (exactly one observed):
 
@@ -117,7 +118,5 @@ with the `REGENERATE_SQL_GOLDENS=1` arm through the same writer.
 
 - The `AddressSet` rotation arm (S1): no mainnet rotation exists; pinned by
   unit test only.
-- The unresolvable `ProxyCreated` abort (S2 loud arm) at block 16,291,136: the
-  green replay excludes it; its unit test carries the policy pin.
 - The `[21,091,000 .. 26,149,200]` region is not exhaustively scanned; any
   `AddressSet` rotation above block 21,090,999 would not have been observed.

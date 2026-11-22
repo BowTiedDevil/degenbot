@@ -158,9 +158,9 @@ const WINDOWS: &[Window] = &[
     // resolvable proxy creations (the `POOL` and `POOL_CONFIGURATOR` proxies)
     // plus their paired `PoolUpdated`/`PoolConfiguratorUpdated` at blocks
     // 16,291,127 and 16,291,130. The cursor pins the run to start just before
-    // them; the window ends at 16,291,135 so it EXCLUDES the third
-    // `ProxyCreated` at 16,291,136 (a non-ASCII id the resolver cannot name —
-    // it aborts loudly by policy, the S2 arm).
+    // them; the focused window ends at 16,291,135. The reset integration
+    // replay separately covers the unrelated incentives-controller
+    // `ProxyCreated` at 16,291,136 and its no-op dispatch.
     //
     // The substrate resolves 74 blocks later: at the cursor the Pool /
     // configurator / data-provider proxies do not all exist yet, so the

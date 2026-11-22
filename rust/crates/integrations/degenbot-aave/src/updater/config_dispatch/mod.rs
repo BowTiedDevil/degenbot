@@ -125,22 +125,6 @@ pub enum ConfigDispatchError {
     /// `is_discount_supported` gate).
     #[error("missing vtoken revision for market {0}")]
     MissingVtokenRevision(i64),
-
-    /// A `ProxyCreated` whose `id` matched neither known proxy id — the
-    /// resolver cannot name the created proxy. The event kind is a permanent
-    /// unknown (the decoding predates it), so per the loud-abort rule the
-    /// chunk aborts loudly rather than skipping the event.
-    #[error(
-        "unresolvable ProxyCreated id {id} (proxy {proxy_address}, implementation {implementation_address})"
-    )]
-    UnresolvableProxyCreated {
-        /// The unmatched proxy id (the event's topic[1]).
-        id: String,
-        /// The created proxy's address (the event's topic[2]).
-        proxy_address: String,
-        /// The implementation behind the proxy (the event's topic[3]).
-        implementation_address: String,
-    },
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
@@ -278,8 +262,8 @@ async fn dispatch_single_config_event(
 /// `AddressSet`, `ProxyCreated`). Extracted from
 /// [`dispatch_single_config_event`] to keep that fn under the 100-line
 /// `clippy::too_many_lines` limit. Returns `Ok(None)` for other events
-/// (operation events). A `ProxyCreated` whose `id` matches neither
-/// known proxy id aborts with [`ConfigDispatchError::UnresolvableProxyCreated`].
+/// (operation events) and for `ProxyCreated` ids outside the tracked
+/// Pool and Pool Configurator components.
 ///
 /// # Events
 ///
@@ -344,29 +328,15 @@ async fn resolve_missing_variant_event(
                 })
             }
         }
-        DecodedAaveEvent::ProxyCreated(ev) => {
-            // A `None` here means the id named neither known proxy, so the
-            // resolver cannot name the created proxy. That is a permanent
-            // unknown, not a transient failure — the loud-abort rule makes it
-            // fatal: the chunk rolls back and the wedge is visible, never a
-            // silently dropped event.
-            let Some(resolved) = ctx
-                .resolve_proxy_created(&ev.id, &ev.proxy_address, &ev.implementation_address)
-                .await?
-            else {
-                return Err(ConfigDispatchError::UnresolvableProxyCreated {
-                    id: ev.id.to_string(),
-                    proxy_address: checksum(&ev.proxy_address),
-                    implementation_address: checksum(&ev.implementation_address),
-                });
-            };
-            Some(AaveChunkEvent::ContractInserted {
+        DecodedAaveEvent::ProxyCreated(ev) => ctx
+            .resolve_proxy_created(&ev.id, &ev.proxy_address, &ev.implementation_address)
+            .await?
+            .map(|resolved| AaveChunkEvent::ContractInserted {
                 market_id,
                 name: resolved.name,
                 address: resolved.address,
                 revision: Some(resolved.revision),
-            })
-        }
+            }),
         // Events outside the six (operation events + the 10 already-handled
         // config events — unreachable from `dispatch_single_config_event`'s `_`
         // arm for the 10, reachable for the operation events).
@@ -1515,7 +1485,7 @@ mod tests {
         );
     }
 
-    // ── the `ProxyCreated` arms (resolvable insert + unresolvable abort) ──
+    // ── the `ProxyCreated` arms (tracked insert + unrelated no-op) ──
 
     /// The resolvable arm: a known proxy id resolves the contract
     /// name + the proxy address + the implementation's RPC-fetched revision,
@@ -1584,13 +1554,9 @@ mod tests {
         assert_eq!(transport.served_snapshot().served, 1, "one revision read");
     }
 
-    /// An unresolvable proxy id is a permanent unknown: the resolver cannot
-    /// name the created proxy, so per the loud-abort rule the chunk aborts with
-    /// the typed error naming the id + the proxy/implementation addresses —
-    /// never a silent skip. The id match fails before any read, so nothing
-    /// reaches the wire.
+    /// An unrelated proxy component produces no event and no RPC.
     #[test]
-    fn proxy_created_unresolvable_id_aborts_loudly() {
+    fn proxy_created_unrelated_id_is_ignored() {
         let (db, _) = db_seeded();
         let conn = db.lock();
         let proxy_addr = Address::repeat_byte(0x81);
@@ -1605,25 +1571,10 @@ mod tests {
             proxy_address: proxy_addr,
             implementation_address: implementation_addr,
         });
-        let err = degenbot_core::runtime::get_runtime()
+        let event = degenbot_core::runtime::get_runtime()
             .block_on(resolve_missing_variant_event(&decoded, &mut ctx))
-            .expect_err("an unresolvable proxy id must abort, not skip");
-        match err {
-            ConfigDispatchError::UnresolvableProxyCreated {
-                id,
-                proxy_address,
-                implementation_address,
-            } => {
-                assert!(
-                    id.to_lowercase()
-                        .contains(&alloy::hex::encode(unknown_id.as_slice())),
-                    "the error names the proxy id: {id}"
-                );
-                assert_eq!(proxy_address, checksum(&proxy_addr));
-                assert_eq!(implementation_address, checksum(&implementation_addr));
-            }
-            other => panic!("expected UnresolvableProxyCreated, got {other:?}"),
-        }
+            .unwrap();
+        assert!(event.is_none());
     }
 
     // ── Discount-event emitter-validation guard ────────────────────────

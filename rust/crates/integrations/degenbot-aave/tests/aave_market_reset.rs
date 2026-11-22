@@ -318,13 +318,16 @@ const BOOTSTRAP_WINDOW: u64 = 2_000;
 const FIXTURE_START_BLOCK: u64 = 16_291_071;
 const POOL_PROXY_CREATED_BLOCK: u64 = 16_291_127;
 const CONFIGURATOR_PROXY_CREATED_BLOCK: u64 = 16_291_130;
-const FIXTURE_END_BLOCK: u64 = CONFIGURATOR_PROXY_CREATED_BLOCK;
+const INCENTIVES_PROXY_CREATED_BLOCK: u64 = 16_291_136;
+const FIXTURE_END_BLOCK: u64 = INCENTIVES_PROXY_CREATED_BLOCK;
 
 /// The POOL proxy's right-padded ASCII bytes32 id (the `ProxyCreated` topic 1).
 const POOL_ID_TOPIC: &str = "0x504f4f4c00000000000000000000000000000000000000000000000000000000";
 /// The `POOL_CONFIGURATOR` proxy's right-padded ASCII bytes32 id.
 const CONFIGURATOR_ID_TOPIC: &str =
     "0x504f4f4c5f434f4e464947555241544f52000000000000000000000000000000";
+const INCENTIVES_ID_TOPIC: &str =
+    "0x703c2c8634bed68d98c029c18f310e7f7ec0e5d6342c590190b3cb8b3ba54532";
 
 /// The `POOL_REVISION()` calldata (the no-arg selector `cast` signs).
 const POOL_REVISION_CALLDATA: &str = "0x0148170e";
@@ -335,6 +338,8 @@ const CONFIGURATOR_REVISION_CALLDATA: &str = "0x7af635a6";
 /// events name (the revision reads target them).
 const POOL_IMPLEMENTATION: &str = "0x0c008e6479a83be6a6c49d95c2029a6064136688";
 const CONFIGURATOR_IMPLEMENTATION: &str = "0x786dbff3f1292ae8f92ea68cf93c30b34b1ed04b";
+const INCENTIVES_CONTROLLER: &str = "0x8164cc65827dcfe994ab23944cbc90e0aa80bfcb";
+const INCENTIVES_IMPLEMENTATION: &str = "0xe7b67f44ea304dd7f6d215b13686637ff64cd2b2";
 
 /// The five topic sets the chunk loop's fetch passes union over the fixture
 /// window (the recorder's canonical sets; the empty scaled-token and stkAAVE
@@ -409,7 +414,7 @@ fn proxy_created_log(
 
 /// A completing replay ledger over the fixture window: everything the REAL
 /// cold boot asks from the reset state. The bootstrap's address-provider fetch
-/// answers the two `ProxyCreated` events; the revision reads answer the
+/// answers the three `ProxyCreated` events; the revision reads answer the
 /// chain-verified revisions; the chunk loop's fetch passes answer empty (the
 /// window carries no operation events), so the chunk commits with the two
 /// contract inserts and stamps the cursor at the window end.
@@ -450,6 +455,13 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
                 CONFIGURATOR_IMPLEMENTATION,
                 CONFIGURATOR_PROXY_CREATED_BLOCK,
                 1
+            ),
+            proxy_created_log(
+                INCENTIVES_ID_TOPIC,
+                INCENTIVES_CONTROLLER,
+                INCENTIVES_IMPLEMENTATION,
+                INCENTIVES_PROXY_CREATED_BLOCK,
+                2
             ),
         ]),
     );
@@ -523,6 +535,13 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
                 CONFIGURATOR_IMPLEMENTATION,
                 CONFIGURATOR_PROXY_CREATED_BLOCK,
                 1
+            ),
+            proxy_created_log(
+                INCENTIVES_ID_TOPIC,
+                INCENTIVES_CONTROLLER,
+                INCENTIVES_IMPLEMENTATION,
+                INCENTIVES_PROXY_CREATED_BLOCK,
+                2
             ),
         ]),
     );
