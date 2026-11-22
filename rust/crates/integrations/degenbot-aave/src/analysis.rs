@@ -529,9 +529,10 @@ fn u256_to_f64(v: U256) -> f64 {
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    //! 1:1 port of `tests/aave/analysis/test_core.py`. Each Python test class
-    //! becomes a Rust test module; the int inputs + asserted outputs are
-    //! verbatim. The Python suite is the spec.
+    //! The analysis spec. Every row's inputs + asserted outputs were
+    //! transcribed verbatim from the retired Python suite
+    //! (`tests/aave/analysis/test_core.py`, since deleted); this module is what
+    //! the implementation answers to.
 
     use super::*;
     use alloy::primitives::U256;

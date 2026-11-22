@@ -91,13 +91,8 @@ pub enum RayRounding {
 ///
 /// Returns [`WadRayError::Overflow`] if `a * b + HALF_WAD > MAX_UINT256`.
 pub fn wad_mul(a: U256, b: U256) -> Result<U256, WadRayError> {
-    // `a * b + HALF_WAD` cannot overflow if `a*b + HALF_WAD <= MAX_UINT256`
-    // (the guard checked above). Use checked arithmetic to detect overflow.
     let ab = a.checked_mul(b).ok_or(WadRayError::Overflow)?;
     let numerator = ab.checked_add(HALF_WAD).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(numerator / WAD)
 }
 
@@ -115,9 +110,6 @@ pub fn wad_div(a: U256, b: U256) -> Result<U256, WadRayError> {
     let half_b = b / U256::from(2u8);
     let numerator = a.checked_mul(WAD).ok_or(WadRayError::Overflow)?;
     let numerator = numerator.checked_add(half_b).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(numerator / b)
 }
 
@@ -141,9 +133,6 @@ pub fn ray_mul(a: U256, b: U256, rounding: Option<RayRounding>) -> Result<U256, 
 fn ray_mul_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
     let ab = a.checked_mul(b).ok_or(WadRayError::Overflow)?;
     let numerator = ab.checked_add(HALF_RAY).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(numerator / RAY)
 }
 
@@ -154,9 +143,6 @@ fn ray_mul_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
 /// Returns [`WadRayError::Overflow`] if `a * b > MAX_UINT256`.
 pub fn ray_mul_floor(a: U256, b: U256) -> Result<U256, WadRayError> {
     let ab = a.checked_mul(b).ok_or(WadRayError::Overflow)?;
-    if ab > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(ab / RAY)
 }
 
@@ -167,9 +153,6 @@ pub fn ray_mul_floor(a: U256, b: U256) -> Result<U256, WadRayError> {
 /// Returns [`WadRayError::Overflow`] if `a * b > MAX_UINT256`.
 pub fn ray_mul_ceil(a: U256, b: U256) -> Result<U256, WadRayError> {
     let ab = a.checked_mul(b).ok_or(WadRayError::Overflow)?;
-    if ab > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     let base = ab / RAY;
     let rem = ab % RAY;
     if rem.is_zero() {
@@ -202,9 +185,6 @@ fn ray_div_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
     let half_b = b / U256::from(2u8);
     let numerator = a.checked_mul(RAY).ok_or(WadRayError::Overflow)?;
     let numerator = numerator.checked_add(half_b).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(numerator / b)
 }
 
@@ -219,9 +199,6 @@ pub fn ray_div_floor(a: U256, b: U256) -> Result<U256, WadRayError> {
         return Err(WadRayError::ZeroDivision);
     }
     let numerator = a.checked_mul(RAY).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     Ok(numerator / b)
 }
 
@@ -236,9 +213,6 @@ pub fn ray_div_ceil(a: U256, b: U256) -> Result<U256, WadRayError> {
         return Err(WadRayError::ZeroDivision);
     }
     let numerator = a.checked_mul(RAY).ok_or(WadRayError::Overflow)?;
-    if numerator > MAX_UINT256 {
-        return Err(WadRayError::Overflow);
-    }
     let base = numerator / b;
     let rem = numerator % b;
     if rem.is_zero() {

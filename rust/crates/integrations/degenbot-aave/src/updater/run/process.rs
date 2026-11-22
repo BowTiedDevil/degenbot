@@ -39,9 +39,8 @@ pub(super) fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
     let mut groups: HashMap<[u8; 32], TxGroup<'_>> = HashMap::new();
     for log in logs {
         let Some(tx_hash_b256) = log.transaction_hash else {
-            // A log with no tx_hash — shouldn't happen for fetched logs. Treat
-            // it as its own singleton group keyed by zero: a log with no tx hash
-            // still applies, in chain order, exactly once.
+            // A fetched log always carries its transaction hash; one without a
+            // hash is dropped rather than grouped.
             continue;
         };
         let tx_hash = tx_hash_b256.0;
@@ -417,8 +416,8 @@ pub(super) async fn process_chunk_on_conn(
     })
 }
 
-/// A small carrier for the per-chunk core's outcome (the event count + a hook
-/// for richer per-type accounting in a future revision).
+/// The per-chunk core's outcome: the applied event count, the two stage
+/// timings, and the chunk's touched users.
 #[derive(Debug, Clone, Default)]
 pub(super) struct ChunkCoreReport {
     pub(super) events_applied: usize,
@@ -628,9 +627,8 @@ mod tests {
 
     #[test]
     fn group_logs_by_tx_skips_logs_without_tx_hash() {
-        // A log with no transaction_hash — shouldn't happen for fetched logs,
-        // but the grouping is defensive: a hash-less log lands in its own
-        // singleton group instead of panicking.
+        // A fetched log always carries a tx hash; a hash-less one is dropped,
+        // so only the two hashed logs form a group.
         let tx = [0xaa; 32];
         let log_with_tx = make_tx_log(tx, 100, 0);
         let mut log_no_tx = make_tx_log([0x00; 32], 100, 1);

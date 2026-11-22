@@ -348,12 +348,10 @@ pub struct RunSpec {
 /// - **`treasury_address` is `None`**: `process_transaction` accepts it but the
 ///   current dispatch doesn't consume it (forward-compat). The Python resolves
 ///   it via the Pool's `RESERVE_TREASURY_ADDRESS()` RPC — not wired here.
-/// - **`vtoken_revision` drift**: the discount pre-pass reads the GHO vToken's
-///   revision at chunk-start (the in-chunk `Upgraded` write is DEFERRED to
-///   Apply). If an `Upgraded` event lands mid-chunk (the deprecation),
-///   txs AFTER it would see the OLD revision → a non-zero discount instead of
-///   0. In practice a vToken upgrade fires once per market lifetime, so the
-///   drift is rare; flagged for the orchestrator's parity-gate review.
+/// - **`vtoken_revision`**: re-resolved per transaction — stage 1 of
+///   `ChunkContext::dispatch_transaction` — so a transaction after an in-chunk
+///   `Upgraded` apply reads the bumped revision; a chunk-start snapshot would
+///   not (W6: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(C)).
 #[expect(clippy::missing_errors_doc)]
 pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
     if spec.chunk_size == 0 || spec.max_block_range == 0 {
@@ -373,7 +371,8 @@ pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdate
 /// The statement-ledger golden machinery (`degenbot_db::sql_ledger::LedgerDb`,
 /// ADR-068 D3) needs to hand the run ITS traced connection, so the chunk loop
 /// must accept a handle it did not open (the Aave golden captures are wired to
-/// this seam; the committed goldens land with the replay-suite chunk).
+/// this seam; `tests/aave_cassette_replay.rs` replays the committed
+/// statement-ledger + DB-dump goldens through it).
 ///
 /// # Errors
 ///

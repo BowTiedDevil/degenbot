@@ -14,9 +14,11 @@
 //!
 //! The verification pass reads each position's on-chain state and reconciles it
 //! against the committed rows; the `DEAD_ADDRESS` / `ZERO_ADDRESS` skip is part
-//! of the contract (an address with no state has nothing to reconcile). Reads go
-//! through `AlloyProvider::eth_call` per position — multicall3 batching is the
-//! natural extension.
+//! of the contract (an address with no state has nothing to reconcile). The
+//! reads are batched, not per-position: the scaled-token checks + the GHO
+//! discount check flatten their calls into one `multicall3_batch` per position
+//! kind, and the stkAAVE check batches its `balanceOf` calls through
+//! `degenbot_rpc::erc20::balance_of_batch`.
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
@@ -773,10 +775,10 @@ mod tests {
             [a_token_address],
         )
         .unwrap();
-        // asset 1: underlying_asset_id=1, a_token_id=2 — but we insert the
-        // aToken as erc20 id 1 here (the verify JOINs on `a_token_id` →
-        // the aToken row). Plus a separate vtoken id for parity with the
-        // full schema (not used by collateral verify).
+        // asset 1: underlying_asset_id=2, a_token_id=1 (the verify JOINs on
+        // `a_token_id` → the erc20 row inserted above), v_token_id=2 (present
+        // for parity with the full schema; the collateral verify never reads
+        // it).
         conn.execute(
             "INSERT INTO erc20_tokens (id, chain, address) VALUES (2, 1, '0x0000000000000000000000000000000000000002')",
             [],

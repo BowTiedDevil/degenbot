@@ -278,8 +278,8 @@ mod tests {
             percent_div_ceil(U256::from(1u64), U256::from(3u64)).unwrap(),
             U256::from(3_334u64)
         );
-        // exact: percent_div_ceil(3, 3) = 10000 // 3 + (rem? 1) = 3334.
-        // 3 * 10000 = 30000; 30000 % 3 = 0 → no round-up → 10000.
+        // exact: percent_div_ceil(3, 3) = (3 * 10000) / 3 = 10000 — the
+        // 30000 product has no remainder, so ceil does not bump.
         assert_eq!(
             percent_div_ceil(U256::from(3u64), U256::from(3u64)).unwrap(),
             U256::from(10_000u64)

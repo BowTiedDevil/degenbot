@@ -14,17 +14,22 @@
 //! no dispatch path can re-round an amount on its way to the position row. The
 //! parity-gate cross-check is the final arbiter.
 //!
-//! # Scope (incremental)
+//! # Dispatch surface
 //!
-//! This impl covers the 5 standard pool-event operations (Supply/Withdraw/
-//! Borrow/Repay/RepayWithAtokens) + the standalone `BalanceTransfer` + the
-//! InterestAccrual/InterestOnly paths. The liquidation apply
-//! (`OperationType::Liquidation`/`GhoLiquidation`), the GHO-discount-lookup
-//! machinery (scope 3 — the `discount_updates_by_log_index` map +
-//! `get_effective_discount_at_log_index` path + the stkAAVE pre-processing),
-//! the `DeficitCoverage` paired-event apply, + the `MintToTreasury` v8 `ray_div`
-//! branch are **deferred** — flagged `Err(Deferred)` so the orchestrator can
-//! split them into C2 sub-tasks without rushing the edge-branch verification.
+//! Every parsed `Operation` kind has an apply path: the 5 standard pool-event
+//! operations (Supply/Withdraw/Borrow/Repay/RepayWithAtokens), the standalone
+//! `BalanceTransfer`, the InterestAccrual/InterestOnly paths, the liquidation
+//! apply (`OperationType::Liquidation`/`GhoLiquidation`, sized by the
+//! `LiquidationPatternContext` aggregation), the GHO-discount machinery (the
+//! `discount_updates_by_log_index` map + `get_effective_discount_at_log_index`
+//! path + the stkAAVE pre-processing), the `DeficitCoverage` paired-event
+//! apply, and the `MintToTreasury` v8 `ray_div` branch.
+//!
+//! [`ProcessTxError::Deferred`] therefore marks no unfinished feature. It fires
+//! only on internal-shape exhaustiveness: an `Operation` missing a field the
+//! parser guarantees (`pool_event`, `minted_to_treasury_amount`), or a
+//! `ScaledTokenEventType` reaching an arm its calling dispatch already
+//! excluded.
 
 use crate::gho_processor::{GhoProcessorError, UnifiedGhoProcessor};
 use crate::operations::{
@@ -68,10 +73,9 @@ pub enum ProcessTxError {
     /// A ray-math failure from the enrichment's `ray_div`.
     #[error("ray-math error: {0}")]
     RayMath(#[from] crate::WadRayError),
-    /// A deferred path (the liquidation apply / GHO discount
-    /// machinery / `DeficitCoverage` / `MintToTreasury`). The orchestrator may
-    /// split these into sub-tasks rather than rush the edge-branch
-    /// verification.
+    /// An internal-shape violation: an `Operation` missing a field the parser
+    /// guarantees, or a `ScaledTokenEventType` reaching a dispatch arm its
+    /// caller already excluded. No feature path returns it.
     #[error("deferred: {0}")]
     Deferred(String),
 }
@@ -89,9 +93,8 @@ pub enum ProcessTxError {
 /// # Errors
 ///
 /// Returns [`ProcessTxError`] on any parse / substrate / processor / ray-math
-/// failure, OR [`ProcessTxError::Deferred`] for the not-yet-ported paths
-/// (the GHO bad-debt override pending the orchestrator's confirm on the
-/// `DEFICIT_CREATED` vs `user_liquidation_count` mechanism — flagged).
+/// failure, or [`ProcessTxError::Deferred`] when an `Operation` reaches the
+/// dispatch missing a field the parser guarantees.
 ///
 /// `discounts` is the orchestrator-pre-fetched GHO discount snapshot (the
 /// `raw_call` for users-not-in-DB discounts is the driver-shell's
@@ -514,7 +517,7 @@ fn build_scaled_event_chunk_event(
         | ScaledTokenEventType::GhoDebtTransfer => "v_token",
         _ => {
             return Err(ProcessTxError::Deferred(format!(
-                "non-scaled-token event_type {:?} in standard op — C2",
+                "non-scaled-token event_type {:?} in standard op",
                 ev.event_type
             )));
         }
@@ -816,7 +819,7 @@ fn build_scaled_event_chunk_event(
             })
         }
         _ => Err(ProcessTxError::Deferred(format!(
-            "event_type {:?} not handled in standard op — C2",
+            "event_type {:?} not handled in standard op",
             ev.event_type
         ))),
     }
@@ -994,7 +997,7 @@ fn dispatch_interest_accrual(
             ScaledTokenEventType::DebtMint | ScaledTokenEventType::DebtBurn => "v_token",
             _ => {
                 return Err(ProcessTxError::Deferred(format!(
-                    "interest-accrual event_type {:?} — C2",
+                    "interest-accrual event_type {:?}",
                     ev.event_type
                 )));
             }
@@ -1560,7 +1563,7 @@ fn build_gho_chunk_event(
         }
         _ => {
             return Err(ProcessTxError::Deferred(format!(
-                "GHO event_type {:?} not a GHO debt event — C3",
+                "GHO event_type {:?} not a GHO debt event",
                 ev.event_type
             )));
         }
@@ -2329,12 +2332,11 @@ mod tests {
     /// through the GHO discount processor (`build_gho_chunk_event` →
     /// `process_gho_debt_mint`) instead of returning `Err(Deferred)`.
     ///
-    /// Before the fix this returns `Err(Deferred("interest-accrual event_type
-    /// GhoDebtMint — C2"))` — the coldboot→18M drive crashed at block 17699521
-    /// on exactly this. The byte-exact GHO interest-accrual math (discount,
-    /// dust mints) is verified end-to-end vs the Python gold at 18M; this unit
-    /// test pins the DISPATCH routing (no deferral + a `ScaledTokenMint` chunk
-    /// event produced).
+    /// The coldboot→18M drive crashed at block 17699521 on this routing gap
+    /// (a `GhoDebtMint` refused as an interest-accrual event). The byte-exact
+    /// GHO interest-accrual math (discount, dust mints) is verified end-to-end
+    /// vs the Python gold at 18M; this unit test pins the DISPATCH routing (no
+    /// deferral + a `ScaledTokenMint` chunk event produced).
     #[test]
     fn dispatch_interest_accrual_routes_gho_debt_mint_through_gho_processor() {
         let (db, vtoken) = fresh_db_with_gho_debt_asset();

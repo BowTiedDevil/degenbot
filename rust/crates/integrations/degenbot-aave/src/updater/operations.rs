@@ -9,11 +9,12 @@
 //! to construct `AaveChunkEvent` variants and dispatch via
 //! [`crate::run::apply_aave_chunk_writes_on_conn`].
 //!
-//! This module is the **pure-data contract** between A (this task) + B
-//! (the liquidation engine, [`LiquidationPatternContext`] is a stub here so
-//! B can extend it) + C (the apply dispatch glue, consumes `Operation`s).
-//! No DB / RPC / processor calls live here — the parser struct holds the
-//! stateful behavior in `operations_parser.rs`; this file owns the data types.
+//! This module is the **pure-data contract** the parser fills and the apply
+//! dispatch consumes, including the [`LiquidationPatternContext`] that
+//! `transaction_processor::build_liquidation_patterns` builds and the
+//! liquidation dispatch reads. No DB / RPC / processor calls live here — the
+//! parser struct holds the stateful behavior in `operations_parser/mod.rs`;
+//! this file owns the data types.
 //!
 //! # Lifetime contract
 //!
