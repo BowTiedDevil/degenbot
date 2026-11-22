@@ -1,18 +1,17 @@
-//! T1:
-//! the cycle between a sync FFI pymethod that takes the BotState WRITE while
-//! holding the GIL and a long-held BotState READ whose holder then wants the
-//! GIL. Without `py.detach`: permanent inversion - everything freezes on the
-//! GIL futex (the observed 'GIL deadlock'). The write is acquired via
-//! `py.detach`, the GIL is released while parked, the cycle cannot form.
+//! T1: the cycle between a sync FFI pymethod that takes the BotState WRITE
+//! while holding the GIL and a long-held BotState READ whose holder then
+//! wants the GIL. Without `py.detach`: permanent inversion - everything
+//! freezes on the GIL futex (the observed 'GIL deadlock'). The write is
+//! acquired via `py.detach`, the GIL is released while parked, the cycle
+//! cannot form.
 //!
-//! #2 (this incident's re-audit) extended coverage:
+//! Coverage:
 //! - `update_v3_park_cycle`: the same cycle through the reserve/tick-update
-//!   pymethods the first audit missed (build_v3_pool froze in exactly this
-//!   class - a GIL-held registration write behind 26 fan-out readers).
-//! - `no_gil_held_botstate_writes_in_bot_mod_rs`: source-scan guard so no
+//!   pymethods (a GIL-held registration write parked behind many fan-out
+//!   readers freezes in exactly this class).
+//! - `no_gil_held_botstate_locks_in_bot_sources`: source-scan guard so no
 //!   future change re-introduces a GIL-held BotState write outside a
-//!   `py.detach` scope (covers all incident sites, incl. ones too heavy for
-//!   a unit repro).
+//!   `py.detach` scope (covers sites too heavy for a unit repro).
 
 #![cfg(feature = "auto-initialize")]
 #![expect(
@@ -87,16 +86,12 @@ fn update_v3_pool_write_does_not_invert_with_reader_gil() {
     });
 }
 
-/// (The former mod.rs-only write scan is folded into the directory-walking
-/// scan below: it covers writes as well as reads, in every file under src/bot/.)
-/// Source guard for the 2026-08-21 run-9 cycle (the two-stamp regression),
-/// generalized from the pool.rs-only scan : NO file under
-/// `src/bot/` may acquire a BotState/engine lock outside a `py.detach` scope —
-/// new modules are covered automatically. The captured run-9 cycle: the
-/// seed_genesis pymethod held the GIL while parked in core().write() ->
-/// RawRwLock::wait_for_readers behind three live readers; every GIL waiter
-/// (main loop, log drainer, probe) froze permanently. READS are the same
-/// hazard class: a GIL-held read blocks the pump's per-log write
+/// Source guard: NO file under `src/bot/` may acquire a BotState/engine lock
+/// outside a `py.detach` scope — new modules are covered automatically. The
+/// captured cycle: the seed_genesis pymethod held the GIL while parked in
+/// core().write() -> RawRwLock::wait_for_readers behind three live readers;
+/// every GIL waiter (main loop, log drainer, probe) froze permanently. READS
+/// are the same hazard class: a GIL-held read blocks the pump's per-log write
 /// (log_dispatcher state.write()), and a reader that then wants the GIL
 /// (result-channel anext, Python log forwarding) closes the cycle.
 ///
@@ -153,9 +148,8 @@ fn no_gil_held_botstate_locks_in_bot_sources() {
         // Pattern-drift floors for the heaviest files: if these drop, the
         // invariant being scanned for has moved and this guard needs updating.
         match rel.as_str() {
-            // pool.rs is near-zero by design since the accessor migration
             // Only the sanctioned accessor bodies still name
-            // `.read()`/`.write()` directly.
+            // `.read()`/`.write()` directly; pool.rs is near-zero by design.
             "pool.rs" => assert!(
                 (2..=10).contains(&checked_in_file),
                 "pool.rs lock-site count {checked_in_file} outside the accessor-migration band - the pattern moved"

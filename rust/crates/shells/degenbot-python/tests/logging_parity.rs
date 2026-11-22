@@ -2,9 +2,8 @@
 //! reach Python `logging` under the correct logger names with the correct
 //! levels and messages.
 //!
-//! This tests the subscriber swap: `pyo3_log::init()` replaced by
-//! a `tracing_subscriber` registry with a batched Python-forwarding layer.
-//! The contract (parity with `src/degenbot/logging.py`) is:
+//! The contract under the batched Python-forwarding subscriber (parity with
+//! `src/degenbot/logging.py`) is:
 //!
 //! - A `log::info!("probe {n}")` arrives at Python logger
 //!   `rust_log_probe` (the Rust target with `::` → `.`) with level INFO
@@ -41,8 +40,6 @@ fn ensure_logging_setup() {
         Python::attach(|py| {
             let _logging = py.import("logging").unwrap();
 
-            // Create a handler that appends records to a list on the Python
-            // module itself.
             py.run(
                 c"
 import logging
@@ -99,7 +96,6 @@ fn tracing_log_probe() {
 fn test_log_reaches_python() {
     ensure_logging_setup();
 
-    // Clear any previous records by creating a fresh CaptureHandler.
     Python::attach(|py| {
         py.run(
             c"
@@ -112,19 +108,14 @@ _log_handler.records.clear()
         .unwrap();
     });
 
-    // Emit a Rust log::info! call.
     rust_log_probe(99);
-
-    // Emit a Rust tracing::info! call.
     tracing_log_probe();
 
-    // Wait for the drainer to flush (up to 2 seconds).
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut log_found = false;
     let mut tracing_found = false;
 
     let log_msg = format!("probe {i}", i = 99);
-    // The tracing message: "probe {n=42}"
     let tracing_msg = "probe {n=42}";
 
     while Instant::now() < deadline {

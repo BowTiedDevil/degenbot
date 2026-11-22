@@ -1,4 +1,4 @@
-//! FF-T5: "degenbot.runtime_status()" - budget, plan, census.
+//! "degenbot.runtime_status()" - budget, plan, census.
 //!
 //! The operator's live-process view: what the fleet booted as (the plan:
 //! binding, oversubscription, the tier refusal it fell from), what it
@@ -13,7 +13,7 @@ use pyo3::types::PyDict;
 
 use degenbot_bot::arb_engine::fleet_runtime_status;
 
-/// The runtime fleet status (FF-T5): budget, plan, census - a dict with
+/// The runtime fleet status: budget, plan, census - a dict with
 /// `fleet_booted`, `profile`, `quota_cpus`, `binding`,
 /// `oversubscribed`, `tier_refused`, `budget` (the projected seat/share
 /// table), and `census` (the worker rows, with the binding per

@@ -85,8 +85,6 @@ fn solidly_err(e: SolidlyMathError) -> PyErr {
     }
 }
 
-// ─── Step functions ─────────────────────────────────────────────────────
-
 /// `calc_d` — the Solidly stable `D = 3*x0*y^2 + x0^3*y` analytic.
 ///
 /// # Errors
@@ -172,8 +170,6 @@ pub fn camelot_k(
     u256_to_py_obj(py, result)
 }
 
-// ─── Iterative solvers ──────────────────────────────────────────────────
-
 /// `get_y_solidly` — Newton's-method `y` solve for the Solidly/Aerodrome
 /// invariant. Direct port of the deployed `Pool.sol`'s `get_y`.
 ///
@@ -222,8 +218,6 @@ pub fn camelot_get_y_camelot(
     );
     u256_to_py_obj(py, result)
 }
-
-// ─── Pre-baked orchestration entrypoints ────────────────────────────────
 
 /// `calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
 /// Direct port of the deployed `Pool.sol`'s volatile `getAmountOut`.
@@ -354,27 +348,12 @@ pub fn calc_exact_in_stable_camelot(
     u256_to_py_obj(py, result)
 }
 
-/// Register all Solidly-math functions on the umbrella module.
-///
-/// Register all Solidly/Aerodrome/Camelot math functions on a real Python
-/// submodule.
-///
-/// Creates `degenbot._ffi.solidly_math` (a `PyModule`, not a flat root-level
-/// prefix) and registers the 10 fns on it with un-prefixed names —
-/// `calc_d`, not `solidly_calc_d`. The `solidly_` prefix was an artifact of
-/// the flat root registration; `camelot_` stays because camelot is a distinct
-/// variant in the same crate (matches `camelot.rs`).
-///
-/// The companion `src/degenbot/aerodrome/math/` package re-exports these as the
-/// stable import path, decoupling Python consumers from `degenbot._ffi`.
-///
-/// # Errors
-///
-/// Returns `PyErr` if any function fails to register.
 /// The `degenbot._ffi.solidly_math` Python submodule (declarative
 /// `#[pymodule]`), carrying the Solidly / Aerodrome / Camelot stable-math
-/// pyfunctions. The parent module registers the submodule itself; the
-/// `sys.modules` entry lives in the parent's shared helper.
+/// pyfunctions. The companion `src/degenbot/aerodrome/math/` package
+/// re-exports these as the stable import path, decoupling Python consumers
+/// from `degenbot._ffi`. The parent module registers the submodule itself;
+/// the `sys.modules` entry lives in the parent's shared helper.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod solidly_math {

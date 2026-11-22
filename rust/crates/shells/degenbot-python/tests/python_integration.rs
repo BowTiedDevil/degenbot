@@ -3,10 +3,6 @@
 //! These tests verify the Python → Rust → Python boundary by using
 //! `pyo3::Python::try_attach()` to execute Python code and verify
 //! roundtrip conversions work correctly.
-//!
-//! These tests are skipped if Python is not available (returns `None`).
-//!
-//! Run with: `cargo test --features auto-initialize --test python_integration`
 
 #![expect(clippy::panic)]
 #![cfg(feature = "auto-initialize")]
@@ -27,7 +23,6 @@ where
     Python::attach(f)
 }
 
-/// Test Python integer → `AbiValue` conversion for small positive integers.
 #[test]
 fn test_python_int_small_positive() {
     let result = with_python(|py| {
@@ -40,7 +35,6 @@ fn test_python_int_small_positive() {
     );
 }
 
-/// Test Python integer → `AbiValue` conversion for small negative integers.
 #[test]
 fn test_python_int_small_negative() {
     let result = with_python(|py| {
@@ -53,7 +47,6 @@ fn test_python_int_small_negative() {
     );
 }
 
-/// Test Python integer → `AbiValue` conversion for `U256::MAX`.
 #[test]
 fn test_python_int_u256_max() {
     let result = with_python(|py| {
@@ -70,7 +63,6 @@ fn test_python_int_u256_max() {
     }
 }
 
-/// Test Python integer → `AbiValue` conversion for `I256::MIN`.
 #[test]
 fn test_python_int_i256_min() {
     let result = with_python(|py| {
@@ -91,7 +83,6 @@ fn test_python_int_i256_min() {
     }
 }
 
-/// Test Python bool → `AbiValue` conversion.
 #[test]
 fn test_python_bool() {
     let result_true = with_python(|py| {
@@ -107,7 +98,6 @@ fn test_python_bool() {
     assert_eq!(result_false, AbiValue::Bool(false));
 }
 
-/// Test Python bytes → `AbiValue` conversion.
 #[test]
 fn test_python_bytes() {
     let result = with_python(|py| {
@@ -118,7 +108,6 @@ fn test_python_bytes() {
     assert_eq!(result, AbiValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef]));
 }
 
-/// Test Python string (address) → `AbiValue` conversion.
 #[test]
 fn test_python_string_address() {
     let result = with_python(|py| {
@@ -138,7 +127,6 @@ fn test_python_string_address() {
     }
 }
 
-/// Test Python list → `AbiValue` conversion for array.
 #[test]
 fn test_python_list_array() {
     let result = with_python(|py| {
@@ -166,7 +154,6 @@ fn test_python_list_array() {
     }
 }
 
-/// Test Python int at i128 boundary.
 #[test]
 fn test_python_int_i128_boundary() {
     let result_max = with_python(|py| {
@@ -188,7 +175,6 @@ fn test_python_int_i128_boundary() {
     );
 }
 
-/// Test Python int larger than i128 (requires `to_bytes` path).
 #[test]
 fn test_python_int_large_positive() {
     let result = with_python(|py| {
@@ -209,7 +195,6 @@ fn test_python_int_large_positive() {
     }
 }
 
-/// Test Python int large negative (requires `to_bytes` path).
 #[test]
 fn test_python_int_large_negative() {
     let result = with_python(|py| {
@@ -226,7 +211,6 @@ fn test_python_int_large_negative() {
     }
 }
 
-/// Test invalid Python type errors appropriately.
 #[test]
 fn test_python_invalid_type() {
     let result: PyResult<AbiValue> = with_python(|py| {
@@ -241,7 +225,6 @@ fn test_python_invalid_type() {
     );
 }
 
-/// Test empty Python list.
 #[test]
 fn test_python_empty_list() {
     let result = with_python(|py| {
@@ -251,7 +234,6 @@ fn test_python_empty_list() {
     assert!(matches!(result, AbiValue::Array(arr) if arr.is_empty()));
 }
 
-/// Test Python string (non-address) → `AbiValue` conversion.
 #[test]
 fn test_python_string_non_address() {
     let result = with_python(|py| {

@@ -1,7 +1,6 @@
 //! Tracing subscriber layer that forwards events to Python `logging`.
 //!
-//! Replaces `pyo3_log::init()` (per-record `Python::attach`) with a
-//! batched-drain pattern: events are pushed onto a bounded
+//! Events are pushed onto a bounded
 //! [`ArrayQueue`](crossbeam_queue::ArrayQueue) from any thread (no GIL
 //! needed), and a dedicated OS thread drains the queue, batching up to 256
 //! records or every 50 ms, then forwarding the batch to Python `logging`
@@ -16,8 +15,8 @@
 //! (ADR-043 §6): the stderr `fmt` layer is routed to `io::sink()` because the
 //! binding is present, so a record is never written twice.
 //!
-//! This makes the pump's tokio workers GIL-free for logging: the per-record
-//! GIL round-trip is replaced by a lock-free queue push.
+//! The pump's tokio workers stay GIL-free for logging: a record costs a
+//! lock-free queue push.
 //!
 //! # Shutdown
 //!
@@ -170,13 +169,11 @@ where
             return;
         }
 
-        // Parse the level.
         let level = meta.level().to_string(); // "ERROR", "WARN", "INFO", "DEBUG", "TRACE"
 
-        // Build the Python logger name from the Rust target path.
-        // `tracing_log::LogTracer` bridges `log::` records as tracing events
-        // with `target = "log"` and the original log target stored in the
-        // `log.target` field. Handle this transparently.
+        // `tracing_log::LogTracer` bridges `log::` records with
+        // `target = "log"` and the original log target in the `log.target`
+        // field — resolve the real target transparently.
         let logger_name = if meta.target() == "log" {
             // Extract the original log target from the event's fields.
             extract_log_target(event).unwrap_or_else(|| "log".to_string())
@@ -185,7 +182,6 @@ where
         }
         .replace("::", ".");
 
-        // Format the message by visiting all fields.
         let message = format_event_message(event);
 
         let record = PythonLogRecord {
@@ -203,12 +199,6 @@ where
     }
 }
 
-/// Extract the original `log::` target from a `LogTracer`-bridged event.
-///
-/// When `tracing_log::LogTracer` bridges a `log::` record, the tracing event
-/// has `target = "log"` and the original log target is stored in the
-/// `log.target` field. This function visits the event fields and returns
-/// the original target if found.
 /// Resolve the OTLP endpoint for span export. Precedence (first wins):
 ///
 /// 1. `OTEL_EXPORTER_OTLP_ENDPOINT` env var (standard `OTel` signal env —
@@ -306,6 +296,11 @@ pub(crate) fn read_failure_policy_overrides(
     }
 }
 
+/// Extract the original `log::` target from a `LogTracer`-bridged event.
+///
+/// When `tracing_log::LogTracer` bridges a `log::` record, the tracing event
+/// has `target = "log"` and the original log target is stored in the
+/// `log.target` field; this visitor returns it if found.
 fn extract_log_target(event: &tracing::Event) -> Option<String> {
     struct LogTargetExtractor(Option<String>);
 
@@ -449,14 +444,12 @@ fn flush_batch_to_python(records: &[PythonLogRecord]) {
             return; // Python logging not available — drop batch.
         };
 
-        // Cache the level constants on first use.
         let level_error = logging_mod.getattr("ERROR").ok();
         let level_warn = logging_mod.getattr("WARN").ok();
         let level_info = logging_mod.getattr("INFO").ok();
         let level_debug = logging_mod.getattr("DEBUG").ok();
 
         for record in records {
-            // Resolve the numeric level.
             let py_level = match record.level.as_str() {
                 "ERROR" => level_error.as_ref(),
                 "WARN" => level_warn.as_ref(),
@@ -468,13 +461,11 @@ fn flush_batch_to_python(records: &[PythonLogRecord]) {
                 continue; // Can't determine level — skip.
             };
 
-            // Get the target-specific logger.
             let Ok(logger) = logging_mod.call_method1("getLogger", (record.logger_name.as_str(),))
             else {
                 continue;
             };
 
-            // Call logger.log(level, msg).
             let _ = logger.call_method1("log", (py_level, record.message.as_str()));
         }
     });
@@ -484,8 +475,8 @@ fn flush_batch_to_python(records: &[PythonLogRecord]) {
 /// remaining records.
 ///
 /// This is idempotent: calling it multiple times is safe. The drainer
-/// thread is joined implicitly (it exits on its own after the shutdown
-/// flag + final flush).
+/// thread is not joined — it exits on its own after the shutdown flag +
+/// final flush.
 #[pyfunction]
 pub fn shutdown_log_drainer() {
     // The layer is installed as a global subscriber; to find its state,
@@ -590,18 +581,6 @@ fn record_env_filter() -> EnvFilter {
     )
 }
 
-/// Install the tracing subscriber stack.
-///
-/// This function:
-/// 1. Installs `tracing_log::LogTracer` as the global `log` logger, so
-///    existing `log::` calls flow through the tracing subscriber.
-/// 2. Builds a `tracing_subscriber::Registry` with two layers:
-///    - A `fmt` layer writing to stderr (controlled by `RUST_LOG`).
-///    - A [`PythonLogLayer`] forwarding events to Python `logging`.
-///
-/// Must be called from the `#[pymodule]` init (where Python is initialized
-/// and the GIL is held). Safe to call multiple times — subsequent calls
-/// are no-ops.
 /// The base registry stack that [`build_base_registry`] returns: the
 /// Python slot `P` on top of the `fmt` writer layer on top of
 /// `EnvFilter`.
@@ -617,11 +596,11 @@ type MiddleRegistry = Layered<
 
 type BaseRegistry<P> = Layered<P, MiddleRegistry>;
 
-/// Assembles the base logging registry: `EnvFilter` + stderr `fmt` and a
-/// final Python-forwarding slot `P`). Byte-equivalent
-/// to the pre-extraction inline assembly in `init_logging_subscriber`;
-/// extracted so the `OTel` layer can layer on top and the stack is testable
-/// without a `Python::attach`-capable drainer (seam C).
+/// Assembles the base logging registry: `EnvFilter` + the `fmt` layer with
+/// its silenced writer (`io::sink()` — [`PythonLogLayer`] owns the console,
+/// see [`fmt_writer`]) and a final Python-forwarding slot `P`). Extracted
+/// from `init_logging_subscriber` so the `OTel` layer can layer on top and
+/// the stack is testable without a `Python::attach`-capable drainer.
 #[must_use]
 pub(crate) fn build_base_registry<P>(env_filter: EnvFilter, python_layer: P) -> BaseRegistry<P>
 where
@@ -710,6 +689,15 @@ where
         .with(python_layer.with_filter(console_filter))
 }
 
+/// Install the tracing subscriber stack: the `log` → `tracing` bridge
+/// (`tracing_log::LogTracer`, so existing `log::` calls flow through the
+/// subscriber) plus the base registry — `EnvFilter`, the `fmt` layer, and
+/// [`PythonLogLayer`] forwarding events to Python `logging`.
+///
+/// The `fmt` layer's writer is `io::sink()` in the Python driver
+/// ([`fmt_writer`]): [`PythonLogLayer`] owns the console.
+///
+/// Safe to call multiple times — subsequent calls are no-ops.
 pub fn init_logging_subscriber() {
     let () = INIT_DONE.get_or_init(|| {
 

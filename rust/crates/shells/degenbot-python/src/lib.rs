@@ -1,30 +1,7 @@
-//! Rust extension for degenbot.
-//!
-//! This crate provides high-performance Rust implementations of common operations
-//! used by the degenbot Python package.
-//!
-//! # Modules
-//!
-//! - [`abi_types`] - Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`)
-//! - [`decoder`] - High-performance ABI decoding
-//! - [`encoder`] - High-performance ABI encoding
-//! - [`conversion`] - Shared PyO3-dependent converters (U256/I256 ↔ Python `int`, cached refs, JSON/RPC type → Python)
-//! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
-//! - [`errors`] - Centralized error types with `thiserror`
-//! - [`provider`] - Ethereum RPC provider with Alloy (HTTP, WS, IPC)
-//! - [`rpc::provider`] - `PyO3` bindings for sync provider
-//! - [`rpc::async_provider`] - Async Ethereum provider wrapper
-//! - [`contract`] - Smart contract interface with ABI encoding/decoding
-//! - [`rpc::contract`] - `PyO3` bindings for contract
-//! - [`rpc::async_contract`] - Async contract wrapper with batch calls
-//! - [`signature_parser`] - Robust function signature parsing
-//! - [`runtime`] - Shared Tokio runtime singleton
-//! - [`hex_utils`] - Pure-Rust hex encoding/decoding (no `PyO3` dependency)
-//!
-//! See individual module documentation for usage examples.
+//! Rust extension for degenbot: the `PyO3` driver shell over the pure-Rust
+//! core crates. See individual module documentation for usage.
 
-// Opt-in allocator swap for churn-heavy workloads (missed-WS-pong follow-up,
-// RSS-growth investigation). The measured pathology was glibc free-page
+// Opt-in allocator swap for churn-heavy workloads. The measured pathology was glibc free-page
 // retention across per-thread arenas (system vs in-use spread of gigabytes,
 // reclaimed on demand by malloc_trim). mimalloc returns freed segments to the
 // OS aggressively instead of pooling them, at the cost of the system
@@ -254,22 +231,20 @@ fn driver_boot(_py: Python<'_>) {
 // stubs could not see any member. Every root function/class below is a
 // `#[pymodule_export] use`, every submodule a declarative `#[pymodule]`
 // living beside its definitions (e.g. `crate::abi::abi`), so the macro
-// expansion records the full member tree. Registration order and names
-// mirror the pre-conversion `c_api::register` body; the one imperative
-// island left is the `create_exception!` types (they have no `_PYO3_DEF`
-// and so cannot be exported declaratively) plus the `sys.modules`
-// submodule entries — both in `init`.
+// expansion records the full member tree. The one imperative island is the
+// `create_exception!` types (they have no `_PYO3_DEF` and so cannot be
+// exported declaratively) plus the `sys.modules` submodule entries — both in
+// `init`.
 #[pymodule]
 mod _ffi {
     use degenbot_core::op_info;
     use pyo3::prelude::*;
 
-    // Initialize tracing subscriber stack with batched Python-forwarding layer.
-    // Replaces the previous `pyo3_log::init()` (per-record GIL round-trip)
-    // with a `tracing_subscriber` registry + a custom `PythonLogLayer` that
-    // batches events and flushes to Python `logging` via one `Python::attach`
-    // per batch. Stays in the module init (not a registration site) because
-    // it is module-lifecycle setup, not symbol registration.
+    // Initialize the tracing subscriber stack: a `tracing_subscriber`
+    // registry + a custom `PythonLogLayer` that batches events and flushes to
+    // Python `logging` via one `Python::attach` per batch (one GIL round-trip
+    // per flush, not per record). Stays in the module init (not a registration
+    // site) because it is module-lifecycle setup, not symbol registration.
     //
     // Everything the long-running Python driver needs (runtimes, subscriber +
     // drainer, metrics scrape, panic hook, census dump) lives behind the
@@ -278,8 +253,6 @@ mod _ffi {
     #[pymodule_export]
     use crate::driver_boot;
 
-    // The shutdown pyfunctions on the module (pre-conversion:
-    // `PythonLogLayer::register_pyfunction`).
     #[pymodule_export]
     use crate::python_log_layer::{flush_telemetry, shutdown_log_drainer};
 
@@ -321,7 +294,7 @@ mod _ffi {
     #[pymodule_export]
     use crate::ambient_runtime::{call_blocking_on_ambient_runtime, call_on_ambient_runtime};
 
-    // Keccak256 + event topic (always a dependency;)
+    // Keccak256 + event topic (always a dependency).
     #[pymodule_export]
     use crate::crypto::{event_topic, keccak256};
 
@@ -355,9 +328,9 @@ mod _ffi {
     // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the cockpit
     // session-phase table (`strategy_host::SessionPhase`), exposed so the
     // Python `_Phase` translates the host's verdict instead of authoring the
-    // legal-state matrix. The engine is not an event iterator any more: its
-    // session stream belongs to the session consumer (`degenbot._ffi.simulation`
-    // `SessionConsumer`), which owns the consume loop end to end.
+    // legal-state matrix. The engine's session stream belongs to the session
+    // consumer (`degenbot._ffi.simulation` `SessionConsumer`), which owns the
+    // consume loop end to end.
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::engine::{
@@ -420,9 +393,6 @@ mod _ffi {
     #[pymodule_export]
     use crate::solvers_basket::solve_balancer_weighted_basket;
 
-    // ── Submodules (declarative `#[pymodule]`s beside their definitions;
-    //    registration order mirrors the pre-conversion body) ──────────────
-
     // Concentrated-liquidity math (feature = "concentrated-liquidity-math") —
     // 21 fns + 4 tick-boundary constants, un-prefixed. See
     // `crate::concentrated_liquidity_math::concentrated_liquidity_math`.
@@ -477,8 +447,7 @@ mod _ffi {
     use crate::pool::pool;
 
     // Aave-updater chunk-loop seam (feature = "aave-updater") —
-    // `run_aave_update` (Python name `aave`, mirroring the pre-conversion
-    // `degenbot._ffi.aave` submodule name).
+    // `run_aave_update` (Python name `aave`).
     #[cfg(feature = "aave-updater")]
     #[pymodule_export]
     use crate::aave_updater::aave;
@@ -524,7 +493,7 @@ mod _ffi {
     use crate::bot::dex_identity::dex_identity_pymodule;
 
     // Deployment-identity lookup over the embedded deployments.json
-    // (Fork A) (feature = "bot").
+    // (feature = "bot").
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::deployments::deployments;
@@ -574,7 +543,7 @@ mod _ffi {
         // the ONLY env-reading site; without this install every production run
         // observed schema defaults (metrics bound 127.0.0.1, default debounce),
         // silently ignoring DEGENBOT_* env.
-        // Option B hard cutover: the standard file layer is LIVE —
+        // The standard file layer is LIVE —
         // DEGENBOT_CONFIG (or ~/.config/degenbot/config.toml) feeds the typed
         // BotConfig; the retired pre-0.6 vocabulary ([rpc]/[ws]/[database]/
         // [otel]/default_chain_id) fails the load with pointed migration
@@ -803,7 +772,7 @@ mod _ffi {
                 "TickMapIntakeInconsistentError",
                 py.get_type::<crate::bot::engine::TickMapIntakeInconsistentError>(),
             )?;
-            // PRG-4: the registered-path cap refusal — a BENIGN stop signal
+            // The registered-path cap refusal — a BENIGN stop signal
             // the crawl catches instead of a Python counter unwind.
             m.add(
                 "PathRegistryFullError",
@@ -835,9 +804,7 @@ mod _ffi {
     /// Python's import system needs that entry to traverse the
     /// `degenbot._ffi.<name>` dotted path (the extension module is a single
     /// file, not a package, so without it the import fails with
-    /// `ModuleNotFoundError: 'degenbot._ffi' is not a package`). The
-    /// pre-conversion imperative builders each inserted their own entry; this
-    /// shared helper replaces all of them, gated to the same feature set.
+    /// `ModuleNotFoundError: 'degenbot._ffi' is not a package`).
     fn register_submodules_in_sys(m: &Bound<'_, PyModule>) -> PyResult<()> {
         let py = m.py();
         let sys_modules = py.import("sys")?.getattr("modules")?;

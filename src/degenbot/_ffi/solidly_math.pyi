@@ -2,27 +2,12 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register all Solidly-math functions on the umbrella module.
-
-Register all Solidly/Aerodrome/Camelot math functions on a real Python
-submodule.
-
-Creates `degenbot._ffi.solidly_math` (a `PyModule`, not a flat root-level
-prefix) and registers the 10 fns on it with un-prefixed names —
-`calc_d`, not `solidly_calc_d`. The `solidly_` prefix was an artifact of
-the flat root registration; `camelot_` stays because camelot is a distinct
-variant in the same crate (matches `camelot.rs`).
-
-The companion `src/degenbot/aerodrome/math/` package re-exports these as the
-stable import path, decoupling Python consumers from `degenbot._ffi`.
-
-# Errors
-
-Returns `PyErr` if any function fails to register.
 The `degenbot._ffi.solidly_math` Python submodule (declarative
 `#[pymodule]`), carrying the Solidly / Aerodrome / Camelot stable-math
-pyfunctions. The parent module registers the submodule itself; the
-`sys.modules` entry lives in the parent's shared helper.
+pyfunctions. The companion `src/degenbot/aerodrome/math/` package
+re-exports these as the stable import path, decoupling Python consumers
+from `degenbot._ffi`. The parent module registers the submodule itself;
+the `sys.modules` entry lives in the parent's shared helper.
 """
 
 from typing import Any, SupportsIndex

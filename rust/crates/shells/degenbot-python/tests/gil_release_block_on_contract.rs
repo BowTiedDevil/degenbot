@@ -5,20 +5,14 @@
 //! GIL — the handshake (~12s, one block time) and the snapshot→WS backfill
 //! (tens of seconds, ~168k logs) show up as `gil-probe` "GIL held" acquires of
 //! 16.6s / 8.4s / 5.0s in the 240s example run.
-//!//! The fix wraps the `block_on` in `py.detach(|| { ... })` (PyO3 0.29 renamed
-//! `allow_threads` to `detach`). This test locks the contract: while a
-//! `block_on` future parks, a parallel OS thread's `Python::attach` MUST
-//! complete (it would block indefinitely if the calling thread held the GIL
-//! without yielding). The futures are pure Rust async (no GIL needed to
-//! complete) so `detach` is safe - no re-entry deadlock.
+//! The `block_on` is wrapped in `py.detach(|| { ... })`. This test pins the
+//! contract: while a `block_on` future parks, a parallel OS thread's
+//! `Python::attach` MUST complete (it would block indefinitely if the calling
+//! thread held the GIL without yielding). The futures are pure Rust async (no
+//! GIL needed to complete) so `detach` is safe - no re-entry deadlock.
 
 #![cfg(feature = "auto-initialize")]
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::doc_markdown,
-    clippy::unnecessary_wraps
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::unnecessary_wraps)]
 
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +20,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-/// A `#[pyfunction]` mirroring the FIXED `subscribe`/`resume` shape: a
+/// A `#[pyfunction]` mirroring the `subscribe`/`resume` shape: a
 /// synchronous pyo3 call that runs `runtime.block_on(...)` wrapped in
 /// `py.detach(...)`. A parallel thread can acquire the GIL while the future
 /// parks, proving the GIL was released across the `block_on`.

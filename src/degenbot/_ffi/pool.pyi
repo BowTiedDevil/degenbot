@@ -2,12 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the pool-updater seam on `m` (feature = "pool").
-
-# Errors
-
-Returns a [`PyErr`] if any `add_function`/`add_class` call fails (a name
-collision); propagated unchanged to the `#[pymodule]` caller.
 The `degenbot._ffi.pool` Python submodule (declarative `#[pymodule]`),
 carrying the pool-updater chunk-loop + liquidity-map verify pyfunctions.
 The parent module registers the submodule itself and its `sys.modules`
@@ -49,7 +43,7 @@ def run_pool_update(
     The GIL is released across the WHOLE run (`py.detach`) and the core
     emits its own throttled operator progress lines — no per-chunk
     GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
-    mid-chunk; Task 5's SIGINT handler calls `cancel_handle.cancel()` (the
+    mid-chunk; the SIGINT handler calls `cancel_handle.cancel()` (the
     cooperative flag the loop polls between chunks — the interrupt contract
     (`docs/architecture/chunk-atomicity.md`):
     SIGINT between chunks → honored immediately; SIGINT mid-chunk → the chunk
@@ -111,7 +105,7 @@ def verify_liquidity_map(
     `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` batched through
     Multicall3 for `family="v3"`, the singleton
     `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
-    list (empty = GREEN — the DB matches the chain at `block_number`).
+    list (empty when the DB matches the chain at `block_number`).
 
     This is the ad-hoc / spot-check sibling of the pre-commit gate every
     `run_pool_update` chunk runs; the gate runs the SAME core verify BEFORE the

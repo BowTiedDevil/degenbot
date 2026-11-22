@@ -5,7 +5,7 @@
 //! (`src/degenbot/chainlink/price_feed.py`) constructs this with the bot's
 //! `AlloyProvider` + the aggregator address, then delegates `decimals` /
 //! `latest_round_data` to it (the float `price` is computed by the shell from
-//! the raw `int256` answer + `decimals`, preserving the prior float-exact
+//! the raw `int256` answer + `decimals`, preserving the shell's float-exact
 //! behavior — the Rust `price()` truncating-integer convenience is also
 //! exposed here for standalone Rust consumers).
 
@@ -94,7 +94,7 @@ impl PyChainlinkPriceFeed {
     ///
     /// Note: the Python shell `ChainlinkPriceContract.price` (a float)
     /// computes `float(answer) / 10**decimals` from `latest_round_data` +
-    /// `decimals` to preserve the prior float-exact behavior *including* the
+    /// `decimals` to preserve the shell's float-exact behavior *including* the
     /// fractional part; this `price` truncates and is exposed for direct
     /// Rust/standalone consumers.
     fn price<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

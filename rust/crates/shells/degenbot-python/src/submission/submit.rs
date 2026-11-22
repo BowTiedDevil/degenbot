@@ -1,14 +1,12 @@
 //! `dispatch_and_submit_py` / `fetch_fee_history_py` — the `PyO3` seams over the
-//! N6 submit-orchestration leaves ([`dispatch_and_submit`] + [
+//! core submit-orchestration leaves ([`dispatch_and_submit`] + [
 //! `fetch_fee_history`]) + the `PySubmitCandidate` builder + the local
 //! [`ReceiptProbe`] impl.
 //!
-//! These close the cutover: the example's Python `dispatch_profitable_results`
-//! submit-tail (the mutual-excl guard → `claim_nonce` → access-list re-compute
-//! → sign → `eth_sendRawTransaction` → `reserve_pools` → monitor-spawn) becomes
-//! a `dispatch_and_submit_py(candidates, dispatcher, provider, signer, probe,
-//! …)` call, + `_apply_block_if_ready`'s `eth_feeHistory`+hex-decode block
-//! becomes `fetch_fee_history_py(…)`.
+//! `dispatch_and_submit_py` owns the submit tail (the mutual-exclusion guard →
+//! nonce claim → access-list re-compute → sign → `eth_sendRawTransaction` →
+//! `reserve_pools` → monitor-spawn); `fetch_fee_history_py` owns the
+//! `eth_feeHistory` read + hex decode + dispatcher recording.
 //!
 //! # GIL discipline (ADR-005)
 //!
@@ -78,8 +76,7 @@ impl PySubmitCandidate {
     /// Build a submit candidate from the dispatch fan-out's per-path fields.
     ///
     /// All money fields are wei (`int`). The priority fee is the
-    /// `_compute_priority_fee` output (computed Python-side — S3 stay-Python —
-    /// + passed IN).
+    /// `_compute_priority_fee` output, computed Python-side and passed in.
     #[new]
     #[pyo3(signature = (
         candidate_id, gross_profit, net_profit, gas_used, priority_fee,
@@ -141,8 +138,6 @@ impl PySubmitCandidate {
         Ok(Self { inner })
     }
 
-    // ── read-only getters (the rewired `[dispatch]` per-path log reads these
-    //    from each survivor — A5). --------------------------------------------
     #[getter]
     fn candidate_id(&self) -> crate::simulation::identity::PyCandidateId {
         crate::simulation::identity::PyCandidateId::wrap(self.inner.candidate_id)
@@ -159,7 +154,7 @@ impl PySubmitCandidate {
     }
 
     /// The composed `execute(bytes, uint256)` calldata (the exact bytes the
-    /// submit leaf signs + broadcasts). Forensic/fork-replay seam (R3b): a
+    /// submit leaf signs + broadcasts). Forensic/fork-replay seam: a
     /// candidate judged submittable must be replayable at its solve block.
     #[getter]
     fn execute_calldata<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
@@ -244,11 +239,9 @@ impl ReceiptProbe for PyReceiptProbe {
 
 /// Route a batch of profitable candidates through the Rust submit leaf.
 ///
-/// This replaces the Python submit-tail of `dispatch_profitable_results`
-/// (the mutual-excl guard → `claim_nonce` → access-list re-compute → sign →
-/// `eth_sendRawTransaction` → `reserve_pools` → monitor-spawn). Python builds
-/// the `PySubmitCandidate` list from `gas_profitable` (encode/sim/gas stays
-/// Python — S3 stay-Python), then hands the batch + the coordination args.
+/// Python builds the `PySubmitCandidate` list from `gas_profitable`
+/// (encode/sim/gas stays Python), then hands the batch + the coordination
+/// args.
 ///
 /// Args:
 ///     `candidates`: list of `PySubmitCandidate` (profit-descending is
@@ -393,8 +386,7 @@ pub fn dispatch_and_submit_py<'py>(
 
 /// Route a single-block `eth_feeHistory` RPC + record into the dispatcher.
 ///
-/// Replaces `_apply_block_if_ready`'s `make_request('eth_feeHistory')` +
-/// hex-decode block. Returns `True` if the fee history was fetched + recorded
+/// Returns `True` if the fee history was fetched + recorded
 /// (the dispatcher's `record_priority_fees` ran), `False` on RPC failure
 /// (matches the Python `except Web3Exception: pass` no-op).
 ///
@@ -433,8 +425,7 @@ pub fn fetch_fee_history_py<'py>(
     })
 }
 
-/// Map `U256` from a Python int (decimal or `hex` string) — mirrors the
-/// `executor/mod.rs` `obj_to_u256` helper shape.
+/// Map `U256` from a Python int (decimal or `hex` string).
 fn int_to_u256(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     // Direct int extraction (the common path — Python passes a plain int).
     if let Ok(n) = obj.extract::<u128>() {

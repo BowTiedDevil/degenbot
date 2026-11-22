@@ -117,7 +117,7 @@ class ChainlinkPriceFeed:
 
         Note: the Python shell `ChainlinkPriceContract.price` (a float)
         computes `float(answer) / 10**decimals` from `latest_round_data` +
-        `decimals` to preserve the prior float-exact behavior *including* the
+        `decimals` to preserve the shell's float-exact behavior *including* the
         fractional part; this `price` truncates and is exposed for direct
         Rust/standalone consumers.
         """

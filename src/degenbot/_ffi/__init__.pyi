@@ -4617,10 +4617,6 @@ def build_path_graph(
     to `find_paths_rust`; the typed edge families and address maps reconstruct
     `PathStep`s through `PathStepBuilder`.
 
-    This replaces Python's `_prepare_graph` + `_get_tokens_with_min_degree`
-    inline SQLAlchemy selects with a single GIL-released Rust pass. The DFS
-    half (`find_paths_rust`) + `_build_path_steps` shape are unchanged.
-
     Args:
         database_path: The SQLite file path (resolved by the Python caller
             from `db._engine.url.database`).
@@ -4885,11 +4881,6 @@ def find_paths_async_rust(
         `list[list[tuple[int, int]]]`; exhaustion raises
         `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
 
-    Raises:
-        ValueError: when ``max_depth`` is negative or above the hop ceiling
-            ``4294967295``, exactly as [`find_paths_rust`] refuses it (the two
-            seams share one projection).
-
     # Errors
 
     Returns `PyValueError` when `max_depth` is negative or wider than
@@ -4908,8 +4899,8 @@ def find_paths_rust(
     """
     Find arbitrage paths (cycles) through a liquidity-pool graph.
 
-    This is the Rust-backed DFS that replaces the Python ``networkx``-based
-    ``_dfs``. Returns a **lazy iterator** — paths are yielded one at a time,
+    The Rust-backed DFS over the flat edge list. Returns a **lazy iterator** —
+    paths are yielded one at a time,
     so memory usage is bounded even for graphs that produce millions of paths.
 
     Args:
@@ -4929,11 +4920,6 @@ def find_paths_rust(
     Returns:
         A ``PathIterator`` — iterate it (``for path in iter: ...``) to lazily
         yield paths, each a list of ``(pool_id, pool_kind)`` tuples.
-
-    Raises:
-        ValueError: when ``max_depth`` is negative or above the hop ceiling
-            ``4294967295``. ``None`` (unlimited) and ``0`` are both accepted;
-            ``0`` admits no completed path.
 
     # Errors
 
@@ -5166,7 +5152,7 @@ def resolved_node_uri_for_tests(chain_id: SupportsIndex, scope: str) -> str:
 
 def runtime_status() -> dict:
     """
-    The runtime fleet status (FF-T5): budget, plan, census - a dict with
+    The runtime fleet status: budget, plan, census - a dict with
     `fleet_booted`, `profile`, `quota_cpus`, `binding`,
     `oversubscribed`, `tier_refused`, `budget` (the projected seat/share
     table), and `census` (the worker rows, with the binding per
@@ -5215,8 +5201,8 @@ def shutdown_log_drainer() -> None:
     remaining records.
 
     This is idempotent: calling it multiple times is safe. The drainer
-    thread is joined implicitly (it exits on its own after the shutdown
-    flag + final flush).
+    thread is not joined — it exits on its own after the shutdown flag +
+    final flush.
     """
 
 def solve_balancer_weighted_basket(
@@ -5231,9 +5217,8 @@ def solve_balancer_weighted_basket(
     """
     `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 
-    Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`].
-    Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
-    Harrington, `QuantAMM` Equation 9).
+    Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`]
+    (Willetts & Harrington, `QuantAMM` Equation 9).
 
     # Arguments
 

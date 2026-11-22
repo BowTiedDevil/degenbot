@@ -35,10 +35,11 @@ class Dispatcher:
     """
     The coordination-state value object for the dispatch loop.
 
-    Bundles the mutable containers `consume_result_batches` /
-    `dispatch_profitable_results` / `monitor_pending_transaction` previously
-    held as a Python mirror: pending nonces/pools, in-flight task count, the
-    current-block reference, the block-time ring, per-block priority fees.
+    Bundles the mutable containers the submit-orchestration leaves
+    (`consume_result_batches` / `dispatch_profitable_results` /
+    `monitor_pending_transaction`) share: pending nonces/pools, in-flight
+    task count, the current-block reference, the block-time ring, per-block
+    priority fees.
     `PathSuppression` is **not** composed ; it lives behind its
     own `Arc<Mutex<PathSuppression>>` on `PyDispatcher` so the simulation seam
     locks it directly, never the `Dispatcher`.
@@ -94,7 +95,7 @@ class Dispatcher:
         """
         The current divergent-pool set — `list[dict]`, one per pool flagged
         `SolverCalc` within the decay window. Each dict carries `family`
-        (`"V2"`/`"V3"`/`"V4"`), the pool identity (`address` for V2/V3,
+        (`"v2"`/`"v3"`/`"v4"`), the pool identity (`address` for V2/V3,
         `pool_id` bytes32 hex for V4), + `last_flagged_block`. Drives the
         operator's `[pool-divergence-memo]` monitoring view of the persistent
         memo state (distinct from the per-block `[pool-divergence]` signal the
@@ -114,10 +115,6 @@ class Dispatcher:
         confirmed `FoT` (>= K distinct failing pools, 0 successes, within the
         decay window). Each entry is the token's checksummed address. Drives
         the operator's `[fot]` monitoring view + the denylist feed.
-
-        Panics (crashes the driver) if any confirmed token is in the
-        operator's verified-non-FoT set — the hard classifier-invariant guard
-        (coarse, per the operator's directive).
         """
     def is_path_blocked(self, /, path_pools: set[str], committed_pools: set[str]) -> bool:
         """
@@ -333,8 +330,7 @@ class SubmitCandidate:
         Build a submit candidate from the dispatch fan-out's per-path fields.
 
         All money fields are wei (`int`). The priority fee is the
-        `_compute_priority_fee` output (computed Python-side — S3 stay-Python —
-        + passed IN).
+        `_compute_priority_fee` output, computed Python-side and passed in.
         """
     @property
     def candidate_id(self, /) -> CandidateId: ...
@@ -342,7 +338,7 @@ class SubmitCandidate:
     def execute_calldata(self, /) -> bytes:
         """
         The composed `execute(bytes, uint256)` calldata (the exact bytes the
-        submit leaf signs + broadcasts). Forensic/fork-replay seam (R3b): a
+        submit leaf signs + broadcasts). Forensic/fork-replay seam: a
         candidate judged submittable must be replayable at its solve block.
         """
     @property
@@ -509,11 +505,9 @@ def dispatch_and_submit_py(
     """
     Route a batch of profitable candidates through the Rust submit leaf.
 
-    This replaces the Python submit-tail of `dispatch_profitable_results`
-    (the mutual-excl guard → `claim_nonce` → access-list re-compute → sign →
-    `eth_sendRawTransaction` → `reserve_pools` → monitor-spawn). Python builds
-    the `PySubmitCandidate` list from `gas_profitable` (encode/sim/gas stays
-    Python — S3 stay-Python), then hands the batch + the coordination args.
+    Python builds the `PySubmitCandidate` list from `gas_profitable`
+    (encode/sim/gas stays Python), then hands the batch + the coordination
+    args.
 
     Args:
         `candidates`: list of `PySubmitCandidate` (profit-descending is
@@ -558,8 +552,7 @@ def fetch_fee_history_py(
     """
     Route a single-block `eth_feeHistory` RPC + record into the dispatcher.
 
-    Replaces `_apply_block_if_ready`'s `make_request('eth_feeHistory')` +
-    hex-decode block. Returns `True` if the fee history was fetched + recorded
+    Returns `True` if the fee history was fetched + recorded
     (the dispatcher's `record_priority_fees` ran), `False` on RPC failure
     (matches the Python `except Web3Exception: pass` no-op).
 

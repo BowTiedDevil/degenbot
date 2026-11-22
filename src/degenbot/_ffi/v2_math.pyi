@@ -2,19 +2,12 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Creates `degenbot._ffi.v2_math` and registers the two V2
-constant-product calcs on it with un-prefixed names. The Python
-companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
-re-export these as the stable import path, decoupling consumers
-from `degenbot._ffi`.
-
-# Errors
-
-Returns `PyErr` if any function fails to register.
 The `degenbot._ffi.v2_math` Python submodule (declarative
 `#[pymodule]`), carrying the V2 constant-product swap-math pyfunctions.
-The parent module registers the submodule itself; the `sys.modules`
-entry lives in the parent's shared helper.
+The Python companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
+re-export these as the stable import path, decoupling consumers from
+`degenbot._ffi`. The parent module registers the submodule itself; the
+`sys.modules` entry lives in the parent's shared helper.
 """
 
 from typing import Any

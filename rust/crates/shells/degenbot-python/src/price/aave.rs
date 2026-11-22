@@ -2,8 +2,7 @@
 //! [`degenbot_price::AavePriceOracle`].
 //!
 //! Python companion shell `OraclePriceFetcher`
-//! (:mod:`degenbot.aave.analysis.orchestrator`) delegates `fetch` to this,
-//! replacing the inline `raw_call` / `encode_function_calldata` loop. The
+//! (:mod:`degenbot.aave.analysis.orchestrator`) delegates `fetch` to this. The
 //! tolerant per-asset skip-on-error behavior (matching the Python
 //! `ContractLogicError` / `ValueError` catch) lives in the Rust core.
 
@@ -86,8 +85,6 @@ impl PyAavePriceOracle {
         py: Python<'py>,
         asset_addresses: Vec<String>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        // Parse + checksum all inputs up front (raises on a malformed address,
-        // matching Contract::new's validation on the oracle address itself).
         let parsed: Vec<(String, alloy::primitives::Address)> = asset_addresses
             .into_iter()
             .map(|addr| {
@@ -107,8 +104,8 @@ impl PyAavePriceOracle {
                 })
             });
 
-        // Map back to the checksummed input strings; the core already logged
-        // a warning per failed asset.
+        // Failed assets are omitted here; the core logged a warning per
+        // failure.
         let result = PyDict::new(py);
         for (checksum, addr) in parsed {
             if let Some(price) = prices.get(&addr) {

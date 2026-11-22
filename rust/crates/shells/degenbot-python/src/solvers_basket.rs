@@ -8,9 +8,8 @@ use pyo3::prelude::*;
 
 /// `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 ///
-/// Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`].
-/// Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
-/// Harrington, `QuantAMM` Equation 9).
+/// Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`]
+/// (Willetts & Harrington, `QuantAMM` Equation 9).
 ///
 /// # Arguments
 ///

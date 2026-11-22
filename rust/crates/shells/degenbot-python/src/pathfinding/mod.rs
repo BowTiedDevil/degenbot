@@ -8,17 +8,15 @@
 //! (`degenbot_db::fetch_path_graph_edges` and `fetch_tokens_with_min_degree`),
 //! the candidate-token edge filter, and the core
 //! `degenbot_pathfinding::graph::PathGraph` build + `prune_dead_ends`; the
-//! Python `_prepare_graph` becomes a delegating shell. The DFS half
-//! (`find_paths_rust`) is unchanged.
+//! Python `_prepare_graph` delegates to it.
 
 #![expect(clippy::doc_markdown)]
 
 use crate::prelude::*;
 #[cfg(all(feature = "pathfinding", feature = "db"))]
-// Note: `alloy::primitives::Address` is no longer named in this module
-// after the GIL fix — the address maps are pre-computed to
-// checksum STRINGS inside the `py.detach` span in `build_path_graph`, so
-// `PathGraph` holds no `Address` values. Re-add the import if a
+// The address maps are pre-computed to checksum strings inside the
+// `py.detach` span in `build_path_graph`, so `PathGraph` holds no
+// `alloy::primitives::Address` values; re-add the import only if a
 // downstream helper here regains an `Address`-typed surface.
 #[cfg(all(feature = "pathfinding", feature = "db"))]
 use degenbot_db::DegenbotDb;
@@ -585,8 +583,8 @@ fn project_max_depth(raw: Option<Bound<'_, PyInt>>) -> PyResult<Option<u32>> {
 
 /// Find arbitrage paths (cycles) through a liquidity-pool graph.
 ///
-/// This is the Rust-backed DFS that replaces the Python ``networkx``-based
-/// ``_dfs``. Returns a **lazy iterator** — paths are yielded one at a time,
+/// The Rust-backed DFS over the flat edge list. Returns a **lazy iterator** —
+/// paths are yielded one at a time,
 /// so memory usage is bounded even for graphs that produce millions of paths.
 ///
 /// Args:
@@ -606,11 +604,6 @@ fn project_max_depth(raw: Option<Bound<'_, PyInt>>) -> PyResult<Option<u32>> {
 /// Returns:
 ///     A ``PathIterator`` — iterate it (``for path in iter: ...``) to lazily
 ///     yield paths, each a list of ``(pool_id, pool_kind)`` tuples.
-///
-/// Raises:
-///     ValueError: when ``max_depth`` is negative or above the hop ceiling
-///         ``4294967295``. ``None`` (unlimited) and ``0`` are both accepted;
-///         ``0`` admits no completed path.
 ///
 /// # Errors
 ///
@@ -680,11 +673,6 @@ pub fn find_paths_rust(
 ///     A `PathBatchIterator` — `async for batch in iter:` yields
 ///     `list[list[tuple[int, int]]]`; exhaustion raises
 ///     `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
-///
-/// Raises:
-///     ValueError: when ``max_depth`` is negative or above the hop ceiling
-///         ``4294967295``, exactly as [`find_paths_rust`] refuses it (the two
-///         seams share one projection).
 ///
 /// # Errors
 ///
@@ -781,10 +769,6 @@ fn build_owned_finder(
 /// to `find_paths_rust`; the typed edge families and address maps reconstruct
 /// `PathStep`s through `PathStepBuilder`.
 ///
-/// This replaces Python's `_prepare_graph` + `_get_tokens_with_min_degree`
-/// inline SQLAlchemy selects with a single GIL-released Rust pass. The DFS
-/// half (`find_paths_rust`) + `_build_path_steps` shape are unchanged.
-///
 /// Args:
 ///     database_path: The SQLite file path (resolved by the Python caller
 ///         from `db._engine.url.database`).
@@ -865,10 +849,10 @@ pub fn build_path_graph(
 /// The address maps hold PRE-COMPUTED checksum strings (not `Address`) so
 /// `build_graph_value` does no keccak/EIP-55 work under the GIL — the
 /// `to_checksum(None)` calls run inside the `py.detach` span in
-/// `build_path_graph`: the keccak loop over tens of thousands
-/// of V2/V3 addresses previously held the GIL for ~24 s, starving every
-/// tokio worker that needs `PyGILState_Ensure` and triggering the dispatch
-/// circular deadlock during the rolling-start `build_paths` overlap).
+/// `build_path_graph`: a keccak loop over tens of thousands of V2/V3
+/// addresses under the GIL holds it for ~24 s, starving every tokio worker
+/// that needs `PyGILState_Ensure` and triggering the dispatch circular
+/// deadlock during the rolling-start `build_paths` overlap.
 //
 // The maps are STD collections, not the core's `hashbrown` maps: PyO3 (without
 // its `hashbrown` feature) extracts dict arguments into `std::collections`
@@ -928,12 +912,8 @@ fn fetch_graph_data(
     }
 
     // Pre-compute EIP-55 checksum strings for every V2/V3 pool address +
-    // every V4 manager address inside this GIL-released span .
-    // `Address::to_checksum(None)` is pure Rust (a keccak256 over the
-    // lowercase-hex address) and does NOT need the GIL; doing it here keeps
-    // `build_graph_value`'s materialization loop GIL-light (only `set_item`
-    // calls). Previously the materialization called `to_checksum` PER pool
-    // while holding the GIL, a ~24 s keccak loop that starved tokio workers.
+    // every V4 manager address inside this GIL-released span: per-pool
+    // `to_checksum` under the GIL held it for ~24 s (see `GraphBuildResult`).
     let v2v3_checksums: HashMap<u64, String> = data
         .v2v3_addresses
         .iter()

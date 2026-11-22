@@ -12,8 +12,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 
 use crate::conversion::alloy as alloy_py;
 
-/// Extract a Python `int` into a `U256` (local copy of the math-binding
-/// helper pattern, mirroring `solidly_math::extract_u256`).
+/// Extract a Python `int` into a `U256`.
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     if let Ok(v) = obj.extract::<u64>() {
         return Ok(U256::from(v));
@@ -115,19 +114,12 @@ pub fn calc_exact_out_v2(
     u256_to_py_obj(py, result)
 }
 
-/// Creates `degenbot._ffi.v2_math` and registers the two V2
-/// constant-product calcs on it with un-prefixed names. The Python
-/// companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
-/// re-export these as the stable import path, decoupling consumers
-/// from `degenbot._ffi`.
-///
-/// # Errors
-///
-/// Returns `PyErr` if any function fails to register.
 /// The `degenbot._ffi.v2_math` Python submodule (declarative
 /// `#[pymodule]`), carrying the V2 constant-product swap-math pyfunctions.
-/// The parent module registers the submodule itself; the `sys.modules`
-/// entry lives in the parent's shared helper.
+/// The Python companions `degenbot.uniswap.math` / `degenbot.aerodrome.math`
+/// re-export these as the stable import path, decoupling consumers from
+/// `degenbot._ffi`. The parent module registers the submodule itself; the
+/// `sys.modules` entry lives in the parent's shared helper.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod v2_math {

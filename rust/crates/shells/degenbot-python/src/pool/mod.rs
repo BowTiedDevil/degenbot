@@ -14,16 +14,16 @@
 //! `py.detach(|| core::run_pool_update(...))` releases the GIL across the
 //! WHOLE run (long RPC polls hold NO GIL); the core
 //! never re-acquires it. A Python-side `KeyboardInterrupt` won't
-//! pre-empt mid-chunk (the GIL is released); Task 5's signal handler calls
+//! pre-empt mid-chunk (the GIL is released); the signal handler calls
 //! [`CancelHandle::cancel`] (the cooperative flag the loop polls between
 //! chunks — see [`degenbot_pool_updater::run::run_pool_update`]'s shared-
 //! runtime constraint + the interrupt contract).
 //!
-//! # Owned-runtime constraint (D2)
+//! # Owned-runtime constraint
 //!
 //! [`degenbot_pool_updater::run::run_pool_update`] owns its
 //! `tokio::runtime::Runtime`. Calling it from within an existing tokio
-//! runtime panics ("Cannot start a runtime from within a runtime"). Task 5's
+//! runtime panics ("Cannot start a runtime from within a runtime"). The
 //! CLI driver runs `run_pool_update` from a worker thread with NO ambient
 //! tokio runtime (the standard degenbot CLI doesn't embed one) — the
 //! constraint holds. If a future async-Python driver embeds tokio, wrap the
@@ -39,8 +39,7 @@ use pyo3::types::PyDict;
 
 use degenbot_pool_updater::run::{self, NoProgress, RunError, UpdateReport};
 
-/// Build the `UpdateReport` return `dict` (matches the `db_heal_database`
-/// `dict`-return idiom from `67691f7c`).
+/// Build the `UpdateReport` return `dict`.
 ///
 /// Shape: `{"chain_id": int, "from_block": int, "to_block": int,
 /// "chunks_committed": int, "total_pools_written": int,
@@ -71,7 +70,7 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
 /// The GIL is released across the WHOLE run (`py.detach`) and the core
 /// emits its own throttled operator progress lines — no per-chunk
 /// GIL re-acquisition. A Python-side `KeyboardInterrupt` won't pre-empt
-/// mid-chunk; Task 5's SIGINT handler calls `cancel_handle.cancel()` (the
+/// mid-chunk; the SIGINT handler calls `cancel_handle.cancel()` (the
 /// cooperative flag the loop polls between chunks — the interrupt contract
 /// (`docs/architecture/chunk-atomicity.md`):
 /// SIGINT between chunks → honored immediately; SIGINT mid-chunk → the chunk
@@ -285,7 +284,7 @@ fn parse_verify_identity(
 /// `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` batched through
 /// Multicall3 for `family="v3"`, the singleton
 /// `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
-/// list (empty = GREEN — the DB matches the chain at `block_number`).
+/// list (empty when the DB matches the chain at `block_number`).
 ///
 /// This is the ad-hoc / spot-check sibling of the pre-commit gate every
 /// `run_pool_update` chunk runs; the gate runs the SAME core verify BEFORE the
@@ -426,7 +425,7 @@ fn verify_liquidity_map(
 }
 
 /// Encode a [`degenbot_pool_updater::LiquidityDivergence`] list as a list of
-/// dicts (empty = GREEN). Each dict carries `variant` + the named fields for
+/// dicts (empty when nothing diverges). Each dict carries `variant` + the named fields for
 /// bisect-able triage (the same shape the pre-commit gate surfaces).
 #[expect(clippy::unwrap_used)] // dict.set_item can't fail on these literal values
 fn divergences_to_dicts(
@@ -484,9 +483,9 @@ fn divergences_to_dicts(
     out
 }
 
-// `CancelHandle` lives in `cancel.rs` (extracted) — shared with the Aave
-// updater seam. Re-exported here so `run_pool_update`'s `cancel_handle:
-// &CancelHandle` resolves + existing `pool::CancelHandle` references work.
+// Shared with the Aave updater seam. Re-exported here so `run_pool_update`'s
+// `cancel_handle: &CancelHandle` resolves + existing `pool::CancelHandle`
+// references work.
 pub use crate::cancel::CancelHandle;
 
 /// Map a [`RunError`] to a Python exception.
@@ -494,8 +493,8 @@ pub use crate::cancel::CancelHandle;
 /// `RunError::Cancelled` becomes `RuntimeError` ("cancelled by cancel flag")
 /// so the driver can distinguish a cooperative cancel from a DB/RPC failure
 /// (commit-or-rollback integrity holds either way). `Db`/`Provider`/`Runtime`
-/// map to `ValueError` (the degenbot convention for operation failures, mir
-/// roring [`crate::db::db_err_to_py`] where `Db` variants already land).
+/// map to `ValueError` (the degenbot convention for operation failures,
+/// mirroring [`crate::db::db_err_to_py`] where `Db` variants already land).
 fn run_err_to_py(err: RunError) -> PyErr {
     use pyo3::exceptions::{PyRuntimeError, PyValueError};
     match err {
@@ -504,12 +503,6 @@ fn run_err_to_py(err: RunError) -> PyErr {
     }
 }
 
-/// Register the pool-updater seam on `m` (feature = "pool").
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_function`/`add_class` call fails (a name
-/// collision); propagated unchanged to the `#[pymodule]` caller.
 /// The `degenbot._ffi.pool` Python submodule (declarative `#[pymodule]`),
 /// carrying the pool-updater chunk-loop + liquidity-map verify pyfunctions.
 /// The parent module registers the submodule itself and its `sys.modules`

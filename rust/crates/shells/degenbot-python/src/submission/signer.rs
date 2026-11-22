@@ -3,8 +3,7 @@
 //! Python constructs this ONCE with the operator private key (hex string or
 //! 32 bytes) + the chain id; the held [`PrivateKeySigner`] lives in Rust for
 //! the signer's lifetime — the key **never round-trips back into Python** per
-//! transaction (the prior `eth_account.Account.sign_transaction(...,
-//! private_key=operator_private_key)` path crossed the key on every submit).
+//! transaction, so no Python frame ever holds the operator key.
 //!
 //! [`PyTxSigner::sign_eip1559`] releases the GIL around the synchronous ECDSA
 //! signing (CPU-bound secp256k1, no network — unlike the price readers'
@@ -99,9 +98,6 @@ impl PyTxSigner {
         py: Python<'py>,
         tx_params: &PyTxParams,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        // Move the TxParams out (the Python caller built + finalized it; the
-        // wrapper owns no business logic — pure arg extraction → GIL release →
-        // core call → result wrap; the ADR-005 thin-wrapper discipline).
         let params = tx_params.inner.clone();
         // Release the GIL for the CPU-bound ECDSA signing. No async runtime
         // needed (signing is sync / no I/O).

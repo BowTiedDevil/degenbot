@@ -20,8 +20,7 @@
 //!   through `call_on_ambient_runtime`), while an off-runtime thread drives
 //!   the process-wide shared runtime (the updater entries, which arrive on a
 //!   Python worker thread with no runtime context at all).
-//! - [`UPDATER_MAX_RETRIES`] is the updater family's ONE retry budget (the
-//!   literal that used to sit at every entry).
+//! - [`UPDATER_MAX_RETRIES`] is the updater family's ONE retry budget.
 //! - [`require_ambient_runtime`] is the ONE spelling of the verify seams'
 //!   ambient-runtime policy.
 //!
@@ -78,12 +77,11 @@ pub fn drive<F: Future>(fut: F) -> F::Output {
 /// The verify seams' runtime policy: the calling thread MUST already stand in
 /// an ambient tokio context.
 ///
-/// These seams used to build and drop a full multi-thread runtime per call —
-/// its default worker count is the raw core count, so the live process
-/// accumulated dead `tokio-rt-worker` threads. They now refuse a missing
-/// ambient runtime with the typed error instead of quietly driving the shared
-/// runtime, so a Python driver that forgot `call_on_ambient_runtime` fails
-/// loudly at the policy line rather than papering over it.
+/// The refusal is deliberate: a per-call multi-thread runtime's default
+/// worker count is the raw core count, so quietly building one leaks dead
+/// `tokio-rt-worker` threads into the live process. A Python driver that
+/// forgot `call_on_ambient_runtime` fails loudly at the policy line rather
+/// than being papered over.
 ///
 /// # Errors
 ///

@@ -2,15 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
-the declarative `crate::pool::pool` `#[pymodule]`. `CancelHandle` is
-registered separately by the declarative `crate::cancel::cancel`
-`#[pymodule]` (shared).
-
-# Errors
-
-Returns a [`PyErr`] if the `add_function` call fails (a name collision);
-propagated unchanged to the `#[pymodule]` caller.
 The `degenbot._ffi.aave` Python submodule (declarative `#[pymodule]`;
 the Python-facing name is `aave`, not `aave_updater`), carrying the Aave
 chunk-loop + verify/maintenance pyfunctions. The parent module registers
@@ -45,9 +36,7 @@ def activate_aave_market(
     pool_address_provider, gho_token_address, rpc_url) -> dict`
 
     Seed (or re-activate) an Aave V3 market — the ONE-TIME setup the chunk
-    loop's `run_aave_update` bootstraps from. Rust-owned replacement for the
-    Python `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on
-    the Aave path after the parity-gate retirement. Activates the market,
+    loop's `run_aave_update` bootstraps from. Activates the market,
     inserts the `POOL_ADDRESS_PROVIDER` contract row, + seeds the GHO
     `erc20_tokens` + `aave_gho_tokens` rows, all in ONE transaction.
 
@@ -71,8 +60,7 @@ def cleanup_zero_balance_positions(database_path: str, market_id: SupportsIndex)
     """
     `degenbot._ffi.aave.cleanup_zero_balance_positions(database_path, market_id)`
 
-    Delete all zero-balance collateral + debt positions for `market_id`.
-    Delete every zero-balance collateral + debt row for the market.
+    Delete every zero-balance collateral + debt row for `market_id`.
     Opens the DB for writes, deletes, + commits. The GIL is released across
     the call.
     """
@@ -81,9 +69,8 @@ def deactivate_aave_market(database_path: str, market_id: SupportsIndex) -> None
     """
     `degenbot._ffi.aave.deactivate_aave_market(database_path, market_id) -> None`
 
-    Set `active = False` for `market_id`. Rust-owned replacement for the
-    Python `deactivate_mainnet_aave_v3` (commands.py). The GIL is released
-    across the call.
+    Set `active = False` for `market_id`. The GIL is released across the
+    call.
 
     # Raises
 
@@ -149,8 +136,7 @@ def run_aave_update(
     - `max_chunks` — `None` to advance to `to_block`/tip; `Some(n)` to stop
       after committing `n` chunks (one-chunk mode). `last_update_block` is
       advanced to the last committed chunk's end, so the next run resumes
-      from there. Previously the Python `--one-chunk` flag was downgraded to
-      a warning by the cutover shell; this restores first-class support.
+      from there.
 
     # Returns
 
@@ -193,7 +179,8 @@ def verify_all_positions_on_chain(
     4. GHO discount percent (`getDiscountPercent` on the GHO vToken,
        with the revision-based skip guard).
 
-    Returns a list of divergence dicts (empty = GREEN). Each dict has a
+    Returns a list of divergence dicts (empty when every check passes). Each
+    dict has a
     `check` field (`"scaled_token"`, `"stk_aave_balance"`, or
     `"gho_discount"`) plus the relevant fields for that check type.
 
@@ -223,7 +210,7 @@ def verify_touched_positions_on_chain(
     `degenbot._ffi.aave.verify_touched_positions_on_chain(database_path, rpc_url,
     market_id, chain_id, block_number, touched_users=None) -> list[dict]`
 
-    Minimal-slice Rust port of Python's
+    Rust port of Python's
     `verification.py::verify_scaled_token_positions` (collateral + debt
     dimensions only).
 
@@ -235,14 +222,14 @@ def verify_touched_positions_on_chain(
     aToken / vToken at `block_number` + asserts equality with the DB `balance`
     + `last_index`.
 
-    Returns a list of divergence dicts (empty = GREEN). Each dict has:
+    Returns a list of divergence dicts (empty when every position verifies).
+    Each dict has:
     `kind`, `position_id`, `user_address`, `token_address`, `block_number`,
     `field`, `expected`, `actual` — the same shape the drive harness's
     compare divergences emit, so it's bisect-able.
 
     Per-position `eth_call`s — acceptable for the touched-users-per-chunk case
-    (small set). Multicall3 batching for the market-wide verify is the natural
-    extension .
+    (small set).
 
     The GIL is released across the whole call (`py.detach`); the orchestrator
     drives its RPC fetches/verifies on the process-wide shared runtime

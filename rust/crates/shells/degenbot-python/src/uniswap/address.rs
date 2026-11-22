@@ -43,9 +43,9 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 /// ```
 #[pyfunction(signature = (address))]
 pub fn to_checksum_address(address: &Bound<'_, PyAny>) -> PyResult<String> {
-    // SAFETY: to_checksum_address takes ~50ns — less than the ~200ns
-    // GIL release/reacquire overhead. Holding the GIL is faster.
-    // Verified by `cargo bench --bench address_utils`.
+    // to_checksum_address takes ~50ns — below the ~200ns GIL
+    // release/reacquire overhead, so holding the GIL is faster (measured by
+    // `cargo bench --bench address_utils`).
     if let Ok(s) = address.extract::<&str>() {
         return to_checksum_address_str(s)
             .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()));
@@ -132,12 +132,6 @@ pub fn compute_aerodrome_v3_pool_address(
         &addr,
     ))
 }
-
-// --- Uniswap V2/V3 pool-address derivations ---------------------------------
-//
-// Thin bindings over the pure-Rust `degenbot_uniswap::create2` family —
-// the Python counterparts in `src/degenbot/uniswap/v{2,3}_functions.py` and
-// `src/degenbot/contract/addresses.py` delegate here.
 
 fn parse_b256_hex(hex_str: &str, field: &str) -> PyResult<alloy::primitives::B256> {
     let bytes = crate::hex_utils::decode_hex(hex_str)
