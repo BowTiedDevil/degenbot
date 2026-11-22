@@ -314,8 +314,11 @@ const ADDRESS_PROVIDER_TOPICS: [&str; 6] = [
 /// `BOOTSTRAP_WINDOW`).
 const BOOTSTRAP_WINDOW: u64 = 2_000;
 
-/// The single block the fixture window collapses to (bootstrap block + 1).
-const FIXTURE_BLOCK: u64 = 16_291_071;
+/// The reset cursor's next block and the fixture window's first block.
+const FIXTURE_START_BLOCK: u64 = 16_291_071;
+const POOL_PROXY_CREATED_BLOCK: u64 = 16_291_127;
+const CONFIGURATOR_PROXY_CREATED_BLOCK: u64 = 16_291_130;
+const FIXTURE_END_BLOCK: u64 = CONFIGURATOR_PROXY_CREATED_BLOCK;
 
 /// The POOL proxy's right-padded ASCII bytes32 id (the `ProxyCreated` topic 1).
 const POOL_ID_TOPIC: &str = "0x504f4f4c00000000000000000000000000000000000000000000000000000000";
@@ -381,13 +384,14 @@ fn proxy_created_log(
     id: &str,
     proxy: &str,
     implementation: &str,
+    block_number: u64,
     log_index: u64,
 ) -> serde_json::Value {
     let word = |addr: &str| format!("0x000000000000000000000000{}", &addr["0x".len()..]);
     serde_json::json!({
         "address": POOL_ADDRESS_PROVIDER.to_lowercase(),
         "blockHash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
-        "blockNumber": FIXTURE_BLOCK.to_string(),
+        "blockNumber": block_number.to_string(),
         "blockTimestamp": "0",
         "data": "0x",
         "logIndex": log_index.to_string(),
@@ -398,7 +402,7 @@ fn proxy_created_log(
             word(proxy),
             word(implementation),
         ],
-        "transactionHash": "0xa17567fa201a78b66c43e6ab178559f8c1d5d308fe944c0bd2c39b5e585097dc",
+        "transactionHash": format!("0x{block_number:064x}"),
         "transactionIndex": "0",
     })
 }
@@ -411,11 +415,11 @@ fn proxy_created_log(
 /// contract inserts and stamps the cursor at the window end.
 #[expect(clippy::too_many_lines)]
 fn completing_sync_cassette() -> CassetteReplayTransport {
-    let from_block = u64::try_from(ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK).unwrap() + 1;
+    let from_block = FIXTURE_START_BLOCK;
     let boot_end = from_block + BOOTSTRAP_WINDOW;
     let span = CassetteSpan {
         from_block,
-        to_block: from_block,
+        to_block: FIXTURE_END_BLOCK,
     };
     let mut entries = std::collections::BTreeMap::new();
     let mut add = |method: &str, params: serde_json::Value, result: serde_json::Value| {
@@ -428,18 +432,23 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
             },
         );
     };
-    let block = FIXTURE_BLOCK.to_string();
-
     // The bootstrap's ProxyCreated fetch over the whole bootstrap window.
     add(
         "eth_getLogs",
         serde_json::Value::Array(vec![bootstrap_filter(from_block, boot_end)]),
         serde_json::json!([
-            proxy_created_log(POOL_ID_TOPIC, POOL, POOL_IMPLEMENTATION, 0),
+            proxy_created_log(
+                POOL_ID_TOPIC,
+                POOL,
+                POOL_IMPLEMENTATION,
+                POOL_PROXY_CREATED_BLOCK,
+                0
+            ),
             proxy_created_log(
                 CONFIGURATOR_ID_TOPIC,
                 CONFIGURATOR,
                 CONFIGURATOR_IMPLEMENTATION,
+                CONFIGURATOR_PROXY_CREATED_BLOCK,
                 1
             ),
         ]),
@@ -449,22 +458,33 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
     let revision = |add: &mut dyn FnMut(&str, serde_json::Value, serde_json::Value),
                     selector: &str,
                     target: &str,
+                    block_number: u64,
                     value: u64| {
         add(
             "eth_call",
-            serde_json::json!([{"input": selector, "to": target.to_lowercase()}, block]),
+            serde_json::json!([
+                {"input": selector, "to": target.to_lowercase()},
+                block_number.to_string()
+            ]),
             serde_json::json!(format!("0x{:064x}", value)),
         );
     };
-    revision(&mut add, POOL_REVISION_CALLDATA, POOL_IMPLEMENTATION, 11);
+    revision(
+        &mut add,
+        POOL_REVISION_CALLDATA,
+        POOL_IMPLEMENTATION,
+        POOL_PROXY_CREATED_BLOCK,
+        11,
+    );
     revision(
         &mut add,
         CONFIGURATOR_REVISION_CALLDATA,
         CONFIGURATOR_IMPLEMENTATION,
+        CONFIGURATOR_PROXY_CREATED_BLOCK,
         8,
     );
 
-    // The chunk loop's fetch passes over [FIXTURE_BLOCK, FIXTURE_BLOCK]. The
+    // The chunk loop's fetch passes over the full fixture window. The
     // address-provider pass re-serves the same two ProxyCreated events (the
     // idempotent re-encounter the bootstrap's apply is built for).
     let chunk_filter = |address: Option<&str>, topics: serde_json::Value| {
@@ -472,8 +492,14 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
         if let Some(address) = address {
             filter.insert("address".to_string(), serde_json::json!(address));
         }
-        filter.insert("fromBlock".to_string(), serde_json::json!(block));
-        filter.insert("toBlock".to_string(), serde_json::json!(block));
+        filter.insert(
+            "fromBlock".to_string(),
+            serde_json::json!(from_block.to_string()),
+        );
+        filter.insert(
+            "toBlock".to_string(),
+            serde_json::json!(FIXTURE_END_BLOCK.to_string()),
+        );
         filter.insert("topics".to_string(), topics);
         serde_json::Value::Object(filter)
     };
@@ -484,11 +510,18 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
             serde_json::json!([ADDRESS_PROVIDER_TOPICS.to_vec()]),
         )]),
         serde_json::json!([
-            proxy_created_log(POOL_ID_TOPIC, POOL, POOL_IMPLEMENTATION, 0),
+            proxy_created_log(
+                POOL_ID_TOPIC,
+                POOL,
+                POOL_IMPLEMENTATION,
+                POOL_PROXY_CREATED_BLOCK,
+                0
+            ),
             proxy_created_log(
                 CONFIGURATOR_ID_TOPIC,
                 CONFIGURATOR,
                 CONFIGURATOR_IMPLEMENTATION,
+                CONFIGURATOR_PROXY_CREATED_BLOCK,
                 1
             ),
         ]),
@@ -545,7 +578,7 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
 /// answer is empty, so the bootstrap resolves nothing and reports its failure —
 /// the observable that a reset market re-entered the cold boot.
 fn bootstrap_only_cassette() -> CassetteReplayTransport {
-    let from_block = u64::try_from(ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK).unwrap() + 1;
+    let from_block = FIXTURE_START_BLOCK;
     let boot_end = from_block + BOOTSTRAP_WINDOW;
     let span = CassetteSpan {
         from_block,
@@ -605,7 +638,7 @@ fn run_once(
 fn a_reset_market_syncs_normally_over_the_fixture_window() {
     let (db, market_id) = populated();
     reset_market(&db, market_id);
-    let (result, requests, served) = run_once(&db, &completing_sync_cassette(), FIXTURE_BLOCK);
+    let (result, requests, served) = run_once(&db, &completing_sync_cassette(), FIXTURE_END_BLOCK);
     assert!(result.is_ok(), "the cold boot must complete: {result:?}");
     let report = result.unwrap();
     assert_eq!(report.chunks_committed, 1);
@@ -613,7 +646,7 @@ fn a_reset_market_syncs_normally_over_the_fixture_window() {
         report.total_events_applied, 2,
         "the two ProxyCreated inserts"
     );
-    assert_eq!(report.to_block, FIXTURE_BLOCK);
+    assert_eq!(report.to_block, FIXTURE_END_BLOCK);
 
     // The run's whole request set is served: the ledger IS the cold-boot
     // request surface a reset state issues (the replay drift gate). Two
@@ -633,7 +666,7 @@ fn a_reset_market_syncs_normally_over_the_fixture_window() {
         .unwrap();
     assert_eq!(
         stamp,
-        Some(i64::try_from(FIXTURE_BLOCK).unwrap()),
+        Some(i64::try_from(FIXTURE_END_BLOCK).unwrap()),
         "the sync commits and advances the cursor normally"
     );
     let (pool_rev, cfg_rev): (Option<i64>, Option<i64>) = conn

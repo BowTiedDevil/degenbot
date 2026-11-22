@@ -92,7 +92,11 @@ pub(super) async fn bootstrap_pool_contracts(
             &ev.id,
             &ev.proxy_address,
             &ev.implementation_address,
-            from_block,
+            log.block_number.ok_or_else(|| {
+                crate::config_dispatch::ConfigDispatchError::DecodeShape(
+                    "ProxyCreated log missing block number".to_string(),
+                )
+            })?,
         )
         .await?
         {
