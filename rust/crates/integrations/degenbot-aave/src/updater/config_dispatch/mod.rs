@@ -2500,4 +2500,302 @@ mod tests {
             Ok(_) => panic!("an all-absent metadata burst must abort the dispatch"),
         }
     }
+
+    // ── the same-tx GHO ReserveInitialized → Mint transition ────────────
+    //
+    // A tx carrying the GHO reserve's `ReserveInitialized` followed by a
+    // GHO vToken `Mint` — the mainnet precedent tx 0xae8e542d… at block
+    // 17699249 (ReserveInitialized logIdx 85, GHO config events logIdx 91)
+    // that the discount-channel fresh-resolution test above pins. The
+    // operation parser resolves the GHO addresses POST-config (the later
+    // operation executed on initialized chain state); the discount
+    // pre-pass reads the transaction-start row.
+
+    /// The GHO side of the fixture: the GHO underlying erc20 row exists
+    /// (id 10) with `aave_gho_tokens.v_token_id` NULL — the
+    /// pre-initialization state whose tx-start read the pre-pass pins.
+    fn seed_linkless_gho_row(conn: &Connection) {
+        let addr_str = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        conn.execute(
+            "INSERT INTO erc20_tokens (id, chain, address) VALUES (10, 1, ?1)",
+            params![addr_str(reserve_init_tokens()[0].0)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_gho_tokens (id, token_id, v_token_id) VALUES (1, 10, NULL)",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// The `ReserveInitialized` log for [`reserve_init_tokens`] (the
+    /// underlying IS the GHO token, so the apply links the GHO row).
+    fn reserve_initialized_log(log_index: u64) -> Log {
+        use degenbot_decoders::aave_event_decoder::AAVE_RESERVE_INITIALIZED_TOPIC;
+        let t = reserve_init_tokens();
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(Address::repeat_byte(0xa4).into_word().as_slice());
+        data.extend_from_slice(t[2].0.into_word().as_slice());
+        data.extend_from_slice(Address::repeat_byte(0xa5).into_word().as_slice());
+        Log {
+            inner: AlloyLog::new_unchecked(
+                Address::repeat_byte(0x77), // the PoolConfigurator emitter
+                vec![
+                    AAVE_RESERVE_INITIALIZED_TOPIC,
+                    t[0].0.into_word(),
+                    t[1].0.into_word(),
+                ],
+                Bytes::from(data),
+            ),
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: Some(B256::from([0xaa; 32])),
+            transaction_index: None,
+            log_index: Some(log_index),
+            removed: false,
+        }
+    }
+
+    /// The GHO vToken `Mint` log (the later operation in the same tx):
+    /// `value == balance_increase` — the pure interest-accrual mint shape.
+    fn gho_vtoken_mint_log(log_index: u64, v_token: Address, user: Address) -> Log {
+        use degenbot_decoders::aave_event_decoder::AAVE_MINT_TOPIC;
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(&U256::from(1_000u64).to_be_bytes::<32>());
+        data.extend_from_slice(&U256::from(1_000u64).to_be_bytes::<32>());
+        data.extend_from_slice(&U256::from(1_000_000_000u64).to_be_bytes::<32>());
+        Log {
+            inner: AlloyLog::new_unchecked(
+                v_token,
+                vec![
+                    AAVE_MINT_TOPIC,
+                    pad_address(&Address::repeat_byte(0x11)), // caller (the Pool)
+                    pad_address(&user),
+                ],
+                Bytes::from(data),
+            ),
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: Some(B256::from([0xaa; 32])),
+            transaction_index: None,
+            log_index: Some(log_index),
+            removed: false,
+        }
+    }
+
+    /// A seeded market + a POOL contract row (the parser's pool-revision
+    /// read) over [`seed_linkless_gho_row`].
+    fn same_tx_transition_db() -> DegenbotDb {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            seed_linkless_gho_row(&conn);
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (2, 1, 'POOL', ?1, 1)",
+                params![checksum(&Address::repeat_byte(0x88))],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    /// The transition case: a GHO `ReserveInitialized` (logIdx 85) followed
+    /// by a GHO vToken `Mint` (logIdx 91) in ONE transaction. The dispatch's
+    /// post-config resolution must hand the parser the linked vToken, so the
+    /// mint classifies `GhoDebtMint` (the GHO processor path) — never the
+    /// ordinary debt path the stale pre-dispatch `None` selects.
+    #[test]
+    fn same_tx_gho_reserve_initialized_then_mint_is_classified_gho() {
+        use crate::operations::ScaledTokenEventType;
+        use crate::operations_parser::TransactionOperationsParser;
+
+        let db = same_tx_transition_db();
+        let conn = db.lock();
+        let t = reserve_init_tokens();
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let ri_log = reserve_initialized_log(85);
+        let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
+        let logs = vec![&ri_log, &mint_log];
+        let dispatch = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.dispatch_transaction(&logs))
+            .unwrap();
+        assert_eq!(
+            dispatch.gho_vtoken_address,
+            Some(t[2].0),
+            "the operation parser's vToken address resolves POST-config (the link is visible)"
+        );
+        assert_eq!(
+            dispatch.gho_underlying_address,
+            Some(t[0].0),
+            "the operation parser's underlying address resolves POST-config"
+        );
+        assert!(
+            dispatch.discounts.is_empty(),
+            "the discount pre-pass kept its transaction-start snapshot (no vToken yet)"
+        );
+
+        let mut parser = TransactionOperationsParser::new(
+            1,
+            1,
+            Address::repeat_byte(0x88),
+            dispatch.gho_underlying_address,
+            dispatch.gho_vtoken_address,
+            &conn,
+            ctx.substrate_mut(),
+        )
+        .unwrap();
+        let parsed = parser.parse(&logs, [0xaa; 32]).unwrap();
+        let mint_op = parsed
+            .operations
+            .iter()
+            .find(|op| op.scaled_events.iter().any(|e| e.log_index == 91))
+            .expect("the same-tx mint forms an operation");
+        assert_eq!(
+            mint_op.scaled_events[0].event_type,
+            ScaledTokenEventType::GhoDebtMint,
+            "the same-tx mint classifies GHO — the ordinary debt path is the stale-resolution bug"
+        );
+    }
+
+    /// A tx with NO GHO-affecting config event: the linked vToken address is
+    /// resolved identically for the operation parser (the post-config
+    /// re-resolve is a substrate cache hit), and the whole dispatch issues
+    /// ZERO wire reads — the snapshot's deprecation path (revision 4) needs
+    /// no RPC, so the linkless tx keeps the linkless tx's wire shape.
+    #[test]
+    fn same_tx_linkless_tx_preserves_tx_start_addresses() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let t = reserve_init_tokens();
+        let addr_str = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (10, 1, ?1), (11, 1, ?2)",
+                params![addr_str(t[0].0), addr_str(t[2].0)],
+            )
+            .unwrap();
+            // The GHO row already linked — the tx-start state equals post-config.
+            conn.execute(
+                "INSERT INTO aave_gho_tokens (id, token_id, v_token_id) VALUES (1, 10, 11)",
+                [],
+            )
+            .unwrap();
+            // The asset row backing the vToken revision read; revision 4 →
+            // the deprecation snapshot path (no RPC).
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 10, 10, 1, 11, 4, '0', '0', '0', '0')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = db.lock();
+        // An EMPTY cassette: any wire read would be a loud miss.
+        let transport = CassetteReplayTransport::new(test_cassette(vec![]));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let mint_log = gho_vtoken_mint_log(5, t[2].0, Address::repeat_byte(0x42));
+        let logs = vec![&mint_log];
+        let dispatch = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.dispatch_transaction(&logs))
+            .unwrap();
+        assert_eq!(
+            dispatch.gho_vtoken_address,
+            Some(t[2].0),
+            "no link event → the tx-start address stands"
+        );
+        assert_eq!(
+            dispatch.gho_underlying_address,
+            Some(t[0].0),
+            "no link event → the tx-start underlying stands"
+        );
+        assert_eq!(
+            dispatch.discounts.get(&Address::repeat_byte(0x42)),
+            Some(&U256::ZERO),
+            "the linked-vToken mint takes the deprecation snapshot path"
+        );
+        let snap = transport.served_snapshot();
+        assert_eq!(snap.served, 0, "a linkless tx issues zero wire reads");
+        assert_eq!(snap.requests, 0, "no request left the transport");
+    }
+
+    /// The pre-pass pin: the SAME transition tx as
+    /// [`same_tx_gho_reserve_initialized_then_mint_is_classified_gho`], but
+    /// asserting the discount snapshot stage — it must run against the
+    /// TRANSACTION-START GHO row (v_token unlinked → an empty snapshot),
+    /// never the post-config state the operation parser resolves.
+    #[test]
+    fn pre_config_discount_snapshot_stays_tx_start() {
+        let db = same_tx_transition_db();
+        let conn = db.lock();
+        let t = reserve_init_tokens();
+        let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
+        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            Some(reserve_init_oracle()),
+            &conn,
+            &mut substrate,
+        );
+        ctx.begin_transaction(100);
+        let ri_log = reserve_initialized_log(85);
+        let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
+        let logs = vec![&ri_log, &mint_log];
+        let dispatch = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.dispatch_transaction(&logs))
+            .unwrap();
+        assert!(
+            dispatch.discounts.is_empty(),
+            "the pre-pass saw no vToken at tx start — the same-tx link is invisible to it"
+        );
+        assert_eq!(
+            dispatch.gho_vtoken_address,
+            Some(t[2].0),
+            "the operation parser still resolves POST-config in the same dispatch"
+        );
+    }
 }

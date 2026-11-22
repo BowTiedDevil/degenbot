@@ -422,10 +422,15 @@ impl<'span> ChunkContext<'span> {
     ///    transaction's `Upgraded` apply bumped the cached row, and this read
     ///    must see the bump (a chunk-start snapshot would not).
     /// 2. **build the discount snapshot** — the GHO-discount pre-pass, gated
-    ///    on the revision just read.
+    ///    on the revision just read, against the TRANSACTION-START GHO row
+    ///    (a same-tx link is invisible to it by design).
     /// 3. **dispatch the config events** — each event applies intra-dispatch via
     ///    [`ChunkContext::apply_events`], so a later event in the same
     ///    transaction sees an earlier event's write.
+    /// 4. **re-resolve the GHO row for the operation parser** — the tx-start
+    ///    read predates a same-tx `ReserveInitialized` linking the GHO
+    ///    vToken; the parser's Mint/Burn classification must see the link
+    ///    (the later operation executed on initialized chain state).
     ///
     /// Returning the resolved GHO addresses lets the caller parse the
     /// transaction's operations against the same overlay state.
@@ -442,10 +447,9 @@ impl<'span> ChunkContext<'span> {
         let block_number = self.block_number;
         // (0) Re-resolve the GHO row for THIS transaction — sees a prior
         //     transaction's write through the overlay's dirty-mark contract.
+        //     This is the TRANSACTION-START snapshot: the discount pre-pass
+        //     below runs against it even when the tx later links the vToken.
         let gho_asset = self.gho_asset()?;
-        let underlying = gho_asset
-            .as_ref()
-            .and_then(|g| g.gho_token_address.parse().ok());
         let gho_vtoken = gho_asset
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
@@ -486,11 +490,27 @@ impl<'span> ChunkContext<'span> {
         //     independent `eth_call`s ride the multicall batch.
         let config_events = dispatch_config_events(self, tx_logs).await?;
 
+        // (4) Post-config GHO re-resolve for the operation parser: a same-tx
+        //     `ReserveInitialized` linking the GHO vToken marked the row
+        //     dirty, so this read sees the link and the tx's Mint/Burn logs
+        //     classify as GHO — the initialized state the later operation
+        //     executed on. The discount pre-pass above deliberately keeps
+        //     its transaction-start snapshot; only the operation-parsing
+        //     addresses are fresh.
+        let gho_asset_post = self.gho_asset()?;
+        let underlying = gho_asset_post
+            .as_ref()
+            .and_then(|g| g.gho_token_address.parse().ok());
+        let gho_vtoken_post = gho_asset_post
+            .as_ref()
+            .and_then(|g| g.v_token_address.as_deref())
+            .and_then(|s| s.parse().ok());
+
         Ok(TransactionDispatch {
             discounts,
             config_events,
             gho_underlying_address: underlying,
-            gho_vtoken_address: gho_vtoken,
+            gho_vtoken_address: gho_vtoken_post,
             stk_aave_address: stk_aave,
         })
     }
@@ -555,11 +575,14 @@ pub(crate) struct TransactionDispatch {
     pub(crate) discounts: HashMap<Address, U256>,
     /// The config events dispatched (already applied intra-dispatch).
     pub(crate) config_events: Vec<AaveChunkEvent>,
-    /// The GHO underlying (`GHO`) address, resolved from the overlay.
+    /// The GHO underlying (`GHO`) address, resolved POST-config (a same-tx
+    /// `ReserveInitialized` link is visible).
     pub(crate) gho_underlying_address: Option<Address>,
-    /// The GHO vToken (`v_token`) address, resolved from the overlay.
+    /// The GHO vToken (`v_token`) address, resolved POST-config (a same-tx
+    /// `ReserveInitialized` link is visible).
     pub(crate) gho_vtoken_address: Option<Address>,
-    /// The GHO discount token (stkAAVE) address, resolved from the overlay.
+    /// The GHO discount token (stkAAVE) address, resolved at TRANSACTION
+    /// START — the address the post-apply discount refresh rides.
     pub(crate) stk_aave_address: Option<Address>,
 }
 
