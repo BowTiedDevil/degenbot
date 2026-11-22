@@ -926,7 +926,7 @@ async fn run_aave_update_driver(
             // The final-chunk test is also the committed report's `is_final`.
             let max_chunks_hit =
                 max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit);
-            let is_final = chunk_end >= last_block || max_chunks_hit;
+            let is_final = crate::verify::is_final_chunk(chunk_end, last_block, max_chunks_hit);
             let run_full = crate::verify::should_run_full_verify_at_interval(
                 working_start,
                 chunk_end,
