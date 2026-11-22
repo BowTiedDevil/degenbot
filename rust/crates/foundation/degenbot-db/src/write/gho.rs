@@ -90,6 +90,18 @@ impl DegenbotDb {
         /// Apply a GHO `DiscountTokenUpdated` event: set the GHO token's
         /// `v_gho_discount_token` column (a checksummed address or `NULL`).
         ///
+        /// An ACTUAL generation change (`Some(T0)` -> `Some(T1)`, `T0 != T1`)
+        /// additionally invalidates every cached `stk_aave_balance` on the
+        /// GHO row's chain — the cached values are T0-denominated (the old
+        /// contract's ledger), so carrying them across the rotation would let
+        /// a balance minted on one token be read as another's. The
+        /// invalidation runs on the caller's connection (the chunk's own
+        /// `Transaction`), so the rotation + the invalidation commit or roll
+        /// back atomically and the next read/backfill
+        /// (`get_or_init_stk_aave_balance`) reseeds from the NEW token. The
+        /// initial `None` -> `Some` set and an unchanged token invalidate
+        /// nothing.
+        ///
         /// # Errors
         ///
         /// Returns [`DbError::Sqlite`] on a query failure, or
@@ -100,6 +112,18 @@ impl DegenbotDb {
             gho_token_id: i64,
             new_discount_token: Option<&str>,
         ) -> Result<(), DbError> {
+            let old: Option<String> = conn
+                .query_row(
+                    "SELECT v_gho_discount_token FROM aave_gho_tokens WHERE id = ?1",
+                    [gho_token_id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    DbError::MissingRow(format!(
+                        "aave_gho_tokens id={gho_token_id} (DiscountTokenUpdated apply target)"
+                    ))
+                })?;
             let updated = conn.execute(
                 "UPDATE aave_gho_tokens SET v_gho_discount_token = ?1 WHERE id = ?2",
                 params![new_discount_token, gho_token_id],
@@ -108,6 +132,29 @@ impl DegenbotDb {
                 return Err(DbError::MissingRow(format!(
                     "aave_gho_tokens id={gho_token_id} (DiscountTokenUpdated apply target)"
                 )));
+            }
+            let generation_changed = matches!(
+                (&old, new_discount_token),
+                (Some(old), Some(new)) if !old.eq_ignore_ascii_case(new)
+            );
+            if generation_changed {
+                // The GHO row is chain-unique (its chain rides the underlying
+                // erc20_tokens row) and the discount token is a chain-wide
+                // property — every user row on that chain holding a cached
+                // balance carries an old-generation value.
+                let chain_id: i64 = conn.query_row(
+                    "SELECT t.chain FROM aave_gho_tokens g \
+                     JOIN erc20_tokens t ON t.id = g.token_id \
+                     WHERE g.id = ?1",
+                    [gho_token_id],
+                    |r| r.get(0),
+                )?;
+                conn.execute(
+                    "UPDATE aave_v3_users SET stk_aave_balance = NULL \
+                     WHERE stk_aave_balance IS NOT NULL \
+                     AND market_id IN (SELECT id FROM aave_v3_markets WHERE chain_id = ?1)",
+                    params![chain_id],
+                )?;
             }
             Ok(())
         }

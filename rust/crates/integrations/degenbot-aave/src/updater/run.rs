@@ -786,28 +786,46 @@ async fn run_aave_update_driver(
         }
         // (c) Same-chunk staleness for the discount token: a
         //     `DiscountTokenUpdated` event in tx N sets the new
-        //     `v_gho_discount_token` mid-chunk — but `spec.stk_aave_address`
-        //     was resolved from committed DB state BEFORE the chunk's dispatch
-        //     (still `None` on a cold-boot where the event that first sets the
-        //     token fires mid-drive). Pre-scan the frozen logs for
-        //     `DiscountTokenUpdated`, re-resolve the new discount token, +
-        //     re-fetch the stkAAVE Transfer/Staked/Redeem logs for the chunk
-        //     range, merging with de-dup (same pattern as `(b)` above). The
-        //     per-tx config-dispatch still applies `DiscountTokenUpdated` at its
-        //     correct logIndex, so read-your-own-writes within the transaction
-        //     is preserved.
-        let mut discount_token_from_event: Option<Address> = None;
+        //     `v_gho_discount_token` mid-chunk — but the main pass fetched the
+        //     whole chunk from the chunk-start (`spec.stk_aave_address`)
+        //     generation only, so every OTHER generation's stkAAVE
+        //     Transfer/Staked/Redeem logs over the chunk range are unreachable
+        //     without a supplemental pass. Pre-scan the frozen logs for
+        //     `DiscountTokenUpdated` and fetch every UNCOVERED generation —
+        //     the tokens the chunk introduces that the main pass does not
+        //     already cover (multiple updates in one chunk keep every
+        //     intermediate generation; a committed generation, including a
+        //     no-op `DiscountTokenUpdated(T0, T0)`, is already covered and
+        //     never re-requested) — merging with de-dup (same seam as
+        //     `(b)`/`(d)` above). The initial `None -> stkAAVE` set is the
+        //     single-generation special case (no committed coverage to
+        //     subtract), and a chunk with no `DiscountTokenUpdated` issues no
+        //     supplemental pass (the statement-ledger + cassette goldens stay
+        //     byte-identical). The per-tx config-dispatch still applies
+        //     `DiscountTokenUpdated` at its correct logIndex, so
+        //     read-your-own-writes within the transaction is preserved.
+        let mut uncovered_generations: Vec<Address> = Vec::new();
         for log in &logs {
             if let Some(ev) =
                 degenbot_decoders::aave_event_decoder::decode_aave_discount_token_updated_log(log)
             {
-                discount_token_from_event = Some(ev.new_discount_token);
+                let covered = spec
+                    .stk_aave_address
+                    .is_some_and(|committed| committed == ev.new_discount_token)
+                    || uncovered_generations.contains(&ev.new_discount_token);
+                if !covered {
+                    uncovered_generations.push(ev.new_discount_token);
+                }
             }
         }
-        if let Some(token) = discount_token_from_event.filter(|_| spec.stk_aave_address.is_none()) {
+        if !uncovered_generations.is_empty() {
             let fetch_started = Instant::now();
-            let extra =
-                fetch_stk_aave_logs(&fetcher, working_start, chunk_end, Some(token)).await?;
+            let mut extra = Vec::new();
+            for token in &uncovered_generations {
+                extra.extend(
+                    fetch_stk_aave_logs(&fetcher, working_start, chunk_end, Some(*token)).await?,
+                );
+            }
             chunk_fetch_time += fetch_started.elapsed();
             merge_chunk_log_extension(&mut logs, extra);
         }

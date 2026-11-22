@@ -468,10 +468,6 @@ impl<'span> ChunkContext<'span> {
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
             .and_then(|s| s.parse().ok());
-        let stk_aave = gho_asset
-            .as_ref()
-            .and_then(|g| g.v_gho_discount_token.as_deref())
-            .and_then(|s| s.parse().ok());
 
         // (1) Re-resolve the GHO vToken revision — the overlay's cached row
         //     carries the prior transaction's `Upgraded` bump.
@@ -509,8 +505,11 @@ impl<'span> ChunkContext<'span> {
         //     dirty, so this read sees the link and the tx's Mint/Burn logs
         //     classify as GHO — the initialized state the later operation
         //     executed on. The discount pre-pass above deliberately keeps
-        //     its transaction-start snapshot; only the operation-parsing
-        //     addresses are fresh.
+        //     its transaction-start snapshot; only the addresses the
+        //     POST-apply consumers ride are fresh: the operation-parsing
+        //     addresses, and the discount token the post-apply refresh
+        //     reads — a same-tx `DiscountTokenUpdated` rotation must refresh
+        //     against the NEW contract's ledger, never the tx-start one.
         let gho_asset_post = self.gho_asset()?;
         let underlying = gho_asset_post
             .as_ref()
@@ -519,13 +518,17 @@ impl<'span> ChunkContext<'span> {
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
             .and_then(|s| s.parse().ok());
+        let stk_aave_post = gho_asset_post
+            .as_ref()
+            .and_then(|g| g.v_gho_discount_token.as_deref())
+            .and_then(|s| s.parse().ok());
 
         Ok(TransactionDispatch {
             discounts,
             config_events,
             gho_underlying_address: underlying,
             gho_vtoken_address: gho_vtoken_post,
-            stk_aave_address: stk_aave,
+            stk_aave_address: stk_aave_post,
         })
     }
 
@@ -595,8 +598,11 @@ pub(crate) struct TransactionDispatch {
     /// The GHO vToken (`v_token`) address, resolved POST-config (a same-tx
     /// `ReserveInitialized` link is visible).
     pub(crate) gho_vtoken_address: Option<Address>,
-    /// The GHO discount token (stkAAVE) address, resolved at TRANSACTION
-    /// START — the address the post-apply discount refresh rides.
+    /// The GHO discount token (stkAAVE) address, resolved POST-config — the
+    /// address the post-apply discount refresh rides (an in-tx
+    /// `DiscountTokenUpdated` rotation is visible, so the refresh reseeds
+    /// from the NEW contract's ledger). The discount pre-pass does not
+    /// consume this field: its transaction-start snapshot lives in stage (2).
     pub(crate) stk_aave_address: Option<Address>,
 }
 
