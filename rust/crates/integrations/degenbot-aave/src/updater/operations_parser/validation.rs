@@ -1,23 +1,17 @@
 use super::{Operation, OperationType, ScaledTokenEventType, TransactionOperationsParser};
 
 impl TransactionOperationsParser<'_, '_> {
-    // ── the validators (`_validate_operation` + per-op) ───────────────────
+    // ── the validators ───────────────────────────────────────────────────────
 
-    ///  dispatch. Mutates `op.validation_errors`
-    /// (the validators are token-fillers here; the Python's strict top-level
-    /// `TransactionOperations.validate` pass).
-    /// Dispatch-style match over `OperationType` — one arm per variant. Kept as
-    /// a single fn (rather than per-op validator helpers) because each arm is
-    /// 2–8 lines of predicate checks; splitting would fragment the validation
-    /// logic across ~10 helpers without improving clarity (the Python uses a
-    /// validators dict, not per-op fns here).
+    /// Validate one operation: a dispatch-style match over `OperationType` —
+    /// one arm per variant, mutating `op.validation_errors` on miss.
+    /// Kept as a single fn (rather than per-op validator helpers) because each
+    /// arm is 2–8 lines of predicate checks; splitting would fragment the
+    /// validation logic across ~10 helpers without improving clarity.
     #[expect(clippy::too_many_lines)]
     pub(super) fn validate_operation(op: &mut Operation<'_>) {
-        // The API dispatch is a match over the operation type; the
-        // actual validation is per-op (`_validate_*` in Python). For A's
-        // parse() integrity, the validators are minimal — they fill
-        // `validation_errors` with descriptive messages on miss-pattern.
-        // The strict top-level pass is a separate concern.
+        // The validators are minimal — they fill `validation_errors` with
+        // descriptive messages on miss-pattern.
         match op.operation_type {
             OperationType::Supply => {
                 if op
@@ -125,9 +119,9 @@ impl TransactionOperationsParser<'_, '_> {
                 op.validation_errors
                     .push("STKAAVE_TRANSFER expects 1 DiscountTransfer".into());
             }
-            // ExpectedAbsent: Liquidation / GhoLiquidation / GhoFlashLoan /
-            // Unknown get minimal validation (B owns the LiquidationCall
-            // builder + its validators).
+            // Liquidation / GhoLiquidation / GhoFlashLoan / Unknown get
+            // minimal validation — the LiquidationCall builder owns its
+            // validators.
             _ => {}
         }
     }

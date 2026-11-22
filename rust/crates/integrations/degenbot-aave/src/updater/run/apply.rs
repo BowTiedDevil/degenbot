@@ -108,12 +108,12 @@ pub enum AaveChunkEvent {
     },
     /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken,
     /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (the
-    /// the other direct Pool-event DB writer). The orchestrator
+    /// other direct Pool-event DB writer). The orchestrator
     /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
     /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
     /// `getSourceOfAsset` `price_source`; this enum carries the resolved
-    /// fields (mirrors design decision #1 — the apply core is pure
-    /// substrate, no RPC, no address→id resolution).
+    /// fields (the apply core is pure substrate, no RPC, no address→id
+    /// resolution).
     ReserveInitialized {
         market_id: i64,
         underlying_asset_id: i64,
@@ -123,20 +123,18 @@ pub enum AaveChunkEvent {
         v_token_revision: i64,
         /// The checksummed oracle address (`None` when the event's address is zero).
         price_source: Option<String>,
-        /// When the new asset's underlying IS the GHO token, the Python's
-        /// `_process_reserve_initialized_event` links the GHO token row to the
-        /// new vToken: `aave_gho_tokens.v_token_id = v_token.id` (the FK the
-        /// discount-event emitter guard resolves via
+        /// When the new asset's underlying IS the GHO token, the GHO token
+        /// row links to the new vToken: `aave_gho_tokens.v_token_id =
+        /// v_token.id` (the FK the discount-event emitter guard resolves via
         /// `gho_asset.v_token_address`). `Some(gho_token_row_id)` when the link
-        /// should fire; `None` for a regular reserve (divergence #8).
+        /// should fire; `None` for a regular reserve.
         gho_link_token_id: Option<i64>,
     },
     /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event. Carries
     /// the PRE-COMPUTED signed `balance_delta` (the
     /// orchestrator/parser ran `ScaledTokenProcessor::process_collateral_mint`
     /// / `ScaledTokenProcessor::process_debt_mint` BEFORE constructing this
-    /// variant — mirrors design decision #1: the apply core is pure
-    /// substrate, no processor calls). The apply dispatch just forwards the
+    /// variant — the apply core is pure substrate, no processor calls). The apply dispatch just forwards the
     /// delta to [`DegenbotDb::apply_scaled_token_mint_on_conn`].
     ScaledTokenMint {
         /// Which position table (collateral for aToken / debt for vToken).
@@ -162,7 +160,7 @@ pub enum AaveChunkEvent {
         balance_delta: alloy::primitives::I256,
         new_index: alloy::primitives::U256,
     },
-    /// GHO discount-refresh signal (C3.3 — the (C) refresh wiring). Emitted by
+    /// GHO discount-refresh signal. Emitted by
     /// `build_gho_chunk_event` ALONGSIDE the `ScaledTokenMint`/`ScaledTokenBurn`
     /// when the GHO processor's `should_refresh_discount` is set (V1-V3 — the
     /// discount mechanism is active). NOT applied synchronously — the chunk
@@ -171,9 +169,7 @@ pub enum AaveChunkEvent {
     /// None) + `_refresh_discount_rate` (`debt_balance = ray_mul(scaled,
     /// index)` + `calculate_gho_discount_rate` → write
     /// `aave_v3_users.gho_discount`). `apply_chunk_events_on_conn` is a no-op for
-    /// this variant (it carries no synchronously-applicable state). Mirrors
-    /// Python's `token_processor._refresh_discount_rate` after a GHO
-    /// borrow/accrual.
+    /// this variant (it carries no synchronously-applicable state).
     GhoRefreshDiscount {
         /// The GHO debt position (`aave_v3_debt_positions.id`) whose
         /// `balance`/`last_index` were just updated — the refresh reads the
@@ -194,7 +190,7 @@ pub enum AaveChunkEvent {
     // ── GHO + stkAAVE + Rewards events ─────────────
     /// GHO `DiscountPercentUpdated(user, oldPercent, newPercent)` — sets the
     /// user's `gho_discount` (an `i64` percentage; the Aave protocol caps at
-    /// 100%). Port of `event_handlers._process_discount_percent_updated_event`.
+    /// 100%).
     GhoDiscountPercentUpdated {
         /// Pre-resolved `aave_v3_users.id` (the orchestrator called
         /// `get_or_create_user_on_conn`).
@@ -203,8 +199,7 @@ pub enum AaveChunkEvent {
         new_discount_percent: i64,
     },
     /// GHO `DiscountRateStrategyUpdated(oldStrategy, newStrategy)` — sets the
-    /// chain-unique GHO token row's `v_gho_discount_rate_strategy`. Port of
-    /// `event_handlers._process_discount_rate_strategy_updated_event`.
+    /// chain-unique GHO token row's `v_gho_discount_rate_strategy`.
     GhoDiscountRateStrategyUpdated {
         /// Pre-resolved `aave_gho_tokens.id` (chain-unique).
         gho_token_id: i64,
@@ -213,21 +208,17 @@ pub enum AaveChunkEvent {
         new_strategy: Option<String>,
     },
     /// GHO `DiscountTokenUpdated(oldToken, newToken)` — sets the GHO token
-    /// row's `v_gho_discount_token`. Port of
-    /// `event_handlers._process_discount_token_updated_event`.
+    /// row's `v_gho_discount_token`.
     GhoDiscountTokenUpdated {
         gho_token_id: i64,
         new_discount_token: Option<String>,
     },
     /// stkAAVE ERC20 `Transfer(from, to, value)`. The canonical + only
-    /// stkAAVE balance-mutation channel — Python's
-    /// `process_stk_aave_transfer_event` processes EVERY `Transfer` event on
-    /// `v_gho_discount_token`, including both zero-leg arms (the
-    /// `Transfer(0→X)` mint + `Transfer(X→0)` burn) — the `ZERO_ADDRESS` leg is
-    /// treated as a half-event (skip the zero side, always mutate the real
-    /// user). This variant mirrors that exactly: each side is `None` iff the
-    /// corresponding address is `ZERO_ADDRESS`, and the apply fn skips `None`
-    /// + mutates the other.
+    /// stkAAVE balance-mutation channel: EVERY `Transfer` event on
+    /// `v_gho_discount_token` applies, including both zero-leg arms (the
+    /// `Transfer(0→X)` mint + `Transfer(X→0)` burn). Each side is `None` iff
+    /// the corresponding address is `ZERO_ADDRESS`, and the apply fn skips
+    /// `None` + mutates the other.
     ///
     /// A zero-leg `Transfer` is a half-event: the `ZERO_ADDRESS` side is
     /// skipped and the real user mutated. It must NOT be dedupe-skipped in
@@ -251,18 +242,16 @@ pub enum AaveChunkEvent {
         amount: alloy::primitives::U256,
     },
     /// `RewardsController` `RewardsClaimed(user, reward, to, claimer,
-    /// claimedAmount)` — **no-op apply**. Investigation confirmed the
-    /// Python declares the event in `events.py` but has NO handler: rewards
-    /// claims surface only via the stkAAVE token's `Transfer` events
-    /// (`transaction_processor.py:249`). The DB has no rewards table. The
-    /// variant exists for parser routing/event-accounting only.
+    /// claimedAmount)` — **no-op apply**. Rewards claims surface only via
+    /// the stkAAVE token's `Transfer` events; the DB has no rewards table.
+    /// The variant exists for parser routing/event-accounting only.
     RewardsClaimed {
         user_id: i64,
         reward_token_id: i64,
         claimer_id: i64,
         claimed_amount: alloy::primitives::U256,
     },
-    /// The bad-debt liquidation reset (C3 — `DEFICIT_CREATED` path). The
+    /// The bad-debt liquidation reset (`DEFICIT_CREATED` path). The
     /// contract burns the ENTIRE remaining debt (not just `debtToCover`) when
     /// a `DeficitCreated` event accompanies a `LiquidationCall` — the
     /// protocol writes off the bad debt. Sets the debt position's `balance` to
@@ -276,12 +265,11 @@ pub enum AaveChunkEvent {
         /// max-with-prev).
         new_index: alloy::primitives::U256,
     },
-    // ── the 6 missing-variant config events ───────────────────
+    // ── config events ─────────────────────────────────────────
     /// `Upgraded(implementation)` — emitted by an aToken or vToken proxy. The
     /// dispatch resolves which asset (by `a_token`/`v_token` address match) +
     /// RPCs `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` on the new
-    /// implementation. Port of `_process_scaled_token_upgrade_event`
-    /// (event_handlers.py:848-940). When the upgraded token is the GHO vToken
+    /// implementation. When the upgraded token is the GHO vToken
     /// and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4), the
     /// `deprecated_gho_token_id` is `Some(gho_token.id)`: the apply fn then
     /// clears `v_gho_discount_token` and `v_gho_discount_rate_strategy`, and
@@ -303,10 +291,9 @@ pub enum AaveChunkEvent {
     /// `PoolUpdated`/`PoolConfiguratorUpdated(old, new)` — RPC
     /// `POOL_REVISION()`/`CONFIGURATOR_REVISION()` on the new address → update
     /// the `aave_v3_contracts` row's `revision` (LOOKED UP BY NAME: "POOL"/
-    /// `POOL_CONFIGURATOR`). Port of `_update_contract_revision`
-    /// (event_handlers.py:944-974). **Parity gate:** the Python updates ONLY
-    /// `revision` — NOT `address` (the proxy address is stable; the `new_address`
-    /// is used only for the RPC call). The apply mirrors this exactly.
+    /// `POOL_CONFIGURATOR`). **Parity gate:** the apply updates ONLY
+    /// `revision` — NOT `address` (the proxy address is stable; the
+    /// `new_address` is used only for the RPC call).
     ContractRevisionUpdated {
         /// The market owning the contract row.
         market_id: i64,
@@ -317,9 +304,7 @@ pub enum AaveChunkEvent {
     },
     /// `PoolDataProviderUpdated(old, new)` — INSERT the `POOL_DATA_PROVIDER`
     /// contract row when `old == ZERO_ADDRESS`, else UPDATE the existing row's
-    /// `address` (looked up by the old address). Port of
-    /// `_process_pool_data_provider_updated_event` (event_handlers.py:1017-1046).
-    /// Pure decode — no RPC. `old_address` is `None` when the event's old is
+    /// `address` (looked up by the old address). Pure decode — no RPC. `old_address` is `None` when the event's old is
     /// the zero address (the INSERT path).
     PoolDataProviderUpdated {
         /// The market owning the contract row.
@@ -332,14 +317,14 @@ pub enum AaveChunkEvent {
     },
     /// `AddressSet(id, old, new)` + `ProxyCreated(id, proxy, impl)` (the
     /// id-filtered ones) — INSERT a contract row.
-    /// `AddressSet` (event_handlers.py:1048-1078): the `id` is ASCII-decoded
+    /// `AddressSet`: the `id` is ASCII-decoded
     /// from the bytes32 topic + null-stripped → the `name`; this is the
     /// `old == ZERO_ADDRESS` registration arm only (the `old != ZERO_ADDRESS`
     /// rotation routes to [`AaveChunkEvent::ContractAddressChanged`]).
     /// `revision` is `None`.
-    /// `ProxyCreated` (event_handlers.py:977-1008): the `id` is matched
+    /// `ProxyCreated`: the `id` is matched
     /// against the right-padded ASCII bytes32 `b"POOL"`/`b"POOL_CONFIGURATOR"`
-    /// (NOT `keccak256` — a parity-gate finding); the match resolves the `name` + the
+    /// (NOT `keccak256`); the match resolves the `name` + the
     /// revision-function (`POOL_REVISION`/`CONFIGURATOR_REVISION`). The
     /// dispatch RPCs the revision on the implementation address; `revision`
     /// is `Some`.
@@ -348,7 +333,7 @@ pub enum AaveChunkEvent {
         name: String,
         address: String,
         /// `Some(rev)` for `ProxyCreated` (RPC-fetched); `None` for `AddressSet`
-        /// (no revision RPC — the Python doesn't fetch one).
+        /// (no revision RPC).
         revision: Option<i64>,
     },
     /// `AddressSet(id, old, new)` with `old != ZERO_ADDRESS` — the address-
@@ -392,8 +377,8 @@ pub struct AaveChunkWriteReport {
     pub gho_discount_percent_updated: usize,
     pub gho_discount_rate_strategy_updated: usize,
     pub gho_discount_token_updated: usize,
-    /// C3.3 (C refresh) — the GHO discount-refresh signals (the async
-    /// post-apply pass consumes them (`balanceOf` + recompute `gho_discount`).
+    /// The GHO discount-refresh signals (the async post-apply pass consumes
+    /// them (`balanceOf` + recompute `gho_discount`).
     pub gho_refresh_discount: usize,
     /// stkAAVE `Transfer(from, to, value)` — the canonical balance-mutation
     /// channel: covers the zero-leg arms + the neither-zero case.
@@ -402,9 +387,9 @@ pub struct AaveChunkWriteReport {
     /// No-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
     pub rewards_claimed: usize,
-    /// The bad-debt liquidation reset count (C3 — `DebtPositionReset`).
+    /// The bad-debt liquidation reset count (`DebtPositionReset`).
     pub debt_position_reset: usize,
-    /// the 6 missing-variant config events.
+    /// The config events.
     pub upgraded: usize,
     pub contract_revision_updated: usize,
     pub pool_data_provider_updated: usize,
@@ -415,10 +400,9 @@ pub struct AaveChunkWriteReport {
     /// cleanup (`delete_zero_balance_positions_on_conn`).
     pub zero_balances_cleared: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
-    /// as the LAST write in the transaction. `None` if `events` was empty (no
-    /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
-    /// is NOT taken here; `chunk_end_block` is always stamped when this core is
-    /// invoked with a chunk range). Set on commit.
+    /// as the LAST write in the transaction. Always `Some` when this core is
+    /// invoked with a chunk range (no `events.is_empty()` guard here). Set on
+    /// commit.
     pub stamped_block: Option<u64>,
 }
 
@@ -428,7 +412,7 @@ pub struct AaveChunkWriteReport {
 /// caller owns the stamp (per-tx apply in `process_chunk_on_conn`, or the
 /// batched [`apply_aave_chunk_writes_on_conn`]).
 ///
-/// `substrate` is the chunk-level cache (Perf C): the per-event substrate
+/// `substrate` is the chunk-level cache: the per-event substrate
 /// reads ride its prefetch + write-overlay, and EVERY cache-visible write
 /// lands an overlay update here — the asset re-binds (`ReserveInitialized`),
 /// the revision bumps (`Upgraded`), the position state writes (the scaled
@@ -439,10 +423,10 @@ pub struct AaveChunkWriteReport {
 ///
 /// Written per-tx: the apply loop writes each tx's events to `conn` BEFORE
 /// the next tx's
-/// dispatch/parse reads — fixing the two staleness surfaces (the prior tx's
+/// dispatch/parse reads — the two staleness surfaces close (the prior tx's
 /// `Upgraded` revision + scaled-token balances are visible via
-/// read-your-own-writes within the `SQLite` txn, matching Python's per-tx ORM
-/// apply). The `ScaledTokenProcessor` is stateless (its balances come from
+/// read-your-own-writes within the `SQLite` txn). The `ScaledTokenProcessor`
+/// is stateless (its balances come from
 /// `process_transaction`'s `conn` lookups), so per-tx apply is the only seam.
 ///
 /// Pure, synchronous, transactional. NONE of: RPC, ABI decode, `pyo3`,
@@ -561,7 +545,7 @@ pub fn apply_chunk_events_on_conn(
                 variable_borrow_index,
                 block_number,
             } => {
-                // Perf C: the asset rate/index write is DEFERRED to the
+                // The asset rate/index write is DEFERRED to the
                 // chunk-level multi-row flush (no mid-chunk reader of these
                 // columns — the asset lookups read only id/revisions/addresses,
                 // the verification gate runs post-commit, the position math
@@ -605,8 +589,8 @@ pub fn apply_chunk_events_on_conn(
                 // re-read the fresh row + re-bind the address indexes (the
                 // overlay's read-your-own-writes for the asset lookups; a
                 // re-initialized reserve's OLD addresses must stop resolving,
-                // exactly as the SQL JOIN would). The GHO link (divergence #8)
-                // wrote `aave_gho_tokens` — the cached GHO row is stale.
+                // exactly as the SQL JOIN would). The GHO link wrote
+                // `aave_gho_tokens` — the cached GHO row is stale.
                 substrate.refresh_asset_row(conn, asset_row_id)?;
                 if gho_link_token_id.is_some() {
                     substrate.mark_gho_dirty();
@@ -672,7 +656,7 @@ pub fn apply_chunk_events_on_conn(
                 );
                 report.scaled_token_burn += 1;
             }
-            // C3.3 (C refresh): no synchronous apply — the chunk loop's async
+            // No synchronous apply — the chunk loop's async
             // post-apply pass consumes this (balanceOf + recompute
             // gho_discount). Counted in `report.gho_refresh_discount` so the
             // apply loop's exhaustiveness stays explicit.
@@ -832,7 +816,7 @@ pub fn apply_chunk_events_on_conn(
                 );
                 report.debt_position_reset += 1;
             }
-            // ── the 6 missing-variant config events ─────────
+            // ── config events ─────────────────────────────────
             AaveChunkEvent::Upgraded {
                 asset_id,
                 market_id: _,
@@ -981,14 +965,13 @@ pub fn apply_aave_chunk_writes_on_conn(
     let mut substrate = ChunkSubstrate::lazy(0);
     let mut report = apply_chunk_events_on_conn(conn, market_id, events, &mut substrate)?;
 
-    // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
+    // Flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE) BEFORE the cleanup + the stamp — the stamp stays the
     // LAST write (the restart invariant), and the flush sits inside the
     // caller's transaction (a rollback reverts it with the chunk).
     substrate.flush_reserve_data_updates(conn)?;
 
-    // End-of-chunk zero-balance cleanup (the ported Python
-    // `cleanup_zero_balance_positions`): the chunk's apply may have zeroed
+    // End-of-chunk zero-balance cleanup: the chunk's apply may have zeroed
     // scaled-token balances (full withdrawals / repays / bad-debt resets);
     // delete those rows BEFORE the stamp so they do not accumulate as
     // permanent '0' rows. Inside the chunk's transaction — a rollback reverts
@@ -1849,16 +1832,14 @@ mod tests {
     /// burn-to-zero leg, the `Transfer(from=user, to=0x0, amount)` shape) must
     /// NOT create a 0x0 collateral position: writing both legs unconditionally
     /// creates an `aave_v3_collateral_positions` row for the 0-address user
-    /// (a dust balance, e.g. 911746220 wei) where the Python reference has no
-    /// such rows.
+    /// (a dust balance, e.g. 911746220 wei) where the recorded gold fixture
+    /// has no such rows.
     ///
-    /// Python's mirror filter lives in `transfers.py:_process_collateral_transfer`
-    /// the recipient block (`if scaled_event.target_address != ZERO_ADDRESS:`)
-    /// is skipped when `to == ZERO_ADDRESS`. The SENDER side is written
-    /// unconditionally (matches the 2 pre-existing 0-address rows on
-    /// 0x83F2 / 0xD533 in both Python ref + Rust). The Rust equivalent: the
-    /// dispatch path wraps `to_position_id: None` when `to_addr == ZERO_ADDRESS`,
-    /// and the apply fn skips the recipient write.
+    /// The recipient leg is skipped when `to == ZERO_ADDRESS`; the SENDER side
+    /// is written unconditionally (matches the 2 pre-existing 0-address rows on
+    /// 0x83F2 / 0xD533 in the recorded gold + Rust). The dispatch path wraps
+    /// `to_position_id: None` when `to_addr == ZERO_ADDRESS`, and the apply fn
+    /// skips the recipient write.
     #[test]
     fn apply_aave_chunk_writes_on_conn_skips_zero_address_recipient_leg() {
         let db = fresh_db();
@@ -2408,7 +2389,7 @@ mod tests {
         );
     }
 
-    // ── the 6 missing-variant event apply tests ────────────────
+    // ── config-event apply tests ───────────────────────────────
 
     #[test]
     fn apply_upgraded_on_conn_updates_a_token_revision() {

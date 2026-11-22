@@ -80,9 +80,8 @@ pub enum ProcessTxError {
     Deferred(String),
 }
 
-/// The per-tx entry point the orchestrator calls. Mirrors
-/// `_process_transaction` — parses the tx logs into `Operation`s +
-/// dispatches each Operation's constituent scaled-token events to
+/// The per-tx entry point the orchestrator calls: parses the tx logs into
+/// `Operation`s + dispatches each Operation's constituent scaled-token events to
 /// [`AaveChunkEvent`] variants (the enricher + processor pipeline). Returns
 /// the accumulated events for the orchestrator to batch + stamp via
 /// `apply_aave_chunk_writes_on_conn`.
@@ -98,8 +97,8 @@ pub enum ProcessTxError {
 ///
 /// `discounts` is the orchestrator-pre-fetched GHO discount snapshot (the
 /// `raw_call` for users-not-in-DB discounts is the driver-shell's
-/// concern, NOT C3's). Keyed by user address → the discount percent (basis
-/// points, `10_000 == 100.00%`) in effect at the tx's start. C3's
+/// concern). Keyed by user address → the discount percent (basis
+/// points, `10_000 == 100.00%`) in effect at the tx's start.
 /// [`GhoDiscountContext`] resolves the EFFECTIVE discount per event (adjusting
 /// for in-tx `DISCOUNT_PERCENT_UPDATED` events).
 #[expect(
@@ -131,9 +130,8 @@ pub fn process_transaction(
     let parsed = parser.parse(tx_logs, tx_hash)?;
 
     // Build the GHO-discount context once per tx (the
-    // `discount_updates_by_log_index` map + the `bad_debt_users` set). Mirrors
-    // `_process_transaction`'s pre-pass (the DISCOUNT_PERCENT_UPDATED scan) +
-    // `_is_bad_debt_liquidation`'s DEFICIT_CREATED scan.
+    // `discount_updates_by_log_index` map + the `bad_debt_users` set): the
+    // DISCOUNT_PERCENT_UPDATED scan + the DEFICIT_CREATED scan.
     let gho_ctx = GhoDiscountContext::new(tx_logs, discounts, gho_vtoken_address);
 
     // Build the per-tx liquidation-pattern context (the port of
@@ -191,9 +189,8 @@ fn operation_sort_key(op: &Operation) -> u64 {
     }
 }
 
-/// Build the per-tx liquidation-pattern context. Mirrors Python's
-/// `detect_liquidation_patterns` (`aave/liquidation_patterns.py` + Python's
-/// `_preprocess_liquidation_aggregates`). Groups the tx's liquidation ops by
+/// Build the per-tx liquidation-pattern context. Groups the tx's liquidation
+/// ops by
 /// `(user, debt_v_token)`, attaches the matched debt burns (by vToken emitter
 /// address), and computes the SINGLE / `COMBINED_BURN` / `SEPARATE_BURNS` pattern
 /// per group.
@@ -205,9 +202,9 @@ fn operation_sort_key(op: &Operation) -> u64 {
 /// `LiquidationCall`'s resolved vToken — so burns attach to the same group.
 ///
 /// Non-liquidation ops + liquidation ops with an unresolvable vToken are
-/// skipped (matches Python's `if debt_v_token is None: continue`). Infallible
+/// skipped. Infallible
 /// (a substrate miss degrades to `None` → no aggregation → the per-op path
-/// runs unchanged — matches the Python skip).
+/// runs unchanged).
 fn build_liquidation_patterns(
     conn: &Connection,
     market_id: i64,
@@ -216,8 +213,7 @@ fn build_liquidation_patterns(
 ) -> LiquidationPatternContext {
     let mut ctx = LiquidationPatternContext::default();
     // 1. Group liquidations by (user, debt_v_token); record each call's
-    //    `(operation_id, debt_to_cover, pool_event_log_index)`, mirrors the
-    //    `for op in operations` loop in `detect_liquidation_patterns`.
+    //    `(operation_id, debt_to_cover, pool_event_log_index)`.
     for op in operations {
         if !matches!(
             op.operation_type,
@@ -252,22 +248,18 @@ fn build_liquidation_patterns(
             log_idx_value(pool_event),
         ));
         // 2. Attach the matched debt burns carried by THIS op's
-        // 2. Attach the matched debt burns carried by THIS op's
         //    `scaled_events` (the parser already matched them via
         //    `collect_debt_burns`; the burn's vToken emitter IS the group's
-        //    `debt_v_token`). Mirrors Python's `detect_liquidation_patterns`
-        //    burn-association step: SKIP a burn whose `(user, v_token)` key is
-        //    NOT already an existing liquidation group (`if key not in groups:
-        //    continue`). This is critical: a standalone (non-liquidation) repay
-        //    burn, or a burn whose vToken doesn't match the LC's debt vToken,
-        //    must NOT create a spurious 0-liquidation group — such a group
-        //    classifies as `CombinedBurn` with `total_debt_to_cover() == 0`,
-        //    and `dispatch_liquidation`'s COMBINED_BURN override would size the
-        //    burn by 0 (the GHO debt-burn zeroing bug). Dedup by log_index —
-        //    Python iterates the tx-wide
-        //    `scaled_token_events` once; the per-op iteration can only ever see
-        //    each burn once (the parser attaches it to a single op —
-        //    `COMBINED_BURN` position 0).
+        //    `debt_v_token`). SKIP a burn whose `(user, v_token)` key is
+        //    NOT already an existing liquidation group. This is critical: a
+        //    standalone (non-liquidation) repay burn, or a burn whose vToken
+        //    doesn't match the LC's debt vToken, must NOT create a spurious
+        //    0-liquidation group — such a group classifies as `CombinedBurn`
+        //    with `total_debt_to_cover() == 0`, and `dispatch_liquidation`'s
+        //    COMBINED_BURN override would size the burn by 0 (the GHO
+        //    debt-burn zeroing bug). Dedup by log_index — the per-op iteration
+        //    can only ever see each burn once (the parser attaches it to a
+        //    single op — `COMBINED_BURN` position 0).
         for ev in &op.scaled_events {
             if matches!(
                 ev.event_type,
@@ -291,7 +283,7 @@ fn build_liquidation_patterns(
 }
 
 /// Dispatch a single Operation's scaled-token events → [`AaveChunkEvent`]
-/// variants. Mirrors `_process_operation`'s per-event-type dispatch loop.
+/// variants — the per-event-type dispatch loop.
 #[expect(clippy::too_many_arguments)]
 fn dispatch_operation(
     op: &Operation,
@@ -374,8 +366,8 @@ fn dispatch_operation(
             Ok(())
         }
         OperationType::Unknown => {
-            // The Python marks DEFICIT_CREATED as UNKNOWN to avoid interfering
-            // with liquidation processing downstream — no apply, no event.
+            // DEFICIT_CREATED stays UNKNOWN to avoid interfering with
+            // liquidation processing downstream — no apply, no event.
             Ok(())
         }
     }
@@ -484,12 +476,12 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
     }
 }
 
-/// Build an [`AaveChunkEvent`] from a single scaled-token event. Mirrors the
-/// `_process_operation` per-event-type dispatch (the Mint-exceeds → Burn edge
-/// + the standard Mint/Burn/Transfer paths). The `raw_amount` is the Pool
-///   event's amount (the enricher's `raw_amount`); the `scaled_amount` is
-///   computed as `ray_div(raw_amount, index, strategy)` (the plumbing-
-///   equivalence caveat — NOT the processor's None fallback path).
+/// Build an [`AaveChunkEvent`] from a single scaled-token event (the
+/// Mint-exceeds → Burn edge + the standard Mint/Burn/Transfer paths). The
+/// `raw_amount` is the Pool event's amount (the enricher's `raw_amount`);
+/// the `scaled_amount` is computed as `ray_div(raw_amount, index,
+/// strategy)` from the Pool word — never `scaled_amount: None`, which would
+/// let the processor recompute from `value ± balance_increase`.
 #[expect(clippy::too_many_lines)]
 fn build_scaled_event_chunk_event(
     ev: &ScaledTokenEvent,
@@ -569,13 +561,11 @@ fn build_scaled_event_chunk_event(
             // repayAmount — the vToken contract emits a Mint whose NET effect
             // is burning the scaled repayment amount (Aave V3 `_burnScaled`:
             // the Mint-of-the-payed-interest falsifies the simple `value <
-            // balance_increase` reading). Python's `_process_debt_mint_with_match`
-            // (`token_processor.py:630-715`) does NOT dispatch this through
-            // `process_mint_event`: it decodes `repayAmount` from the Repay
-            // pool event, computes `actual_scaled_burn =
-            // get_debt_burn_scaled_amount(repayAmount, index)` (= `ray_div_floor`
-            // for V4/V5), and dispatches a `DebtBurnEvent(value=actual_scaled_burn,
-            // scaled_amount=actual_scaled_burn)`. The Pool word is the amount
+            // balance_increase` reading). The dispatch does NOT route this
+            // through `process_mint_event`: it decodes `repayAmount` from the
+            // Repay pool event, computes the burn's scaled amount as
+            // `ray_div_floor(repayAmount, index)` for V4/V5, and dispatches a
+            // `DebtBurn` sized by that value. The Pool word is the amount
             // that couples to chain, because the event's own `value` is rounded
             // relative to `balance_increase - repayAmount` by ±1 wei — at block
             // 23_093_579 (`repayAmount = 10_000_000`, `balance_increase =
@@ -608,8 +598,7 @@ fn build_scaled_event_chunk_event(
             if is_debt_repay_mint_edge {
                 // Treat the Mint as a DebtBurn, sized by the Pool word: the
                 // enriched `scaled_amount = ray_div(raw_amount, index, FLOOR)` —
-                // mirrors Python's
-                // `DebtBurnEvent(value=actual_scaled_burn, scaled_amount=actual_scaled_burn)`.
+                // the burn rides the Pool word.
                 //
                 // `enricher_debt_burn(v_token_revision)` is the on-chain
                 // TokenMath row for the burn leg (`ray_div_floor` at rev ≥ 4);
@@ -743,9 +732,7 @@ fn build_scaled_event_chunk_event(
             let result = if token_type == "v_token" {
                 // The enriched amount is the Pool word — `debtToCover` for a
                 // `LiquidationCall`, `repayAmount` for a `Repay` — divided by the
-                // debt-burn row, the same column Python's
-                // `_process_debt_burn_with_match` reads
-                // (`get_debt_burn_scaled_amount(...)`). It rides the event, so
+                // debt-burn row. It rides the event, so
                 // every dispatch path (standard repay, non-bad-debt liquidation,
                 // deficit coverage, balance transfer, interest accrual) reaches
                 // the processor with one precedence, and no operation type can
@@ -774,13 +761,11 @@ fn build_scaled_event_chunk_event(
         | ScaledTokenEventType::Erc20CollateralTransfer => {
             // The aToken BalanceTransfer (collateral moved between users).
             // The `from` position is always resolved — the SENDER side is
-            // written unconditionally (Python's `_process_collateral_transfer`
-            // doesn't guard `from == ZERO_ADDRESS`; this matches the 2
+            // written unconditionally (this matches the 2
             // pre-existing 0-address collateral rows on 0x83F2 / 0xD533 in
-            // both Python ref + Rust). The `to` position is resolved ONLY
-            // when `to_addr != ZERO_ADDRESS` (Python's `transforms.py` guard:
-            // `if scaled_event.target_address != ZERO_ADDRESS:` the recipient
-            // block in `_process_collateral_transfer`). Burn-to-zero legs
+            // the recorded gold + Rust). The `to` position is resolved ONLY
+            // when `to_addr != ZERO_ADDRESS` (the recorded-gold guard skips
+            // the recipient leg for a zero target). Burn-to-zero legs
             // (`Transfer(from=user, to=0x0, amount)` = dust from a direct
             // aToken `transfer()` drop to the burn address) must NOT create
             // a 0x0 collateral row.
@@ -827,7 +812,6 @@ fn build_scaled_event_chunk_event(
 /// Paired `BalanceTransfer` event(s) on `op.balance_transfer_events` carry
 /// the SCALED balance being moved (+ the liquidity index) — those are the
 /// authoritative inputs for credit/debit + `last_index` advancement
-/// (mirrors Python's `_match_paired_balance_transfer` in transfers.py).
 /// The BT's SCALED amount and index are the only valid inputs: dispatching
 /// the ERC20's UNDERLYING amount with `transfer_index=0` debits more than the
 /// credited scaled balance whenever the liquidity index is not 1, and the
@@ -942,11 +926,10 @@ fn dispatch_interest_accrual(
     gho_running_state: &mut HashMap<i64, (U256, U256)>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
-    // Python routes ALL GHO vToken Mints — including interest accrual + the
-    // discount "dust mints" — through the GHO discount processor
-    // (token_processor.py:540-595, `_process_debt_mint_with_match`'s GHO
-    // branch: `gho_processor.process_mint_event`). It does NOT branch on
-    // operation_type for the per-event dispatch (only on event_type). So a
+    // ALL GHO vToken Mints — including interest accrual + the
+    // discount "dust mints" — route through the GHO discount processor.
+    // The per-event dispatch does NOT branch on operation_type (only on
+    // event_type). So a
     // `GhoDebtMint` inside an `InterestAccrual` op takes the SAME path as one
     // inside a `GhoBorrow` op.
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
@@ -960,12 +943,12 @@ fn dispatch_interest_accrual(
                     | ScaledTokenEventType::GhoDebtTransfer
             );
         if is_gho {
-            // Python's interest-accrual enricher sets `scaled_amount = 0` for
-            // ALL events (enrichment/handlers/interest_accrual.py — "Interest
-            // accrual does not change scaled balance"). This matters for the
+            // Interest accrual does not change the scaled balance, so the
+            // interest-accrual enricher sets `scaled_amount = 0` for ALL
+            // events. This matters for the
             // BORROW branch of `process_gho_debt_mint` (hit by dust mints where
             // `balance_increase == 0 < value`): V5+ uses `scaled_amount` there,
-            // so it MUST be 0 to match Python (NOT `ray_div(raw_amount, index)`
+            // so it MUST be 0 (NOT `ray_div(raw_amount, index)`
             // which `build_gho_chunk_event` would compute for pool-event ops).
             // The discount math (delta for V1-V3 / pure-interest-accrual) is
             // verified byte-exact vs the Python gold at 18M.
@@ -1044,15 +1027,14 @@ fn dispatch_interest_accrual(
     Ok(())
 }
 
-// ── the GHO-discount-lookup machinery (C3 — ports
-//    `transaction_processor._process_transaction` L73-192 + `_is_bad_debt_liquidation`) ─
+// ── the GHO-discount-lookup machinery ─────────────────────────────────────
 
 /// The per-tx GHO-discount context. Computed once at the top of
 /// [`process_transaction`] — its pre-pass:
 /// - scans `tx_logs` for `DISCOUNT_PERCENT_UPDATED` events → builds the
 ///   `updates_by_log_index` map (per-user, sorted by log index).
 /// - scans `tx_logs` for `DEFICIT_CREATED` events → builds the `bad_debt_users`
-///   set (the bad-debt-liquidation signal — `_is_bad_debt_liquidation`).
+///   set (the bad-debt-liquidation signal).
 /// - holds the orchestrator-pre-fetched `discounts` snapshot (the
 ///   `raw_call` for users-not-in-DB is the driver-shell's concern).
 ///
@@ -1072,8 +1054,7 @@ fn dispatch_interest_accrual(
 #[derive(Debug)]
 pub struct GhoDiscountContext<'a> {
     /// `(user, log_index, old_discount)` — from `DISCOUNT_PERCENT_UPDATED`
-    /// events, per-user, sorted ascending by log index. Mirrors
-    /// `tx_context.discount_updates_by_log_index`.
+    /// events, per-user, sorted ascending by log index.
     updates_by_log_index: HashMap<Address, Vec<(u64, U256)>>,
     /// The orchestrator-pre-fetched GHO discount snapshot. Keyed by user
     /// address → the discount percent (basis points) in effect at the tx's
@@ -1123,8 +1104,7 @@ impl<'a> GhoDiscountContext<'a> {
                 bad_debt_users.insert(user);
             }
         }
-        // Sort each user's updates ascending by log index (mirrors the
-        // Python `tx_context.discount_updates_by_log_index[user].sort(...)`).
+        // Sort each user's updates ascending by log index.
         for v in updates_by_log_index.values_mut() {
             v.sort_by_key(|(idx, _)| *idx);
         }
@@ -1144,8 +1124,8 @@ impl<'a> GhoDiscountContext<'a> {
     }
 
     /// Resolve the discount percent in effect at `log_index` for `user` on a
-    /// GHO vToken at `vtoken_rev`. Mirrors `tx_context.user_discounts.get(...)`
-    /// + `get_effective_discount_at_log_index`. Returns 0 for V4+ (no discount).
+    /// GHO vToken at `vtoken_rev` (the most-recent in-tx update before
+    /// `log_index`, else the snapshot default). Returns 0 for V4+ (no discount).
     #[must_use]
     pub fn effective_discount(&self, user: Address, log_index: u64, vtoken_rev: u32) -> U256 {
         if !Self::discount_supported(vtoken_rev) {
@@ -1185,8 +1165,7 @@ impl<'a> GhoDiscountContext<'a> {
         self.bad_debt_users.contains(&user)
     }
 
-    /// `true` if `token_address` is the GHO vToken. Mirrors
-    /// `tx_context.is_gho_vtoken`.
+    /// `true` if `token_address` is the GHO vToken.
     #[must_use]
     pub fn is_gho_vtoken(&self, token_address: Address) -> bool {
         self.gho_vtoken_address
@@ -1423,26 +1402,23 @@ fn build_gho_chunk_event(
         let raw_amount =
             pool_event.map_or(ev.amount, |pe| extract_raw_amount_for_event(pe, ev, op));
         let strat = crate::gho_processor::gho_strategy(asset.v_token_revision);
-        // Mirror Python's per-op enrichment handler strategy
-        // (calculator.py + enrichment/handlers/{borrow,repay,liquidation}.py):
+        // The rounding mode derives from the operation's shape, never from
+        // the event magnitudes:
         //
-        //   • `BorrowHandler.handle`   → `context.calculate(GHO_DEBT_MINT, ...)`  → MINT strategy (`get_debt_mint_scaled_amount`, CEIL for V5)
-        //   • `RepayHandler._handle_standard_burn` OR `._handle_interest_exceeds_repayment` →
-        //     `context.calculate(GHO_DEBT_BURN, ...)` → BURN strategy (`get_debt_burn_scaled_amount`, FLOOR for V5)
-        //   • `LiquidationHandler.handle`: the defaulting path through `_get_calculation_event_type`
-        //     (returns `event_type` as-is) → event-type-based (MINT for GhoDebtMint, BURN for GhoDebtBurn)
+        //   • GhoBorrow → the MINT strategy row (CEIL for V5)
+        //   • GhoRepay → the BURN strategy row (FLOOR for V5)
+        //   • the other GHO-carrying ops → event-type-based (MINT for
+        //     GhoDebtMint, BURN for GhoDebtBurn)
         //
-        // The rounding mode derives from the operation's handler, never from
-        // the event magnitudes: the heuristic
+        // The heuristic
         // `if ev.amount >= balance_increase { MINT } else { BURN }` reads a GHO
         // REPAY (GhoDebtBurn) whose `Burn.value > Burn.balanceIncrease`
         // (typical when the user repays the principal, not just interest) as a
-        // MINT, so it CEILs and burns 1 wei more than Python's FLOOR per burn.
-        // Across several GHO Burns in one chunk that accumulates into a wei
-        // underflow at the final full repay, blocked by the uint128-negative
-        // guard that must STAY.
+        // MINT, so it CEILs and burns 1 wei more than the FLOOR row per burn;
+        // across several GHO Burns in one chunk that accumulates into a wei
+        // underflow at the final full repay — the uint128-negative guard
+        // blocks it.
         //
-        // The dispatch follows Python's handler-by-handler strategy selection.
         // The deriving `ray_div` call uses the chosen
         // per-op per-event rounding mode. Note the dispatch_gho_liquidation
         // path already handles bad-debt via `DebtPositionReset` (before reaching
@@ -1495,8 +1471,8 @@ fn build_gho_chunk_event(
     // `prev_balance` + `prev_index` — reading the DB pre-tx state on every
     // event re-applies the `accrue_debt_on_action` `discount_scaled` burn
     // once per event, because `balance_increase` looks non-zero against a
-    // stale `prev_index`. Mirrors Python's `position.
-    // balance += balance_delta` immediate SQLAlchemy-session write.
+    // stale `prev_index` — the map stands in for the immediate
+    // read-your-own-writes balance the apply buffer lands.
     //
     // The map is per-tx (the run-loop's `apply_chunk_events_on_conn` lands
     // the buffer right after `process_transaction` returns, so the next tx's
@@ -1632,8 +1608,7 @@ fn dispatch_liquidation(
         // `(user, debt_v_token)` share 1 burn. The aggregated burn — sized by
         // the group's `total_debt_to_cover` (handled below for `DebtBurn`) —
         // covers ALL debt reduction; the debt Mint events for this group are
-        // SKIPPED entirely. Mirrors `_process_debt_mint_with_match`'s
-        // `COMBINED_BURN` early-return (`token_processor.py:642-650`).
+        // SKIPPED entirely (the `COMBINED_BURN` early-return).
         if matches!(
             ev.event_type,
             ScaledTokenEventType::DebtMint | ScaledTokenEventType::GhoDebtMint
@@ -1644,9 +1619,8 @@ fn dispatch_liquidation(
         }
         // The bad-debt check applies only to debt events (the collateral leg
         // is unaffected — bad-debt writes off the DEBT, not the collateral).
-        // Mirrors Python's `_process_debt_burn_with_match`, whose bad-debt
-        // reset "applies to both GHO and non-GHO tokens" for ANY debt burn in a
-        // Liquidation/GhoLiquidation op. A GHO debt burn attached to a
+        // The bad-debt reset applies to both GHO and non-GHO tokens for ANY
+        // debt burn in a Liquidation/GhoLiquidation op. A GHO debt burn attached to a
         // NON-GHO LiquidationCall (the parser's `collect_debt_burns`
         // single-liquidation branch attaches ALL of the user's debt burns) MUST
         // be reset here: it never reaches `dispatch_gho_liquidation` (the op
@@ -1697,9 +1671,8 @@ fn dispatch_liquidation(
         let mut ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
         // COMBINED_BURN aggregation: size the single shared
         // debt burn by the group's aggregate `debt_to_cover` across ALL its
-        // liquidations — NOT this single LiquidationCall's `debtToCover`.
-        // Mirrors `_process_debt_burn_with_match`'s COMBINED_BURN arm:
-        // `burn_value = get_debt_burn_scaled_amount(total_debt_to_cover, index)`.
+        // liquidations — NOT this single LiquidationCall's `debtToCover` —
+        // rounded by the debt-burn rounding row.
         // `mark_processed` guards double-application; the parser attached the
         // shared burn to exactly one op (position 0), so it fires once.
         if is_debt
@@ -1721,13 +1694,12 @@ fn dispatch_liquidation(
     Ok(())
 }
 
-/// Dispatch the `DeficitCoverage` paired-event apply (Umbrella protocol).
-/// Mirrors `_process_deficit_coverage_operation` — process transfer events
-/// first (credit the user's collateral position), then burn events (debit,
-/// including accrued interest). The burn's `scaled_amount` is computed
-/// directly from the burn's `amount` + `index` (skip enrichment validation
-/// the deficit-coverage burn includes interest accrued between the
-/// transfer + the burn within the same tx).
+/// Dispatch the `DeficitCoverage` paired-event apply (Umbrella protocol):
+/// process transfer events first (credit the user's collateral position),
+/// then burn events (debit, including accrued interest). The burn's
+/// `scaled_amount` is computed directly from the burn's `amount` + `index` —
+/// the deficit-coverage burn includes interest accrued between the transfer
+/// + the burn within the same tx, so the enriched path must be skipped.
 fn dispatch_deficit_coverage(
     op: &Operation,
     market_id: i64,
@@ -1737,15 +1709,11 @@ fn dispatch_deficit_coverage(
 ) -> Result<(), ProcessTxError> {
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
-    // Two-pass: transfers first (credit), then burns (debit). Mirrors
-    // Python's `_process_deficit_coverage_operation` — which calls
-    // `_process_collateral_transfer` for each transfer event. Python's
-    // `_process_collateral_transfer` runs `_should_skip_collateral_transfer`
-    // (the BT variant `CollateralTransfer` is in `op.balance_transfer_events`
-    // → Rule 1 skips it; only the unscaled ERC20 `Erc20CollateralTransfer` is
-    // processed) + `_match_paired_balance_transfer` (which resolves the
-    // ERC20 Transfer's paired `BalanceTransfer` log + uses the BT's SCALED
-    // value — NOT the unscaled ERC20 amount).
+    // Two-pass: transfers first (credit), then burns (debit). The BT-variant
+    // `CollateralTransfer` is in `op.balance_transfer_events` and is skipped;
+    // only the unscaled ERC20 `Erc20CollateralTransfer` is processed, paired
+    // with its `BalanceTransfer` log, using the BT's SCALED value — NOT the
+    // unscaled ERC20 amount.
     //
     // The two transfer variants carry the same logical delta at different
     // scales (`CollateralTransfer` (BT, scaled value) +
@@ -1754,12 +1722,12 @@ fn dispatch_deficit_coverage(
     // `unscaled + scaled` — when the unscaled amount exceeds the position's
     // scaled balance the uint128-negative guard fires (the balance is uint128
     // on-chain — see AToken.rev_1.sol:1714, linearity checked; this guard is
-    // CORRECT and must STAY).
+    // CORRECT).
     //
-    // The dispatch (faithful-mirror parity):
-    //   - SKIP the `CollateralTransfer` (BT) variant entirely (Python's
-    //     `Rule 1` — the BT log is also in `op.balance_transfer_events`,
-    //     paired with the ERC20 Transfer that handles the delta).
+    // The dispatch:
+    //   - SKIP the `CollateralTransfer` (BT) variant entirely (the BT log is
+    //     also in `op.balance_transfer_events`, paired with the ERC20 Transfer
+    //     that handles the delta).
     //   - For the `Erc20CollateralTransfer` event, pair with the BT log via
     //     `op.balance_transfer_events` (mirrors `dispatch_balance_transfer`'s
     //     `find_map` lookup — same matching `bt_token + bt_from + bt_to`),
@@ -1772,8 +1740,7 @@ fn dispatch_deficit_coverage(
             ScaledTokenEventType::CollateralTransfer
                 | ScaledTokenEventType::Erc20CollateralTransfer
         ) {
-            // The `CollateralTransfer` (BT) variant — Python's
-            // `_should_skip_collateral_transfer` Rule 1: it's already in
+            // The `CollateralTransfer` (BT) variant — it's already in
             // `op.balance_transfer_events` (the orchestrator's `create_deficit_coverage_operations`
             // inserts `bt_events` exactly from the BT-variant events). The
             // paired ERC20 Transfer handles the delta via the BT pair below.
@@ -1812,9 +1779,9 @@ fn dispatch_deficit_coverage(
     for ev in &scaled {
         if matches!(ev.event_type, ScaledTokenEventType::CollateralBurn) {
             // The deficit-coverage burn: compute `scaled_amount` directly from
-            // the burn's `amount` (the raw value) + `index` (the collateral-burn strategy). Skip
-            // enrichment validation (the burn includes interest accrued between
-            // the transfer + the burn — mirrors `_process_deficit_coverage_burn`).
+            // the burn's `amount` (the raw value) + `index` (the collateral-burn
+            // strategy). Skip enrichment validation — the burn includes interest
+            // accrued between the transfer + the burn.
             let chunk_event =
                 build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn, substrate)?;
             events.push(chunk_event);
@@ -1919,10 +1886,6 @@ fn resolve_position_id(
     Ok(position_id)
 }
 
-// Silence the unused-import warn for `I256` (kept for the deferred paths'
-// type-annotation parity; remove when C2 lands).
-// (Removed — no deferred path uses I256 directly; the processor returns it.)
-
 #[expect(clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::too_many_lines)]
@@ -1992,8 +1955,8 @@ mod tests {
 
     /// Unit test for `extract_pool_amount_word0` — the Pool event's data word 0
     /// is the `raw_amount` (supplyAmount/withdrawAmount/borrowAmount/repayAmount).
-    /// This is the enricher's `raw_amount` extraction (the plumbing-equivalence
-    /// caveat — CANNOT pass `scaled_amount: None` to the processor).
+    /// This is the enricher's `raw_amount` extraction — the dispatch must
+    /// hand the processor the Pool word, never `scaled_amount: None`.
     #[test]
     fn extract_pool_amount_word0_reads_data_word_0() {
         // data = [amount=0x1000 (4096), padding...] → word 0 = 4096.
@@ -2090,10 +2053,9 @@ mod tests {
     }
 
     /// `OperationType::MintToTreasury` scaled-amount calculation — the
-    /// `PoolMath::underlying_to_scaled_collateral` revision split. This is
+    /// revision split. This is
     /// the parity-gate zero-drift surface for the `MintToTreasury` path: rev >= 9 →
-    /// CEIL, rev <= 8 → `HALF_UP`. Mirrors `calculator.py` +
-    /// `pool_math.py::underlying_to_scaled_collateral`.
+    /// CEIL, rev <= 8 → `HALF_UP`.
     #[test]
     fn mint_to_treasury_scaled_amount_revision_split() {
         use crate::RAY;
@@ -2109,7 +2071,7 @@ mod tests {
         assert_ne!(v9, v8, "the rev-9 CEIL vs rev-8 HALF_UP split must differ");
     }
 
-    // ── GhoDiscountContext (C3) ────────────────────────────────────────
+    // ── GhoDiscountContext ─────────────────────────────────────────────
 
     /// Build a synthetic `DISCOUNT_PERCENT_UPDATED` log.
     fn make_discount_updated_log(idx: u64, user: Address, old_discount: u64) -> Log {
@@ -2382,14 +2344,12 @@ mod tests {
         }
     }
 
-    /// `dispatch_deficit_coverage` must mirror Python's
-    /// `_process_deficit_coverage_operation` — the `CollateralTransfer` (BT
-    /// variant, with `.index` set) is SKIPPED (Python's
-    /// `_should_skip_collateral_transfer` Rule 1 — the BT log is in
+    /// `dispatch_deficit_coverage`: the `CollateralTransfer` (BT
+    /// variant, with `.index` set) is SKIPPED (the BT log is in
     /// `op.balance_transfer_events`, paired with the `Erc20CollateralTransfer`
     /// that handles the delta), and the `Erc20CollateralTransfer` event is
     /// paired with the BT log via `decode_balance_transfer_log` lookup
-    /// (mirrors `dispatch_balance_transfer`'s `find_map` +
+    /// (`dispatch_balance_transfer`'s `find_map` +
     /// `override_transfer_with_paired_bt`) — its `scaled_amount` is the BT's
     /// SCALED value, NOT the unscaled ERC20 Transfer amount.
     ///
@@ -2397,8 +2357,7 @@ mod tests {
     /// and the `CollateralTransfer` (BT, scaled `ev.amount`) as `chunk_events`
     /// double-bills the position: the unscaled amount `168401963` over-debits
     /// the scaled balance `148831960` and the uint128-negative guard rejects
-    /// it (the guard STAYS — on-chain `UserState.balance` is uint128,
-    /// `AToken.rev_1.sol:1712`).
+    /// it (on-chain `UserState.balance` is uint128, `AToken.rev_1.sol:1712`).
     #[test]
     fn dispatch_deficit_coverage_pairs_erc20_transfer_with_paired_balance_transfer() {
         use crate::RAY;
@@ -2974,9 +2933,8 @@ mod tests {
     // spurious 0-liquidation + 1-burn group; `detect_pattern` then returns
     // `CombinedBurn` with `total_debt_to_cover() == 0`, and
     // `dispatch_liquidation`'s COMBINED_BURN override sizes the burn by 0 —
-    // zeroing a debt balance chain expects ~1.28e15 on. Mirrors Python's
-    // `detect_liquidation_patterns` guard
-    // `if key not in groups: continue`.
+    // zeroing a debt balance chain expects ~1.28e15 on — a burn whose key
+    // has no liquidation group must NOT create one.
     #[test]
     fn build_liquidation_patterns_does_not_classify_standalone_burn_as_combined() {
         use degenbot_core::address_utils::address_to_checksum_string;
@@ -3071,10 +3029,9 @@ mod tests {
     // a bad-debt write-off: the contract emits DEFICIT_CREATED, on-chain
     // scaledBalanceOf drops to 0).
     //
-    // The Python `_process_debt_burn_with_match` applies the bad-debt reset
-    // FIRST (balance=0) — and its comment says "applies to both GHO and
-    // non-GHO tokens" — for ANY debt burn in a Liquidation/GhoLiquidation op
-    // when `_is_bad_debt_liquidation` is true.
+    // The bad-debt reset applies FIRST (balance=0) to ANY debt burn in a
+    // Liquidation/GhoLiquidation op when the tx carries the user's
+    // `DEFICIT_CREATED`.
     //
     // Gating the reset on `is_debt` EXCLUDES `GhoDebtBurn` (the set is
     // {DebtBurn, DebtTransfer, Erc20DebtTransfer}), and an `is_gho` guard
@@ -3241,11 +3198,11 @@ mod tests {
     // mints the interest-remainder token then the actual burn subtracts the
     // principal scaled amount.
     //
-    // The Python `_process_debt_mint_with_match` treats a `DebtMint` in
-    // {LIQUIDATION, GHO_LIQUIDATION, REPAY, REPAY_WITH_ATOKENS, GHO_REPAY} as
+    // A `DebtMint` in an op of type `Liquidation | GhoLiquidation | Repay |
+    // RepayWithAtokens | GhoRepay` is
     // a burn sized by the Pool event's `debtToCover`/`repayAmount` (decoded
-    // from the Pool event word0), via `get_debt_burn_scaled_amount` (FLOOR for
-    // rev ≥4). The Rust `is_debt_repay_mint_edge` gate must include
+    // from the Pool event word0), FLOOR-rounded for rev ≥4. The Rust
+    // `is_debt_repay_mint_edge` gate must include
     // `Liquidation`: a `DebtMint` outside it falls to the standard-mint
     // REPAY-arm, which derives the amount from `balance_increase - value`
     // (= `bi - (bi - debtToCover)` = debtToCover on paper — but the on-chain

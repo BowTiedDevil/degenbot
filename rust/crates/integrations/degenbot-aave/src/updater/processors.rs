@@ -78,12 +78,11 @@ pub struct RoundingStrategy {
     pub burn: RayDivMode,
 }
 
-// ── the enricher math (ports `libraries/token_math.py`) ────────────────────
+// ── the enricher math ──────────────────────────────────────────────────────
 //
 // These four functions are the on-chain rounding the Pool applies to compute a
-// scaled amount — `TokenMathFactory.get_token_math_for_token_revision`
-// (`libraries/token_math.py:267-285`), `ExplicitRoundingMath` for rev ≥ 4 and
-// `HalfUpRoundingMath` for rev ≤ 3. They are the only rounding source the
+// scaled amount: `ExplicitRoundingMath` for rev ≥ 4 and `HalfUpRoundingMath`
+// for rev ≤ 3. They are the only rounding source the
 // scaled-token paths consult, and the rev-4 collateral-mint row (FLOOR) is the
 // one that a naive "same rounding for both legs" table gets wrong: the Pool's
 // `AToken` rev 9 uses `getATokenMintScaledAmount = rayDivFloor`
@@ -92,8 +91,7 @@ pub struct RoundingStrategy {
 // `(raw_amount * RAY) % index > index // 2`.
 
 /// Enricher rounding for a collateral `mint` (= the **supplied** side), by
-/// **`token_revision`** of the aToken. Port of
-/// `TokenMathFactory.get_token_math_for_token_revision` → `get_collateral_mint_scaled_amount`.
+/// **`token_revision`** of the aToken.
 /// rev ≥4 ⇒ FLOOR (`ExplicitRoundingMath`); rev ≤3 ⇒ `HALF_UP` (`HalfUpRoundingMath`).
 #[must_use]
 pub const fn enricher_collateral_mint(token_revision: u32) -> RayDivMode {
@@ -103,8 +101,8 @@ pub const fn enricher_collateral_mint(token_revision: u32) -> RayDivMode {
     }
 }
 
-/// Enricher rounding for a collateral `burn`. Port of
-/// `ExplicitRoundingMath::get_collateral_burn_scaled_amount = ray_div_ceil`.
+/// Enricher rounding for a collateral `burn` (`ExplicitRoundingMath`'s
+/// `get_collateral_burn_scaled_amount` = `ray_div_ceil`).
 #[must_use]
 pub const fn enricher_collateral_burn(token_revision: u32) -> RayDivMode {
     match token_revision {
@@ -113,8 +111,8 @@ pub const fn enricher_collateral_burn(token_revision: u32) -> RayDivMode {
     }
 }
 
-/// Enricher rounding for a debt `mint`. Port of
-/// `ExplicitRoundingMath::get_debt_mint_scaled_amount = ray_div_ceil`.
+/// Enricher rounding for a debt `mint` (`ExplicitRoundingMath`'s
+/// `get_debt_mint_scaled_amount` = `ray_div_ceil`).
 #[must_use]
 pub const fn enricher_debt_mint(token_revision: u32) -> RayDivMode {
     match token_revision {
@@ -123,8 +121,8 @@ pub const fn enricher_debt_mint(token_revision: u32) -> RayDivMode {
     }
 }
 
-/// Enricher rounding for a debt `burn`. Port of
-/// `ExplicitRoundingMath::get_debt_burn_scaled_amount = ray_div_floor`.
+/// Enricher rounding for a debt `burn` (`ExplicitRoundingMath`'s
+/// `get_debt_burn_scaled_amount` = `ray_div_floor`).
 #[must_use]
 pub const fn enricher_debt_burn(token_revision: u32) -> RayDivMode {
     match token_revision {
@@ -145,7 +143,7 @@ pub const fn debt_strategy(revision: u32) -> RoundingStrategy {
     }
 }
 
-// ── the event data (ports `processors/base.py` event dataclasses) ──────────
+// ── the event data ────────────────────────────────────────────────────────
 
 /// The decoded fields of a collateral (aToken) or debt (vToken) `Mint`/`Burn`
 /// event. The Pool contract emits these with `value` (the user-facing amount)
@@ -227,9 +225,8 @@ pub enum ProcessorError {
 
 /// The aToken/vToken processor pair — the four `Mint`/`Burn` delta entry
 /// points. Stateless: the enriched scaled amount carries the rounding, so no
-/// token revision or rounding table survives in the type. Mirrors the Python
-/// `UnifiedCollateralProcessor` / `UnifiedDebtProcessor`, whose only remaining
-/// difference is which leg a call site names.
+/// token revision or rounding table survives in the type; the collateral and
+/// debt processors differ only in which leg a call site names.
 #[derive(Debug, Clone, Copy)]
 pub struct ScaledTokenProcessor;
 
@@ -246,8 +243,7 @@ impl ScaledTokenProcessor {
         Self
     }
 
-    /// Process a collateral (aToken) `Mint` event. Port of
-    /// `UnifiedCollateralProcessor::process_mint_event`.
+    /// Process a collateral (aToken) `Mint` event.
     ///
     /// `value` against `balance_increase` is the entire classification:
     ///
@@ -273,8 +269,7 @@ impl ScaledTokenProcessor {
         mint_delta(event)
     }
 
-    /// Process a collateral (aToken) `Burn` event. Port of
-    /// `UnifiedCollateralProcessor::process_burn_event`.
+    /// Process a collateral (aToken) `Burn` event.
     ///
     /// The delta is the negated enriched amount: `scaled_delta` when the caller
     /// already holds it (the withdraw-with-Mint-event amount), else the event's
@@ -292,8 +287,7 @@ impl ScaledTokenProcessor {
         burn_delta(event, scaled_delta)
     }
 
-    /// Process a debt (vToken) `Mint` event. Port of
-    /// `UnifiedDebtProcessor::process_mint_event`.
+    /// Process a debt (vToken) `Mint` event.
     ///
     /// - `value >= balance_increase` — the BORROW path (`_mintScaled`): a mint
     ///   of the enriched amount.
@@ -311,8 +305,7 @@ impl ScaledTokenProcessor {
         mint_delta(event)
     }
 
-    /// Process a debt (vToken) `Burn` event. Port of
-    /// `UnifiedDebtProcessor::process_burn_event`.
+    /// Process a debt (vToken) `Burn` event.
     ///
     /// Same contract as [`Self::process_collateral_burn`]: the negated enriched
     /// amount, `scaled_delta` first, the event's `scaled_amount` otherwise.
@@ -380,8 +373,7 @@ fn to_i256(value: U256) -> Result<I256, ProcessorError> {
         .map_err(|_| ProcessorError::DeltaOverflow(format!("U256 {value} exceeds I256::MAX")))
 }
 
-/// Negate a `U256` into a negative `I256` (a burn's delta). Mirrors the
-/// Python's `-ray_div(...)` unary negate. Returns
+/// Negate a `U256` into a negative `I256` (a burn's delta). Returns
 /// [`ProcessorError::DeltaOverflow`] if the value exceeds `I256::MAX` (so
 /// `-value` would underflow).
 fn negate_to_i256(value: U256) -> Result<I256, ProcessorError> {

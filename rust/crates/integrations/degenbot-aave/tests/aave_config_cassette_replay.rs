@@ -97,7 +97,7 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// loop going back in, a per-row re-read, an unbatched revision call's
 /// re-read all change this count and fail the plain run before the
 /// byte-diff consults the committed golden). Measured on this corpus with
-/// the Perf-C substrate in place; the discount-path `eth_call` adds no
+/// the chunk substrate in place; the discount-path `eth_call` adds no
 /// statements, so the delta against the seed corpus's 52 is purely the
 /// span's event mix (GHO debt burns + position/user creation + the
 /// USDT/WETH operation events).

@@ -5,7 +5,7 @@
 //!
 //! The fixtures mirror `aave_market_reset.rs`'s seeded market; the cassette
 //! answers the activation RPC (the head block, `getMarketId()`, and the GHO
-//! token metadata) that C6.1's provider injection made replayable.
+//! token metadata) the provider-injected transport makes replayable.
 
 #![expect(clippy::unwrap_used)]
 

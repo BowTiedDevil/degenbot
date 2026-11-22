@@ -15,8 +15,7 @@ use rusqlite::params;
 
 // ── Market activation / deactivation ─────────────────────────────
 //
-// The one-time market-activation path — the LAST Python ORM writer on the
-// Aave path after the parity-gate retirement. These substrate fns seed the
+// The one-time market-activation path. These substrate fns seed the
 // `aave_v3_markets` row + the `POOL_ADDRESS_PROVIDER` contract row + the GHO
 // `erc20_tokens` row (with caller-supplied metadata) + a bare `aave_gho_tokens`
 // row (token_id only; the discount columns are filled later by the GHO-config
@@ -199,10 +198,8 @@ pub struct ActivatedMarket {
 /// Idempotent: re-activating an existing market sets `active = true` + inserts
 /// no duplicate rows.
 ///
-/// This is the Rust-owned replacement for the Python
-/// `activate_ethereum_aave_v3` (commands.py) — the last ORM writer on the Aave
-/// path after the parity-gate retirement. A standalone Rust consumer (`cargo
-/// add degenbot`) can activate a market without Python.
+/// A standalone Rust consumer (`cargo add degenbot`) can activate a market
+/// without Python: this fn owns the market-seeding write path.
 ///
 /// # Args
 ///
@@ -390,8 +387,7 @@ async fn fetch_market_id(
     ))))
 }
 
-/// Deactivate an Aave V3 market — set `active = false`. The thin Rust-owned
-/// replacement for the Python `deactivate_mainnet_aave_v3` (commands.py).
+/// Deactivate an Aave V3 market — set `active = false`.
 ///
 /// # Args
 ///

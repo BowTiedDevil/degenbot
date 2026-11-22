@@ -39,9 +39,8 @@ pub(crate) fn parse_address(s: &str) -> Option<Address> {
     }
     Address::parse_checksummed(s, None).ok().or_else(|| {
         // Fall back to case-insensitive parse (the DB-stored address may not
-        // be EIP-55 checksum-encoded — the Python stores lowercase, so the
-        // `parse_checksummed` strict check would fail; alloy's
-        // `Address::from_str` accepts the lowercase form).
+        // be EIP-55 checksum-encoded, so the strict `parse_checksummed` check
+        // would fail; `Address::from_str` accepts the lowercase form).
         let bytes = alloy::hex::decode(trimmed).ok()?;
         if bytes.len() != 20 {
             return None;
@@ -97,8 +96,7 @@ pub fn amounts_match_with_tolerance(calculated: U256, expected: U256, tolerance:
     }
 }
 
-/// Bare-bytes comparison helper — repeated in a handful of test expressions;
-/// kept here for parity (the Python field-tests on a similar helper).
+/// Bare-bytes comparison helper — repeated in a handful of test expressions.
 fn _amounts_match_eq(a: U256, b: U256) -> bool {
     a == b
 }
@@ -145,7 +143,7 @@ pub(super) enum EventDisposition {
     /// A movement's index-less ERC20 `Transfer` report (underlying units), with
     /// the scaled `BalanceTransfer` report of the same movement when the token
     /// emitted one. This report is what a standalone
-    /// `BALANCE_TRANSFER`/`STKAAVE_TRANSFER` operation carries.
+    /// `BalanceTransfer`/`StkAaveTransfer` operation carries.
     StandaloneTransfer { scaled_partner: Option<u64> },
     /// A movement's index-bearing `BalanceTransfer` report (scaled units), with
     /// the ERC20 `Transfer` report of the same movement when one was decoded.

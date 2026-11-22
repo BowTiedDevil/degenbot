@@ -31,19 +31,15 @@
 //! - `util`: shared free helpers (log-index/address codecs, event cloning,
 //!   the tolerance comparison, the per-log ownership classification).
 //!
-//! # The plumbing-equivalence caveat (escalation trigger)
+//! # Raw-arithmetic matching (escalation trigger)
 //!
-//! The reference pipeline is 4-stage: `parser.parse(events)` →
-//! `ScaledEventEnricher.enrich(scaled_event, operation)` →
-//! `EnrichedScaledTokenEvent` → `token_processor._process_*_with_match`.
-//! `ScaledTokenProcessor` already subsumes the enrichment layer (they route
-//! through the same `TokenMath` rounding). This parser does NOT call
-//! `ScaledTokenProcessor` — the matching uses raw
-//! `value - balance_increase` / `value + balance_increase`; the
-//! `ScaledTokenProcessor` is the apply-path concern. If the standard-builder
-//! tests reveal a divergence between the raw-arithmetic matching here and
-//! `ScaledTokenProcessor::process_*` on an edge branch, escalate (don't paper
-//! over).
+//! `ScaledTokenProcessor` subsumes the enrichment layer (both route through
+//! the same rounding). This parser does NOT call `ScaledTokenProcessor` —
+//! the matching uses raw `value - balance_increase` /
+//! `value + balance_increase`; the `ScaledTokenProcessor` is the apply-path
+//! concern. If the standard-builder tests reveal a divergence between the
+//! raw-arithmetic matching here and `ScaledTokenProcessor::process_*` on an
+//! edge branch, escalate (don't paper over).
 
 use super::run::substrate::ChunkSubstrate;
 use crate::operations::{
@@ -114,7 +110,7 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// The borrowed `&Connection` — every substrate lookup runs on this
     /// (the chunk-atomicity invariant).
     pub conn: &'a rusqlite::Connection,
-    /// The chunk substrate cache (Perf C) — the parse-time lookups + the
+    /// The chunk substrate cache — the parse-time lookups + the
     /// POOL-revision read ride its prefetch + write-overlay (the
     /// chunk-atomicity
     /// read-your-own-writes contract lives in `run/substrate.rs`). The `'s`
@@ -134,9 +130,8 @@ pub struct TransactionOperationsParser<'a, 's> {
 /// `[cold]` look-up `MissingRow` errors.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    /// A `pool_event` had no matching `scaled_token` event (the Python's
-    /// `assert x is not None` — surfaces as `Err` not panic so the chunk
-    /// rolls back cleanly).
+    /// A `pool_event` had no matching `scaled_token` event — surfaces as
+    /// `Err` not panic so the chunk rolls back cleanly.
     #[error("matching scaled-token event not found: {0}")]
     NoMatch(String),
     /// A substrate lookup failed (a SELECT error, a decode failure — e.g. the
@@ -235,10 +230,9 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
     ///
     /// # Errors
     /// Returns [`ParseError`] on any builder-matching failure (the caller
-    /// rolls back the chunk-tx). Validator-level assertion failures (the
-    /// `_validate_*` fns) are routed to `Operation.validation_errors`
-    /// (non-fatal — the caller can decide; the Python's
-    /// `TransactionOperations.validate` is the strict top-level pass).
+    /// rolls back the chunk-tx). Validator-level assertion failures are
+    /// routed to `Operation.validation_errors` (non-fatal — the caller can
+    /// decide).
     #[expect(
         clippy::missing_panics_doc,
         clippy::too_many_lines,
@@ -276,7 +270,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
                             scaled_events.push(s);
                         }
                     }
-                    _ => {} // ExpectedAbsent: pool events are handled separately in step 1.
+                    _ => {} // pool events are handled separately in step 1.
                 }
             }
         }
@@ -360,7 +354,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         }
         operations.extend(transfer_ops);
 
-        // Step 4f: unassigned events (preserve the Python's ERC20-Transfer filter).
+        // Step 4f: unassigned events (the ERC20-Transfer filter).
         let unassigned_events = events
             .iter()
             .copied()

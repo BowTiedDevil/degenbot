@@ -33,12 +33,11 @@ use super::{
     ConfigDispatchError,
 };
 
-/// The EIP-1967 implementation storage slot (the canonically-fixed
-/// `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`).
-/// The ERC-1967 implementation slot — read via
-/// `get_storage_at` to resolve a proxy's logic contract. Written as the
-/// canonical hex and parsed at compile time (a typo fails the build rather
-/// than silently mis-routing proxy resolution).
+/// The EIP-1967 implementation storage slot
+/// (`bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`) —
+/// read via `get_storage_at` to resolve a proxy's logic contract. Written as
+/// the canonical hex and parsed at compile time (a typo fails the build
+/// rather than silently mis-routing proxy resolution).
 pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix(
     "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
     16,
@@ -49,10 +48,9 @@ pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix
 
 // ── the 8 sync config handlers (no RPC — testable with in-memory DB) ───────
 
-/// `ReserveDataUpdated` → [`AaveChunkEvent::ReserveDataUpdated`]. Mirrors
-/// `event_handlers._process_reserve_data_update_event` (the
-/// `assert asset_in_db is not None` lifts to a `DecodeShape` error — the
-/// orchestrator pre-seeds assets via `ReserveInitialized`).
+/// `ReserveDataUpdated` → [`AaveChunkEvent::ReserveDataUpdated`]. A missing
+/// asset lifts to a `DecodeShape` error — the orchestrator pre-seeds assets
+/// via `ReserveInitialized`.
 pub(super) fn dispatch_reserve_data_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
@@ -80,7 +78,6 @@ pub(super) fn dispatch_reserve_data_updated(
 }
 
 /// `UserEModeSet(user, categoryId)` → [`AaveChunkEvent::UserEModeSet`].
-/// Mirrors `event_handlers._process_user_e_mode_set_event`.
 pub(super) fn dispatch_user_e_mode_set(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
@@ -130,9 +127,8 @@ pub(super) fn dispatch_reserve_used_as_collateral(
 }
 
 /// `PriceOracleUpdated(old, new)` → [`AaveChunkEvent::PriceOracleUpdated`].
-/// Mirrors `_process_price_oracle_updated_event` (the `assert existing_oracle
-/// is None` lifts to an idempotent overwrite — the apply fn handles the
-/// INSERT-not-UPDATE guard).
+/// An existing oracle lifts to an idempotent overwrite — the apply fn
+/// handles the INSERT-not-UPDATE guard.
 //
 // The arm keeps the uniform `Result` shape the dispatch match relies on
 // (`Some(dispatch_*(ctx, ev)?)`); this handler itself cannot fail.
@@ -148,7 +144,6 @@ pub(super) fn dispatch_price_oracle_updated(
 }
 
 /// `AssetSourceUpdated(asset, source)` → [`AaveChunkEvent::AssetSourceUpdated`].
-/// Mirrors `_process_asset_source_updated_event`.
 pub(super) fn dispatch_asset_source_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
@@ -194,20 +189,16 @@ pub(super) fn dispatch_e_mode_category_added(
         ltv: decoded.ltv.to::<u64>(),
         liquidation_threshold: decoded.liquidation_threshold.to::<u64>(),
         liquidation_bonus: decoded.liquidation_bonus.to::<u64>(),
-        // Parity match: Python's `_process_e_mode_category_added_event`
-        // (event_handlers.py:269,277) does
-        //   `price_source = get_checksum_address(oracle) if oracle else None`
-        // but web3.py decodes the indexed `oracle` event field as a non-empty
-        // HexAddress *string*, whose string-truthiness is ALWAYS true — even
-        // for the zero-address — so Python stores
+        // Parity: the Python gold's decode treats the indexed `oracle` event
+        // field as a non-empty HexAddress *string*, whose string-truthiness is
+        // ALWAYS true — even for the zero-address — so the gold stores
         // `get_checksum_address(Address::ZERO)` = the literal zero-address
         // checksum string when the event emitted `oracle = Address::ZERO`.
         // To honor byte-exact gold-parity on `aave_v3_emode_categories
         // .price_source` (the 16591070 parity gate criterion), unconditionally
         // checksum the decoded oracle (zero-oracle → the lowercase 42-char
         // zero-address string). The DB write layer receives
-        // `Some("0x0000...0000")` and stores it as the column text — matching
-        // Python gold's stored representation.
+        // `Some("0x0000...0000")` and stores it as the column text.
         price_source: Some(checksum(&decoded.oracle)),
         label: decoded.label.clone(),
     })
@@ -268,11 +259,10 @@ pub(super) fn dispatch_asset_collateral_in_emode_changed(
 
 /// `CollateralConfigurationChanged(asset)` →
 /// [`AaveChunkEvent::CollateralConfigurationChanged`] with the RPC-fetched
-/// `getConfiguration(address)` bitmap. Mirrors
-/// `_process_collateral_configuration_changed_event`. The Python does NOT
-/// trust the event's `ltv`/`threshold`/`bonus` fields — it RPC-fetches the
-/// full bitmap from the Pool contract at the event's block (a pool upgrade
-/// can emit stale values). The apply fn decodes the bitmap.
+/// `getConfiguration(address)` bitmap. The event's `ltv`/`threshold`/`bonus`
+/// fields are NOT trusted — the full bitmap is RPC-fetched from the Pool
+/// contract at the event's block (a pool upgrade can emit stale values).
+/// The apply fn decodes the bitmap.
 pub(super) async fn resolve_collateral_configuration(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
@@ -309,13 +299,13 @@ pub(super) async fn resolve_collateral_configuration(
 
 /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken, …)`
 /// → [`AaveChunkEvent::ReserveInitialized`] with the RPC-resolved revisions +
-/// price source. Mirrors `event_handlers._process_asset_initialization_event`:
-/// the 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d with their
+/// price source. The 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d
+/// with their
 /// RPC-fetched metadata, and per EIP-1967 the aToken/vToken implementation
 /// slot → `ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` `eth_call` +
 /// `getSourceOfAsset(address)` `eth_call` on the PRICE_ORACLE contract.
 ///
-/// The metadata step ports `erc20_utils._fetch_erc20_token_metadata`: the
+/// The metadata step: the
 /// name/symbol/decimals tuple rides the ctx's injected provider (ADR-068 D5 —
 /// the core never builds a transport), ONE Multicall3 pass for the three
 /// tokens, and each field is `None` when its reads fail (the reference's
@@ -333,8 +323,7 @@ pub(super) async fn resolve_reserve_initialized(
     let block_number = ctx.block_number();
     let conn = ctx.conn();
     // The GHO asset through the ctx-owned always-fresh accessor, for the
-    // GHO-vToken-FK link below: the fresh read mirrors Python's live ORM read
-    // of `gho_asset.token.address` (a cache hit until an apply marks it dirty).
+    // GHO-vToken-FK link below (a cache hit until an apply marks it dirty).
     let gho_asset = ctx.gho_asset()?;
     // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
     //    RPC-fetching the name/symbol/decimals from the chain (the

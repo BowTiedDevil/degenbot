@@ -29,7 +29,7 @@
 //!   `PoolUpdated`/`PoolConfiguratorUpdated`, `ProxyCreated` (rows 4, 5, 11).
 //! - `discount`: the GHO-discount channel — the per-tx snapshot pre-pass,
 //!   the discount-config dispatchers, the stkAAVE transfer path (row 7's
-//!   consumer side; §(C) W6).
+//!   consumer side; §(C)).
 //! - `asset_config`: the per-asset config handlers — the 8 sync
 //!   dispatchers + the `ReserveInitialized`/`CollateralConfigurationChanged`
 //!   RPC resolutions + the ERC20 metadata family (row 9).
@@ -45,8 +45,7 @@
 //! (those not matched to an Operation by the parser) + dispatches by topic0.
 //! In Rust, the config events are NEVER operation-assigned (the parser only
 //! assigns Mint/Burn/BalanceTransfer/Transfer/Pool-event Supply/Borrow/etc.),
-//! so this module loops over ALL tx logs (the orchestrator may narrow to
-//! `parser.unassigned_events` in `-3`; the decode + dispatch is identical).
+//! so this module loops over ALL tx logs (the decode + dispatch is identical).
 //!
 //! # Chunk atomicity
 //!
@@ -56,7 +55,7 @@
 //! All `get_or_create_*` / `lookup_*` substrate calls run on it — the
 //! chunk-atomicity
 //! invariant (ONE `Transaction` per chunk) holds. The dispatch emits
-//! [`AaveChunkEvent`]s; the apply step (`-3`) consumes them on the same conn.
+//! [`AaveChunkEvent`]s; the apply step consumes them on the same conn.
 //! No `Transaction` lifecycle here — this file owns neither `commit` nor
 //! `drop`.
 
@@ -155,17 +154,15 @@ fn revision_selector(sig: &str) -> [u8; 4] {
 /// The per-tx config-event dispatch loop: loop over `tx_logs`, decode each via
 /// [`decode_aave_log`], + for the 10 enum-covered config event types,
 /// resolve ids + emit [`AaveChunkEvent`] variants. Non-config events
-/// (Supply/Borrow/Mint/Burn/Transfer — the Operation events C3's
-/// `process_transaction` handles) are skipped. The six former fenced events
-/// (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
-/// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`) are now handled,
-/// all routed through [`resolve_missing_variant_event`]: the upgrade-
-/// transition resolvers fetch revisions, `PoolDataProviderUpdated` + the
-/// `AddressSet` name decode are pure decode, and `ProxyCreated` resolves the
-/// filtered proxy. `AddressSet` covers BOTH shapes — a registration (an
-/// insert) and an address rotation (an in-place replace through
-/// [`ChunkContext`]); closing the rotation gap is this chunk's change.
-/// Pinning all six with golden captures is a later slice's follow-up.
+/// (Supply/Borrow/Mint/Burn/Transfer — the Operation events
+/// `process_transaction` handles) are skipped. The six upgrade-transition
+/// events (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
+/// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`) all route through
+/// [`resolve_missing_variant_event`]: the upgrade-transition resolvers
+/// fetch revisions, `PoolDataProviderUpdated` + the `AddressSet` name decode
+/// are pure decode, and `ProxyCreated` resolves the filtered proxy.
+/// `AddressSet` covers BOTH shapes — a registration (an insert) and an
+/// address rotation (an in-place replace through [`ChunkContext`]).
 pub(crate) async fn dispatch_config_events(
     ctx: &mut ChunkContext<'_>,
     tx_logs: &[&alloy::rpc::types::Log],
@@ -269,23 +266,25 @@ async fn dispatch_single_config_event(
         // ── stkAAVE `Transfer` arm (covers the zero-leg arms + the
         // neither-zero case via Option<i64>; scoped to the discount token). ──
         DecodedAaveEvent::Erc20Transfer(ev) => dispatch_stk_aave_transfer(ctx, ev).await?,
-        // ── the 6 missing-variant config events ──────────────────
+        // ── upgrade-transition config events ──────────────────
         // Delegated to `resolve_missing_variant_event` to keep this fn under
         // the 100-line `clippy::too_many_lines` limit.
         //
         // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
-        // 6 missing-variant events both fall through to the `_` arm. The
-        // `resolve_missing_variant_event` fn matches on the 6 missing-variant
-        // variants; for operation events it returns `Ok(None)`.
+        // upgrade-transition events both fall through to the `_` arm. The
+        // `resolve_missing_variant_event` fn matches on the six variants; for
+        // operation events it returns `Ok(None)`.
         _ => resolve_missing_variant_event(decoded, ctx).await?,
     };
     Ok(ev)
 }
 
-/// Resolve the 6 missing-variant config events. Extracted from
+/// Resolve the upgrade-transition config events (`Upgraded`,
+/// `PoolUpdated`, `PoolConfiguratorUpdated`, `PoolDataProviderUpdated`,
+/// `AddressSet`, `ProxyCreated`). Extracted from
 /// [`dispatch_single_config_event`] to keep that fn under the 100-line
-/// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
-/// events (operation events). A `ProxyCreated` whose `id` matches neither
+/// `clippy::too_many_lines` limit. Returns `Ok(None)` for other events
+/// (operation events). A `ProxyCreated` whose `id` matches neither
 /// known proxy id aborts with [`ConfigDispatchError::UnresolvableProxyCreated`].
 ///
 /// # Events
@@ -374,7 +373,7 @@ async fn resolve_missing_variant_event(
                 revision: Some(resolved.revision),
             })
         }
-        // Non-missing-variant events (operation events + the 10 already-handled
+        // Events outside the six (operation events + the 10 already-handled
         // config events — unreachable from `dispatch_single_config_event`'s `_`
         // arm for the 10, reachable for the operation events).
         _ => None,
@@ -382,7 +381,7 @@ async fn resolve_missing_variant_event(
     Ok(ev)
 }
 
-// ── RPC helpers (hand-encoded calldata — no degenbot-abi helper, per -2 decision) ──
+// ── RPC helpers (hand-encoded calldata — no degenbot-abi helper) ──
 
 /// Encode a single-`address`-arg `eth_call`: 4-byte selector
 /// (`keccak256(sig)[0..4]`) + 32-byte left-padded address. For
@@ -527,9 +526,8 @@ fn discount_to_i64(v: U256) -> i64 {
     v.to::<u64>().try_into().unwrap_or(i64::MAX)
 }
 
-/// ASCII-decode a bytes32 + strip the trailing NUL bytes. Port of the Python's
-/// `contract_id_bytes.decode("ascii").strip("\\x00")` (the `AddressSet` event's
-/// `id` topic). The bytes2 is left-aligned ASCII (the protocol writes the
+/// ASCII-decode a bytes32 + strip the trailing NUL bytes (the `AddressSet`
+/// event's `id` topic). The bytes2 is left-aligned ASCII (the protocol writes the
 /// contract name into the bytes32 + right-pads with zeros).
 fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
     let bytes = id.as_slice();
@@ -1076,9 +1074,8 @@ mod tests {
         );
     }
 
-    /// The unchanged path: when the asset EXISTS, `AssetSourceUpdated`
-    /// dispatches normally (the later-update case). Guards against Fix 2b
-    /// over-skipping.
+    /// The existing-asset path: when the asset EXISTS, `AssetSourceUpdated`
+    /// dispatches normally (the later-update case), never over-skipping.
     #[test]
     fn dispatch_asset_source_updated_existing_asset_dispatches() {
         let (db, _) = db_seeded();
@@ -1193,10 +1190,10 @@ mod tests {
         // Parity-directed behavior: when EModeCategoryAdded emits
         // `oracle = Address::ZERO` (the canonical Aave V3 "no specific price
         // oracle" sentinel), Rust MUST emit `price_source =
-        // Some("0x0000000000000000000000000000000000000000")` — matching Python's
-        // `_process_e_mode_category_added_event` (event_handlers.py:269,277)
-        // which, via web3's truthiness check on the decoded address string,
-        // stores `get_checksum_address(zero_address)`.
+        // Some("0x0000000000000000000000000000000000000000")` — the Python
+        // gold stores the checksummed zero address (web3's truthiness check
+        // on the decoded address string passes it through
+        // `get_checksum_address`).
         // Without this, Rust stores NULL — a 1-row byte-divergence vs Python
         // gold on `aave_v3_emode_categories.price_source` (surfaced by the
         // full-schema-diff at the 16591070 parity gate).
@@ -1267,7 +1264,7 @@ mod tests {
         assert!(deprecated, "V4+ deprecates");
     }
 
-    // ── the 6 missing-variant pure-decode tests ──────────────
+    // ── the pure-decode tests ─────────────────────────────────
 
     #[test]
     fn strip_trailing_nulls_from_ascii_decodes_pool() {
@@ -1315,7 +1312,7 @@ mod tests {
         B256::from(id)
     }
 
-    /// The `AddressSet` registration arm is UNCHANGED: `old == ZERO` emits a
+    /// The `AddressSet` registration arm: `old == ZERO` emits a
     /// `ContractInserted`, and applying it lands exactly one `aave_v3_contracts`
     /// row under the ASCII-decoded name (with a NULL revision — no revision
     /// RPC on this path).
@@ -1480,7 +1477,7 @@ mod tests {
 
     // ── the `ProxyCreated` arms (resolvable insert + unresolvable abort) ──
 
-    /// The resolvable arm is UNCHANGED: a known proxy id resolves the contract
+    /// The resolvable arm: a known proxy id resolves the contract
     /// name + the proxy address + the implementation's RPC-fetched revision,
     /// and applying the emitted event lands exactly one `aave_v3_contracts`
     /// row carrying that revision.
@@ -1590,11 +1587,10 @@ mod tests {
         }
     }
 
-    // ── Discount-event emitter-validation guard (divergence #2) ────────
-    // The dispatch returns Ok(None) when (a) the GHO asset has no vToken FK
-    // (the Python's `gho_asset.v_token is None` guard) or (b) the decoded
-    // emitter (log.address) doesn't match gho_asset.v_token_address (the
-    // Python's `v_token.address != event["address"]` guard). Only an emitting
+    // ── Discount-event emitter-validation guard ────────────────────────
+    // The dispatch returns Ok(None) when (a) the GHO asset has no vToken FK,
+    // or (b) the decoded emitter (log.address) doesn't match
+    // gho_asset.v_token_address. Only an emitting
     // log from the matching vToken yields a chunk event. Every test reads the
     // asset through the ctx-owned always-fresh accessor, so the rows below are
     // the accessor's source.

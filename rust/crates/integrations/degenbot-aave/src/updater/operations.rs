@@ -4,7 +4,8 @@
 //! per-Ethereum-tx grouping engine: it matches Pool events (Supply/Borrow/
 //! Repay/Withdraw/MintToTreasury/Deficit) to their constituent `ScaledToken`
 //! events (aToken/vToken Mint/Burn/Transfer + plain ERC20 Transfer) by user +
-//! amount +/- a pool-revision ray-flooring tolerance (`_amounts_match`), then
+//! amount +/- a pool-revision ray-flooring tolerance
+//! (`TransactionOperationsParser::amounts_match`), then
 //! emits typed [`Operation`] objects the apply dispatch glue consumes
 //! to construct `AaveChunkEvent` variants and dispatch via
 //! [`crate::run::apply_aave_chunk_writes_on_conn`].
@@ -28,7 +29,7 @@ use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use std::collections::HashSet;
 
-// ── the ω-shape constants (`operations.py:L19-L23`) ────────────────────────
+// ── parity tolerance constants ────────────────────────────────────────────
 
 /// Pool revisions at-or-above this use flooring ray division which can cause
 /// ±2 wei deviations when the Pool scales the underlying amount before
@@ -38,14 +39,14 @@ use std::collections::HashSet;
 /// wei on those revisions.
 pub const SCALED_AMOUNT_POOL_REVISION: u32 = 9;
 /// The ±wei tolerance applied on pool revisions >=
-/// [`SCALED_AMOUNT_POOL_REVISION`]. Mirrors `operations.py::TOKEN_AMOUNT_MATCH_TOLERANCE`.
+/// [`SCALED_AMOUNT_POOL_REVISION`].
 pub const TOKEN_AMOUNT_MATCH_TOLERANCE: u64 = 2;
 
-// ── enums (`operation_types.py` + `operations.py::ScaledTokenEventType`) ──
+// ── enums ─────────────────────────────────────────────────────────────────
 
 /// The discriminated kind of Aave V3 `Operation` produced by the parser.
-/// Mirrors `aave/operation_types.py::OperationType` (1:1, in declaration order
-/// to make the parity cross-check trivial).
+/// Variants are declared 1:1 with the committed Python gold fixture's
+/// declaration order so the parity cross-check stays trivial.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OperationType {
     /// `Supply` → `CollateralMint`.
@@ -89,7 +90,7 @@ pub enum OperationType {
 /// A token classification for an emitter contract address (the
 /// aToken-or-vToken-or-gho-discount-token discriminator the parser uses to
 /// classify each decoded `Mint`/`Burn`/`BalanceTransfer`/`Transfer` event
-/// into a [`ScaledTokenEventType`]). Mirrors `aave/types.py::TokenType`.
+/// into a [`ScaledTokenEventType`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TokenType {
     /// An aToken (collateral) contract.
@@ -103,10 +104,9 @@ pub enum TokenType {
 }
 
 /// The discriminated kind of a scaled-token (or plain ERC20 Transfer) event,
-/// as seen by the parser. Mirrors `aave/events.py::ScaledTokenEventType`:
-/// the emission variants (`*Mint`/`*Burn`/`*Transfer`) + the 6 interest-accrual
-/// derived variants applied AFTER matching (the parser flourishes the Python
-/// applies when classifying the net effect of a `Mint` emitted on a
+/// as seen by the parser: the emission variants (Mint/Burn/Transfer) + the 6
+/// interest-accrual derived variants applied AFTER matching (the parser
+/// derives them when classifying the net effect of a `Mint` emitted on a
 /// repayment/withdrawal path where interest exceeded the principal).
 ///
 /// This enum lives in the **parser** crate (not the **decoder** crate).
@@ -152,7 +152,6 @@ pub enum ScaledTokenEventType {
 }
 
 impl ScaledTokenEventType {
-    /// Mirrors `operations.py::ScaledTokenEvent.is_collateral`.
     #[must_use]
     pub fn is_collateral(self) -> bool {
         matches!(
@@ -165,7 +164,6 @@ impl ScaledTokenEventType {
                 | Self::Erc20CollateralTransfer
         )
     }
-    /// Mirrors `operations.py::ScaledTokenEvent.is_debt`.
     #[must_use]
     pub fn is_debt(self) -> bool {
         matches!(
@@ -183,7 +181,6 @@ impl ScaledTokenEventType {
                 | Self::Erc20DebtTransfer
         )
     }
-    /// Mirrors `operations.py::ScaledTokenEvent.is_burn`.
     #[must_use]
     pub fn is_burn(self) -> bool {
         matches!(
@@ -198,7 +195,7 @@ impl ScaledTokenEventType {
     }
 }
 
-// ── ScaledTokenEvent (`operations.py::ScaledTokenEvent`) ───────────────────
+// ── ScaledTokenEvent ──────────────────────────────────────────────────────
 
 /// The parser-side wrapper around a decoded scaled-token (or plain ERC20
 /// Transfer) event. Carries the emitter `Address` (so the apply dispatch
@@ -209,22 +206,18 @@ impl ScaledTokenEventType {
 /// ([`crate::operations_parser::TransactionOperationsParser`]) use.
 ///
 /// Borrows the source `&Log` so downstream `Operation`s can re-reference the
-/// raw event for `transfer_events` / `balance_transfer_events` arrays (mirror
-/// of `operations.py::ScaledTokenEvent.event`).
+/// raw event for `transfer_events` / `balance_transfer_events` arrays.
 #[derive(Clone, Debug)]
 pub struct ScaledTokenEvent<'a> {
-    /// The source log (mirror of `ScaledTokenEvent.event`).
     pub log: &'a Log,
     /// Field-by-field decoded event data (the Mint/Burn/BalanceTransfer/
     /// `Erc20Transfer` struct from `degenbot_decoders::aave_event_decoder`).
     pub decoded: ScaledTokenEventData,
-    /// The classification (mirror of `ScaledTokenEvent.event_type`).
     pub event_type: ScaledTokenEventType,
     /// The contract that emitted the event (the aToken/vToken/Discount-token).
     pub token_address: Address,
     /// The user address the event credits/debits (`onBehalfOf` for Mint;
-    /// `from` for Burn/BalanceTransfer/Transfer). Mirrors
-    /// `ScaledTokenEvent.user_address`.
+    /// `from` for Burn/BalanceTransfer/Transfer).
     pub user_address: Address,
     /// `caller` for Mint; `None` for Burn/BalanceTransfer/Transfer.
     pub caller_address: Option<Address>,
@@ -240,8 +233,8 @@ pub struct ScaledTokenEvent<'a> {
     pub balance_increase: Option<U256>,
     /// The event's `index`; `None` for plain ERC20 Transfer.
     pub index: Option<U256>,
-    /// The logIndex (mirror of `event["logIndex"]`) — used by the parser for
-    /// assigned-index tracking + chronological ordering.
+    /// The logIndex — used by the parser for assigned-index tracking +
+    /// chronological ordering.
     pub log_index: u64,
 }
 
@@ -281,12 +274,11 @@ pub enum ScaledTokenEventData {
     },
 }
 
-// ── Operation (`operations.py::Operation`) ───────────────────────────────
+// ── Operation ────────────────────────────────────────────────────────────
 
-/// A single logical operation with complete asset-flow context. Mirrors
-/// `operations.py::Operation` (dataclass by dataclass; the Python `validation_errors`
-/// list is preserved verbatim — validators run at the end of
-/// [`crate::operations_parser::TransactionOperationsParser::parse`]).
+/// A single logical operation with complete asset-flow context.
+/// `validation_errors` is filled only by the validators that run at the end
+/// of [`crate::operations_parser::TransactionOperationsParser::parse`].
 ///
 /// Borrows source logs for the lifetime of the input `&[&Log]` slice.
 #[derive(Clone, Debug)]
@@ -305,30 +297,23 @@ pub struct Operation<'a> {
     /// The matched scaled-token events (the parser grouped these into the
     /// operation).
     pub scaled_events: Vec<ScaledTokenEvent<'a>>,
-    /// Supporting aToken/vToken Transfer events (raw logs; mirror of
-    /// `Operation.transfer_events`).
+    /// Supporting aToken/vToken Transfer events (raw logs).
     pub transfer_events: Vec<&'a Log>,
-    /// Supporting aToken `BalanceTransfer` events (raw logs; mirror of
-    /// `Operation.balance_transfer_events`).
+    /// Supporting aToken `BalanceTransfer` events (raw logs).
     pub balance_transfer_events: Vec<&'a Log>,
     /// For `MintToTreasury`: the `MintedToTreasury` event's `amountMinted` field
-    /// (raw UNDERLYING amount, regardless of `pool_revision`). Mirrors Python's
-    /// `operation.minted_to_treasury_amount` semantics — NOT pre-scaled.
-    /// The scaling conversion (`ray_div` / `ray_div_ceil` per `pool_revision`) happens
-    /// EXACTLY ONCE in `dispatch_mint_to_treasury` (mirrors Python's
-    /// `PoolMath::underlying_to_scaled_collateral` flow); pre-converting here
-    /// for rev < 9 makes dispatch re-convert → double-conversion divergence.
+    /// (raw UNDERLYING amount, regardless of `pool_revision`) — NOT pre-scaled;
+    /// the single-conversion rule is pinned by
+    /// `mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts`.
     pub minted_to_treasury_amount: Option<U256>,
     /// For Liquidation: the `LiquidationCall` `debtToCover` field (surfaces
     /// the burn-amount's accuracy edge — the Burn `amount + balance_increase`
     /// is off by 1 wei; the liquidation builder consumes it.
     pub debt_to_cover: Option<U256>,
-    /// Validation errors filled by the `_validate_*` fns (`operations_parser.py`).
     pub validation_errors: Vec<String>,
 }
 
 impl Operation<'_> {
-    /// Mirrors `operations.py::Operation.is_valid`.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.validation_errors.is_empty()
@@ -364,13 +349,12 @@ fn pool_ev_idx(log: &Log) -> u64 {
     log_idx(log)
 }
 
-// ── the liquidation-pattern stubs (pattern_types.py) ──────────────────────
+// ── liquidation-pattern types ─────────────────────────────────────────────
 //
-// The type definitions land here so the apply dispatch glue can extend them
-// and so the parser's `parse()` scaffold (which builds but does not exercise
-// the pattern context) is wired.
+// Defined here so the apply dispatch glue can extend them and so the
+// parser's `parse()` scaffold (which builds but does not exercise the
+// pattern context) stays wired.
 
-/// Mirrors `aave/pattern_types.py::LiquidationPattern`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LiquidationPattern {
     /// 1 liquidation, 1 burn (standard).
@@ -381,55 +365,49 @@ pub enum LiquidationPattern {
     SeparateBurns,
 }
 
-/// Mirrors `aave/pattern_types.py::LiquidationPatternContext`.
 ///
-/// Built per-tx by `crate::transaction_processor::build_liquidation_patterns`
-/// (the port of `detect_liquidation_patterns`); consumed by the liquidation
+/// Built per-tx by `crate::transaction_processor::build_liquidation_patterns`;
+/// consumed by the liquidation
 /// dispatch (`dispatch_liquidation`) to apply the `COMBINED_BURN`
 /// aggregated-burn + Mint-skip behavior.
 #[derive(Clone, Debug, Default)]
 pub struct LiquidationPatternContext {
     /// `(user, debt_v_token)` → detected pattern.
     pub patterns: std::collections::HashMap<(Address, Address), LiquidationPattern>,
-    /// `(user, debt_v_token)` → group state (mirrors
-    /// `LiquidationGroup::liquidations` / `burn_events`).
+    /// `(user, debt_v_token)` → group state.
     pub groups: std::collections::HashMap<(Address, Address), LiquidationGroup>,
     /// Groups already fully processed (`COMBINED_BURN` handling).
     pub processed: std::collections::HashSet<(Address, Address)>,
 }
 
 impl LiquidationPatternContext {
-    /// Get the detected pattern for a `(user, debt_v_token)`. Mirrors
-    /// `LiquidationPatternContext.get_pattern`. `None` for a pair with no
-    /// liquidation group (the dispatch falls through to the per-op path).
+    /// Get the detected pattern for a `(user, debt_v_token)`. `None` for a
+    /// pair with no liquidation group (the dispatch falls through to the
+    /// per-op path).
     #[must_use]
     pub fn get_pattern(&self, user: Address, debt_v_token: Address) -> Option<LiquidationPattern> {
         self.patterns.get(&(user, debt_v_token)).copied()
     }
 
-    /// Get the liquidation group for a `(user, debt_v_token)`. Mirrors
-    /// `LiquidationPatternContext.get_group`.
+    /// Get the liquidation group for a `(user, debt_v_token)`.
     #[must_use]
     pub fn get_group(&self, user: Address, debt_v_token: Address) -> Option<&LiquidationGroup> {
         self.groups.get(&(user, debt_v_token))
     }
 
     /// Whether a group has been fully processed (`COMBINED_BURN`
-    /// aggregated-burn has already fired). Mirrors
-    /// `LiquidationPatternContext.is_processed`.
+    /// aggregated-burn has already fired).
     #[must_use]
     pub fn is_processed(&self, user: Address, debt_v_token: Address) -> bool {
         self.processed.contains(&(user, debt_v_token))
     }
 
-    /// Mark a group as fully processed (`COMBINED_BURN` handling). Mirrors
-    /// `LiquidationPatternContext.mark_processed`.
+    /// Mark a group as fully processed (`COMBINED_BURN` handling).
     pub fn mark_processed(&mut self, user: Address, debt_v_token: Address) {
         self.processed.insert((user, debt_v_token));
     }
 }
 
-/// Mirrors `aave/pattern_types.py::LiquidationGroup`.
 #[derive(Clone, Debug, Default)]
 pub struct LiquidationGroup {
     /// `(operation_id, debt_to_cover, pool_event_log_index)` tuples.
@@ -453,7 +431,6 @@ impl LiquidationGroup {
             .iter()
             .fold(U256::ZERO, |acc, &(_, debt, _)| acc + debt)
     }
-    /// Mirrors `LiquidationGroup::detect_pattern`.
     #[must_use]
     pub fn detect_pattern(&self) -> LiquidationPattern {
         if self.liquidation_count() == 1 {

@@ -143,7 +143,7 @@ pub(super) fn build_fetch_spec(
     chain_id: i64,
 ) -> Result<(AaveFetchSpec, Option<AaveGhoAsset>), RunError> {
     let contracts = db.fetch_aave_contracts(market_id)?;
-    // Index by name (the Python `get_contract(market, name)` shape).
+    // Index by contract-row name.
     let mut by_name: HashMap<&str, &degenbot_db::rows::AaveV3ContractRow> = HashMap::new();
     for c in &contracts {
         by_name.insert(c.name.as_str(), c);

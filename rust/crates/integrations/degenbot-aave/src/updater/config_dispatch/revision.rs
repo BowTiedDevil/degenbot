@@ -26,7 +26,7 @@ use degenbot_rpc::provider::AlloyProvider;
 use super::context::{ChunkContext, RevisionMemo};
 use super::{checksum, discount_to_i64, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION};
 
-// ── the 6 missing-variant event resolvers ─────────────────────
+// ── upgrade-transition event resolvers ───────────────────────
 
 /// The right-padded ASCII bytes32 id `b"POOL"` (4 bytes + 28 zeros). The
 /// Python's `eth_abi.abi.encode(["bytes32"], [b"POOL"])` — a parity-gate
@@ -62,13 +62,11 @@ pub(crate) struct ProxyCreationResolution {
     pub(crate) revision: i64,
 }
 
-/// Resolve an `Upgraded` event (the riskiest piece). Port of
-/// `_process_scaled_token_upgrade_event` (event_handlers.py:848-940).
+/// Resolve an `Upgraded` event (the riskiest piece).
 ///
 /// 1. The event's `proxy_address` (the emitter) is matched against existing
-///    `aave_v3_assets.a_token` first, then `v_token` (the Python's
-///    `get_asset_by_token_type` sequence). If neither matches, returns `Err`
-///    ("Unreachable code path" — the Python raises `ValueError`).
+///    `aave_v3_assets.a_token` first, then `v_token`. If neither matches,
+///    returns `Err`("Unreachable code path").
 /// 2. The new implementation's revision is RPC'd (`ATOKEN_REVISION()` for
 ///    aToken / `DEBT_TOKEN_REVISION()` for vToken) at `block_number`.
 /// 3. For a vToken upgrade, the GHO-discount-deprecation fires when the
@@ -148,8 +146,7 @@ pub(super) async fn resolve_upgraded(
 }
 
 /// Resolve a `PoolUpdated`/`PoolConfiguratorUpdated` event: RPC the revision fn
-/// on the new address + emit `ContractRevisionUpdated`. Port of
-/// `_update_contract_revision` (event_handlers.py:944-974). The `contract_name`
+/// on the new address + emit `ContractRevisionUpdated`. The `contract_name`
 /// is "POOL"/"POOL_CONFIGURATOR"; the `revision_fn` is
 /// "POOL_REVISION()"/"CONFIGURATOR_REVISION()".
 pub(super) async fn resolve_contract_revision_updated(

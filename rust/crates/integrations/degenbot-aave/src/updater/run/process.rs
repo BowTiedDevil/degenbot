@@ -66,10 +66,10 @@ pub(super) fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
 
 /// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
 /// body). Per tx group: re-resolve the GHO vToken revision, run the discount
-/// pre-pass + the config-event dispatch + C3's `process_transaction`, then
+/// pre-pass + the config-event dispatch + `process_transaction`, then
 /// apply THAT tx's events to `conn` via [`apply_chunk_events_on_conn`] BEFORE
-/// the next tx's reads (per-tx apply — fixes the config-revision +
-/// ops-balance staleness surfaces; matches Python's per-tx ORM session apply).
+/// the next tx's reads (per-tx apply — the config-revision + ops-balance
+/// surfaces read fresh per-tx state).
 /// The `last_update_block` stamp is the LAST write (end-of-chunk). Held
 /// inside the caller's `Transaction`; on `Err` the caller drops the tx
 /// (rollback).
@@ -89,22 +89,21 @@ pub(super) async fn process_chunk_on_conn(
     chunk_start: u64,
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
-    // Per-tx apply within `conn`. Two staleness surfaces fixed —
-    //   (1) config: `vtoken_revision` is now re-resolved per-tx from `conn`
-    //       (read-your-own-writes sees the prior tx's `Upgraded` write),
-    //       instead of the chunk-start snapshot that masked an in-chunk bump.
+    // Per-tx apply within `conn`. The two staleness surfaces:
+    //   (1) config: `vtoken_revision` is re-resolved per-tx from `conn`
+    //       (read-your-own-writes sees the prior tx's `Upgraded` write); a
+    //       chunk-start snapshot would mask an in-chunk bump.
     //   (2) ops balances: each tx's events are applied to `conn` BEFORE the
     //       next tx's `build_discount_snapshot` / `dispatch_config_events` /
-    //       `process_transaction` read — so tx N+1 sees tx N's writes (the
+    //       `process_transaction` read — tx N+1 sees tx N's writes (the
     //       `ScaledTokenProcessor` is stateless; its balances come from `conn`
-    //       lookups, so per-tx apply is the only seam that matches Python's
-    //       per-tx ORM session apply).
+    //       lookups).
     // The stamp advance stays LAST (end-of-chunk), preserving the
     // restart-invariant (on rollback the stamp does NOT advance + the whole
     // chunk reverts).
     let mut events_applied_total: usize = 0;
     let mut touched_user_addresses: HashSet<Address> = HashSet::new();
-    // Perf C: the chunk-level substrate cache — a handful of set-shaped
+    // The chunk-level substrate cache — a handful of set-shaped
     // `SELECT ... IN` prefetches over the chunk's touched entity sets (the
     // topic-derived candidate users + their positions/configs, the market's
     // assets/contracts, the chain's GHO row), then in-memory map hits for the
@@ -137,7 +136,7 @@ pub(super) async fn process_chunk_on_conn(
     // lock across their RPC reads) and the per-tx + end-of-chunk SQL apply.
     let mut decode_compute_time = Duration::ZERO;
     let mut apply_time = Duration::ZERO;
-    // Perf D: the per-chunk dispatch context — ONE owner holding the
+    // The per-chunk dispatch context — ONE owner holding the
     // chunk-scoped dispatch constants, the chunk connection, the chunk
     // substrate, and the `RevisionMemo`, so the 4 revision
     // reads (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
@@ -202,19 +201,19 @@ pub(super) async fn process_chunk_on_conn(
         //     revision in place), build the discount snapshot, then dispatch the
         //     config events (each applied intra-dispatch). The seam owns the
         //     order; `ChunkContext::dispatch_transaction` carries the rationale
-        //     + the Python-mirror notes for each stage.
+        //     for each stage.
         let dispatch = ctx.dispatch_transaction(&tx_hashes_refs).await?;
         let discounts = dispatch.discounts;
         let config_events = dispatch.config_events;
         let discount_token_tx = dispatch.stk_aave_address;
         // (d) The config events were applied INTRA-dispatch: by here the tx's
         //     config writes are already on `conn` (read-your-own-writes for
-        //     the ops parser below). Matches Python's per-event apply order.
+        //     the ops parser below).
         events_applied_total += config_events.len();
 
-        // (e) C3's operations parser (sync, substrate lookups) — reads `conn`
+        // (e) The operations parser (sync, substrate lookups) — reads `conn`
         //     (sees this tx's config writes + prior txs' writes) + uses the
-        //     overlay-resolved GHO addresses (surface #3).
+        //     overlay-resolved GHO addresses.
         let op_events = process_transaction(
             market_id,
             chain_id,
@@ -312,7 +311,7 @@ pub(super) async fn process_chunk_on_conn(
                             seen.insert((false, *to));
                         }
                     }
-                    _ => {} // ExpectedAbsent: only position-bearing events feed this trace.
+                    _ => {} // only position-bearing events feed this trace.
                 }
             }
             let txhex = alloy::hex::encode(group.tx_hash);
@@ -356,15 +355,13 @@ pub(super) async fn process_chunk_on_conn(
             }
         }
 
-        // (f.5) C3.3 (C refresh): the async POST-APPLY discount-refresh pass.
+        // (f.5) The async POST-APPLY discount-refresh pass.
         //     For each `GhoRefreshDiscount` signal this tx emitted (V1-V3 GHO
         //     mints/burns), recompute the user's `gho_discount` from the
         //     POST-APPLY debt balance + the user's stkAAVE balance
         //     (`balanceOf` `eth_call` at block-1 if `stk_aave_balance` is
         //     None). The refresh reads the POST-APPLY values (the apply above
         //     just landed them) + has the provider (this loop is async).
-        //     Mirrors Python's `_refresh_discount_rate` +
-        //     `get_or_init_stk_aave_balance` after a GHO borrow/accrual.
         for ev in &op_events {
             if let AaveChunkEvent::GhoRefreshDiscount { position_id } = ev {
                 crate::config_dispatch::refresh_gho_discount(
@@ -381,8 +378,8 @@ pub(super) async fn process_chunk_on_conn(
 
     // (g) End-of-chunk zero-balance cleanup, then the `last_update_block`
     //     stamp as the LAST write (end-of-chunk). The cleanup deletes the
-    //     burned-down collateral + debt rows the chunk zeroed (the ported
-    //     Python `cleanup_zero_balance_positions`); the per-tx applies above +
+    //     burned-down collateral + debt rows the chunk zeroed; the per-tx
+    //     applies above +
     //     the cleanup are durable only when the caller's `Transaction`
     //     commits; on rollback the whole chunk (events + cleanup + stamp)
     //     reverts (the restart invariant).
@@ -393,7 +390,7 @@ pub(super) async fn process_chunk_on_conn(
     let cleanup_span = tracing::info_span!("degenbot.updater.aave.apply", apply.kind = "cleanup");
     let cleanup_guard = cleanup_span.enter();
     let apply_started = Instant::now();
-    // Perf C: flush the deferred `ReserveDataUpdated` writes (one sorted
+    // Flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE — the liquidity_updater deterministic-order idiom)
     // BEFORE the cleanup + stamp: the stamp stays the LAST write (chunk atomicity), and
     // the flush sits inside the chunk's transaction (a rollback reverts it
@@ -466,8 +463,8 @@ mod tests {
 
     #[test]
     fn process_chunk_clears_zero_balance_positions_at_end_of_chunk() {
-        // The live chunk path's end-of-chunk zero-balance cleanup (the ported
-        // Python cleanup_zero_balance_positions) - the same substrate call the
+        // The live chunk path's end-of-chunk zero-balance cleanup - the same
+        // substrate call the
         // batched entrypoint makes, riding the chunk's uncommitted transaction
         // so a rollback reverts it too. With an EMPTY chunk (no logs) the only
         // observable writes are the cleanup + the stamp.

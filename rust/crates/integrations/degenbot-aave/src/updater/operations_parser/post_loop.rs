@@ -70,14 +70,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
 
             // Store the MintedToTreasury event's `amount_minted` as the
             // raw UNDERLYING amount on the operation (regardless of pool
-            // revision). The scaling conversion (ray_div / ray_div_ceil per
-            // rev) happens EXACTLY ONCE in `dispatch_mint_to_treasury`
-            // (single conversion at apply-time). Pre-converting here for rev < 9
-            // makes `dispatch_mint_to_treasury` convert AGAIN →
-            // double-division by `idx`, shrinking the applied scaled_amount by
-            // a factor of `idx/RAY` (the treasury 0x464C divergence across 4
-            // aToken positions — WETH -8.04e12, wstETH -2.29e11, DAI -3.12e15,
-            // USDC -6415).
+            // revision) — pre-scaling here makes `dispatch_mint_to_treasury`
+            // convert AGAIN. Pinned by
+            // `mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts`.
             let resolved = minted_amount;
 
             assigned_indices.insert(ev.log_index);
@@ -99,10 +94,8 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         operations
     }
 
-    /// `DEFICIT_CREATED` → Unknown
-    /// (placeholder awaiting downstream liquidation matching). The Python
-    /// deliberately uses UNKNOWN so `DEFICIT_CREATED` doesn't interfere with
-    /// liquidation processing downstream.
+    /// `DEFICIT_CREATED` → Unknown — `DEFICIT_CREATED` must not interfere
+    /// with liquidation processing downstream.
     pub(super) fn create_deficit_operation(
         &self,
         operation_id: u32,
@@ -124,7 +117,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
 
     /// Deficit-coverage `BalanceTransfer` + Burn pair, plus the
     /// `Erc20-Transfer` + `BalanceTransfer` + Burn triplet matching (the
-    /// parity-drift knife-edge).
+    /// parity-sensitive triplet insertion).
     pub(super) fn create_deficit_coverage_operations(
         &self,
         scaled_events: &[ScaledTokenEvent<'a>],
@@ -163,14 +156,16 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 burn_ev.token_address == bt_ev.token_address
             });
 
-            // DeficitCoverage: the bt_ev is required to be ERC20_COLLATERAL_TRANSFER
-            // for the triplet middle-insertion. If paired_burn is Some, build the op.
+            // DeficitCoverage: the bt_ev is required to be
+            // Erc20CollateralTransfer for the triplet middle-insertion. If
+            // paired_burn is Some, build the op.
             let paired = if let Some(burn) = paired_burn {
                 let mut paired_events: Vec<ScaledTokenEvent<'a>> =
                     vec![clone_scaled_event(bt_ev), clone_scaled_event(burn)];
-                // The Python requires bt_ev.event_type == ERC20_COLLATERAL_TRANSFER
-                // here; an additional look for a matching BalanceTransfer (with index
-                // field) for the same transfer — inserted between transfer + burn.
+                // The triplet requires bt_ev.event_type ==
+                // Erc20CollateralTransfer here; an additional look for a
+                // matching BalanceTransfer (with index field) for the same
+                // transfer — inserted between transfer + burn.
                 let mut bt_events: Vec<&'a Log> = Vec::new();
                 if bt_ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer {
                     for other_ev in scaled_events {
@@ -301,8 +296,8 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         operations
     }
 
-    /// Unassigned movement reports → standalone `BALANCE_TRANSFER` (or
-    /// `STKAAVE_TRANSFER`) operations.
+    /// Unassigned movement reports → standalone `BalanceTransfer` (or
+    /// `StkAaveTransfer`) operations.
     ///
     /// The carrier is the movement's index-less ERC20 `Transfer` report
     /// ([`EventDisposition::StandaloneTransfer`]); the scaled

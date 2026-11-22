@@ -1,7 +1,6 @@
-//! On-chain-truth position verification (the Rust port of Python
-//! `verification.py` + `db_verification.py`).
+//! On-chain-truth position verification.
 //!
-//! Four verification checks, mirroring Python's `verify_all_positions`:
+//! Four verification checks:
 //! 1. Collateral scaled-token balance + `last_index` (`scaledBalanceOf` +
 //!    `getPreviousIndex` on each aToken).
 //! 2. Debt scaled-token balance + `last_index` (same calls on each vToken).
@@ -47,8 +46,7 @@ pub enum DivergenceField {
 }
 
 /// One named mismatch between the DB position state + the on-chain truth at
-/// `block_number` (mirror of Python `verify_scaled_token_positions`'s two
-/// assertions; one divergence per row/column; can have up to two per
+/// `block_number` (one divergence per row/column; can have up to two per
 /// position if BOTH balance + index mismatch).
 #[derive(Debug, Clone)]
 pub struct PositionDivergence {
@@ -251,8 +249,7 @@ const DEAD_ADDRESS: Address =
 const ZERO_ADDRESS: Address = Address::ZERO;
 
 /// Verify the on-chain scaled-token state matches the DB positions for
-/// `market_id` at `block_number`. Mirrors Python's
-/// `verify_scaled_token_positions` (verification.py:152) — iterates the
+/// `market_id` at `block_number` — iterates the
 /// collateral + debt positions (filtered by `user_addresses` when `Some`),
 /// skips `DEAD_ADDRESS` / `ZERO_ADDRESS` users, calls `scaledBalanceOf(user)` +
 /// `getPreviousIndex(user)` on each aToken / vToken at `block_number`, asserts
@@ -264,7 +261,7 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 /// prior per-call revert semantics). The market-wide `--verify-all` path is the
 /// win; the per-chunk touched-set path is a wash but harmless.
 ///
-/// Returns the divergence list (empty = GREEN). Each row carries the
+/// Returns the divergence list (empty = no divergence). Each row carries the
 /// human-readable fields needed by the drive harness to emit a NAMED,
 /// bisect-able divergence (`user_address`, `token_address`, `position_id`,
 /// expected vs actual `balance`/`last_index` at `block_number`).
@@ -369,7 +366,6 @@ fn result_to_u256(result: &MulticallOutcome) -> U256 {
 // ── stkAAVE balance + GHO discount verification ─────────────────────────
 
 /// The GHO vToken revision at which the discount mechanism is deprecated
-/// (mirrors `cli/aave/constants.py::GHO_DISCOUNT_DEPRECATION_REVISION`).
 /// At revision ≥ 4, `getDiscountPercent` is removed; the verify skips.
 const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
 
@@ -421,8 +417,7 @@ fn user_address_clause(user_addresses: Option<&[Address]>) -> (String, Vec<Strin
 }
 
 /// Verify that `aave_v3_users.stk_aave_balance` matches on-chain `balanceOf`
-/// for each user with a tracked stkAAVE balance. Mirrors Python's
-/// `verify_stk_aave_balances` (`db_verification.py:61`). No-op when the market
+/// for each user with a tracked stkAAVE balance. No-op when the market
 /// has no `v_gho_discount_token` (the GHO asset row's discount token is
 /// `None`).
 ///
@@ -516,8 +511,7 @@ pub async fn verify_stk_aave_balances_on_conn(
 }
 
 /// Verify that `aave_v3_users.gho_discount` matches the GHO vToken's
-/// `getDiscountPercent` for each user with GHO debt. Mirrors Python's
-/// `verify_gho_discount_amounts` (`db_verification.py:22`). Skips when the
+/// `getDiscountPercent` for each user with GHO debt. Skips when the
 /// GHO vToken's revision is `None` or `>= GHO_DISCOUNT_DEPRECATION_REVISION` (4).
 ///
 /// # Errors
@@ -625,9 +619,7 @@ pub async fn verify_gho_discount_amounts_on_conn(
 }
 
 /// Run all 4 verification checks (scaled-token collateral + debt, stkAAVE
-/// balance, GHO discount) and return a unified divergence list. Mirrors
-/// the Python `verify_all_positions` (verification.py:110) +
-/// `verify_positions_for_users` (verification.py:44).
+/// balance, GHO discount) and return a unified divergence list.
 ///
 /// When `user_addresses` is `None`, verifies ALL positions/users in the market
 /// (the post-run `--verify-all` path). When `Some`, verifies only the
@@ -731,7 +723,7 @@ pub fn cleanup_zero_balance_positions_on_conn(
 /// fires because it spans a multiple. `interval = None` never fires.
 ///
 /// Edge cases: `chunk_end == 0` → false (no block processed); `n == 0` is
-/// the caller's bug (the CLI/clamp it to >= 1) but is treated as never-fires
+/// the caller's bug (the CLI clamps it to >= 1) but is treated as never-fires
 /// to avoid a divide-by-zero panic.
 pub(crate) fn should_run_full_verify_at_interval(
     working_start: u64,
@@ -979,9 +971,9 @@ mod tests {
     }
 
     /// Decode is delegated to the home (`degenbot_rpc::abi::decode_uint256`);
-    /// the local helper + its test were deleted in slice A. The home carries the
-    /// independent-oracle test. Kept below: the calldata-encode test for
-    /// `scaledBalanceOf(address)` / `getPreviousIndex(address)`.
+    /// the home carries the independent-oracle test. Kept below: the
+    /// calldata-encode test for `scaledBalanceOf(address)` /
+    /// `getPreviousIndex(address)`.
 
     // ── verification-policy predicates ─────────────────────────────────
 

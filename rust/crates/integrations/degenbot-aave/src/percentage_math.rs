@@ -50,7 +50,7 @@ pub enum PercentError {
 }
 
 /// Multiply `value` by `percentage` (in 4-decimal basis points), rounding half
-/// up to the nearest integer. Port of `percentage_math.percent_mul`.
+/// up to the nearest integer.
 ///
 /// `percentage` is in basis points: `10_000 == 100.00%`. A `percentage` of `0`
 /// short-circuits to `0` (no overflow check).
@@ -77,7 +77,7 @@ pub fn percent_mul(value: U256, percentage: U256) -> Result<U256, PercentError> 
 }
 
 /// Divide `value` by `percentage` (in 4-decimal basis points), rounding half
-/// up. Port of `percentage_math.percent_div`.
+/// up.
 ///
 /// # Errors
 ///
@@ -101,8 +101,7 @@ pub fn percent_div(value: U256, percentage: U256) -> Result<U256, PercentError> 
     Ok(numerator / percentage)
 }
 
-/// Multiply `value` by `percentage`, truncating toward zero. Port of
-/// `percentage_math.percent_mul_floor`.
+/// Multiply `value` by `percentage`, truncating toward zero.
 ///
 /// # Errors
 ///
@@ -120,8 +119,7 @@ pub fn percent_mul_floor(value: U256, percentage: U256) -> Result<U256, PercentE
     Ok(product / PERCENTAGE_FACTOR)
 }
 
-/// Multiply `value` by `percentage`, rounding toward +∞. Port of
-/// `percentage_math.percent_mul_ceil`.
+/// Multiply `value` by `percentage`, rounding toward +∞.
 ///
 /// # Errors
 ///
@@ -145,8 +143,7 @@ pub fn percent_mul_ceil(value: U256, percentage: U256) -> Result<U256, PercentEr
     }
 }
 
-/// Divide `value` by `percentage`, rounding toward +∞. Port of
-/// `percentage_math.percent_div_ceil`.
+/// Divide `value` by `percentage`, rounding toward +∞.
 ///
 /// # Errors
 ///

@@ -76,7 +76,7 @@ const POOL_ADDRESS_PROVIDER: &str = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"
 /// The chain's GHO token (the reserve whose underlying carries the FK link).
 const GHO_TOKEN: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
 /// `getDiscountPercent(address)` — the discount pre-pass's rev-3-branch RPC.
-/// The W6 corpus must never carry one after the in-chunk deprecation: the
+/// The corpus must never carry one after the in-chunk deprecation: the
 /// per-tx revision re-resolve reads the applied revision (4) and takes the
 /// deprecated-zero path with no RPC.
 const GET_DISCOUNT_PERCENT_SELECTOR: &str = "6c53272b";
@@ -681,7 +681,7 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
         "W2 probe: the GHO asset's vToken revision moved off 4 — only that asset changed"
     );
 
-    // ── W6: the deprecation upgrade INTERIOR to a chunk, a GHO borrow after
+    // ── the deprecation upgrade INTERIOR to a chunk, a GHO borrow after
     //    it in the same chunk (the per-tx revision re-resolve pin) ─────────
     let w6 = WINDOWS[5].name;
     let w6_bytes = std::fs::read(cassette_path(w6)).unwrap();
@@ -724,7 +724,7 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // method-not-found contract) with a served/request gap as the fingerprint.
     let w6_seed = read_seed(w6);
     let mut w6_cassette = Cassette::from_json_bytes(&w6_bytes).unwrap();
-    // The GHO vToken implementation at the W6 block (the recorded rev-4
+    // The GHO vToken implementation at the window's block (the recorded rev-4
     // answer; an impl unique to the GHO vToken, so no other asset's memo
     // entry shares the mutation).
     let w6_mutated = mutate_one_eth_call(

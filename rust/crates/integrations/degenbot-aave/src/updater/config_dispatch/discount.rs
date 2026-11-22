@@ -8,14 +8,14 @@
 //! path) with the NULL-balance backfill, + the post-apply discount refresh.
 //!
 //! The pre-pass consumes the vToken revision its caller re-resolved per
-//! transaction (stage 1 of `ChunkContext::dispatch_transaction`) — the W6
-//! pin: with the deprecation applied, the snapshot must serve the applied
-//! revision + the recorded corpus must carry ZERO `getDiscountPercent`
-//! entries (a chunk-start revision snapshot produces exactly the mutated
-//! replay's RPC shape).
+//! transaction (stage 1 of `ChunkContext::dispatch_transaction`) — with the
+//! deprecation applied, the snapshot must serve the applied revision + the
+//! recorded corpus must carry ZERO `getDiscountPercent` entries (a
+//! chunk-start revision snapshot produces exactly the mutated replay's RPC
+//! shape).
 //!
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
-//! row 7 (consumer side of the per-tx revision re-resolve) + §(C) W6 + the
+//! row 7 (consumer side of the per-tx revision re-resolve) + §(C) + the
 //! deprecation negative probe.
 
 #![expect(clippy::doc_markdown)]
@@ -37,9 +37,8 @@ use super::{
 };
 
 /// `DiscountPercentUpdated(user, old, new)` →
-/// [`AaveChunkEvent::GhoDiscountPercentUpdated`]. Mirrors
-/// `_process_discount_percent_updated_event` (`newDiscountPercent` is topic[2]
-/// — the decoder already extracted it).
+/// [`AaveChunkEvent::GhoDiscountPercentUpdated`] (`newDiscountPercent` is
+/// topic[2] — the decoder already extracted it).
 pub(super) fn dispatch_discount_percent_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
@@ -170,8 +169,7 @@ pub(super) async fn dispatch_stk_aave_transfer(
 
 /// RPC-fetch `balanceOf(user)` at `block_number - 1` and store via
 /// [`DegenbotDb::set_user_stk_aave_balance_on_conn`] when the user's
-/// `stk_aave_balance` column is `NULL`. Mirrors Python's
-/// `get_or_init_stk_aave_balance` (stkaave.py:24-39) — a `NULL` column means
+/// `stk_aave_balance` column is `NULL`. A `NULL` column means
 /// the user was created by an earlier event but never touched by a stkAAVE
 /// `Staked`/`Transfer` event YET; the on-chain value at the previous block is
 /// the authoritative balance before any current-block events. No-op when the
@@ -241,15 +239,13 @@ async fn read_stk_aave_balance(
 }
 
 /// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
-/// Mirrors `_process_discount_token_updated_event`.
 ///
 /// # Emitter-validation guard
 ///
 /// `fetch_discount_config_logs` is chain-wide (no address filter — the events
-/// emit from any contract). The load-bearing Python guard
-/// `if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
-/// return` filters spurious chain-wide discount events; this dispatch mirrors
-/// it: returns `Ok(None)` when the GHO vToken FK is missing OR the decoded
+/// emit from any contract). The load-bearing guard filters spurious
+/// chain-wide discount events: returns `Ok(None)` when the GHO vToken FK is
+/// missing OR the decoded
 /// emitter (`decoded.v_token_address` = `log.address()`) doesn't match
 /// `gho_asset.v_token_address`. The apply fn never sees the skip.
 pub(super) fn dispatch_discount_token_updated(
@@ -274,12 +270,11 @@ pub(super) fn dispatch_discount_token_updated(
 }
 
 /// `DiscountRateStrategyUpdated(old, new)` →
-/// [`AaveChunkEvent::GhoDiscountRateStrategyUpdated`]. Mirrors
-/// `_process_discount_rate_strategy_updated_event`.
+/// [`AaveChunkEvent::GhoDiscountRateStrategyUpdated`].
 ///
 /// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
-/// its docs; the chain-wide fetch + the Python's `event["address"]` guard
-/// apply identically (divergence #2).
+/// its docs; the chain-wide fetch + the emitter-address guard apply
+/// identically.
 pub(super) fn dispatch_discount_rate_strategy_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
@@ -299,7 +294,7 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 // ── the discount pre-pass (the 3-way hybrid) ───────────────────────────────
 
 /// Build the per-tx GHO discount snapshot — the `HashMap<Address, U256>` that
-/// `process_transaction` (C3) consumes as the `discounts` parameter: scan the
+/// `process_transaction` consumes as the `discounts` parameter: scan the
 /// tx's GHO
 /// vToken Mint/Burn events, + for each user, resolve the START discount (the
 /// value in effect at tx start, BEFORE any `DISCOUNT_PERCENT_UPDATED` in this
@@ -415,13 +410,12 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
     Address::from_slice(&topic.as_slice()[12..])
 }
 
-// ── C3.3: the (C) discount-refresh post-apply pass ───────────────────
+// ── the discount-refresh post-apply pass ─────────────────────────────
 
 /// The (C) discount-refresh post-apply pass. For one `GhoRefreshDiscount`
 /// signal (one V1-V3 GHO mint/burn that set `should_refresh_discount`),
 /// recompute `aave_v3_users.gho_discount` from the POST-APPLY debt balance +
-/// the user's stkAAVE balance (mirrors Python's `_refresh_discount_rate` +
-/// `get_or_init_stk_aave_balance`).
+/// the user's stkAAVE balance.
 ///
 /// 1. Read the debt position's `(user_id, user_address, scaled_balance,
 ///    last_index, stk_aave_balance)` from `conn` — the POST-apply values
@@ -429,13 +423,12 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 /// 2. `get_or_init_stk_aave_balance`: if `stk_aave_balance` is `None` (the
 ///    user never touched by a stkAAVE `Staked`/`Transfer` yet — the 890
 ///    `None` + the 1042 missing), `balanceOf(address)` `eth_call` on the
-///    discount-token (stkAAVE) at **`block_number - 1`** (Python reads at the
-///    PREVIOUS block — the balance check is BEFORE any events in the current
-///    block; an off-by-one here causes a divergence class) → SET
+///    discount-token (stkAAVE) at **`block_number - 1`** (the PREVIOUS
+///    block — the balance check is BEFORE any events in the current block;
+///    an off-by-one here causes a divergence class) → SET
 ///    `aave_v3_users.stk_aave_balance`.
 /// 3. `debt_balance = ray_mul(scaled_balance, last_index, None)` (HALF_UP —
-///    Python's `math_libs.ray_mul` default; matches the byte-exact
-///    `accrue_debt_on_action` path).
+///    matches the byte-exact `accrue_debt_on_action` path).
 /// 4. `gho_discount = calculate_gho_discount_rate(debt_balance,
 ///    stk_aave_balance)` → `i64`.
 /// 5. Write `aave_v3_users.gho_discount` (the DB-cache path #1 of

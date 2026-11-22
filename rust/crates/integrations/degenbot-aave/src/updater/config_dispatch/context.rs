@@ -20,7 +20,7 @@
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
 //! row 3 (the memo key MUST include the block lane), row 7 (stage 1 of
 //! `dispatch_transaction` re-resolves the GHO vToken revision per
-//! transaction — a chunk-start snapshot is the exact shape W6 disproves),
+//! transaction — a chunk-start snapshot is the mutated-replay shape),
 //! and row 11 (one memo instance per phase; the cold-boot bootstrap pass in
 //! `run::fetch` builds its own [`RevisionMemo`] and calls
 //! [`super::revision::match_proxy_id`] with it).

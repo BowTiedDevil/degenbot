@@ -169,10 +169,8 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// proper disambiguation when the same user is liquidated multiple times
     /// with the same debt asset in one transaction.
     ///
-    /// Parity-gate note: the Python reads `decode_address(ev["topics"][3])`
-    /// (user) + `decode_address(ev["topics"][2])` (`debt_asset`) per
-    /// `LiquidationCall` event → resolves `debt_asset` → vToken via
-    /// `_get_v_token_for_asset`; we mirror the same per-event vToken resolution.
+    /// The user (`topics[3]`) + `debt_asset` (`topics[2]`) are read per
+    /// `LiquidationCall` event; `debt_asset` resolves → vToken per-event.
     fn analyze_liquidation_scenarios(
         &mut self,
         all_events: &[&Log],
@@ -239,18 +237,13 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     ///   - **`COMBINED_BURN`** (`liquidation_count_for_asset > total_burn_count` +
     ///     `liquidation_position == 0`): all burns go to the first liquidation.
     ///
-    /// # Parity-gate note (the `assigned_indices.add(ev.index)` quirk)
+    /// # Parity-gate note (the ray-scale `index` quirk)
     ///
-    /// The Python also calls `assigned_indices.add(ev.index)` to store the
-    /// Burn event's `index` field (a ray-scale u256 liquidity-index value) in
-    /// `assigned_indices`. This storage is **dead-code** — every
-    /// `in assigned_indices` query is `ev.event["logIndex"] in assigned_indices`
-    /// (small-int logIndex), never `ev.index`. The `add(ev.index)` stores
-    /// ray-scale values that are never matched; we omit the assignment (a u64
-    /// set can't hold ray values anyway) but preserve the assertions
-    /// `assert ev.index is not None; assert ev.index > 0` (the runtime panic on
-    /// ill-formed events) as `debug_assert!`. Output parity verified: the
-    /// `assigned_indices` state never affects the parsed Operation output.
+    /// The Burn event's `index` (a ray-scale u256 liquidity-index value) is
+    /// deliberately NOT stored in `assigned_indices` — every membership query
+    /// is against the small-int logIndex, and a u64 set can't hold ray
+    /// values. The ill-formed-event assertions (`index` present + > 0)
+    /// survive as `debug_assert!`.
     pub(super) fn collect_debt_burns<'b>(
         user: Address,
         debt_v_token_address: Option<Address>,
@@ -284,9 +277,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                     !idx.is_zero(),
                     "DebtBurn index must be > 0 (parity: assert ev.index > 0)"
                 );
-                // NB: the Python's `assigned_indices.add(ev.index)` here is
-                // dead-code (no later `in assigned_indices` query hits the
-                // ray-scale `index` field); omitted (u64 set can't hold it).
+                // The ray-scale `index` is deliberately not stored in
+                // `assigned_indices` (every membership query is logIndex; a
+                // u64 set can't hold ray values).
             }
         } else {
             #[expect(clippy::expect_used)] // required on the multi-liquidation path (documented)
@@ -299,7 +292,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             let is_multi_liquidation = liquidation_count_for_asset > 1;
             // Get ALL burns for this (user, debt_asset) to determine pattern.
             // Don't filter by assigned_indices yet — we need total count for
-            // pattern detection (parity: Python lines 1580-1586).
+            // pattern detection.
             let mut all_burns_for_asset: Vec<&ScaledTokenEvent<'a>> = scaled_events
                 .iter()
                 .filter(|ev| {

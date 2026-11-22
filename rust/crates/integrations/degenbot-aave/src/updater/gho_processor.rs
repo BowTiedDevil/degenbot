@@ -11,13 +11,13 @@
 //!
 //! # The GHO-vs-standard-debt split
 //!
-//! [`crate::processors::ScaledTokenProcessor`] (SCALEAPPLY) is the standard
+//! [`crate::processors::ScaledTokenProcessor`] is the standard
 //! aToken/vToken processor — it has NO discount surface. GHO debt (the Aave
 //! native stablecoin) is a SEPARATE concern: borrowers with staked AAVE receive
 //! a discount on their interest, modeled by the `previous_discount` /
 //! `should_refresh_discount` / `accrue_debt_on_action` /
-//! `get_discounted_balance` machinery. The GHO processor is the SCALEAPPLY-
-//! sibling that owns this — the GHO apply dispatch consumes it
+//! `get_discounted_balance` machinery. The GHO processor is the standard
+//! processor's sibling that owns this — the GHO apply dispatch consumes it
 //! via the `process_gho_debt_mint` / `process_gho_debt_burn` fns.
 //!
 //! # π (zero DB, zero RPC)
@@ -26,7 +26,7 @@
 //! revision, holding no mutable state. The RPC `raw_call` for
 //! users-not-in-DB discounts is the driver shell's concern — the caller passes
 //! `previous_discount` in.
-//! The `should_refresh_discount` flag is what C3's GHO-discount machinery
+//! The `should_refresh_discount` flag is what the GHO-discount machinery
 //! consumes (the flag the processor sets when the discount needs refreshing
 //! after a balance-changing operation).
 //!
@@ -46,8 +46,7 @@ use alloy::primitives::{I256, U256};
 
 use crate::processors::{RayDivMode, RoundingStrategy, ScaledTokenEventData};
 
-// ── the GHO strategies (ports `strategies.py::GHO_STRATEGIES` +
-//    `GHO_DISCOUNT_STRATEGIES`) ─────────────────────────────────────────────
+// ── the GHO strategies ───────────────────────────────────────────────────
 
 /// The GHO discount strategy per revision: whether the revision supports a
 /// discount, and whether it carries the discounted-balance method.
@@ -65,8 +64,7 @@ pub struct DiscountStrategy {
     pub has_discounted_balance_method: bool,
 }
 
-/// The GHO rounding + discount strategy per revision. Port of
-/// `GHO_STRATEGIES` + `GHO_DISCOUNT_STRATEGIES` — V1/V2/V3: `HALF_UP` for all
+/// The GHO rounding + discount strategy per revision. V1/V2/V3: `HALF_UP` for all
 /// ops (discount takes precedence); V4: `HALF_UP` for all ops (no discount);
 /// V5/V6: `CEIL` mint, `FLOOR` burn (no discount).
 ///
@@ -89,9 +87,8 @@ pub const fn gho_strategy(revision: u32) -> RoundingStrategy {
     }
 }
 
-/// The GHO discount strategy per revision. Port of
-/// `GHO_DISCOUNT_STRATEGIES` — V1: discount + no method; V2/V3: discount +
-/// method; V4+: no discount.
+/// The GHO discount strategy per revision. V1: discount + no method;
+/// V2/V3: discount + method; V4+: no discount.
 #[must_use]
 pub const fn gho_discount_strategy(revision: u32) -> DiscountStrategy {
     match revision {
@@ -113,8 +110,7 @@ pub const fn gho_discount_strategy(revision: u32) -> DiscountStrategy {
     }
 }
 
-// ── the result types (ports `GhoScaledTokenMintResult` /
-//    `GhoScaledTokenBurnResult`) ────────────────────────────────────────────
+// ── the result types ─────────────────────────────────────────────────────
 
 /// The GHO operation classification for a Mint event, keyed on the event's
 /// `value` against its `balance_increase` — the fields the GHO vToken's `Mint`
@@ -138,9 +134,8 @@ pub enum GhoUserOperation {
 }
 
 impl GhoUserOperation {
-    /// `true` when the Mint is on the repay path (the `is_repay` flag the
-    /// task body's `GhoProcessorResult` carries — derived from
-    /// `user_operation == GHO_REPAY`).
+    /// `true` when the Mint is on the repay path; the result types carry an
+    /// `is_repay` derived from this.
     #[must_use]
     pub const fn is_repay(self) -> bool {
         matches!(self, Self::Repay)
@@ -175,8 +170,7 @@ pub struct GhoScaledTokenMintResult {
 }
 
 impl GhoScaledTokenMintResult {
-    /// `is_repay` — derived from `user_operation == GHO_REPAY`. Mirrors the
-    /// `ScaledTokenMintResult.is_repay` field on the standard processor.
+    /// `is_repay` — derived from `user_operation == GhoUserOperation::Repay`.
     #[must_use]
     pub const fn is_repay(&self) -> bool {
         self.user_operation.is_repay()
@@ -198,7 +192,7 @@ pub struct GhoScaledTokenBurnResult {
     pub should_refresh_discount: bool,
 }
 
-// ── the processor (ports `UnifiedGhoProcessor`) ────────────────────────────
+// ── the processor ─────────────────────────────────────────────────────────
 
 /// Errors from the GHO processor.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -225,10 +219,8 @@ pub struct UnifiedGhoProcessor {
 }
 
 impl UnifiedGhoProcessor {
-    /// Construct a processor for a GHO vToken at `revision`. Mirrors
-    /// `TokenProcessorFactory::get_gho_debt_processor` (the
-    /// `GHO_STRATEGIES[revision]` + `GHO_DISCOUNT_STRATEGIES[revision]`
-    /// lookup + the `UnifiedGhoProcessor` constructor).
+    /// Construct a processor for a GHO vToken at `revision` — the
+    /// `gho_strategy` + `gho_discount_strategy` lookup.
     #[must_use]
     pub fn new(revision: u32) -> Self {
         Self {
@@ -245,21 +237,18 @@ impl UnifiedGhoProcessor {
     }
 
     /// `true` if this revision's discount mechanism is active (V1/V2/V3).
-    /// Mirrors `UnifiedGhoProcessor::supports_discount`.
     #[must_use]
     pub const fn supports_discount(&self) -> bool {
         self.discount.supports_discount
     }
 
-    /// Perform a `ray_div` with the strategy's rounding mode. Mirrors the
-    /// Python `UnifiedGhoProcessor::_ray_div` (the `match mode` dispatch).
+    /// Perform a `ray_div` with the strategy's rounding mode.
     #[expect(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
     fn ray_div(&self, a: U256, b: U256, mode: RayDivMode) -> Result<U256, GhoProcessorError> {
         Ok(ray_div(a, b, mode.into())?)
     }
 
-    /// Simulate the `_accrueDebtOnAction` contract fn (stateless). Mirrors
-    /// `UnifiedGhoProcessor::accrue_debt_on_action`. Computes the
+    /// Simulate the `_accrueDebtOnAction` contract fn (stateless). Computes the
     /// `discount_scaled` amount (the discount portion burned by the contract
     /// on a balance-changing action). Returns `0` for revisions without
     /// discount support.
@@ -285,7 +274,7 @@ impl UnifiedGhoProcessor {
             return Ok(U256::ZERO);
         }
         // balance_increase = ray_mul(prev, current) - ray_mul(prev, prev_index)
-        // (half-up ray_mul — the Python `_math_libs.ray_mul` is `wad_ray_math.ray_mul` = half-up).
+        // (half-up `ray_mul`).
         let curr = ray_mul(prev_scaled_balance, current_index, None)?;
         let prev = ray_mul(prev_scaled_balance, prev_index, None)?;
         // No underflow: `current_index >= prev_index` (monotonic), so `curr >= prev`.
@@ -294,13 +283,12 @@ impl UnifiedGhoProcessor {
             return Ok(U256::ZERO);
         }
         let discount = percent_mul(balance_increase, discount_percent)?;
-        // `ray_div(discount, current_index)` — half-up (the Python uses the no-arg `ray_div`).
+        // `ray_div(discount, current_index)` — half-up.
         let discount_scaled = ray_div(discount, current_index, None)?;
         Ok(discount_scaled)
     }
 
-    /// Calculate the discounted balance for a burn operation. Mirrors
-    /// `UnifiedGhoProcessor::get_discounted_balance`. Returns the balance
+    /// Calculate the discounted balance for a burn operation. Returns the balance
     /// with the discount applied (the amount the contract considers "owed"
     /// before a burn). Returns `0` for a zero scaled balance; returns the
     /// raw `ray_mul(scaled_balance, current_index)` for revisions without
@@ -331,8 +319,8 @@ impl UnifiedGhoProcessor {
         Ok(balance)
     }
 
-    /// Process a GHO debt `Mint` event. Port of
-    /// `UnifiedGhoProcessor::process_mint_event`. The classification is the
+    /// Process a GHO debt `Mint` event (the `Mint` emission the GHO vToken's
+    /// `_mintScaled`/`_burnScaled` paths carry). The classification is the
     /// exhaustive `value.cmp(balance_increase)`: greater is a borrow, less a
     /// repay, equal a pure interest accrual. Each arm carries its own signed
     /// delta, so the sign falls out of the classification.
@@ -348,7 +336,8 @@ impl UnifiedGhoProcessor {
     ///   orchestrator pre-fetches + passes it in).
     /// - `actual_repay_amount` — optional actual repay amount from a paired
     ///   `Repay` event (avoids the 1-wei rounding error from deriving it
-    ///   from Mint event fields). C3 threads this through when available.
+    ///   from Mint event fields). The orchestrator threads this through when
+    ///   available.
     ///
     #[expect(clippy::missing_errors_doc)]
     pub fn process_gho_debt_mint(
@@ -426,8 +415,7 @@ impl UnifiedGhoProcessor {
                             // Full repayment: burn all scaled balance.
                             prev_balance
                         } else {
-                            // Partial: burn (repayment_scaled + discount_scaled). The
-                            // Python returns `-(repayment_scaled + discount_scaled)`.
+                            // Partial: burn (repayment_scaled + discount_scaled).
                             repayment_scaled.saturating_add(discount_scaled)
                         }
                     } else if self.discount.supports_discount {
@@ -466,8 +454,8 @@ impl UnifiedGhoProcessor {
         })
     }
 
-    /// Process a GHO debt `Burn` event. Port of
-    /// `UnifiedGhoProcessor::process_burn_event`. For all GHO revisions,
+    /// Process a GHO debt `Burn` event (the `_burnScaled` burn path). For
+    /// all GHO revisions,
     /// always calculate from event data (the `scaled_amount` field is NOT
     /// used for GHO except for V5+ no-discount FLOOR burns, where the
     /// enrichment's pre-calculated value avoids 1-wei rounding errors).
@@ -525,9 +513,8 @@ impl UnifiedGhoProcessor {
                 // `prev_balance` drifts by wei across earlier GHO burns that
                 // took the partial arm. Strict `==` misses that case and
                 // applies `-amount_scaled` (= `ray_div_floor(requested, idx)`
-                // > `prev_balance`), driving the balance negative. Python uses
-                // the >=
-                // Aave-V3 `_burnScaled` semantics: when the contract caps the
+                // > `prev_balance`), driving the balance negative. Aave-V3
+                // `_burnScaled` semantics: when the contract caps the
                 // repay amount to the actual outstanding debt, the emitted
                 // Repay.amount (= requested_amount) is ALWAYS >= Rust's
                 // approximation of `balanceBefore`; using `>=` mirrors that.
@@ -588,9 +575,7 @@ fn to_signed_neg(v: U256) -> Result<I256, GhoProcessorError> {
     // boundary `v == 2^255` (= `I256::MAX + 1` = `-(I256::MIN)` in absolute)
     // must map to `I256::MIN`.
     // `MAX_ABS` = `I256::MAX` = `2^255 - 1` (`0x7fff` is the HIGH
-    // limb; little-endian `from_limbs`). The prior constant put it in the LOW
-    // limb → `2^256 - 2^63 - 1`, making `v == 2^255` unreachable (it
-    // overflow-errored) while out-of-range `2^256 - 2^63` was coerced to `I256::MIN`.
+    // limb; little-endian `from_limbs`).
     const MAX_ABS: U256 = U256::from_limbs([
         0xffff_ffff_ffff_ffff,
         0xffff_ffff_ffff_ffff,
@@ -611,20 +596,19 @@ fn to_signed_neg(v: U256) -> Result<I256, GhoProcessorError> {
     }
 }
 
-// ── the GHO discount-rate formula (port of `GhoMath.calculate_discount_rate`) ─
+// ── the GHO discount-rate formula ─────────────────────────────────────────
 
-/// The GHO discount rate (basis points, 0-3000). Port of
-/// `GhoMath.calculate_discount_rate` (mirrors the `GhoDiscountRateStrategy`
-/// contract at mainnet `0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812`). The rate
+/// The GHO discount rate (basis points, 0-3000). Mirrors the
+/// `GhoDiscountRateStrategy` contract at mainnet
+/// `0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812`. The rate
 /// is the user's discount PERCENT, derived from the stkAAVE balance + the GHO
 /// debt: 0 below the minimums, capped at `DISCOUNT_RATE_BPS` (30%) when the
 /// discounted balance covers the debt, else proportional.
 ///
 /// Called by the discount-refresh pass after a GHO borrow/accrual that signals
 /// `should_refresh_discount` — recomputes `aave_v3_users.gho_discount` from the
-/// post-operation debt balance + the user's stkAAVE balance (mirrors Python's
-/// `_refresh_discount_rate`: `debt_token_balance = ray_mul(scaled_balance,
-/// index)` then this fn).
+/// post-operation debt balance + the user's stkAAVE balance; the caller
+/// passes `debt_token_balance = ray_mul(scaled_balance, index)`.
 ///
 /// # Errors
 ///
@@ -651,8 +635,7 @@ pub fn calculate_gho_discount_rate(
     if discounted_balance >= debt_balance {
         Ok(discount_rate_bps)
     } else {
-        // Proportional: (discounted * max_rate) // debt. Python uses integer
-        // `//` (floor). `discounted * 3000` cannot overflow for realistic
+        // Proportional: (discounted * max_rate) / debt — floor division. `discounted * 3000` cannot overflow for realistic
         // balances (discounted < debt < 2^244); saturating_mul is exact when
         // no overflow + safe if it ever did.
         Ok(discounted_balance.saturating_mul(discount_rate_bps) / debt_balance)
@@ -1189,7 +1172,6 @@ mod tests {
         // BORROW path: rev=1 (V1 discount, prev=0→discount=0), rev=2 (discount
         // active but prev=0→discount=0), rev=4 (no discount HALF_UP), rev=5
         // (no discount CEIL → uses precomputed scaled_amount).
-        // Python: delta=1000 (rev 1/2/4); delta=1500 (rev 5 precomputed).
         let ev = |val, bi, sa: Option<u64>| ScaledTokenEventData {
             value: U256::from(val),
             balance_increase: U256::from(bi),
@@ -1439,8 +1421,8 @@ mod tests {
 
     #[test]
     fn calculate_gho_discount_rate_capped_at_max() {
-        // Python docstring example: 5000 GHO debt, 100 stkAAVE → 100*100e18
-        // = 10000e18 discounted >= 5000e18 debt → capped at 3000 bps.
+        // 5000 GHO debt, 100 stkAAVE → 100*100e18 = 10000e18 discounted >=
+        // 5000e18 debt → capped at 3000 bps.
         assert_eq!(
             calculate_gho_discount_rate(e18(5000), e18(100)).unwrap(),
             U256::from(3000u64)

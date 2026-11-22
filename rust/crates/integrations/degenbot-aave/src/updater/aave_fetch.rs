@@ -2,14 +2,14 @@
 //! (`run_aave_update`).
 //!
 //! These wrap [`degenbot_rpc::provider::LogFetcher::fetch_logs_chunked`] with
-//! the Aave V3 topic groups the Python `cli/aave/event_fetchers.py` fetchers
-//! declare (the 7 fetch passes: pool, reserve-init, scaled-token, stkAAVE,
-//! address-provider, discount-config, oracle). Each fn returns raw
+//! the Aave V3 topic groups for the 7 fetch passes (pool, reserve-init,
+//! scaled-token, stkAAVE, address-provider, discount-config, oracle). Each fn returns raw
 //! [`alloy::rpc::types::Log`]s sorted by `(block_number, log_index)` (the
 
 #![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
-//! fetcher's contract — AC4's deterministic ordering); the per-tx grouping +
-//! the `DecodedAaveEvent` decode are the orchestrator's concern (`-3`) — these
+//! fetcher's contract — deterministic `(block_number, log_index)` ordering);
+//! the per-tx grouping + the `DecodedAaveEvent` decode are the orchestrator's
+//! concern — these
 //! fetchers do NOT decode: a fetch returns raw `LogReceipt`s and the decode leaf
 //! owns the interpretation.
 //!
@@ -20,9 +20,9 @@
 //!
 //! # Why raw `Log`s (not decoded)
 //!
-//! The Python's `_build_transaction_contexts` groups raw `LogReceipt`s by
-//! `transactionHash` BEFORE any decode — the orchestrator (`-3`) must do the
-//! same (the sort + group is a parity-gate surface). Decoding here would force
+//! Raw `LogReceipt`s are grouped by `transactionHash` BEFORE any decode —
+//! the orchestrator must do the same (the sort + group is a parity-gate
+//! surface). Decoding here would force
 //! a re-batch + a re-sort at the group boundary. The decoder is pure +
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
@@ -79,12 +79,11 @@ pub struct AaveFetchSpec {
     pub stk_aave_address: Option<Address>,
 }
 
-// ── the 7 fetch passes (mirror `event_fetchers.py`) ───────────────────────
+// ── the 7 fetch passes ───────────────────────────────────────────────────
 
 /// Fetch Pool contract events (`Supply`/`Borrow`/`Repay`/`Withdraw`/
 /// `LiquidationCall`/`MintedToTreasury`/`DeficitCreated`/`ReserveDataUpdated`/
-/// `ReserveUsedAsCollateral{Enabled,Disabled}`/`UserEModeSet`). Mirrors
-/// `event_fetchers.fetch_pool_events`.
+/// `ReserveUsedAsCollateral{Enabled,Disabled}`/`UserEModeSet`).
 pub async fn fetch_pool_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -110,8 +109,7 @@ pub async fn fetch_pool_logs(
 /// Fetch Pool Configurator reserve-init + collateral-config events
 /// (`ReserveInitialized`/`CollateralConfigurationChanged`/
 /// `EModeCategoryAdded`/`EModeAssetCategoryChanged`/
-/// `AssetCollateralInEmodeChanged`). Mirrors
-/// `event_fetchers.fetch_reserve_initialization_events`.
+/// `AssetCollateralInEmodeChanged`).
 pub async fn fetch_reserve_init_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -163,8 +161,7 @@ pub async fn fetch_scaled_token_logs(
 }
 
 /// Fetch stkAAVE events (`Staked`/`Redeem`/ERC20 `Transfer`) for the discount
-/// token. Mirrors `event_fetchers.fetch_stk_aave_events`. Returns `Ok(empty)`
-/// when `discount_token` is `None`.
+/// token. Returns `Ok(empty)` when `discount_token` is `None`.
 pub async fn fetch_stk_aave_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -180,7 +177,7 @@ pub async fn fetch_stk_aave_logs(
 
 /// Fetch PoolAddressProvider events (`ProxyCreated`/`PoolUpdated`/
 /// `PoolConfiguratorUpdated`/`PoolDataProviderUpdated`/`PriceOracleUpdated`/
-/// `AddressSet`). Mirrors `event_fetchers.fetch_address_provider_events`.
+/// `AddressSet`).
 pub async fn fetch_address_provider_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -207,7 +204,7 @@ pub async fn fetch_address_provider_logs(
 
 /// Fetch chain-wide discount-config events (`DiscountRateStrategyUpdated`/
 /// `DiscountTokenUpdated`) — no address filter (the events emit from any
-/// contract). Mirrors `event_fetchers.fetch_discount_config_events`.
+/// contract).
 pub async fn fetch_discount_config_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -224,9 +221,7 @@ pub async fn fetch_discount_config_logs(
 }
 
 /// Fetch `AssetSourceUpdated` events from the AaveOracle contract. When
-/// `oracle_address` is `None`, fetches chain-wide (discovery mode — mirrors
-/// the Python `if oracle_address is not None else None` path). Mirrors
-/// `event_fetchers.fetch_oracle_events`.
+/// `oracle_address` is `None`, fetches chain-wide (discovery mode).
 pub async fn fetch_oracle_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -247,13 +242,12 @@ pub async fn fetch_oracle_logs(
 /// `(block_number, log_index)`-sorted `Vec<Log>` accumulated across every event
 /// family (proxy_events +
 /// config_events + pool_events + oracle_events + scaled_token_events +
-/// discount_config_events + stk_aave_events) before `_build_transaction_contexts`
-/// sorts.
+/// discount_config_events + stk_aave_events) before the orchestrator's per-tx
+/// grouping sorts.
 ///
 /// The merge re-sorts because each pass's `fetch_logs_chunked` returns its own
 /// sorted batch, but the cross-pass merge is unordered. The sort key is
-/// `(block_number, log_index)` — matches the Python's `sorted(events,
-/// key=itemgetter("blockNumber","logIndex"))` + AC4's ordering contract.
+/// `(block_number, log_index)` — the parity-gate ordering contract.
 pub async fn fetch_aave_chunk_logs(
     spec: &AaveFetchSpec,
     fetcher: &LogFetcher,
@@ -285,10 +279,9 @@ pub async fn fetch_aave_chunk_logs(
     Ok(all)
 }
 
-/// Stable-sort `logs` by `(block_number, log_index)` ascending. Mirrors the
-/// Python `sorted(events, key=itemgetter("blockNumber","logIndex"))` +
-/// `LogFetcher::fetch_logs_chunked`'s per-batch ordering contract. Exposed
-/// so the orchestrator (`-3`) can re-sort an appended batch (e.g. when a
+/// Stable-sort `logs` by `(block_number, log_index)` ascending — the
+/// `LogFetcher::fetch_logs_chunked` per-batch ordering contract. Exposed so
+/// the orchestrator can re-sort an appended batch (e.g. when a
 /// `ReserveInitialized`-derived synthetic event needs interleaving).
 pub fn sort_logs_by_block_and_index(logs: &mut [Log]) {
     logs.sort_by_key(|log| (log.block_number.unwrap_or(0), log.log_index.unwrap_or(0)));

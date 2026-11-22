@@ -105,7 +105,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// Pool Withdraw → match `CollateralBurn`
     /// by user + amount (value + `balance_increase` vs `withdraw_amount`). The
     /// "interest-exceeds-withdrawal → Mint instead of Burn" branch is the
-    /// Parity-drift edge — verify plumbing equivalence.
+    /// parity edge the standard-builder tests pin.
     #[expect(clippy::too_many_lines)] // mirror's body intrinsic — parity-drift match has 6 branches
     pub(super) fn create_withdraw_operation(
         &mut self,
@@ -176,8 +176,8 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         // Find the matching Transfer event (mint → from-zero; burn → to-zero).
         let mut transfer_event: Option<&'a Log> = None;
         if let Some(interest_mint_ev) = interest_mint {
-            // Mint → Transfer (CreditTransfer) from any addr — Python `_create_withdraw_operation`
-            // interest_mint-branch: search any (CollateralTransfer / ERC20_COLLATERAL_TRANSFER).
+            // Mint → Transfer (CreditTransfer) from any addr: search any
+            // (CollateralTransfer / Erc20CollateralTransfer).
             for ev in scaled_events {
                 if assigned_indices.contains(&ev.log_index)
                     || ev.log_index == interest_mint_ev.log_index
@@ -533,10 +533,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             if ev.user_address != user {
                 continue;
             }
-            let _ = expected_a_token; // Boundary: aToken-address match could be
-                                      // added if multiple collateral tokens exist for a single user;
-                                      // matching by `user` + amount is the Python's primary match
-                                      // (it also doesn't filter by token contract explicitly here).
+            let _ = expected_a_token; // Boundary: matching is by `user` + amount
+                                      // (not token contract); an aToken-address match could be added
+                                      // if multiple collateral tokens exist for a single user.
             let bal_inc = ev.balance_increase.unwrap_or(U256::ZERO);
             let adjustment = if ev.event_type == ScaledTokenEventType::CollateralMint {
                 bal_inc - ev.amount

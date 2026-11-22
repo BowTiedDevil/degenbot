@@ -16,7 +16,7 @@
 //! max-LTV ratios are `f64` (`int / int → float` division). `u256_to_f64`
 //! converts via a lossy limb sum — exact for
 //! values ≤ `2^53` and within `rel-1e-6` for all realistic magnitudes (the
-//! tolerance the Python `test_core.py` suite uses).
+//! tolerance the committed Python gold fixture pins).
 
 use std::collections::HashMap;
 
@@ -24,7 +24,7 @@ use crate::{ray_mul_ceil, ray_mul_floor, WadRayError};
 use alloy::primitives::U256;
 use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 
-/// Basis points: `10_000` = 100% (mirrors Python `BASIS_POINTS`).
+/// Basis points: `10_000` = 100%.
 pub const BASIS_POINTS: i64 = 10_000;
 
 /// A position is "at risk" when its health factor drops below this buffer.
@@ -38,7 +38,6 @@ pub const HEALTH_FACTOR_LIQUIDATABLE_THRESHOLD: f64 = 1.0;
 // =========================================================================
 
 /// Collateral position with calculated values for risk analysis.
-/// Mirrors Python `CollateralPositionData`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollateralPositionData {
     pub asset_address: String,
@@ -78,7 +77,6 @@ impl CollateralPositionData {
 }
 
 /// Debt position with calculated values for risk analysis.
-/// Mirrors Python `DebtPositionData`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebtPositionData {
     pub asset_address: String,
@@ -105,11 +103,10 @@ impl DebtPositionData {
 }
 
 /// Summary of a user's Aave V3 position for liquidation risk assessment.
-/// Mirrors Python `UserPositionSummary`.
 ///
 /// `total_collateral_value` / `total_debt_value` are the (integer) sums of
-/// `price_adjusted_balance` (stored as `U256` to preserve byte-exact parity
-/// with the Python runtime, where the float-typed field holds an `int`).
+/// `price_adjusted_balance`; `U256` keeps the sums byte-exact (a float-typed
+/// field would round the intermediate).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserPositionSummary {
     pub user_address: String,
@@ -151,7 +148,6 @@ impl UserPositionSummary {
 }
 
 /// Result of analyzing positions for liquidation risk.
-/// Mirrors Python `PositionAnalysisResult`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PositionAnalysisResult {
     pub safe_users: Vec<UserPositionSummary>,
@@ -516,7 +512,7 @@ pub fn analyze_user_position(
 /// Python computes `int / int` as a correctly-rounded `f64` of the exact
 /// rational; this conversion rounds each limb individually, which is exact for
 /// values ≤ `2^53` and within `rel-1e-6` for all realistic magnitudes (the
-/// tolerance the Python `test_core.py` suite uses via `pytest.approx`).
+/// tolerance the committed Python gold fixture pins).
 #[expect(clippy::cast_precision_loss)]
 fn u256_to_f64(v: U256) -> f64 {
     let limbs = v.into_limbs();
@@ -529,10 +525,9 @@ fn u256_to_f64(v: U256) -> f64 {
 #[expect(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    //! The analysis spec. Every row's inputs + asserted outputs were
-    //! transcribed verbatim from the retired Python suite
-    //! (`tests/aave/analysis/test_core.py`, since deleted); this module is what
-    //! the implementation answers to.
+    //! The analysis spec. Every row's inputs + asserted outputs are
+    //! transcribed verbatim from the committed Python gold fixture; this
+    //! module is what the implementation answers to.
 
     use super::*;
     use alloy::primitives::U256;
@@ -541,10 +536,9 @@ mod tests {
     const ZERO_ADDR_HEX: &str = "0x0000000000000000000000000000000000000000";
 
     fn addr(n: u8) -> String {
-        // `0x{'0'*39}{n}` (a 40-hex-char
-        // address with `n` as the last hex digit). Kept as a `String` (the
-        // analysis records key on address strings) — the value itself isn't
-        // checksum-validated, mirroring the test-only Python helper.
+        // A 40-hex-char address with `n` as the last hex digit. Kept as a
+        // `String` (the analysis records key on address strings) — the value
+        // itself is not checksum-validated.
         format!("0x{zero39}{n:x}", zero39 = "0".repeat(39))
     }
 

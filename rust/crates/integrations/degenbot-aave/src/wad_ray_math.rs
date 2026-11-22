@@ -37,7 +37,7 @@ use alloy::primitives::U256;
 use thiserror::Error;
 
 /// 18-decimal fixed-point precision (`1e18`).
-#[expect(clippy::unreadable_literal)] // u64 limb — group separator porly groups
+#[expect(clippy::unreadable_literal)] // u64 limbs — digit separators group poorly across limbs
 pub const WAD: U256 = U256::from_limbs([0xde0b6b3a7640000, 0, 0, 0]);
 
 /// Half of [`WAD`] (`5e17`).
@@ -85,7 +85,6 @@ pub enum RayRounding {
 }
 
 /// Multiply two wad values, rounding half up to the nearest wad.
-/// Port of `wad_ray_math.wad_mul`.
 ///
 /// # Errors
 ///
@@ -97,7 +96,6 @@ pub fn wad_mul(a: U256, b: U256) -> Result<U256, WadRayError> {
 }
 
 /// Divide two wad values, rounding half up to the nearest wad.
-/// Port of `wad_ray_math.wad_div`.
 ///
 /// # Errors
 ///
@@ -114,7 +112,6 @@ pub fn wad_div(a: U256, b: U256) -> Result<U256, WadRayError> {
 }
 
 /// Multiply two ray values with the specified [`RayRounding`] mode.
-/// Port of `wad_ray_math.ray_mul`.
 ///
 /// # Errors
 ///
@@ -128,15 +125,14 @@ pub fn ray_mul(a: U256, b: U256, rounding: Option<RayRounding>) -> Result<U256, 
     }
 }
 
-/// Multiply two ray values, rounding half up. Port of `wad_ray_math.ray_mul`
-/// (the default no-rounding-arg path).
+/// Multiply two ray values, rounding half up (the default no-rounding-arg path).
 fn ray_mul_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
     let ab = a.checked_mul(b).ok_or(WadRayError::Overflow)?;
     let numerator = ab.checked_add(HALF_RAY).ok_or(WadRayError::Overflow)?;
     Ok(numerator / RAY)
 }
 
-/// Multiply two ray values, truncating toward zero. Port of `ray_mul_floor`.
+/// Multiply two ray values, truncating toward zero.
 ///
 /// # Errors
 ///
@@ -146,7 +142,7 @@ pub fn ray_mul_floor(a: U256, b: U256) -> Result<U256, WadRayError> {
     Ok(ab / RAY)
 }
 
-/// Multiply two ray values, rounding toward +∞. Port of `ray_mul_ceil`.
+/// Multiply two ray values, rounding toward +∞.
 ///
 /// # Errors
 ///
@@ -163,7 +159,6 @@ pub fn ray_mul_ceil(a: U256, b: U256) -> Result<U256, WadRayError> {
 }
 
 /// Divide two ray values with the specified [`RayRounding`] mode.
-/// Port of `wad_ray_math.ray_div`.
 ///
 /// # Errors
 ///
@@ -177,7 +172,7 @@ pub fn ray_div(a: U256, b: U256, rounding: Option<RayRounding>) -> Result<U256, 
     }
 }
 
-/// Divide two ray values, rounding half up. Port of `ray_div` (default).
+/// Divide two ray values, rounding half up (the default).
 fn ray_div_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
     if b.is_zero() {
         return Err(WadRayError::ZeroDivision);
@@ -188,7 +183,7 @@ fn ray_div_half_up(a: U256, b: U256) -> Result<U256, WadRayError> {
     Ok(numerator / b)
 }
 
-/// Divide two ray values, truncating toward zero. Port of `ray_div_floor`.
+/// Divide two ray values, truncating toward zero.
 ///
 /// # Errors
 ///
@@ -202,7 +197,7 @@ pub fn ray_div_floor(a: U256, b: U256) -> Result<U256, WadRayError> {
     Ok(numerator / b)
 }
 
-/// Divide two ray values, rounding toward +∞. Port of `ray_div_ceil`.
+/// Divide two ray values, rounding toward +∞.
 ///
 /// # Errors
 ///
@@ -223,7 +218,6 @@ pub fn ray_div_ceil(a: U256, b: U256) -> Result<U256, WadRayError> {
 }
 
 /// Cast a ray value down to wad, rounding half up to the nearest wad.
-/// Port of `wad_ray_math.ray_to_wad`.
 #[must_use]
 pub fn ray_to_wad(a: U256) -> U256 {
     let quotient = a / WAD_RAY_RATIO;
@@ -237,7 +231,7 @@ pub fn ray_to_wad(a: U256) -> U256 {
     quotient + tie_break
 }
 
-/// Convert a wad value up to ray. Port of `wad_ray_math.wad_to_ray`.
+/// Convert a wad value up to ray.
 ///
 /// # Errors
 ///

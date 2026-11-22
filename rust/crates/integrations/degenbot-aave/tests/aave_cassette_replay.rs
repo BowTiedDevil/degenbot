@@ -82,9 +82,9 @@ const EXPECTED_APPLIED_EVENTS: usize = 20;
 /// re-read all change this count and fail the plain run before the
 /// byte-diff consults the committed golden).
 ///
-/// Perf C (the chunk substrate cache) measured 150 before it: the
-/// per-event asset/user/position lookups + the per-tx GHO/revision reads
-/// now ride set-shaped prefetches + a write-overlay (the config dispatch
+/// The chunk substrate cache collapses the per-event asset/user/position
+/// lookups + the per-tx GHO/revision reads into set-shaped prefetches + a
+/// write-overlay (the config dispatch
 /// and the parser both consult it; the GHO fresh-resolution paths ride
 /// the dirty-marked cache), and the `ReserveDataUpdated` writes flush as
 /// one sorted multi-row UPDATE. 52 = 7 pre-tx run-setup statements +

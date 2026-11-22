@@ -2173,8 +2173,7 @@ fn liquidation_group_detect_pattern() {
 // ── MintToTreasury must NOT pre-scale ─────────────────────
 //
 // `create_mint_to_treasury_operations` stores the MintedToTreasury
-// `amount_minted` as the RAW UNDERLYING amount (Python's
-// `operation.minted_to_treasury_amount` semantics, regardless of
+// `amount_minted` as the RAW UNDERLYING amount (regardless of
 // `pool_revision`); the one scaled conversion (`ray_div(.., HALF_UP)`) lives in
 // `dispatch_mint_to_treasury`. Pre-scaling in the MintToTreasury builder
 // makes the
@@ -2313,9 +2312,8 @@ fn mint_to_treasury_collateral_mint_event(
     }
 }
 
-/// Asserts the pipeline (builder + dispatch) produces the SINGLE `ray_div` result
-/// (= Python's `PoolMath::underlying_to_scaled_collateral` value), NOT a
-/// DOUBLE-conversion. Pre-scaling the `amount_minted` in the builder makes
+/// Asserts the pipeline (builder + dispatch) produces the SINGLE `ray_div`
+/// result, NOT a DOUBLE-conversion. Pre-scaling the `amount_minted` in the builder makes
 /// `dispatch_mint_to_treasury` re-ray_div it, shrinking by `idx/RAY`
 /// (= the -8.04e12 residual on the treasury WETH position).
 #[test]
@@ -2403,9 +2401,8 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     assert_eq!(op.operation_type, OperationType::MintToTreasury);
 
     // === DISPATCH STEP (the apply-time conversion) ===
-    // `dispatch_mint_to_treasury` does the single ray_div (`= Python's
-    // `PoolMath::underlying_to_scaled_collateral`). The final balance_delta ==
-    // python_gold_scaled.
+    // `dispatch_mint_to_treasury` does the single ray_div. The final
+    // balance_delta == python_gold_scaled.
     //
     // An already-SCALED `op.minted_to_treasury_amount` makes dispatch's ray_div
     // produce the DOUBLE-conv result = buggy_double_conv_scaled.

@@ -74,9 +74,8 @@ pub struct AaveChunkProgress {
     /// re-process).
     pub committed: bool,
     /// `true` iff this is the run's final chunk (`chunk_end >= last_block` or
-    /// `max_chunks` hit). Reported POST-commit; the Python shell uses it to
-    /// fire the completion-time backup. The Rust completion full-verify
-    /// computes finality inline.
+    /// `max_chunks` hit). Reported POST-commit; the completion-time backup
+    /// fires off it. The completion full-verify computes finality inline.
     pub is_final: bool,
     /// The user addresses touched by ANY log in this chunk (topics\[1\]/\[2\]
     /// extracted as addresses). A programmatic [`ProgressSink`] consumer can
@@ -87,8 +86,8 @@ pub struct AaveChunkProgress {
     pub touched_user_addresses: Vec<Address>,
     /// Wall time of the chunk's RPC log fetches (the multi-pass fetch plus
     /// the same-chunk staleness re-fetches). Plain `Instant` spans (the
-    /// replay-bench baseline measurement; the telemetry chunk lands its own spans
-    /// later). Mirrors `degenbot-pool-updater::ChunkProgress`.
+    /// replay-bench baseline measurement; the telemetry spans carry the same
+    /// regions). Mirrors `degenbot-pool-updater::ChunkProgress`.
     pub fetch_time: Duration,
     /// Wall time of the in-transaction per-tx decode+compute block (the
     /// GHO/revision conn reads, the discount pre-pass + the config-event
@@ -103,8 +102,8 @@ pub struct AaveChunkProgress {
     /// span minus [`Self::decode_compute_time`] and [`Self::verify_time`].
     pub apply_time: Duration,
     /// The write-lock hold: the span from `transaction()` open to
-    /// commit/drop. The headline number for the hoist-RPC-out-of-the-tx fix
-    /// (survey finding 1; the `await_holding_lock` shape).
+    /// commit/drop. The headline number for keeping RPC reads out of the
+    /// chunk transaction (the `await_holding_lock` shape).
     pub write_lock_hold_time: Duration,
 }
 
@@ -314,7 +313,7 @@ pub struct RunSpec {
 ///    discount snapshot (RPC + the DB-cache path), dispatch the config events
 ///    (RPC for revisions and metadata plus the substrate lookups), apply THAT
 ///    tx's config events to `conn` (so the ops parser sees them), run
-///    `process_transaction` (C3's operations parser, sync, substrate lookups),
+///    `process_transaction` (the operations parser, sync, substrate lookups),
 ///    and apply THAT tx's op events to `conn` (so tx N+1 sees them).
 /// 4. Stamp `last_update_block = chunk_end` as the LAST write (end-of-chunk).
 ///    The caller's `Transaction` commits (or drops, rolling back). The stamp
@@ -348,7 +347,7 @@ pub struct RunSpec {
 /// - **`vtoken_revision`**: re-resolved per transaction — stage 1 of
 ///   `ChunkContext::dispatch_transaction` — so a transaction after an in-chunk
 ///   `Upgraded` apply reads the bumped revision; a chunk-start snapshot would
-///   not (W6: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(C)).
+///   not (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(C)).
 #[expect(clippy::missing_errors_doc)]
 pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
     if spec.chunk_size == 0 || spec.max_block_range == 0 {
@@ -663,9 +662,9 @@ async fn run_aave_update_driver(
         // future's single-thread poll (the same soundness argument as the
         // `await_holding_lock` expectation above: the future is never polled
         // concurrently, so the thread-local span context cannot tear).
-        // PASSIVE telemetry: the loop body below is untouched, so the
-        // statement ledger, the RPC request stream, and the chunk-atomicity rollback
-        // boundary (the three golden gates) cannot move.
+        // The span wrap does not touch the loop body: the statement ledger,
+        // the RPC request stream, and the chunk-atomicity rollback boundary
+        // (the three golden gates) are unaffected.
         let chunk_span = tracing::info_span!(
             "degenbot.updater.aave.chunk",
             chain.id = chain_id,
@@ -679,8 +678,8 @@ async fn run_aave_update_driver(
         // `degenbot_rpc::provider::rpc_round_trips` for the scope contract.
         let chunk_rpc_round_trips_start = degenbot_rpc::provider::rpc_round_trips();
 
-        // The replay-bench stage span (plain `Instant`; the telemetry chunk
-        // lands its own spans later). The write-lock hold — `transaction()`
+        // The replay-bench stage span (plain `Instant`; the telemetry spans
+        // carry the same regions). The write-lock hold — `transaction()`
         // open → commit/drop — and the verify split accrue inside the chunk's
         // transaction guard below, which also reports them, so the loop
         // carries no caller-local measurement a new failure exit could
@@ -691,9 +690,8 @@ async fn run_aave_update_driver(
         //    (block_number, log_index)).
         //
         // (a) Refresh the scaled-token address set from the DB at the
-        //     START of each chunk — matches the Python's per-chunk
-        //     `_get_all_scaled_token_addresses` (commands.py:1153). The frozen
-        //     run-start set (build_fetch_spec above) misses assets created in
+        //     START of each chunk — the frozen run-start set (build_fetch_spec
+        //     above) misses assets created in
         //     PRIOR chunks (cross-chunk + run-spanning staleness). Read BEFORE
         //     the transaction (committed state — assets from prior chunks).
         //     The remaining same-chunk case (asset created mid-chunk) is
@@ -714,9 +712,7 @@ async fn run_aave_update_driver(
         //     chunk — no stkAAVE Transfer events dispatched, no balance updates,
         //     the (C) refresh's on-chain backfill is the sole writer. Reading
         //     BEFORE the transaction sees committed state from prior chunks'
-        //     DiscountTokenUpdated applies. Mirrors Python's per-chunk
-        //     `_get_stk_aave_address` (would-be analog of
-        //     `_get_all_scaled_token_addresses`).
+        //     DiscountTokenUpdated applies.
         spec.stk_aave_address = db
             .fetch_aave_gho_asset(chain_id)?
             .as_ref()
@@ -743,12 +739,11 @@ async fn run_aave_update_driver(
         //     Pre-scan the frozen logs for `ReserveInitialized` events whose
         //     aToken/vToken isn't in the known set, re-fetch those tokens'
         //     scaled-token logs for the chunk range, + merge (de-dup by
-        //     (block_number, log_index)). `process_chunk_on_conn` is
-        //     UNCHANGED — the per-tx config-dispatch → ops interleave is
-        //     preserved, so the `v_token_revision` conn reads stay per-tx-
-        //     correct per the intra-dispatch apply (no rev-boundary regression — the
-        //     rejected Option A two-pass split would have made tx N's ops see
-        //     a later tx's `Upgraded`).
+        //     (block_number, log_index)). The per-tx config-dispatch → ops
+        //     interleave is preserved, so the `v_token_revision` conn reads
+        //     stay per-tx-correct per the intra-dispatch apply (no
+        //     rev-boundary regression — a two-pass split would let tx N's ops
+        //     see a later tx's `Upgraded`).
         let known: HashSet<Address> = spec.scaled_token_addresses.iter().copied().collect();
         let mut new_tokens: Vec<Address> = Vec::new();
         for log in &logs {
@@ -799,8 +794,7 @@ async fn run_aave_update_driver(
         //     `DiscountTokenUpdated`, re-resolve the new discount token, +
         //     re-fetch the stkAAVE Transfer/Staked/Redeem logs for the chunk
         //     range, merging with de-dup (same pattern as `(b)` above). The
-        //     `process_chunk_on_conn` dispatch is UNCHANGED — the per-tx
-        //     config-dispatch still applies `DiscountTokenUpdated` at its
+        //     per-tx config-dispatch still applies `DiscountTokenUpdated` at its
         //     correct logIndex, so read-your-own-writes within the transaction
         //     is preserved.
         let mut discount_token_from_event: Option<Address> = None;
@@ -889,9 +883,8 @@ async fn run_aave_update_driver(
             // is already durable).
             if verify_chunk {
                 let touched: Vec<Address> = r.touched_user_addresses.iter().copied().collect();
-                // Skip when no users were touched (matches the Python's
-                // `if not touched: return` — an empty chunk has nothing to
-                // verify). Passing `None` would verify ALL positions rather
+                // Skip when no users were touched — an empty chunk has
+                // nothing to verify. Passing `None` would verify ALL positions rather
                 // than none.
                 if !touched.is_empty() {
                     let verify_span = tracing::info_span!(

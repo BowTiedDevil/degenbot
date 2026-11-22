@@ -1,4 +1,4 @@
-//! The chunk-level substrate cache (Perf C): set-shaped prefetch + a
+//! The chunk-level substrate cache: set-shaped prefetch + a
 //! write-overlay consulted before the prefetched indexes.
 //!
 //! The aave chunk loop's per-event substrate reads (the asset-resolution
@@ -437,7 +437,7 @@ impl ChunkSubstrate {
     /// The `lookup_asset_by_token_address_on_conn` /
     /// `lookup_asset_by_underlying_address_on_conn` cache shell. `kind` is
     /// one of the `ASSET_KIND_*` constants (a bad kind is the substrate's
-    /// loud `DbError::Decode`, BEFORE any map access — the silent-arm rule).
+    /// loud `DbError::Decode`, BEFORE any map access — no silent default).
     ///
     /// Map hit → the cached row. Miss → the SQL probe (once per
     /// `(kind, address)`, including a cached negative) → cache → return.
@@ -795,8 +795,8 @@ impl ChunkSubstrate {
     }
 
     /// The scaled-token apply's read-modify-write seed read. Missing row →
-    /// the apply body's `MissingRow` (same message, the apply-target tag
-    /// target)").
+    /// the apply body's `MissingRow` (same message, tagged with the apply
+    /// target).
     ///
     /// # Errors
     ///
@@ -955,7 +955,7 @@ impl ChunkSubstrate {
 
     /// The substrate lookup kinds are the two `token_type` strings plus the
     /// underlying-JOIN kind; anything else is the substrate's loud
-    /// `DbError::Decode` (the silent-arm rule — no catch-all default).
+    /// `DbError::Decode` (no catch-all default).
     fn asset_kind(kind: &str) -> Result<&'static str, DbError> {
         match kind {
             ASSET_KIND_UNDERLYING => Ok(ASSET_KIND_UNDERLYING),
