@@ -9,10 +9,8 @@ use pyo3::prelude::*;
 /// The `degenbot._ffi.abi` Python submodule (declarative `#[pymodule]`).
 ///
 /// Carries the ABI decode/encode fns (`decode`/`decode_single`/`encode`/
-/// `encode_packed`/`encode_single`). Unlike the math submodules, no
-/// de-prefixing is needed — these fns were already un-prefixed; the win is
-/// the submodule + companion home (importers reach them via
-/// `degenbot.abi_adapter`, not `degenbot._ffi`). The parent module
+/// `encode_packed`/`encode_single`). Importers reach them via the
+/// `degenbot.abi` mirror home, not `degenbot._ffi`. The parent module
 /// registers the submodule itself and its `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]

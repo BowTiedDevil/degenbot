@@ -1,7 +1,7 @@
 //! GIL-acquire-latency probe + main-loop stuck-watchdog.
 //!
-//! Purpose: measure and observe the rolling-start GIL-contention deadlock
-//! . The probe runs on a dedicated **`std::thread`** (NOT a `tokio`
+//! Purpose: measure and observe the rolling-start GIL-contention deadlock.
+//! The probe runs on a dedicated **`std::thread`** (NOT a `tokio`
 //! worker, NOT needing the GIL to make progress), so it can keep sampling
 //! even when the main `asyncio` thread is parked holding the GIL and every
 //! `tokio` worker is blocked on `PyGILState_Ensure`.
@@ -23,8 +23,7 @@
 //!      GIL for the whole call body.
 //!   2. The asyncio main thread parked in `_asyncio.so`'s `futex_wait`
 //!      while awaiting a pyo3 `future_into_py` future whose completion
-//!      needs the GIL — the permanent-deadlock signature observed at
-//!      mainnet block 25647518.
+//!      needs the GIL — the permanent-deadlock signature.
 //!
 //! When `elapsed > threshold_ms`, the probe emits `[gil-probe] GIL held`
 //! with the acquire duration — a live marker of WHO was holding the GIL
@@ -73,11 +72,6 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-/// Python-callable: stamp "forward progress happened" (call after each
-/// block the pump delivers + dispatches). The stuck-watchdog reads this.
-///
-/// Cheap: one relaxed atomic store. Safe to call from any thread holding
-/// the GIL (the example's main loop) — no allocation, no I/O.
 /// The effective reaction for a failure bucket (ADR-040): the closed
 /// `failure_policy` matrix resolved against boot-time `[failure_policy]`
 /// overrides. Returns `observe` | `event` | `quarantine` | `exit`.
@@ -90,6 +84,11 @@ fn failure_action(kind: &str, reason: Option<&str>) -> &'static str {
     degenbot_bot::failure_policy::action(kind, reason).as_str()
 }
 
+/// Python-callable: stamp "forward progress happened" (call after each
+/// block the pump delivers + dispatches). The stuck-watchdog reads this.
+///
+/// Cheap: one relaxed atomic store. Safe to call from any thread holding
+/// the GIL (the example's main loop) — no allocation, no I/O.
 #[pyfunction]
 fn mark_progress() {
     LAST_PROGRESS_MS.store(now_ms(), Ordering::Relaxed);
@@ -137,7 +136,6 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
         binding: "pinned",
     });
 
-    // ── Probe thread: periodic GIL acquire + latency log. ──
     thread::Builder::new()
         .name("gil-probe".to_string())
         .spawn(move || {
@@ -156,11 +154,6 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
                 let now = now_ms();
                 let gap = now.saturating_sub(last_sample_ms);
                 last_sample_ms = now;
-                // Publish the probe's own last-acquire timestamp so the
-                // watchdog can distinguish a real GIL deadlock (this thread
-                // blocks on ``PyGILState_Ensure`` -> this store never runs ->
-                // ``LAST_PROBE_SAMPLE_MS`` goes stale) from the main loop
-                // merely being busy (probe still sampling).
                 LAST_PROBE_SAMPLE_MS.store(now, Ordering::Relaxed);
                 if elapsed >= threshold {
                     op_warn!(domain = pump, acquire_ms = %elapsed.as_millis(),
@@ -180,21 +173,13 @@ fn start_gil_probe(interval_ms: u64, threshold_ms: u64, stuck_ms: u64) -> PyResu
             pyo3::exceptions::PyRuntimeError::new_err(format!("failed to spawn probe thread: {e}"))
         })?;
 
-    // ── Watchdog thread: detect main-loop stuck (no `mark_progress()`). ──
-    // Never acquires the GIL — runs even during a permanent GIL deadlock.
-    //
-    // Two signals, one verdict:
-    //  - `LAST_PROGRESS_MS`        = Python consumer-loop heartbeat
-    //    (`mark_progress()` per batch). Goes stale while the consumer has no
-    //    work — a NORMAL rolling-start window (`build_paths` registers no
-    //    paths yet, so no batches flow). Alone it is NOT a deadlock signal.
-    //  - `LAST_PROBE_SAMPLE_MS`    = the probe thread's own last successful
-    //    `Python::attach`. A permanent GIL deadlock blocks the probe thread too,
-    //    so this stops advancing. THIS is the true deadlock signal.
-    // The watchdog alarms `*** GIL DEADLOCK` only when BOTH are stale (the
-    // probe itself stopped sampling) — a busy-but-alive main loop (probe still
-    // sampling) emits a softer `main loop idle` note instead, so a normal
-    // rolling start no longer false-alarms as a permanent deadlock.
+    // Watchdog thread: never acquires the GIL — runs even during a permanent
+    // GIL deadlock. Two signals, one verdict — see `watchdog_verdict`:
+    // `LAST_PROGRESS_MS` can go stale during a normal rolling start with no
+    // batches flowing, so it is not sufficient alone; `LAST_PROBE_SAMPLE_MS`
+    // stops advancing only when the probe itself cannot acquire the GIL and
+    // is the true permanent-deadlock signal. Alarm only when both are stale;
+    // a fresh probe sample downgrades the verdict to busy/idle.
     thread::Builder::new()
         .name("gil-probe-watchdog".to_string())
         .spawn(move || {
@@ -347,10 +332,6 @@ enum WatchdogVerdict {
     },
 }
 
-/// Register the diagnostics pyfunctions on the module.
-///
-/// # Errors
-/// Returns `PyErr` if a function fails to register.
 /// The `degenbot._ffi.diagnostics` Python submodule (declarative
 /// `#[pymodule]`), carrying the GIL-probe pyfunctions. The parent module
 /// registers the submodule itself and its `sys.modules` entry.
@@ -364,7 +345,6 @@ pub mod diagnostics {
     use super::{mark_progress, start_gil_probe};
 }
 
-// Keep the unused-import linter quiet in builds without the probe wired.
 fn _unused_imports_keep_arc() -> Arc<()> {
     Arc::new(())
 }

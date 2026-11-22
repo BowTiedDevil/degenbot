@@ -2,11 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the Curve `get_dy` calculator seam on `degenbot._ffi.curve_dy`.
-
-# Errors
-
-Returns `PyErr` if any symbol fails to register.
 The `degenbot._ffi.curve_dy` Python submodule (declarative
 `#[pymodule]`), carrying the `get_dy` calculator seam. The parent module
 registers the submodule itself; the `sys.modules` entry lives in the

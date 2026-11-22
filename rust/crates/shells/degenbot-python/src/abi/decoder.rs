@@ -15,10 +15,6 @@ use errors::AbiDecodeError;
 use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::types::{PyBool, PyBytes, PyList, PyString};
 
-// =============================================================================
-// Python conversion
-// =============================================================================
-
 /// Convert an `AbiValue` to a Python object.
 fn abi_value_to_python<'py>(
     value: &AbiValue,
@@ -65,10 +61,6 @@ fn decoded_values_to_py_list<'py>(
     PyList::new(py, py_values)
 }
 
-// =============================================================================
-// Error mapping
-// =============================================================================
-
 /// Map `AbiDecodeError` to the appropriate Python exception.
 ///
 /// Fixed-point types map to `NotImplementedError`; all others map to `ValueError`.
@@ -79,10 +71,6 @@ fn map_decode_error(e: &AbiDecodeError) -> PyErr {
         PyValueError::new_err(e.to_string())
     }
 }
-
-// =============================================================================
-// PyO3-exposed functions (thin wrappers)
-// =============================================================================
 
 /// Decode ABI-encoded data for multiple types.
 ///
@@ -96,14 +84,8 @@ fn map_decode_error(e: &AbiDecodeError) -> PyErr {
 ///
 /// A list of decoded Python values.
 ///
-/// # Architecture
-///
-/// This PyO3-exposed function is a thin wrapper around the pure Rust `decode_rust`.
-/// The decoding happens entirely without GIL, then results are converted to Python
-/// objects in a single pass. This enables:
-/// - Parallel decoding without GIL contention
-/// - Pure Rust unit testing
-/// - Clean separation of concerns
+/// Decoding runs entirely without the GIL (so parallel decodes never contend
+/// for it), then results are converted to Python objects in a single pass.
 #[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, data, checksum = true))]
@@ -113,7 +95,6 @@ pub fn decode(
     data: &[u8],
     checksum: bool,
 ) -> PyResult<Py<PyAny>> {
-    // Extract type strings from Python list (borrow directly, no String alloc)
     let type_strings: Vec<String> = types
         .iter()
         .map(|t| t.extract::<String>())
@@ -129,12 +110,6 @@ pub fn decode(
 }
 
 /// Decode a single ABI value.
-///
-/// Convenience function for decoding a single value.
-///
-/// # Architecture
-///
-/// This PyO3-exposed function wraps `decode_single_rust` for consistent architecture.
 #[expect(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (abi_type, data, checksum = true))]
@@ -151,10 +126,6 @@ pub fn decode_single(
     let py_value = abi_value_to_python(&value, py, checksum)?;
     Ok(py_value.unbind())
 }
-
-// =============================================================================
-// Python-touching tests (moved from the pre-split decoder.rs)
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -101,8 +101,6 @@ fn bal_err(e: BalancerMathError) -> PyErr {
         BalancerMathError::StableGetBalanceDidntConverge => "STABLE_GET_BALANCE_DIDNT_CONVERGE",
         BalancerMathError::TokenCountOverflow => "TOO_MANY_TOKENS",
     };
-    // Overflow-class errors (would exceed MAX_UINT256) surface as OverflowError;
-    // the rest carry the deployed-contract revert tags verbatim.
     match e {
         BalancerMathError::AddOverflow
         | BalancerMathError::SubOverflow
@@ -111,8 +109,6 @@ fn bal_err(e: BalancerMathError) -> PyErr {
         _ => PyValueError::new_err(tag),
     }
 }
-
-// ─── Weighted math ─────────────────────────────────────────────────────
 
 /// Weighted-product invariant (`WeightedMath._calculateInvariant`).
 ///
@@ -229,14 +225,12 @@ pub fn weighted_add_swap_fee_amount(
     u256_to_py_obj(py, result)
 }
 
-// ─── Fixed-point (shared by weighted + stable math) ─────────────────
-
 /// `FixedPoint._mul_down(a, b) = a * b / ONE`, rounding down.
 ///
 /// Uses `widening_mul` + truncation (mirrors Solidity's `uint256` return for
 /// over-large-but-unreachable inputs); the deployed contract reverts on
 /// `a * b > MAX_UINT256` — observable only for adversarial inputs the bot
-/// never feeds in normal swap math. C8d: the stable companion's per-block
+/// never feeds in normal swap math. The stable companion's per-block
 /// scaling-factor refresh multiplies through this leaf rather than a
 /// pure-Python port.
 ///
@@ -279,8 +273,6 @@ pub fn fixed_point_div_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResul
         .map_err(bal_err)?;
     u256_to_py_obj(py, result)
 }
-
-// ─── Stable math ───────────────────────────────────────────────────────
 
 /// `StableSwap` invariant (`StableMath._calculate_invariant`, V1 always-roundDown `D_P`).
 ///
@@ -377,43 +369,28 @@ pub fn stable_calc_in_given_out(
     u256_to_py_obj(py, result)
 }
 
-/// Register the Balancer-math functions as a real Python submodule.
-///
-/// Creates `degenbot._ffi.balancer_math` (a `PyModule`, not a flat
-/// root-level prefix) and registers the 12 swap-path math functions on it
-/// with un-prefixed names — `fixed_point_mul_down`, not
-/// `balancer_fixed_point_mul_down`. The `balancer_` prefix was an artifact
-/// of the flat root registration; on the submodule it is redundant.
-///
-/// The companion `src/degenbot/balancer/math/` package re-exports these as the
-/// stable import path (`from degenbot.balancer.math import fixed_point_div_down`),
-/// decoupling Python consumers from the `degenbot._ffi` internal module and
-/// letting the Rust crate structure show through to Python.
-///
-/// # Errors
-///
-/// Returns `PyErr` if any function fails to register.
 /// The `degenbot._ffi.balancer_math` Python submodule (declarative
 /// `#[pymodule]`), carrying the weighted / fixed-point / stable math
-/// pyfunctions. The parent module registers the submodule itself; the
+/// pyfunctions with un-prefixed names. The companion
+/// `src/degenbot/balancer/math/` package re-exports these as the stable
+/// import path (`from degenbot.balancer.math import fixed_point_div_down`),
+/// decoupling Python consumers from the `degenbot._ffi` internal module.
+/// The parent module registers the submodule itself; the
 /// `sys.modules["degenbot._ffi.balancer_math"]` entry (needed for the
 /// dotted-path import — the extension module is a single file, not a
 /// package) lives in the parent's shared helper.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod balancer_math {
-    // Weighted math
     #[pymodule_export]
     use super::{
         weighted_add_swap_fee_amount, weighted_calc_in_given_out, weighted_calc_out_given_in,
         weighted_calculate_invariant, weighted_subtract_swap_fee_amount,
     };
 
-    // Fixed-point (shared by weighted + stable)
     #[pymodule_export]
     use super::{fixed_point_div_down, fixed_point_div_up, fixed_point_mul_down};
 
-    // Stable math
     #[pymodule_export]
     use super::{
         stable_calc_in_given_out, stable_calc_out_given_in, stable_calculate_invariant,

@@ -2,13 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the fleet seam on the real Python submodule
-`degenbot._ffi.fleet`.
-
-# Errors
-
-Returns `PyErr` if the submodule, the typed exception, or a function
-fails to register on the module.
 The `degenbot._ffi.fleet` Python submodule (declarative `#[pymodule]`),
 carrying the posture re-tune operator pyfunctions. The parent module
 registers the submodule itself and its `sys.modules` entry.

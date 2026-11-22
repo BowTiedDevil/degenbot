@@ -13,37 +13,35 @@
 //!   arg extract → GIL release (`py.detach`) → core call (`get_runtime()
 //!   ::block_on(async move { ... })`) → result wrap. Zero business logic.
 //!
-//! ## Sync-only surface (FF3 decision)
+//! ## Sync-only surface
 //!
 //! The 12 dev methods are **sync** at the `PyO3` boundary, mirroring the
 //! `PyAlloyProvider` precedent (its async counterpart is a separate
 //! `PyAsyncAlloyProvider` pyclass over the same `Arc<AlloyProvider>`).
-//! An async twin can be added later (FF4-era) along the same shape if the
-//! cockpit needs it — the underlying tokio runtime is already shared.
+//! An async twin can be added later along the same shape if a consumer
+//! needs it — the underlying tokio runtime is already shared.
 //!
-//! ## `provider` property (deferred to FF4)
+//! ## No `provider` property
 //!
-//! The legacy Python `AnvilFork` exposed `self.w3`/`self.async_w3()` (a
-//! Web3 instance) constructed over the spawned anvil process's URL. The
-//! Rust direction replaces that with `AlloyProvider` constructed from
-//! [`PyAnvilFork::ipc_path`]. The Python companion shell owns the decision
-//! of whether `AnvilFork.provider` becomes:
+//! The Python-visible surface is `ipc_path` / `http_url` / `ws_url`, not a
+//! Web3-style provider handle. A companion `provider` property, if added,
+//! is either:
 //!
 //! 1. a re-constructed `AlloyProvider` over `ipc_path` (the same path the
 //!    core `DynProvider` is already connected over — IPC supports
 //!    multiple connection handles), or
 //! 2. a thin wrapper around the core `DynProvider` itself.
 //!
-//! Either way the FF4 shell already has everything it needs: `ipc_path`.
+//! Either way the companion shell already has everything it needs:
+//! `ipc_path`.
 //!
-//! ## Override queues (deferred to FF4)
+//! ## No constructor override kwargs
 //!
-//! The legacy `AnvilFork.__init__` accepted `balance_overrides` /
-//! `code_overrides` / `nonce_overrides` / `storage_overrides` kwargs +
-//! applied them post-spawn. FF4's shell can call the registered
-//! `set_balance`/`set_code`/`set_nonce`/`set_storage_at` methods directly
-//! after construction — that's the same action, just explicit at the
-//! companion-shell layer. Deferring keeps FF3 surface minimal + keeps
+//! Post-spawn overrides (`balance_overrides` / `code_overrides` /
+//! `nonce_overrides` / `storage_overrides`) are applied by calling the
+//! registered `set_balance`/`set_code`/`set_nonce`/`set_storage_at` methods
+//! directly after construction — the same action, explicit at the
+//! companion-shell layer. Keeping them off the constructor keeps
 //! `arg-extraction` out of the borrow-lifetime trap that arises when
 //! passing `&Bound<PyAny>` references across the GIL-release boundary
 //! into a `Send`-bound closure.
@@ -58,8 +56,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-/// Default mnemonic — matches the legacy Python `AnvilFork.__init__`
-/// default (the Brownie/Ganache test mnemonic). The default value
+/// Default mnemonic — the Brownie/Ganache test mnemonic. The default value
 /// referenced in the `#[pyo3(signature)]` annotation expands to `&'static
 /// str`, so it must be a `const`, not an inline literal.
 const DEFAULT_MNEMONIC: &str =
@@ -124,8 +121,7 @@ pub struct PyAnvilFork {
 impl PyAnvilFork {
     /// Spawn the `anvil` subprocess + connect the IPC `DynProvider`.
     ///
-    /// Mirrors the legacy Python `AnvilFork.__init__` keyword surface for
-    /// spawn-time config; the legacy `mining_mode` string literal
+    /// Spawn-time config keyword surface; the `mining_mode` string
     /// (`"auto"` / `"interval"` / `"none"`) maps to the Rust
     /// [`MiningMode`] enum. `mining_interval` only applies when
     /// `mining_mode == "interval"`.
@@ -134,11 +130,10 @@ impl PyAnvilFork {
     /// - `ValueError` on invalid `mining_mode` value.
     /// - `RuntimeError` on spawn / IPC / RPC failure.
     ///
-    /// Post-spawn state overrides (the legacy `balance_overrides` /
-    /// `code_overrides` / `nonce_overrides` / `storage_overrides` kwargs)
-    /// are NOT exposed on the constructor — apply them after construction
-    /// via the registered `set_balance` / `set_code` / `set_nonce` /
-    /// `set_storage_at` methods. See module-level note.
+    /// Post-spawn state overrides are NOT exposed on the constructor —
+    /// apply them after construction via the registered `set_balance` /
+    /// `set_code` / `set_nonce` / `set_storage_at` methods. See the
+    /// module-level note.
     #[new]
     #[pyo3(signature = (
         *,
@@ -243,8 +238,7 @@ impl PyAnvilFork {
     ///
     /// Use this to construct a secondary `AlloyProvider` against the
     /// same IPC socket (e.g. retry-aware `eth_call` / `get_logs` against
-    /// the in-memory fork). The legacy Python `AnvilFork.w3` handle is
-    /// replaced by that pattern in FF4.
+    /// the in-memory fork).
     #[getter]
     fn ipc_path(&self) -> &str {
         self.fork.ipc_path()
@@ -436,10 +430,6 @@ impl PyAnvilFork {
     }
 }
 
-/// Register the `AnvilFork` pyclass on the `degenbot._ffi.fork` submodule.
-///
-/// # Errors
-/// Returns `PyErr` if `add_class` fails (e.g. name collision).
 /// The `degenbot._ffi.fork` Python submodule (declarative `#[pymodule]`),
 /// carrying the `PyAnvilFork` lifecycle + dev-RPC seam. The parent module
 /// registers the submodule itself and its `sys.modules` entry.

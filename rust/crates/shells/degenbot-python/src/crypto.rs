@@ -1,8 +1,8 @@
-//! Keccak256 + event-topic pyfunctions — the pure-crypto slice of `eth_utils`
-//! owned in Rust .
+//! Keccak256 + event-topic pyfunctions — the Rust-owned pure-crypto slice of
+//! `eth_utils`.
 //!
 //! `degenbot.crypto.keccak256` / `event_topic` (Python) delegate here; the
-//! golden vectors in `tests/test_crypto_parity.py` pin parity with the old
+//! golden vectors in `tests/test_crypto_parity.py` pin parity with the
 //! `eth_utils` implementations byte-for-byte.
 
 use pyo3::exceptions::PyValueError;
@@ -24,7 +24,7 @@ pub fn keccak256(data: &[u8]) -> Vec<u8> {
 
 /// Canonical event-signature type string of one event-input component,
 /// expanding struct (tuple) params to `(...)` with recursive component
-/// expansion — the same canonicalization eth-abi applied for event
+/// expansion — the same canonicalization eth-abi applies for event
 /// signatures.
 fn canonical_param_type(component: &Bound<'_, PyDict>) -> PyResult<String> {
     let typ: String = component

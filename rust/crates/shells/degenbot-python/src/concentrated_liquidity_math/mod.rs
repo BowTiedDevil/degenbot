@@ -14,10 +14,10 @@ use pyo3::prelude::*;
 /// `LiquidityMapping`), the 2 `tick_math.rs` entry points
 /// (`get_sqrt_ratio_at_tick` / `get_tick_at_sqrt_ratio`), and the 4
 /// `TickMath` boundary constants (`MIN_TICK`/`MAX_TICK`/
-/// `MIN_SQRT_RATIO`/`MAX_SQRT_RATIO`) — previously all flat on the root
-/// `_ffi` namespace — onto one real submodule with un-prefixed names
-/// (`muldiv`, not `concentrated_liquidity_muldiv`). The parent module registers the submodule
-/// itself; the `sys.modules` entry lives in the parent's shared helper.
+/// `MIN_SQRT_RATIO`/`MAX_SQRT_RATIO`) onto one submodule with un-prefixed
+/// names (`muldiv`, not `concentrated_liquidity_muldiv`). The parent module
+/// registers the submodule itself; the `sys.modules` entry lives in the
+/// parent's shared helper.
 ///
 /// The companion `src/degenbot/uniswap/math/` package re-exports these as the
 /// stable import path, decoupling Python consumers from `degenbot._ffi`.
@@ -33,8 +33,7 @@ pub mod concentrated_liquidity_math {
         least_significant_bit, most_significant_bit, muldiv, muldiv_rounding_up,
     };
 
-    // tick_math.rs — the 2 high-level entry points (previously flat on root
-    // via c_api.rs).
+    // tick_math.rs — the 2 high-level entry points.
     #[pymodule_export]
     use super::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 

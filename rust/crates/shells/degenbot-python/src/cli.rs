@@ -56,9 +56,9 @@ mod tests {
 
     #[test]
     fn boot_refusal_maps_to_ex_config() {
-        // FF-T1: the typed fleet boot refusal is the lone EX_CONFIG (78) arm.
-        // Pin it at the Python seam even though no console arm constructs it
-        // yet, so the passthrough cannot silently regress the code.
+        // The typed fleet boot refusal is the lone EX_CONFIG (78) arm. Pin it
+        // at the Python seam so the passthrough cannot silently regress the
+        // code.
         let error = CliError::BootRefused("fleet refused".to_string());
         assert_eq!(ExitCode::from(&error).code(), 78);
     }

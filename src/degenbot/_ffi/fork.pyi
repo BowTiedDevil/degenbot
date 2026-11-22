@@ -2,10 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the `AnvilFork` pyclass on the `degenbot._ffi.fork` submodule.
-
-# Errors
-Returns `PyErr` if `add_class` fails (e.g. name collision).
 The `degenbot._ffi.fork` Python submodule (declarative `#[pymodule]`),
 carrying the `PyAnvilFork` lifecycle + dev-RPC seam. The parent module
 registers the submodule itself and its `sys.modules` entry.
@@ -47,8 +43,7 @@ class AnvilFork:
         """
         Spawn the `anvil` subprocess + connect the IPC `DynProvider`.
 
-        Mirrors the legacy Python `AnvilFork.__init__` keyword surface for
-        spawn-time config; the legacy `mining_mode` string literal
+        Spawn-time config keyword surface; the `mining_mode` string
         (`"auto"` / `"interval"` / `"none"`) maps to the Rust
         [`MiningMode`] enum. `mining_interval` only applies when
         `mining_mode == "interval"`.
@@ -57,11 +52,10 @@ class AnvilFork:
         - `ValueError` on invalid `mining_mode` value.
         - `RuntimeError` on spawn / IPC / RPC failure.
 
-        Post-spawn state overrides (the legacy `balance_overrides` /
-        `code_overrides` / `nonce_overrides` / `storage_overrides` kwargs)
-        are NOT exposed on the constructor — apply them after construction
-        via the registered `set_balance` / `set_code` / `set_nonce` /
-        `set_storage_at` methods. See module-level note.
+        Post-spawn state overrides are NOT exposed on the constructor —
+        apply them after construction via the registered `set_balance` /
+        `set_code` / `set_nonce` / `set_storage_at` methods. See the
+        module-level note.
         """
     @property
     def http_url(self, /) -> str:
@@ -76,8 +70,7 @@ class AnvilFork:
 
         Use this to construct a secondary `AlloyProvider` against the
         same IPC socket (e.g. retry-aware `eth_call` / `get_logs` against
-        the in-memory fork). The legacy Python `AnvilFork.w3` handle is
-        replaced by that pattern in FF4.
+        the in-memory fork).
         """
     def mine(self, /) -> None:
         """

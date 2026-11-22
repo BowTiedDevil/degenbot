@@ -19,7 +19,6 @@ use degenbot_math::concentrated_liquidity::tick_math::{
 /// Extract a U160 from a Python object (accepts int or bytes).
 #[inline]
 fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
-    /// Number of bytes in a 160-bit word (U160).
     const BYTES_PER_WORD: usize = 20;
 
     if let Ok(bytes) = obj.extract::<&[u8]>() {
@@ -44,7 +43,6 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
         return Ok(U160::from(int_val));
     }
 
-    // For larger integers, convert via bytes
     let py = obj.py();
     let int_type = pyo3::types::PyInt::type_object(py);
     if obj.is_instance(&int_type)? {
@@ -87,10 +85,7 @@ fn extract_u160(obj: &Bound<'_, PyAny>) -> PyResult<U160> {
 /// ```
 #[pyfunction(signature = (tick))]
 pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, PyAny>> {
-    // SAFETY: get_sqrt_ratio_at_tick_internal takes ~20ns — far less than
-    // the ~200ns GIL release/reacquire overhead. Holding the GIL is faster.
     let result = get_sqrt_ratio_at_tick_internal(tick)?;
-    // U160 is at most 160 bits, so it fits in U256
     let u256 = alloy::primitives::U256::from(result);
     alloy_py::u256_to_py(py, &u256)
 }
@@ -128,8 +123,6 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 #[pyfunction(signature = (sqrt_price_x96))]
 pub fn get_tick_at_sqrt_ratio(sqrt_price_x96: &Bound<'_, PyAny>) -> PyResult<i32> {
     let sqrt_price = extract_u160(sqrt_price_x96)?;
-    // SAFETY: get_tick_at_sqrt_ratio_internal takes ~20ns — far less than
-    // the ~200ns GIL release/reacquire overhead. Holding the GIL is faster.
     let tick = get_tick_at_sqrt_ratio_internal(sqrt_price)?;
     Ok(tick.as_i32())
 }

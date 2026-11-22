@@ -28,7 +28,6 @@ fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     if let Ok(v) = obj.extract::<u128>() {
         return Ok(U256::from(v));
     }
-    // For arbitrary Python ints, convert via bytes
     let py = obj.py();
     if obj.is_instance(&pyo3::types::PyInt::type_object(py))? {
         let kwargs = pyo3::types::PyDict::new(py);
@@ -69,9 +68,6 @@ fn extract_i256(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
     }
 }
 
-// extract_round_up not needed — we use Option<bool> directly in the signature
-// ─── BitMath ───────────────────────────────────────────────────────────
-
 /// Find the index of the most significant bit set in `x`.
 ///
 /// # Errors
@@ -93,8 +89,6 @@ pub fn least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
     let v = extract_u256(x)?;
     bit_math::least_significant_bit(v).map_err(|e| PyValueError::new_err(e.to_string()))
 }
-
-// ─── FullMath ──────────────────────────────────────────────────────────
 
 /// Compute `floor(a * b / denominator)` with full 512-bit precision.
 ///
@@ -136,8 +130,6 @@ pub fn muldiv_rounding_up(
     u256_to_py_obj(py, result)
 }
 
-// ─── SwapMath ──────────────────────────────────────────────────────────
-
 /// Compute a V3-style swap step.
 ///
 /// # Errors
@@ -163,7 +155,6 @@ pub fn compute_swap_step_v3(
     if liquidity_u128 > i128::MAX as u128 {
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
-    // Safe: validated above that liquidity_u128 <= i128::MAX.
     let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v3(
@@ -207,14 +198,13 @@ pub fn compute_swap_step_v4(
         Ok(v) => v,
         Err(_) => return Err(PyValueError::new_err("liquidity exceeds u128")),
     };
-    // V4's compute_swap_step takes i128 for liquidity, but V4 Solidity uses uint128.
-    // Positive i128 values cover the full uint128 range (0..2^127-1). Values >= 2^127
-    // are not expected in practice since max uint128 = 2^128-1 cannot fit in i128.
+    // V4's compute_swap_step takes i128 for liquidity, but V4 Solidity uses
+    // uint128: i128 cannot represent the top half of that range, so values
+    // above i128::MAX are refused.
     // Validate before cast to avoid using a wrapped value.
     if liquidity_u128 > i128::MAX as u128 {
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
-    // Safe: validated above that liquidity_u128 <= i128::MAX.
     let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v4(
@@ -237,10 +227,6 @@ pub fn compute_swap_step_v4(
     Ok(tuple.into_any().unbind())
 }
 
-// ─── TickMath (additional helpers) ─────────────────────────────────────
-
-// ─── LiquidityMapping (tick-bitmap + apply_liquidity_mapping_update) ────
-
 /// Compute the tick word and bit position for a compressed tick.
 ///
 /// Returns `(word, bit)` where `word` is the mapping key (`i32`) and `bit`
@@ -250,8 +236,3 @@ pub fn compute_swap_step_v4(
 pub fn get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {
     liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing)
 }
-
-// The `lib.rs` members (`BitMath` / `FullMath` / `UnsafeMath` /
-// `LiquidityMath` / `SqrtPriceMath` / `SwapMath` / `TickMath` helpers /
-// `LiquidityMapping`) are exported declaratively from the
-// `concentrated_liquidity_math` `#[pymodule]` in the parent `mod.rs`.

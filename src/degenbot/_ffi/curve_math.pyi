@@ -2,23 +2,12 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register all Curve-math functions on a real Python submodule.
-
-Creates `degenbot._ffi.curve_math` (a `PyModule`, not a flat
-root-level prefix) and registers the 5 `StableSwap` solver functions on it
-with un-prefixed names — `stableswap_get_d`, not `curve_stableswap_get_d`.
-The `curve_` prefix was an artifact of the flat root registration; on the
-submodule it is redundant.
-
-The companion `src/degenbot/curve/math/` package re-exports these as the
-stable import path (`from degenbot.curve.math import stableswap_get_y`),
-decoupling Python consumers from the `degenbot._ffi` internal module.
-
-# Errors
-
-Returns `PyErr` if any function fails to register.
 The `degenbot._ffi.curve_math` Python submodule (declarative
-`#[pymodule]`), carrying the `StableSwap` math pyfunctions. The parent
+`#[pymodule]`), carrying the `StableSwap` math pyfunctions with
+un-prefixed names. The companion `src/degenbot/curve/math/` package
+re-exports these as the stable import path
+(`from degenbot.curve.math import stableswap_get_y`), decoupling Python
+consumers from the `degenbot._ffi` internal module. The parent
 module registers the submodule itself; the `sys.modules` entry (needed
 for the dotted-path import — the extension module is a single file, not
 a package) lives in the parent's shared helper.
@@ -49,8 +38,7 @@ def derive_rate_and_precision_multipliers(
     per-coin ERC20 `decimals()`. When `precision_multipliers` is supplied (the
     lending-token override path) it is returned verbatim as the precision
     multipliers and `rate = pm * 10**precision_decimals`; otherwise both derive
-    from `token_decimals`. Replaces the deleted Python
-    `curve_stableswap_liquidity_pool._compute_rate_and_precision_multipliers`.
+    from `token_decimals`.
 
     # Errors
 

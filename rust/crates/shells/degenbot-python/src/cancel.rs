@@ -1,16 +1,12 @@
 //! `degenbot._ffi.cancel.CancelHandle` — the cooperative cancel flag for the
 //! long-running updater chunk loops (`run_pool_update`, `run_aave_update`).
 //!
-//! Extracted from `pool/mod.rs` (its first consumer) so the Aave updater seam
-//! (`aave_updater.rs`) reuses it without depending on the `pool` feature. The
-//! cancel flag is a generic primitive (an `Arc<AtomicBool>`-backed handle),
-//! NOT pool-specific — it lived in `pool/mod.rs` only because the pool seam
-//! was the first consumer.
-//!
-//! Registered on the `degenbot._ffi.cancel` submodule (declarative
-//! `#[pymodule]` below)
-//! (gated on `any(feature = "pool", feature = "aave-updater")`) so the
-//! `from degenbot._ffi.cancel import CancelHandle` import path is stable
+//! The cancel flag is a generic primitive (an `Arc<AtomicBool>`-backed
+//! handle), NOT pool-specific: the pool and Aave updater seams reuse it
+//! without a `pool` feature dependency. Registered on the
+//! `degenbot._ffi.cancel` submodule (declarative `#[pymodule]` below, gated
+//! on `any(feature = "pool", feature = "aave-updater")` in the parent) so
+//! the `from degenbot._ffi.cancel import CancelHandle` import path is stable
 //! regardless of which updater features are enabled.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,10 +74,9 @@ impl Default for CancelHandle {
 }
 
 /// The `degenbot._ffi.cancel` Python submodule (declarative `#[pymodule]`),
-/// carrying the shared [`CancelHandle`] pyclass. Called by the parent module
+/// carrying the shared [`CancelHandle`] pyclass, registered by the parent
 /// under `any(feature = "pool", feature = "aave-updater")` — whichever
-/// updater seam is enabled needs the class registered. No-op-safe when both
-/// are enabled (a single declarative export).
+/// updater seam is enabled needs the class registered.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod cancel {

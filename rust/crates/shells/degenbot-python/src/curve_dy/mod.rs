@@ -10,4 +10,4 @@
 //! `calculate_dy` is the pure single-entry `get_dy`; `calculate_dy_underlying`
 //! additionally delegates base-pool ops through a Python base-pool object.
 
-pub mod lib; // nudge
+pub mod lib;

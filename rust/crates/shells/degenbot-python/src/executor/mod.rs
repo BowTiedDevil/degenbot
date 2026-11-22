@@ -8,19 +8,6 @@
 //! Python args → releases
 //! the GIL via `py.detach()` for the encode/warmup compute → calls the core →
 //! wraps the result into `bytes`/`dict`/`int`. No business logic lives here.
-//!
-//! The standalone `encode_cmd_stream` / `v4_input_is_native` /
-//! `v4_output_is_native` `PyO3` pyfunctions + their `HopTypes` /
-//! `extract_hop` / `extract_path_info` / `hop_to_py` / `path_info_to_py`
-//! helpers are RETIRED. The encode path moved to the Rust core
-//! (`composers::encode_cmd_stream`, called by the executor's own row builders,
-//! never from Python), and a candidate resolves its `PathInfo` from
-//! a registered `path_id` via `PyArbEngine::path_info_for_core`. The `[profit]`
-//! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
-//! `simulation/render.rs`). The Python `hop_info` dataclasses are deleted.
-//! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot._ffi`
-//! anymore — the `_DelegateSpy` test pinned them as Rust-bound builtins,
-//! but the example never invoked them post-A5.
 
 use alloy::primitives::U256;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -35,10 +22,6 @@ use degenbot_executor::{
 
 use crate::address_utils::{parse_address, to_checksum_address_str};
 use crate::conversion::alloy::u256_to_py;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Python → Rust arg extraction
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Extract a `U256` from a Python int-like object (`int`, `float`, `str`).
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
@@ -67,10 +50,6 @@ fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     }
     Err(PyTypeError::new_err("expected int/str for U256"))
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PyO3 wrapper functions
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// `degenbot._ffi.executor.compute_simulation_warmup_slots(executor_address,
 /// weth_address, pool_manager_address) -> dict`
@@ -193,25 +172,11 @@ fn nested_mapping_slot<'py>(
     u256_to_py(py, &result)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// Map a [`ConfigError`] to a Python `ValueError`.
 fn config_err_to_py(err: ConfigError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Module registration
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Register the executor seam functions on `m` (feature = "executor").
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_function` call fails (e.g. a name
-/// collision); propagated unchanged to the `#[pymodule]` caller.
 /// The `degenbot._ffi.executor` Python submodule (declarative
 /// `#[pymodule]`), carrying the command-stream encoding pyfunctions. The
 /// parent module registers the submodule itself and its `sys.modules` entry.

@@ -1,10 +1,9 @@
 //! Python-driver seam for the shared degenbot-core ambient runtime.
 //!
 //! The verify seams (`aave_updater::verify_touched_positions_on_chain`,
-//! `pool::verify_v3/v4_liquidity_map`) removed their per-call multi-thread
-//! runtime build (the dead tokio-rt-worker churn source) and now require the
-//! CALLER's ambient runtime — a missing one returns the typed policy error
-//! ("run under the shared degenbot-core ambient runtime"). Rust consumers
+//! `pool::verify_v3/v4_liquidity_map`) require the CALLER's ambient runtime —
+//! a missing one returns the typed policy error ("run under the shared
+//! degenbot-core ambient runtime"). Rust consumers
 //! enter the runtime naturally (they run on it); a Python driver shell has
 //! no way to do that, so this module exposes the minimal primitive: call a
 //! Python callable with the shared runtime entered on the calling thread.
@@ -16,9 +15,8 @@ use pyo3::prelude::*;
 /// Bind `pyo3-async-runtimes` to the shared degenbot-core ambient runtime,
 /// exactly once per process, before the first `future_into_py` runs.
 ///
-/// Incident 2026-08-21: using pyo3-async's default runtime when the
-/// binding never happened is what spawned a SECOND nproc-worker runtime
-/// mid-run (24 surprise worker threads at the wedge timestamp). The singleton
+/// Without the binding, pyo3-async's default runtime spawns a SECOND
+/// nproc-worker runtime mid-run (24 surprise worker threads). The singleton
 /// here is the ONE shared runtime (`degenbot_core::runtime`), and the
 /// `OnceLock` makes creation deterministic at first async use; the driver's
 /// explicit `driver_boot()` moves that first use back to process start.
@@ -106,8 +104,8 @@ pub fn call_on_ambient_runtime(
 /// is ferried back.
 ///
 /// This is the minimal seam for a prep step whose logic must stay
-/// Python-side (e.g. an `SQLAlchemy` token resolution + a bulk graph read
-/// pending the ADR-052 DB cutover): it moves the *scheduling*, not the logic.
+/// Python-side (e.g. an `SQLAlchemy` token resolution + a bulk graph read):
+/// it moves the *scheduling*, not the logic.
 ///
 /// ```python
 /// prepared = await call_blocking_on_ambient_runtime(partial(prepare, ...))

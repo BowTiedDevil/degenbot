@@ -1,13 +1,13 @@
 //! Thread-identity registry: maps each thread's std thread-id to its OS TID
 //! (+ the last span it created), so a GIL-deadlock dump can be cross-
-//! referenced against the /proc futex table (incident 2026-08-20).
+//! referenced against the /proc futex table.
 //!
 //! The registry fills passively: `PythonLogLayer::on_new_span` (present in
 //! every registry stack) calls [`note_current_thread`] on the span-CREATING
 //! thread. The watchdog (never GIL) calls [`dump_to_file`] on a confirmed
 //! GIL-deadlock alarm, writing a `std-thread-id -> os_tid + last span` map joined
 //! with every thread's /proc state + waited futex to a JSON file. Std
-//! Standard thread-ids are the same ids that appear as the `thread.id` span tag
+//! thread-ids are the same ids that appear as the `thread.id` span tag
 //! on `OTel` spans (scrape from Jaeger to join a span to an OS TID).
 use degenbot_core::op_error;
 use std::collections::HashMap;
@@ -176,7 +176,7 @@ pub fn dump_to_file() -> Option<std::path::PathBuf> {
         "span_threads": span_threads,
     });
 
-    // Phantom-reader forensics (incident 2026-08-21): embed the StateLock
+    // Phantom-reader forensics: embed the StateLock
     // tracker's active holds (thread + #[track_caller] acquire site) so a
     // dump names a stuck read-guard holder outright.
     #[cfg(feature = "bot")]

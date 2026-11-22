@@ -4668,8 +4668,8 @@ def call_blocking_on_ambient_runtime(fn_work: Any) -> Any:
     is ferried back.
 
     This is the minimal seam for a prep step whose logic must stay
-    Python-side (e.g. an `SQLAlchemy` token resolution + a bulk graph read
-    pending the ADR-052 DB cutover): it moves the *scheduling*, not the logic.
+    Python-side (e.g. an `SQLAlchemy` token resolution + a bulk graph read):
+    it moves the *scheduling*, not the logic.
 
     ```python
     prepared = await call_blocking_on_ambient_runtime(partial(prepare, ...))

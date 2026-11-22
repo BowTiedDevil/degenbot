@@ -28,10 +28,6 @@ fn map_encode_error(e: &AbiDecodeError) -> PyErr {
     }
 }
 
-// =============================================================================
-// PyO3-exposed functions (thin wrappers)
-// =============================================================================
-
 /// Encode a single ABI value.
 ///
 /// # Arguments
@@ -49,9 +45,9 @@ pub fn encode_single<'py>(
     abi_type: &str,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    // SAFETY: GIL is held — `abi_value_from_python` extracts values from
-    // Python objects that require the GIL. The subsequent `py.detach()` releases
-    // the GIL for the pure-Rust encode computation.
+    // GIL is held: `abi_value_from_python` extracts values from Python
+    // objects that require the GIL. The subsequent `py.detach()` releases it
+    // for the pure-Rust encode computation.
     let abi_value = alloy_py::abi_value_from_python(py, value)?;
     let abi_type_owned = abi_type.to_string();
     let encoded = py
@@ -86,9 +82,9 @@ pub fn encode<'py>(
         )));
     }
 
-    // SAFETY: GIL is held — `abi_value_from_python` extracts values from
-    // Python objects that require the GIL. The subsequent `py.detach()` releases
-    // the GIL for the pure-Rust encode computation.
+    // GIL is held: `abi_value_from_python` extracts values from Python
+    // objects that require the GIL. The subsequent `py.detach()` releases it
+    // for the pure-Rust encode computation.
     let abi_values: Result<Vec<AbiValue>, _> = values
         .iter()
         .map(|v| alloy_py::abi_value_from_python(py, &v))
@@ -134,9 +130,9 @@ pub fn encode_packed<'py>(
         )));
     }
 
-    // SAFETY: GIL is held — `abi_value_from_python` extracts values from
-    // Python objects that require the GIL. The subsequent `py.detach()` releases
-    // the GIL for the pure-Rust encode computation.
+    // GIL is held: `abi_value_from_python` extracts values from Python
+    // objects that require the GIL. The subsequent `py.detach()` releases it
+    // for the pure-Rust encode computation.
     let abi_values: Result<Vec<AbiValue>, _> = values
         .iter()
         .map(|v| alloy_py::abi_value_from_python(py, &v))
@@ -155,7 +151,3 @@ pub fn encode_packed<'py>(
         .map_err(|e| map_encode_error(&e))?;
     Ok(PyBytes::new(py, &encoded))
 }
-
-// Note: the pure-Rust roundtrip proptests (uint256/address/bool/bytes32/int256
-// roundtrips, `test_encode_*`, `test_roundtrip`) live in `degenbot-abi`'s
-// `encoder` module — no Python needed.

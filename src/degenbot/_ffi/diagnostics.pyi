@@ -2,10 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the diagnostics pyfunctions on the module.
-
-# Errors
-Returns `PyErr` if a function fails to register.
 The `degenbot._ffi.diagnostics` Python submodule (declarative
 `#[pymodule]`), carrying the GIL-probe pyfunctions. The parent module
 registers the submodule itself and its `sys.modules` entry.
@@ -17,11 +13,6 @@ __all__ = ["failure_action", "mark_progress", "start_gil_probe"]
 
 def failure_action(kind: str, reason: str | None) -> str:
     """
-    Python-callable: stamp "forward progress happened" (call after each
-    block the pump delivers + dispatches). The stuck-watchdog reads this.
-
-    Cheap: one relaxed atomic store. Safe to call from any thread holding
-    the GIL (the example's main loop) — no allocation, no I/O.
     The effective reaction for a failure bucket (ADR-040): the closed
     `failure_policy` matrix resolved against boot-time `[failure_policy]`
     overrides. Returns `observe` | `event` | `quarantine` | `exit`.
@@ -30,7 +21,15 @@ def failure_action(kind: str, reason: str | None) -> str:
     Rust core owns the matrix; Python must not duplicate the table).
     """
 
-def mark_progress() -> None: ...
+def mark_progress() -> None:
+    """
+    Python-callable: stamp "forward progress happened" (call after each
+    block the pump delivers + dispatches). The stuck-watchdog reads this.
+
+    Cheap: one relaxed atomic store. Safe to call from any thread holding
+    the GIL (the example's main loop) — no allocation, no I/O.
+    """
+
 def start_gil_probe(
     interval_ms: SupportsIndex = 50,
     threshold_ms: SupportsIndex = 100,

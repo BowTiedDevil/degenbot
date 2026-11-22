@@ -2,12 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the executor seam functions on `m` (feature = "executor").
-
-# Errors
-
-Returns a [`PyErr`] if any `add_function` call fails (e.g. a name
-collision); propagated unchanged to the `#[pymodule]` caller.
 The `degenbot._ffi.executor` Python submodule (declarative
 `#[pymodule]`), carrying the command-stream encoding pyfunctions. The
 parent module registers the submodule itself and its `sys.modules` entry.

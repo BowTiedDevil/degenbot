@@ -5,10 +5,8 @@
 The `degenbot._ffi.abi` Python submodule (declarative `#[pymodule]`).
 
 Carries the ABI decode/encode fns (`decode`/`decode_single`/`encode`/
-`encode_packed`/`encode_single`). Unlike the math submodules, no
-de-prefixing is needed — these fns were already un-prefixed; the win is
-the submodule + companion home (importers reach them via
-`degenbot.abi_adapter`, not `degenbot._ffi`). The parent module
+`encode_packed`/`encode_single`). Importers reach them via the
+`degenbot.abi` mirror home, not `degenbot._ffi`. The parent module
 registers the submodule itself and its `sys.modules` entry.
 """
 
@@ -30,25 +28,13 @@ def decode(types: list, data: bytes, checksum: bool = True) -> Any:
 
     A list of decoded Python values.
 
-    # Architecture
-
-    This PyO3-exposed function is a thin wrapper around the pure Rust `decode_rust`.
-    The decoding happens entirely without GIL, then results are converted to Python
-    objects in a single pass. This enables:
-    - Parallel decoding without GIL contention
-    - Pure Rust unit testing
-    - Clean separation of concerns
+    Decoding runs entirely without the GIL (so parallel decodes never contend
+    for it), then results are converted to Python objects in a single pass.
     """
 
 def decode_single(abi_type: str, data: bytes, checksum: bool = True) -> Any:
     """
     Decode a single ABI value.
-
-    Convenience function for decoding a single value.
-
-    # Architecture
-
-    This PyO3-exposed function wraps `decode_single_rust` for consistent architecture.
     """
 
 def encode(types: list, values: list) -> bytes:

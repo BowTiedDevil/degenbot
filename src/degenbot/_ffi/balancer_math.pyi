@@ -2,25 +2,13 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the Balancer-math functions as a real Python submodule.
-
-Creates `degenbot._ffi.balancer_math` (a `PyModule`, not a flat
-root-level prefix) and registers the 12 swap-path math functions on it
-with un-prefixed names — `fixed_point_mul_down`, not
-`balancer_fixed_point_mul_down`. The `balancer_` prefix was an artifact
-of the flat root registration; on the submodule it is redundant.
-
-The companion `src/degenbot/balancer/math/` package re-exports these as the
-stable import path (`from degenbot.balancer.math import fixed_point_div_down`),
-decoupling Python consumers from the `degenbot._ffi` internal module and
-letting the Rust crate structure show through to Python.
-
-# Errors
-
-Returns `PyErr` if any function fails to register.
 The `degenbot._ffi.balancer_math` Python submodule (declarative
 `#[pymodule]`), carrying the weighted / fixed-point / stable math
-pyfunctions. The parent module registers the submodule itself; the
+pyfunctions with un-prefixed names. The companion
+`src/degenbot/balancer/math/` package re-exports these as the stable
+import path (`from degenbot.balancer.math import fixed_point_div_down`),
+decoupling Python consumers from the `degenbot._ffi` internal module.
+The parent module registers the submodule itself; the
 `sys.modules["degenbot._ffi.balancer_math"]` entry (needed for the
 dotted-path import — the extension module is a single file, not a
 package) lives in the parent's shared helper.
@@ -70,7 +58,7 @@ def fixed_point_mul_down(a: Any, b: Any) -> Any:
     Uses `widening_mul` + truncation (mirrors Solidity's `uint256` return for
     over-large-but-unreachable inputs); the deployed contract reverts on
     `a * b > MAX_UINT256` — observable only for adversarial inputs the bot
-    never feeds in normal swap math. C8d: the stable companion's per-block
+    never feeds in normal swap math. The stable companion's per-block
     scaling-factor refresh multiplies through this leaf rather than a
     pure-Python port.
 

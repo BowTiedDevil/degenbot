@@ -3,10 +3,9 @@
 
 """
 The `degenbot._ffi.cancel` Python submodule (declarative `#[pymodule]`),
-carrying the shared [`CancelHandle`] pyclass. Called by the parent module
+carrying the shared [`CancelHandle`] pyclass, registered by the parent
 under `any(feature = "pool", feature = "aave-updater")` — whichever
-updater seam is enabled needs the class registered. No-op-safe when both
-are enabled (a single declarative export).
+updater seam is enabled needs the class registered.
 """
 
 from typing import final
