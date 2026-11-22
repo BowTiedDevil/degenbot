@@ -454,7 +454,6 @@ impl PyProbeExecutor {
 ///     `optimal_input`: The fixed swap input (wei); must be positive.
 ///     `current_block`: The ONE block the vector and its context belong to.
 ///
-/// Raises:
 /// # Errors
 ///
 /// `ValueError`: `optimal_input` is not positive, the path is not registered,
@@ -573,7 +572,6 @@ fn narrow_amounts(amounts: &[alloy::primitives::U256], path_id: u64) -> PyResult
 ///     `target_selection`: `"first_compatible"` (the default) or
 ///         `"all_targets"` — which deployments each path is offered to.
 ///
-/// Raises:
 /// # Errors
 ///
 /// `ValueError` on an unknown `capital`/`target_selection` spelling, or when the

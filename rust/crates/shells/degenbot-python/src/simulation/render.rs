@@ -145,11 +145,10 @@ pub(crate) fn sim_failure_to_dict<'py>(
         ct_list.append(s)?;
     }
     dict.set_item("call_trace", ct_list)?;
-    // The solver's expected amounts — the [sim-diag] classifier's
-    // EXPECTED half (the ACTUAL half is `captured_swaps`). The gap
-    // between `hop_outputs[i]` and the i-th captured swap's amount
-    // is the new SolverCalc basis (replaces the deleted recompute).
-    // `optimal_input` is the solver's expected input (context for the
+    // The solver's expected amounts — the [sim-diag] classifier's EXPECTED
+    // half (the ACTUAL half is `captured_swaps`). The gap between
+    // `hop_outputs[i]` and the i-th captured swap's amount is the SolverCalc
+    // basis; `optimal_input` is the solver's expected input (context for the
     // expected-vs-actual render).
     let optimal_input = alloy_py::u256_to_py(py, &U256::from(f.optimal_input))?;
     dict.set_item("optimal_input", optimal_input)?;

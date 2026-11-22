@@ -40,13 +40,8 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::simulation::render::captured_swap_to_dict;
 
-// ---- the SELFDESTRUCT-gift success-path fixture (mirrors the Rust
-//      parity_evm_sim.rs test — a non-None SimResult over CacheDB<EmptyDB>) ----
-// The executor stub CALLs a "gift" contract; the gift SELFDESTRUCTs to the
-// executor (CALLER), sending its 1 ETH balance → the stub returns the receipt
-// `(1 ETH, 0)` → gross_profit = 1 ETH → the only success-path (non-None
-// SimResult) achievable over CacheDB<EmptyDB> (no real pool state — the profit
-// comes from the gift's ETH, not a swap).
+/// The gift contract the success-path fixture SELFDESTRUCTs from: its 1 ETH
+/// balance is the profit (no real pool state exists over `CacheDB<EmptyDB>`).
 const SMOKE_GIFT: alloy::primitives::Address =
     alloy::primitives::address!("dddddddddddddddddddddddddddddddddddddddd");
 const ONE_ETH: alloy::primitives::U256 =
@@ -75,10 +70,10 @@ fn executor_stub_bytecode(gift: alloy::primitives::Address) -> Vec<u8> {
     code
 }
 
-// ---- the hardcoded smoke fixture (mirrors the Rust smoke test) ----
-// Constants are `const` (not `static`) so they're compiled inline + have no
-// `Sync` requirement — matches the `simulate_in_process_with_db_*` smoke
-// tests in `degenbot-arbitrage`.
+// The hardcoded smoke fixture (mirrors the Rust smoke test). Constants are
+// `const` (not `static`) so they're compiled inline + have no `Sync`
+// requirement — matches the `simulate_in_process_with_db_*` smoke tests in
+// `degenbot-arbitrage`.
 const SMOKE_OWNER: alloy::primitives::Address =
     alloy::primitives::address!("9c56a29c7231974c269e24f9fb3c29203039089e");
 const SMOKE_EXECUTOR: alloy::primitives::Address =
@@ -220,7 +215,6 @@ pub fn simulate_in_process_revert_probe<'py>(
     path_id: u64,
     runtime_bytecode: &Bound<'_, PyBytes>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    // 1. Build the ctx (mock provider — never called over CacheDB<EmptyDB>).
     let provider = mock_no_rpc_provider();
     let byte_slice = runtime_bytecode.as_bytes();
     let deployment = smoke_deployment(alloy::primitives::Bytes::copy_from_slice(byte_slice));
@@ -229,10 +223,9 @@ pub fn simulate_in_process_revert_probe<'py>(
         deployment: &deployment,
     };
 
-    // 2. Build the in-memory DB + apply the executor-injection overrides
-    //    (the evm2 apply is infallible — it never touches the backing). The
-    //    probe runs the production capital posture, which resolves no asset, so
-    //    its plan needs no path.
+    // The evm2 override apply is infallible (it never touches the backing).
+    // The probe runs the production capital posture, which resolves no asset,
+    // so its plan needs no path.
     let overrides = ctx.deployment.override_params(&[]).map_err(|error| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("the capital plan was refused: {error}"))
     })?;
@@ -242,8 +235,8 @@ pub fn simulate_in_process_revert_probe<'py>(
         &overrides,
     );
 
-    // 3. Run the production sim seam (GIL-free — release is implicit: no
-    //    Python objects held across the call).
+    // GIL-free: no Python objects are held across the call, so the release is
+    // implicit.
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).map_err(|e| {
@@ -252,7 +245,6 @@ pub fn simulate_in_process_revert_probe<'py>(
         ))
     })?;
 
-    // 4. Wrap the outcome as a dict (the batch seam's failure-record shape).
     let out = PyDict::new(py);
     // `result` is `None` for reverts/non-profitable (the only paths this probe
     // exercises). A success-path `SimResult` is non-trivial to render + isn't
@@ -357,8 +349,11 @@ pub fn simulate_in_process_revert_probe<'py>(
 /// # Errors
 ///
 /// `RuntimeError` only on an unrecoverable evm2 `transact` error (cannot
-/// happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a non-None
-/// bucket (a `debug_assert!` fires + is surfaced as `RuntimeError`).
+/// happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a `None`
+/// result — refused as a `RuntimeError` at the boundary. The trailing
+/// `debug_assert!` (no failure records) pins the fixture's other half in
+/// debug builds only: it panics there and is compiled out in release, never
+/// surfacing as a Python error.
 #[pyfunction]
 #[pyo3(signature = (path_id))]
 pub fn simulate_in_process_success_probe(
@@ -367,7 +362,6 @@ pub fn simulate_in_process_success_probe(
 ) -> PyResult<Bound<'_, PyDict>> {
     use crate::conversion::alloy::u256_to_py;
 
-    // 1. Build the ctx (mock provider — never called over CacheDB<EmptyDB>).
     let provider = mock_no_rpc_provider();
     let executor_bc = executor_stub_bytecode(SMOKE_GIFT);
     let deployment = smoke_deployment(alloy::primitives::Bytes::copy_from_slice(&executor_bc));
@@ -376,9 +370,8 @@ pub fn simulate_in_process_success_probe(
         deployment: &deployment,
     };
 
-    // 2. Build the in-memory DB + apply overrides (owner, executor, WETH
-    //    warmup) — the evm2 apply is infallible (no backing fetch). The probe
-    //    runs the production capital posture, so its plan needs no path.
+    // The evm2 override apply is infallible (no backing fetch). The probe
+    // runs the production capital posture, so its plan needs no path.
     let overrides = ctx.deployment.override_params(&[]).map_err(|error| {
         pyo3::exceptions::PyRuntimeError::new_err(format!("the capital plan was refused: {error}"))
     })?;
@@ -388,7 +381,7 @@ pub fn simulate_in_process_success_probe(
         &overrides,
     );
 
-    // 3. Deploy the gift contract (the executor stub pays the receipt from it).
+    // The executor stub pays the receipt from the gift contract.
     cache_db.insert_account_info(
         &SMOKE_GIFT,
         ::evm2::evm::AccountInfo::default()
@@ -399,7 +392,6 @@ pub fn simulate_in_process_success_probe(
             )),
     );
 
-    // 4. Run the production sim seam (GIL-free).
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).map_err(|e| {
@@ -408,7 +400,6 @@ pub fn simulate_in_process_success_probe(
         ))
     })?;
 
-    // 5. Validate: the success-path fixture MUST return a SimResult.
     let sim = result.ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err(
             "simulate_in_process_success_probe: fixture regressed to None (check gift ETH / \
@@ -416,7 +407,6 @@ pub fn simulate_in_process_success_probe(
         )
     })?;
 
-    // 6. Wrap the SimResult as a dict.
     let result_dict = PyDict::new(py);
     result_dict.set_item(
         "candidate",

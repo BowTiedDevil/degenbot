@@ -12,7 +12,7 @@
 //! in the driver). There is no enqueue door on this seam: a caller that could
 //! enqueue a batch could own consumption again.
 //!
-//! NO Python closures on the hot path (the task's contract): the two
+//! NO Python closures on the hot path: the two
 //! production leaves are the core's own `EngineLeaves`, and the path resolver
 //! is the engine stage surface itself (GIL-free), so no cell of the pipeline
 //! re-enters Python.
@@ -29,7 +29,7 @@
 //! `next_outcome` releases it across the drain await.
 //!
 //! The `use_v4_batch` encode axis defaults `false` — no driver config key
-//! declares it yet; a declared key arrives later as its own value.
+//! declares it yet.
 
 use std::sync::Arc;
 
@@ -54,7 +54,7 @@ use degenbot_submission::{PathSuppression, SubmissionTarget};
 use pyo3::types::{PyDict, PyList};
 
 /// The session's apply-time BAL relevance: the union of every REGISTERED path's
-/// addresses and the settlement deployment's identities (§4.5 of the design).
+/// addresses and the settlement deployment's identities.
 ///
 /// The two halves live on different owners and meet here, which is why the
 /// adapter is the shell's: the paths come from the engine's path registry
@@ -94,7 +94,6 @@ impl degenbot_simulation::sim::evm2::bal_heads::HeadRelevanceSource for SessionR
 pub(crate) struct EngineResolver(Arc<EngineStages>);
 
 impl EngineResolver {
-    /// Project the engine's stage surface as the assembly's path resolver.
     pub(crate) fn new(stages: Arc<EngineStages>) -> Self {
         Self(stages)
     }
@@ -744,9 +743,9 @@ pub fn build_batch_executor_py(
         // The path resolver is the engine stage surface itself: the projection
         // is GIL-free, so no cell of the pipeline re-enters Python.
         resolver: Arc::new(EngineResolver(engine.stages_arc())),
-        // Decision b: the suppression registry is the dispatcher's
-        // cross-block feedback arc, DISTINCT from the batch-local
-        // payload-served set each batch's payload rows define.
+        // The suppression registry is the dispatcher's cross-block feedback
+        // arc, DISTINCT from the batch-local payload-served set each batch's
+        // payload rows define.
         suppression: Arc::clone(&suppression),
         divergence: dispatcher.pool_divergence_arc(),
         fot: dispatcher.fot_registry_arc(),

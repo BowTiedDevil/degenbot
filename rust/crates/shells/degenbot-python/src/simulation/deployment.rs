@@ -295,8 +295,6 @@ mod tests {
         }
     }
 
-    /// The projection carries the declared facts verbatim into the core value,
-    /// and the lifted adapter encodes the deployment's OWN transaction.
     #[test]
     fn a_python_deployment_projects_onto_the_core_deployment() {
         Python::attach(|py| {
@@ -346,8 +344,6 @@ mod tests {
         });
     }
 
-    /// A deployment's declared code installs at ITS target, so two deployments
-    /// keep two independent code stances.
     #[test]
     fn two_deployments_keep_their_own_targets_and_codes() {
         Python::attach(|py| {
@@ -384,7 +380,6 @@ mod tests {
         });
     }
 
-    /// Declaration-level malformations are refused at the boundary.
     #[test]
     fn malformed_declarations_are_refused() {
         Python::attach(|py| {
@@ -447,13 +442,12 @@ mod tests {
         });
     }
 
-    /// Every core registry refusal reaches Python as a `ValueError` carrying the
-    /// core's own message — including the empty registry, which the Python
-    /// boundary cannot reach because the built-in deployment is always entry one.
     #[test]
     fn registry_refusals_map_to_value_errors() {
         Python::attach(|py| {
             let deployments = [
+                // Unreachable from the Python boundary (the built-in settlement
+                // deployment is always entry one); the mapping is pinned anyway.
                 DeploymentRegistryError::Empty,
                 DeploymentRegistryError::DuplicateId {
                     deployment_id: DeploymentId::new(1),

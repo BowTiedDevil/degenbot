@@ -441,7 +441,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         name: "UnsupportedPath",
         attributes: &[],
         base: "Exception",
-        message: "The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure, so the target-selection walk examines the next target. Every other exception a compose callable raises is a hard encode failure.",
+        message: "The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure — a declaration violation is ComposeError::Validation, produced by the binding's own check, never by this exception — so the target-selection walk examines the next target. Subclasses count: the bridge classifies by is_instance_of, the way a Python `except UnsupportedPath` would, and the decline's detail is the exception's own str() (empty for a bare `raise UnsupportedPath`). Every other exception a compose callable raises is a hard encode failure.",
     },
     ExceptionIsland {
         python_module: "degenbot._ffi.fleet",

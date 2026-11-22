@@ -58,10 +58,6 @@ use degenbot_execution::{
 
 use crate::conversion::alloy::{extract_python_u256, u256_to_py};
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PySolveResult — the solve-result view (ADR-025 D4)
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// `PySolveResult` — the typed solve-result **view** passed to a Python
 /// compose callable (ADR-025 D4).
 ///
@@ -193,10 +189,6 @@ fn hop_descriptor_to_dict<'py>(py: Python<'py>, d: &HopDescriptor) -> PyResult<B
     Ok(dict)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Encode lift — the shared Python-callable invocation
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// Wrap a held Python callable and require it to be callable at construction.
 ///
 /// # Errors
@@ -214,30 +206,19 @@ fn require_callable(callback: &Py<PyAny>, expected: &str) -> PyResult<()> {
     })
 }
 
-// The compose callable's routine path-decline signal.
-//
-// A callback raises `UnsupportedPath` for a path its own contract cannot encode —
-// the explicit spelling of `ComposeError::Unsupported`, which is a CAPABILITY
-// decision the adapter makes, not a verdict on its declaration. The bridge
-// translates it (and only it) into that arm, so the first-compatible walk
-// examines the next target instead of failing the candidate (ADR-098 D5,
-// ADR-100 D5).
-//
-// It is deliberately NOT a validation failure: a declaration violation is
-// `ComposeError::Validation`, produced by the binding's own check, never by the
-// callable. Every other exception a callback raises — whatever its type,
-// including anything raised from deeper inside the callback — remains a hard
-// `ComposeError::Encode`, so a broken encoder is reported, never excused as a
-// decline. Subclasses count: the bridge classifies by `is_instance_of`, the way a
-// Python `except UnsupportedPath` would.
-//
-// Normal Python exception semantics apply: the decline's detail is the
-// exception's own `str()` (empty for a bare `raise UnsupportedPath`).
 create_exception!(
     degenbot._ffi.execution,
     UnsupportedPath,
     PyException,
-    "The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure, so the target-selection walk examines the next target. Every other exception a compose callable raises is a hard encode failure."
+    "The adapter declined this path: a routine capability refusal \
+     (ComposeError::Unsupported), not an interface-validation failure — a \
+     declaration violation is ComposeError::Validation, produced by the \
+     binding's own check, never by this exception — so the target-selection \
+     walk examines the next target. Subclasses count: the bridge classifies \
+     by is_instance_of, the way a Python `except UnsupportedPath` would, and \
+     the decline's detail is the exception's own str() (empty for a bare \
+     `raise UnsupportedPath`). Every other exception a compose callable raises \
+     is a hard encode failure."
 );
 
 /// Classify a compose callable's Python failure as the seam's typed encode error.
@@ -309,10 +290,6 @@ fn solve_result_from_path_inputs(path: &PathInfo, inputs: &ComposerInputs<'_>) -
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PyPayloadComposer — lift a Python callable into the PayloadComposer seam
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// `PyPayloadComposer` — wrap an arbitrary Python callable
 /// (`result: PySolveResult -> bytes`) into the core [`PayloadComposer`] seam.
 ///
@@ -368,10 +345,6 @@ impl PayloadComposer for PyPayloadComposer {
         compose_with_callable(&self.callback, path, inputs)
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PyPayloadAdapter — the complete transaction a Python consumer authors
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// `PayloadAdapter` — a Python-composed foreign execution adapter: the Encode
 /// callable bound to the transaction it executes.
@@ -430,9 +403,7 @@ pub struct PyPayloadAdapter {
     interface: Option<ContractInterface>,
 }
 
-/// The sorted key set a contract-call probe declaration carries.
 const PROBE_CALL_KEYS: [&str; 3] = ["data", "label", "to"];
-/// The sorted key set a native-account probe declaration carries.
 const PROBE_NATIVE_KEYS: [&str; 2] = ["account", "label"];
 
 /// Parse the declared probe list, one dict per probe:
@@ -734,26 +705,16 @@ impl ExecutionAdapter for PyPayloadAdapter {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Declared interface — the optional transaction declaration (ADR-100 D10)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// The key set an `interface` declaration may carry.
 const INTERFACE_KEYS: [&str; 4] = ["abi", "selectors", "target", "value"];
 
-/// The key set a native-value policy dict may carry.
 const VALUE_POLICY_KEYS: [&str; 3] = ["exact_wei", "kind", "max_wei"];
 
-/// The key set a validation case may carry.
 const CASE_KEYS: [&str; 4] = ["amounts", "expect", "hops", "name"];
 
-/// The key set a case's `amounts` may carry.
 const CASE_AMOUNT_KEYS: [&str; 3] = ["consumed_inputs", "hop_outputs", "optimal_input"];
 
-/// The exact key set a case hop of family `v2` or `v3` carries.
 const CASE_HOP_POOL_KEYS: [&str; 6] = ["family", "fee", "pool_address", "token0", "token1", "zfo"];
 
-/// The exact key set a case hop of family `v4` carries.
 const CASE_HOP_V4_KEYS: [&str; 9] = [
     "currency0",
     "currency1",
@@ -766,7 +727,6 @@ const CASE_HOP_V4_KEYS: [&str; 9] = [
     "zfo",
 ];
 
-/// The exact key set a `decline` expectation carries.
 const CASE_EXPECT_DECLINE_KEYS: [&str; 1] = ["kind"];
 
 /// Every key a `transaction` expectation may carry; `selector` is required
@@ -1611,10 +1571,6 @@ impl PyPayloadAdapter {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// abi_encode_call — degenbot.abi-backed helper for a user's own contract
-// ═══════════════════════════════════════════════════════════════════════════
-
 /// `abi_encode_call(signature, values) -> bytes`
 ///
 /// A `degenbot.abi`-backed helper so a Python user can ABI-encode a **call**
@@ -1666,17 +1622,6 @@ fn abi_encode_call<'py>(
     Ok(PyBytes::new(py, &calldata))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Module registration
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Register the execution-seam classes/functions on `m` (feature =
-/// `"execution"`) as `degenbot._ffi.execution`.
-///
-/// # Errors
-///
-/// Returns a [`PyErr`] if any `add_class`/`add_function` call fails (e.g. a
-/// name collision); propagated unchanged to the `#[pymodule]` caller.
 /// The `degenbot._ffi.execution` Python submodule (declarative
 /// `#[pymodule]`), carrying the `ExecutionAdapter` seam lift (ADR-025). The
 /// parent module registers the submodule itself and its `sys.modules` entry.
@@ -1693,17 +1638,12 @@ pub mod execution {
     };
 
     /// [`UnsupportedPath`] is a `create_exception!` type (no `_PYO3_DEF`), so it
-    /// stays on the submodule's one imperative registration line (the fleet
-    /// `PostureRetuneError` pattern) rather than in the declarative export list.
+    /// registers imperatively here rather than in the declarative export list.
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add("UnsupportedPath", m.py().get_type::<UnsupportedPath>())
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
@@ -1749,7 +1689,6 @@ mod tests {
     #[test]
     fn compose_calls_python_callable_with_view_and_takes_bytes() {
         Python::attach(|py| {
-            // A Python callable that reads the view and returns fixed bytes.
             let callback = py
                 .eval(
                     c"lambda result: bytes([0xCA, 0xFE]) \
@@ -1771,7 +1710,6 @@ mod tests {
             let bytes = composer
                 .compose(&path, &inputs)
                 .expect("compose should succeed");
-            // prefix + path_id(0) + hop_count(2) + consumed_inputs[0] (16 bytes)
             assert_eq!(&bytes[..2], &[0xCA, 0xFE]);
             assert_eq!(bytes[2], 0);
             assert_eq!(bytes[3], 2);
@@ -1785,8 +1723,6 @@ mod tests {
     #[test]
     fn a_declined_path_maps_to_unsupported_and_other_errors_stay_hard() {
         Python::attach(|py| {
-            // The typed decline keeps the exception's own message and becomes the
-            // seam's routine `Unsupported` arm (the walk advances past it).
             let decline = compose_error(
                 py,
                 &UnsupportedPath::new_err("this contract cannot encode it"),
@@ -1796,13 +1732,11 @@ mod tests {
                 ComposeError::Unsupported("this contract cannot encode it".to_owned())
             );
 
-            // A bare raise carries the empty message, exactly as `str(exc)` does.
             assert_eq!(
                 compose_error(py, &UnsupportedPath::new_err(())),
                 ComposeError::Unsupported(String::new())
             );
 
-            // Every other exception is the candidate's own unrecoverable failure.
             for err in [
                 PyValueError::new_err("broken encoder"),
                 PyTypeError::new_err("wrong shape"),
@@ -1950,9 +1884,6 @@ mod tests {
 
     #[test]
     fn view_projects_from_canonical_solve_result() {
-        // `PySolveResult::from_solve_path` projects the typed view from
-        // the canonical `SolvePathResult` (amounts) + `PathInfo` (hop
-        // descriptors) — the "one genuinely new surface" (ADR-025 D4).
         use degenbot_pools::solve::SolvePathResult;
         Python::attach(|py| {
             let result = SolvePathResult {
@@ -2001,7 +1932,6 @@ mod tests {
                     .unwrap(),
                 50
             );
-            // amounts stay integer u256 (no float) — hop_outputs[1] round-trips.
             let outs: Vec<u64> = view
                 .bind(py)
                 .getattr("hop_outputs")
@@ -2012,7 +1942,6 @@ mod tests {
                 outs,
                 vec![1_000_000_000_000_000_000u64, 1_000_000_000_000_000_050u64]
             );
-            // hop descriptors render as dicts with the V2 family.
             let descs: Vec<pyo3::Py<PyAny>> = view
                 .bind(py)
                 .getattr("hop_descriptors")

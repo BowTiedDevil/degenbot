@@ -11,8 +11,7 @@
 //!
 //! - ZERO FFI: the sim runs entirely in the solve worker's thread context.
 //! - The per-path handle build (the amortization target) still happens
-//!   per candidate — the soak MEASURES that (a per-block handle reuse
-//!   inside the worker is a follow-up if the tail demands it).
+//!   per candidate — the soak MEASURES that.
 //! - `block_priority_fees` is `None` (the dispatcher's fee ring is
 //!   Python-owned): the priority fee falls to the core's self-targeting
 //!   formula without the percentile clamp. The soak compares LATENCY
@@ -270,12 +269,12 @@ impl InlineSimHook {
     }
 }
 
-// The spawned sim task must re-enter the calling
-// span context. tokio::spawn clones tokio task context but NOT the tracing
-// span context, so any span created inside the task without this re-entry
-// becomes an independent Jaeger trace ROOT (observed 635 orphan roots/60s -
-// the in-memory Jaeger ring at ~100k traces shrank
-// to a 45-min window because ~30 pct of roots were these 2-span orphans).
+// The spawned sim task must re-enter the calling span context. tokio::spawn
+// clones tokio task context but NOT the tracing span context, so any span
+// created inside the task without this re-entry becomes an independent
+// Jaeger trace root — enough of them dominate the roots (~635/60s, ~30%
+// of them two-span orphans) that the ~100k-trace in-memory Jaeger ring
+// shrinks to ~45 minutes.
 /// Spawn `fut` on a runtime, re-entering `parent` so traced work inside the
 /// task joins the caller's trace. Awaitable from any thread (plain thread or
 /// runtime worker); the caller's current span is captured by value.
@@ -288,8 +287,8 @@ where
     T: Send + 'static,
 {
     tokio::spawn(async move {
-        // THE FIX: re-enter the caller's span. The tracing thread-local on a
-        // fresh runtime worker is empty, so without this the first span
+        // Re-enter the caller's span: the tracing thread-local on a fresh
+        // runtime worker is empty, so without this the first span
         // created inside the task becomes an independent trace root that
         // never joins the block's solve trace. `parent.enter()` installs the
         // caller's tracing+OTel context for the task body (guard held till
@@ -388,8 +387,8 @@ fn inline_sim_thread_name() -> String {
     )
 }
 
-/// The private multi-thread runtime hosting the payload sims ).
-/// Sized by [`inline_sim_worker_count`], named distinctly, census-registered
+/// The private multi-thread runtime hosting the payload sims.
+/// Sized by [`inline_sim_worker_count`], named distinctly, census-registered.
 fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     let workers = inline_sim_worker_count();
     degenbot_core::worker_census::register(degenbot_core::worker_census::WorkerCensusEntry {
@@ -403,14 +402,10 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
     #[expect(clippy::expect_used)]
     // unreachable in production: multi-thread Builder only fails on allocator OOM or invalid config (the load refuses a worker count outside 1..=32, so this is never 0)
     tokio::runtime::Builder::new_multi_thread()
-        // Sizing: a 2-worker runtime queues the payload sims while ~50
-        // bins/cycle arrive concurrently; sizing to the core count lets the
-        // bins' sims actually overlap. Env-tunable for constrained hosts.
-        // Workers exist for SIM
-        // PARALLELISM, NOT block_on compensation — the sync sim drive runs
-        // on this runtime's BLOCKING pool (`spawn_blocking`, see the sim
-        // body), so DB waits never convert a worker and the blocking adds
-        // no sizing pressure on this count.
+        // Workers exist for SIM PARALLELISM, NOT block_on compensation — the
+        // sync sim drive runs on this runtime's BLOCKING pool
+        // (`spawn_blocking`, see the sim body), so DB waits never convert a
+        // worker and the blocking adds no sizing pressure on this count.
         .worker_threads(workers)
         .thread_name_fn(inline_sim_thread_name)
         .enable_all()
@@ -418,8 +413,9 @@ fn build_inline_sim_runtime() -> tokio::runtime::Runtime {
         .expect("inline-sim runtime build")
 }
 
-/// The inline-sim runtime's worker count: core-count by default (the payload
-/// sims are the per-path marginal cost of every solve cycle), overridable via
+/// The inline-sim runtime's worker count: the leftover CPU budget after the
+/// solve bins by default (the payload sims are the per-path marginal cost of
+/// every solve cycle), overridable via
 /// the typed `solve.inline_sim_workers` key (env `DEGENBOT_INLINE_SIM_WORKERS`).
 /// The load owns the range — it refuses a value outside 1..=32 and names the
 /// key — so this layer sizes the runtime with exactly the count that arrived.
@@ -441,11 +437,11 @@ fn inline_sim_worker_count() -> usize {
 impl InlineSimulator for InlineSimHook {
     #[expect(clippy::too_many_lines)]
     fn simulate_path(&self, req: InlineSimRequest) -> Option<SimulatedPathResult> {
-        // 1. PathInfo STRAIGHT OFF THE CORE — engine-Lock-FREE. The calling
-        //    cycle holds the engine `Mutex` for its whole duration (the busy
-        //    loop that owns this worker), so re-entering the engine lock from
-        //    the worker would self-deadlock (cycle-waits-on-bin,
-        //    bin-waits-on-cycle). The projection
+        // PathInfo straight off the core — engine-lock-free. The calling
+        // cycle holds the engine `Mutex` for its whole duration (the busy
+        // loop that owns this worker), so re-entering the engine lock from
+        // the worker would self-deadlock (cycle-waits-on-bin,
+        // bin-waits-on-cycle). The projection
         //    (build_path_info) needs only a short core read, same class as
         //    the worker clamp's read. Unknown/unresolvable hops degrade to `None`
         //    (the batch entry stays payload-less -> the legacy FFI path).
@@ -459,8 +455,7 @@ impl InlineSimulator for InlineSimHook {
             }
         };
 
-        // 2. The sim anchor — SHORT core read, dropped before any provider
-        //    I/O discipline.
+        // The sim anchor — short core read, dropped before any provider I/O.
         let anchor = {
             let guard = self
                 .bot_state
@@ -468,8 +463,8 @@ impl InlineSimulator for InlineSimHook {
             SimAnchorState::snapshot(&guard)
         };
 
-        // 3. The sim path from the clamp-committed solve outputs (u128 steps;
-        //    >u128 values are the int-overflow class anyway).
+        // The sim path comes from the clamp-committed solve outputs (u128
+        // steps; >u128 values are the int-overflow class anyway).
         let to_u128 = |v: &U256| u128::try_from(*v).ok();
         let optimal_input = to_u128(&req.optimal_input)?;
         let consumed: Vec<Option<u128>> = req.consumed_inputs.iter().map(to_u128).collect();
@@ -539,9 +534,9 @@ impl InlineSimulator for InlineSimHook {
         let storage_memo = self.memo_for_block(req.sim_block);
         let deployment = Arc::clone(&self.deployment);
 
-        // 4. The sim body runs as a task on the dedicated runtime (see the
-        //    module doc for the thread/runtime matrix). The request is cloned
-        //    into the task (the outer conversions read the original after).
+        // The sim body runs as a task on the dedicated runtime (see the
+        // module doc for the thread/runtime matrix). The request is cloned
+        // into the task (the outer conversions read the original after).
         let (result, buckets): (Result<Option<SimResult>, String>, FailBuckets) = {
             let req_task = req.clone();
             // capture the caller's span (the worker's entered
@@ -708,8 +703,8 @@ impl InlineSimulator for InlineSimHook {
             join_sim_task(&self.sim_runtime, sim_future)
         };
 
-        // 5. Convert: Ok(Some) → success payload; Ok(None)/Err → failure
-        //    payload through the buckets (one record — single path).
+        // Convert: Ok(Some) → success payload; Ok(None)/Err → failure payload
+        // through the buckets (one record — single path).
         let task_excepted = result.is_err();
         if let Ok(Some(sim)) = result {
             Some(Self::payload_from_sim(path_id, &sim))
@@ -746,11 +741,9 @@ impl InlineSimulator for InlineSimHook {
                     base_fee_next: 0,
                     execute_calldata: Vec::new(),
                     access_list: None,
-                    // The sim's own capture rides the failure payload. It used
-                    // to be dropped here (`Vec::new()`), which left every
-                    // inline-sim failure dump with `captured[]` — the ACTUAL
-                    // half of the expected-vs-actual comparison the trap exists
-                    // to capture, gone at the one site that had it.
+                    // The sim's own capture rides the failure payload — the
+                    // ACTUAL half of the expected-vs-actual comparison the
+                    // trap exists to capture.
                     captured_swaps: captured_swap_rows(&f.captured_swaps),
                     hop_count,
                     failure: Some(InlineSimFailure {
@@ -1001,10 +994,6 @@ mod tests {
     // The trait resolves the port methods (escalate/counters) in tests.
     use degenbot_workers::lane::EscalationPort as _;
 
-    // The override parsing matrix moved to degenbot-config's precedence
-    // tests (the loader owns the env read). This pins the production
-    // default only: with no override, the count follows the leftover CPU
-    // budget, NOT raw available_parallelism.
     #[test]
     fn should_reverify_arms_only_on_state_suspect_failures() {
         use alloy::primitives::Bytes;
@@ -1053,6 +1042,10 @@ mod tests {
         assert!(super::captured_swap_rows(&[]).is_empty());
     }
 
+    // The override parsing matrix lives in degenbot-config's precedence
+    // tests (the loader owns the env read). This pins the production
+    // default only: with no override, the count follows the leftover CPU
+    // budget, NOT raw available_parallelism.
     #[test]
     fn inline_sim_worker_count_defaults_to_leftover_budget() {
         let default = degenbot_core::cpu_budget::leftover_worker_budget();
@@ -1275,11 +1268,9 @@ mod tests {
     }
 }
 
-// the spawned sim task must JOIN the caller's trace, not fork a
-// new root. Pinned against the in-memory exporter seam pattern): the
-// `degenbot.simulate.inline` span created inside `spawn_sim_task` must carry
-// the calling span's trace/parent - the exact relationship Jaeger lost when
-// 635 orphan roots/60s fragmented the block traces.
+// The spawned sim task must JOIN the caller's trace, not fork a new root:
+// the `degenbot.simulate.inline` span created inside `spawn_sim_task` must
+// carry the calling span's trace/parent.
 #[cfg(all(test, feature = "otel", not(target_arch = "wasm32")))]
 #[expect(clippy::expect_used)] // otel tests assert loudly per telemetry.rs otel_tests
 mod spawn_span_parent_tests {
@@ -1332,7 +1323,7 @@ mod spawn_span_parent_tests {
             let parent = tracing::Span::current();
 
             // The spawned task creates a span exactly like the inline-hook sim
-            // body does; with the fix it must JOIN the solve trace.
+            // body does; it must JOIN the solve trace.
             let verdict = rt.block_on(super::spawn_sim_task(parent, async {
                 let sim = tracing::info_span!("degenbot.simulate.inline", path_id = 5u64);
                 let _enter = sim.enter();

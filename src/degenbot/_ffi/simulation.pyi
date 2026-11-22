@@ -720,8 +720,8 @@ class SimulateContext:
 
         Args:
             `provider`: the `AsyncAlloyProvider` the cockpit dispatches over.
-                Its inner `Arc<AlloyProvider>` is cloned here; A4 moves it into
-                the async block.
+                Its inner `Arc<AlloyProvider>` is cloned here; the sim fan-out
+                moves it into its async block.
             `executor_owner`: the operator key's address (hex string) — the
                 `from` of `execute()` + the owner funded with ETH in
                 `stateOverrides`.
@@ -1118,7 +1118,6 @@ def build_probe_executor_py(
         `target_selection`: `"first_compatible"` (the default) or
             `"all_targets"` — which deployments each path is offered to.
 
-    Raises:
     # Errors
 
     `ValueError` on an unknown `capital`/`target_selection` spelling, or when the
@@ -1245,7 +1244,6 @@ def quote_execution_probe_py(
         `optimal_input`: The fixed swap input (wei); must be positive.
         `current_block`: The ONE block the vector and its context belong to.
 
-    Raises:
     # Errors
 
     `ValueError`: `optimal_input` is not positive, the path is not registered,
@@ -1317,8 +1315,11 @@ def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
     # Errors
 
     `RuntimeError` only on an unrecoverable evm2 `transact` error (cannot
-    happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a non-None
-    bucket (a `debug_assert!` fires + is surfaced as `RuntimeError`).
+    happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a `None`
+    result — refused as a `RuntimeError` at the boundary. The trailing
+    `debug_assert!` (no failure records) pins the fixture's other half in
+    debug builds only: it panics there and is compiled out in release, never
+    surfacing as a Python error.
     """
 
 def __getattr__(name: str) -> Incomplete: ...

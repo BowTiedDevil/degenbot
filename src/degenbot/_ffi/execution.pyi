@@ -2,13 +2,6 @@
 # Do not edit by hand — regenerate with `just gen-stubs`; generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
 
 """
-Register the execution-seam classes/functions on `m` (feature =
-`"execution"`) as `degenbot._ffi.execution`.
-
-# Errors
-
-Returns a [`PyErr`] if any `add_class`/`add_function` call fails (e.g. a
-name collision); propagated unchanged to the `#[pymodule]` caller.
 The `degenbot._ffi.execution` Python submodule (declarative
 `#[pymodule]`), carrying the `ExecutionAdapter` seam lift (ADR-025). The
 parent module registers the submodule itself and its `sys.modules` entry.
@@ -21,7 +14,7 @@ from typing_extensions import disjoint_base
 
 class UnsupportedPath(Exception):
     """
-    The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure, so the target-selection walk examines the next target. Every other exception a compose callable raises is a hard encode failure.
+    The adapter declined this path: a routine capability refusal (ComposeError::Unsupported), not an interface-validation failure — a declaration violation is ComposeError::Validation, produced by the binding's own check, never by this exception — so the target-selection walk examines the next target. Subclasses count: the bridge classifies by is_instance_of, the way a Python `except UnsupportedPath` would, and the decline's detail is the exception's own str() (empty for a bare `raise UnsupportedPath`). Every other exception a compose callable raises is a hard encode failure.
     """
 
 @final

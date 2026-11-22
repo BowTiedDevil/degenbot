@@ -48,8 +48,8 @@ use std::sync::Arc;
 // fan-out consumes.
 pub struct PySimulateContext {
     /// The typed RPC provider handle (cloned from the `PyAsyncAlloyProvider`
-    /// the cockpit holds). Moved into A4's async block; the borrowed
-    /// `SimulateContext<'_>.provider` borrows `&*this`.
+    /// the cockpit holds). Moved into the sim fan-out's async block; the
+    /// borrowed `SimulateContext<'_>.provider` borrows `&*this`.
     pub(crate) provider: Arc<AlloyProvider>,
     /// The built-in settlement deployment binding: the executor / WETH /
     /// `PoolManager` identities plus the session's encode policy.
@@ -97,8 +97,8 @@ impl PySimulateContext {
     ///
     /// Args:
     ///     `provider`: the `AsyncAlloyProvider` the cockpit dispatches over.
-    ///         Its inner `Arc<AlloyProvider>` is cloned here; A4 moves it into
-    ///         the async block.
+    ///         Its inner `Arc<AlloyProvider>` is cloned here; the sim fan-out
+    ///         moves it into its async block.
     ///     `executor_owner`: the operator key's address (hex string) — the
     ///         `from` of `execute()` + the owner funded with ETH in
     ///         `stateOverrides`.

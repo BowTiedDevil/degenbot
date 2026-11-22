@@ -27,17 +27,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::collections::HashMap;
 
-// ─────────────────────────────────────────────────────────────────────────
-// The inline-sim payload seam — one sim seam for both entry arms
-// ─────────────────────────────────────────────────────────────────────────
-//
-// The engine's inline-sim payloads reach the same categorization as the FFI
-// batch: this seam reuses the batch's own join (join_sim_result →
-// derive_path_pools) and the core's is_gas_profitable predicate, so the
-// mutual-exclusion pool keys and the profit-floor verdict are evaluated by
-// one rule, here, for both arms. Python renders the returned rows/verdicts
-// only.
-
 /// A resolved-map bridge over the crate's `PathResolver`: the GIL-held
 /// resolve phase (below) feeds it, and the crate merge consumes it — plain
 /// map data, so it is `Send + Sync` where a GIL token cannot be.
@@ -129,11 +118,11 @@ pub fn merge_payload_results_py(
         .collect::<PyResult<Vec<_>>>()?;
 
     // Resolve phase (GIL-held): one registered PathInfo per DISTINCT payload
-    // path id through the engine projection. A resolve miss here is decision
-    // (a)'s loud-abort arm — a payload row is engine-born (the engine
-    // simulated the path inline), so a miss evidences batch/registry
-    // divergence and aborts — surfacing as the legacy `ValueError` (the
-    // pre-cut-over driver's contract), with the crate merge's message.
+    // path id through the engine projection. A resolve miss here is the
+    // loud-abort arm — a payload row is engine-born (the engine simulated the
+    // path inline), so a miss evidences batch/registry divergence and aborts
+    // — surfacing as the `ValueError` Python reads here, with the crate
+    // merge's message.
     let mut resolved: HashMap<u64, PathInfo> = HashMap::with_capacity(rows.len());
     for row in &rows {
         if resolved.contains_key(&row.candidate_id.path_id()) {
@@ -163,13 +152,12 @@ pub fn merge_payload_results_py(
         degenbot_batch_executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
     )
     .map_err(|e| match e {
-        // The corruption arm keeps the seam's PRE-EXISTING message: Python has
-        // always read the bare `detail` here, and the crate `Display` prefix
-        // (`batch assembly corrupt at path N: …`) is crate-side framing the
-        // driver's logs and tests never carried.
+        // The corruption arm keeps the bare `detail`: Python reads the bare
+        // detail here, and the crate `Display` prefix (`batch assembly corrupt
+        // at path N: …`) is crate-side framing the driver's logs never carry.
         AssemblyError::Corrupt { detail, .. } => PyValueError::new_err(detail),
-        // The identity refusal is NEW on this surface, so its message is the
-        // crate's own: the identity, the row count, and the rule.
+        // The identity refusal's message is the crate's own: the identity, the
+        // row count, and the rule.
         refusal @ AssemblyError::DuplicateCandidateId { .. } => {
             PyValueError::new_err(refusal.to_string())
         }
@@ -231,7 +219,6 @@ fn required_candidate_id(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<Candi
     ))
 }
 
-/// Extract a required u64 field off one payload dict (seam helper).
 fn required_u64(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u64> {
     entry
         .get_item(key)?
@@ -418,7 +405,6 @@ fn parse_payload_access_list(v: &Bound<'_, PyAny>) -> PyResult<alloy::rpc::types
     Ok(alloy::rpc::types::AccessList(entries))
 }
 
-/// Extract a required u128 field off one payload dict (seam helper).
 fn required_u128(entry: &Bound<'_, PyDict>, key: &str) -> PyResult<u128> {
     entry
         .get_item(key)?
@@ -482,7 +468,6 @@ impl PyPayloadVerdict {
 pub struct PyPayloadVerdict {
     /// The payload's candidate identity.
     pub(crate) candidate_id: CandidateId,
-    /// "submit" | "unprofitable".
     pub(crate) kind: &'static str,
 }
 

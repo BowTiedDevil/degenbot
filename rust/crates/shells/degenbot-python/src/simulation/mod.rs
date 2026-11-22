@@ -37,8 +37,9 @@
 //!
 //! ## Surface
 //!
-//! One pyclass, [`PySimulateContext`] (the session-static config bag); the
-//! batch executor's own classes live in [`batch`].
+//! The declarative submodule below exports the simulation pyclasses and
+//! pyfunctions; [`PySimulateContext`] is the session-static config bag the
+//! cockpit constructs once per session.
 
 use pyo3::prelude::*;
 
