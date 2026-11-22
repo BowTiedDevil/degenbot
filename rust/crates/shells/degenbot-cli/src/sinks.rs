@@ -13,9 +13,9 @@
 //!    module init refuses.
 //! 2. **The tracing registry.** A `fmt` layer on stderr filtered by
 //!    [`resolve_filters`](degenbot_core::telemetry::resolve_filters) with the
-//!    Python-driver wiring default (`info`) - the same resolution the binding
-//!    boots, so an explicit `RUST_LOG` wins verbatim on this sink too - plus
-//!    the [`progress`](crate::progress) bar layer (ADR-051 D9).
+//!    standalone-Rust wiring default (`warn`; an explicit `RUST_LOG` wins
+//!    verbatim on this sink too), plus the [`progress`](crate::progress) bar
+//!    layer (ADR-051 D9).
 //! 3. **The shared ADR-043 contracts**: `warn_retired_env_names`,
 //!    `install_panic_hook`. The worker-census boot table is NOT dumped here —
 //!    it belongs to the drivers' boot prelude, not a one-shot command.
@@ -54,7 +54,8 @@ impl Drop for TelemetryBoot {
 /// cannot honor a policy it does not have, so the boot is refused exactly as
 /// the Python module init refuses it.
 pub fn boot() -> Result<TelemetryBoot, String> {
-    // Step 1: the typed config. The loader is the ONE env-reading site.
+    // Step 1: the typed config; the loader is the env-reading site for the
+    // typed config (the filter resolution below reads `RUST_LOG`).
     match degenbot_config::BotConfigLoader::new()
         .with_standard_file_paths()
         .load()
@@ -66,11 +67,9 @@ pub fn boot() -> Result<TelemetryBoot, String> {
         Err(error) => return Err(format!("invalid configuration - boot refused: {error}")),
     }
 
-    // Step 2: the console filter. The module init no longer installs a
-    // subscriber, so THIS install is the process's one telemetry surface and
-    // it resolves with the standalone-Rust-consumer default (ADR-043 §6):
-    // silent at `info`, loud through an explicit RUST_LOG. The Python driver
-    // resolves ITS console filter in driver_boot() with its own default.
+    // Step 2: the console filter. This install is the console's one
+    // telemetry surface; the Python driver resolves its own console filter
+    // in driver_boot() with its own default.
     let plan = resolve_filters(CONSOLE_WIRING_DEFAULT_RUST);
     let painter = Arc::new(Painter::console());
     let console_filter = EnvFilter::new(&plan.console);
@@ -89,10 +88,8 @@ pub fn boot() -> Result<TelemetryBoot, String> {
     let installed = tracing::subscriber::set_global_default(subscriber).is_ok();
 
     // Step 3: the shared ADR-043 section 2/5 contracts. The census boot
-    // table belongs to the drivers' boot prelude — a one-shot command arms
-    // BOOT_DUMPED by dumping it, which would re-classify every later
-    // registration as a late-registration notice; the register() entries
-    // still document this process's spawn sites either way.
+    // table stays out: dumping it here would arm BOOT_DUMPED and re-classify
+    // every later registration as a late-registration notice.
     degenbot_core::telemetry::warn_retired_env_names();
     degenbot_core::telemetry::install_panic_hook();
 

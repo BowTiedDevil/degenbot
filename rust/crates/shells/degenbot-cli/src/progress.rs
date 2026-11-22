@@ -16,10 +16,10 @@
 //!   stdout — cursor, chunks committed, elapsed — so a redirected run is
 //!   observable. The cores' throttled INFO `op_info!` lines are NOT that
 //!   surface: the console filter defaults to `warn`, so they never reach the
-//!   fmt sink, which is why a redirected run used to print nothing at all. The
-//!   progress layer therefore runs without the console filter and self-filters
-//!   by target + level — the two chunk-committed targets at INFO are its
-//!   entire input domain.
+//!   fmt sink — without this layer, a redirected run would print nothing at
+//!   all. The progress layer therefore runs without the console filter and
+//!   self-filters by target + level — the two chunk-committed targets at INFO
+//!   are its entire input domain.
 //!
 //! (indicatif 0.18 dropped `ProgressDrawTarget::stderr_opt`; [`stderr_opt`]
 //! restores exactly that contract with `std::io::IsTerminal`.)

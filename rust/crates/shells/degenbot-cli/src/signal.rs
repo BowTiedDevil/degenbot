@@ -60,9 +60,10 @@ impl Drop for Guard {
     }
 }
 
-/// The census entry for the dedicated listener thread. The registry is
-/// documentation-enforced for every spawn site (see `worker_census` module
-/// docs): an unregistered thread is invisible to the gauge and the boot dump.
+/// The census entry for the dedicated listener thread. Registration is
+/// gate-enforced for every spawn site (`just check-worker-census-spawn`; see
+/// the `worker_census` module docs): an unregistered thread is invisible to
+/// the gauge, the boot dump, and the /proc comm cross-check.
 #[cfg(unix)]
 const fn census_entry() -> degenbot_core::worker_census::WorkerCensusEntry {
     degenbot_core::worker_census::WorkerCensusEntry {
