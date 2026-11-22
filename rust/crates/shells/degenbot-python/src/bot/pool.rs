@@ -58,8 +58,7 @@ struct PyTickWordSource {
 
 /// Wrap a Python callable as a stored `Arc<dyn TickWordSource>` for
 /// registration-time storage on `V3PoolState`/`V4PoolState` (ADR-006 I/O trait
-/// object). The callable signature is `fetcher(word, block) -> dict | None`
-/// (same as the per-call path this replaces).
+/// object). The callable signature is `fetcher(word, block) -> dict | None`.
 pub(crate) fn make_tick_fetcher(
     callback: pyo3::Py<pyo3::PyAny>,
 ) -> std::sync::Arc<dyn degenbot_pools::TickWordSource> {
@@ -67,16 +66,14 @@ pub(crate) fn make_tick_fetcher(
 }
 
 /// Construct a Chain-arm tick-word source from a `PyBotIo`'s native alloy
-/// provider, if present (Option B: route the Chain arm
-/// through the pure-Rust [`degenbot_rpc::AlloyTickWordSource`]).
+/// provider, if present, routing the Chain arm through the pure-Rust
+/// [`degenbot_rpc::AlloyTickWordSource`].
 /// Returns `None` when the `PyBotIo` has no native alloy provider (legacy
 /// Python test doubles) → the caller passes `chain=None` to the assemble helper,
 /// preserving the current (no-Chain-arm) behavior.
 /// The returned `Arc<dyn TickWordSource>` is `Send + Sync` + holds no GIL
 /// state — the full choreography (bitmap decode, bit enumeration, per-tick
-/// `eth_call`) runs in pure Rust under `py.detach`, no per-RPC GIL re-entry
-/// (the architectural end state: Rust is the engine; Python is a driver
-/// shell, not a co-implementation).
+/// `eth_call`) runs in pure Rust under `py.detach`, no per-RPC GIL re-entry.
 #[must_use]
 pub(crate) fn make_tick_bootstrap_rpc(
     io: &crate::bot::py_bot_io::PyBotIo,
@@ -121,10 +118,6 @@ impl degenbot_pools::TickWordSource for PyTickWordSource {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Balancer rate-provider Py adapter.
-// ---------------------------------------------------------------------------
-
 /// `PyO3` adapter wrapping a Python rate-provider callable (or any object
 /// exposing `get_rates(block_identifier) -> tuple[int, ...]`) as a stored
 /// `Arc<dyn BalancerRateProvider>` for registration-time storage on
@@ -140,8 +133,7 @@ pub(crate) struct PyBalancerRateProvider {
 }
 
 /// Wrap a Python rate-provider object as a stored
-/// `Arc<dyn BalancerRateProvider>`. `None` should be passed through (not
-/// wrapped) to keep the static `1e18` fallback.
+/// `Arc<dyn BalancerRateProvider>`.
 #[must_use]
 pub fn make_balancer_rate_provider(
     callback: pyo3::Py<pyo3::PyAny>,
@@ -186,15 +178,11 @@ impl degenbot_pools::BalancerRateProvider for PyBalancerRateProvider {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Curve data-provider Py adapter (ADR-005 I/O trait object).
-// ---------------------------------------------------------------------------
-
 /// `PyO3` adapter wrapping a Python `CurveDataProvider` as a stored
-/// `Arc<dyn CurveDataProvider>`. Each read re-enters via `Python::attach` and
-/// calls the matching Python method by name; the return is converted to the
-/// Rust type. Caching stays in the Python `PerBlockCache` / the adapter — the
-/// trait is the *read* interface (see the task note).
+/// `Arc<dyn CurveDataProvider>` (ADR-005 I/O trait object). Each read
+/// re-enters via `Python::attach` and calls the matching Python method by
+/// name; the return is converted to the Rust type. Caching stays in the
+/// Python `PerBlockCache` / the adapter — the trait is the *read* interface.
 #[derive(Debug)]
 pub(crate) struct PyCurveDataProvider {
     callback: pyo3::Py<pyo3::PyAny>,
@@ -438,10 +426,9 @@ pub struct PyLiquidityPool {
 }
 
 impl PyLiquidityPool {
-    /// Probe (mechanical lock-freedom invariant, pair-review
-    /// condition 1): the caller thread holds the GIL; the `BotState` WRITE is
-    /// required free. `try_write` is instant and non-blocking - safe at any
-    /// depth (it never parks).
+    /// Mechanical lock-freedom probe: the caller thread holds the GIL; the
+    /// `BotState` WRITE is required free. `try_write` is instant and
+    /// non-blocking - safe at any depth (it never parks).
     #[must_use]
     pub fn state_write_is_free(&self) -> bool {
         self.core
@@ -458,10 +445,10 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Sanctioned `BotState` read access for pymethod code (GIL/`BotState`
-    /// inversion class, incidents 2026-08-20/21): the guard is acquired
-    /// INSIDE `py.detach`. Same invariant contract as `PyBot::with_state` —
-    /// see the doc comment there.
+    /// Sanctioned `BotState` read access for pymethod code (the
+    /// GIL/`BotState` inversion class): the guard is acquired INSIDE
+    /// `py.detach`. Same invariant contract as `PyBot::with_state` — see the
+    /// doc comment there.
     fn with_state<T>(&self, py: Python<'_>, f: impl FnOnce(&BotState) -> T + Send) -> T
     where
         T: Send,
@@ -728,7 +715,7 @@ impl PyLiquidityPool {
     }
 
     /// Calculate the output token amount for a given input amount.
-    /// Surfaces the cdbc03bb on-chain-equivalent revert: when the constant-
+    /// Surfaces the on-chain-equivalent revert: when the constant-
     /// product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
     /// on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
     /// Python companion can translate it to a domain `LiquidityPoolError`.
@@ -1093,8 +1080,8 @@ impl PyLiquidityPool {
             }
             // The mainline route is concentrated-liquidity-only by contract:
             // a reserve-pair payload here would be the route's bug, never a
-            // computable read (the retired flat read answered NotComputable).
-            // Both the verdict and the refusal cross as NotComputable.
+            // computable read. Both the verdict and the refusal cross as
+            // NotComputable.
             SwapRead::Computed(_) | SwapRead::NotComputable => Err(swap_refused_err(
                 py,
                 PySwapRefusalKind::NotComputable,
@@ -1158,17 +1145,12 @@ impl PyLiquidityPool {
         }
     }
 
-    // --- State read getters ---
-    // These read the shared `BotState` under a read guard. Immutable identity
-    // (token0/token1/factory/fees/address) stays on the Python companion —
-    // only mutable state + the reorg journal delegate to Rust.
-
-    // --- V2 identity getters (ADR-005 identity slice) ---
-    // Immutable per-pool identity read from V2PoolState (+ the registration
-    // descriptor) so the Python companion's `from_handle(py_pool)` can be
-    // self-describing — the Polars `_from_pydf` end state. These re-export
-    // what V2PoolState already holds; the descriptor (variant/stable_swap/
-    // fee_denominator) + resolved DexIdentity preset are new in this slice.
+    // --- Identity getters ---
+    // These read the shared `BotState` under a read guard, including the
+    // immutable per-pool identity slices (ADR-005): token0/token1, factory,
+    // fees, and address come off the registered identity slice (+ the
+    // registration descriptor) so the Python companion's `from_handle` can
+    // be self-describing — the Polars `_from_pydf` end state.
 
     /// Pool contract address (EIP-55 checksummed hex). Empty string when the
     /// registered family has no address field; raises if the id is not
@@ -1280,7 +1262,7 @@ impl PyLiquidityPool {
         }))
     }
 
-    /// The CREATE2 deployer this pool's address was verified against (Fork A).
+    /// The CREATE2 deployer this pool's address was verified against.
     /// The JSON row's `deployer` (or the factory for ``null``), resolved at
     /// registration. V2 and V3 pools carry this; other registered families
     /// return an empty string; raises if the id is not registered.
@@ -1383,8 +1365,7 @@ impl PyLiquidityPool {
 
     /// The pool-family tag for this handle's registered pool (`"v2"`,
     /// `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
-    /// `"balancer-stable"`). Raises if unregistered — a handle always
-    /// references a registered pool, so the `""` sentinel is retired.
+    /// `"balancer-stable"`). Raises if unregistered.
     /// This is the uniform family-guard primitive every `from_handle`
     /// seam asserts against — dispatches on the `PoolEntry` variant
     /// directly, so it is correct for every registered family (unlike
@@ -1406,7 +1387,7 @@ impl PyLiquidityPool {
     }
 
     /// The resolved `DexIdentity` for this pool's registered variant, with the
-    /// JSON-sourced deployer + `init_hash` merged in (Fork A). `None` if
+    /// JSON-sourced deployer + `init_hash` merged in. `None` if
     /// not a V2 pool. The Python companion reads this to recover deployer /
     /// init-hash without taking constructor args. Protocol-const fields
     /// (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
@@ -1426,19 +1407,19 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- V2 token-recovery getters (ADR-005 identity slice) ---
-    // Recover `PyErc20Token` handles for the pool's token0/token1 from the
-    // SAME shared BotState (ADR-006: one Bot per chain owns all assets). The
-    // companion wraps these via `Erc20Token.from_handle` so the
-    // `from_handle(py_pool)` seam needs no token args — the Polars
-    // `_from_pydf` end state.
+    // --- Token-recovery getters (ADR-005 identity slice) ---
+    // Recover token handles for the pool's token0/token1 from the SAME shared
+    // BotState (ADR-006: one Bot per chain owns all assets). The companion
+    // wraps these via `Erc20Token.from_handle` so the `from_handle(py_pool)`
+    // seam needs no token args — the Polars `_from_pydf` end state.
     //
-    // Returns `None` if the pool isn't V2 or the token address isn't
-    // registered in the shared BotState.tokens registry (the failure mode the
-    // test-factory cross-Bot-token fix addresses — production always registers).
+    // Returns `None` when the registered family has no token field, or when
+    // the token address is not registered in the shared BotState token
+    // registry.
 
-    /// `PyErc20Token` handle for token0, or `None` if not registered in the
-    /// shared `BotState`.
+    /// Token0 companion handle: `Erc20Token`, or `NativeToken` for V4's
+    /// zero-address currency. `None` when the registered family has no token
+    /// field or the address is not registered in the shared `BotState`.
     fn get_token0(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let family = self.family_of(py)?;
         let slot = self.with_state(py, |core| {
@@ -1470,8 +1451,9 @@ impl PyLiquidityPool {
             .transpose()
     }
 
-    /// `PyErc20Token` handle for token1, or `None` if not registered in the
-    /// shared `BotState`.
+    /// Token1 companion handle: `Erc20Token`, or `NativeToken` for V4's
+    /// zero-address currency. `None` when the registered family has no token
+    /// field or the address is not registered in the shared `BotState`.
     fn get_token1(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let family = self.family_of(py)?;
         let slot = self.with_state(py, |core| {
@@ -1499,14 +1481,6 @@ impl PyLiquidityPool {
         slot.map(|slot| token_slot_object(py, &self.core, self.chain_id, slot))
             .transpose()
     }
-
-    // --- V3 state read getters ---
-    // Mirror the V2 family but read the V3PoolState entry. All getters take
-    // one read guard and return None-defaulted values when the pool_id is not
-    // a registered V3 pool (matching the V2 getters' behavior on V2).
-
-    // --- V4 identity getters (ADR-005 sealed seam) ---
-    // Read off V4PoolIdentity so UniswapV4Pool.from_handle is self-describing.
 
     /// Pool manager contract address (EIP-55 checksummed hex). Empty string if
     /// not a V4 pool.
@@ -1574,7 +1548,7 @@ impl PyLiquidityPool {
 
     /// The pool key's `fee` pips — the LP fee on a static pool, and the
     /// `0x800000` dynamic-fee sentinel (NOT a price) on a dynamic-fee pool,
-    /// which registers like any other since F1. `0` if not a V4 pool.
+    /// which registers like any other. `0` if not a V4 pool.
     #[getter]
     fn lp_fee(&self, py: Python<'_>) -> u32 {
         self.with_state(py, |core| {
@@ -1583,8 +1557,6 @@ impl PyLiquidityPool {
                 .unwrap_or_default()
         })
     }
-
-    // --- Aerodrome V2 identity getters (ADR-005 Aerodrome state port) ---
 
     /// Aerodrome V2 Solidly stable-invariant flag. `false` for volatile mode
     /// or non-Aerodrome pools.
@@ -1627,14 +1599,12 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- Mutations (per-handle, pool_id-keyed) ---
-
     /// Registration/seed genesis anchor (two-stamp rule): push a
     /// `before == after` reorg-journal delta at `block_number` WITHOUT
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
     /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
     ///
-    /// Test-fixture door (ADR-084 D2(b) disposition): production seeding is
+    /// Test-fixture door (ADR-084 D2(b)): production seeding is
     /// the construction arm's — the V3 construction arm seeds atomically with
     /// registration (ADR-085 D5) — so this pymethod's only remaining caller is
     /// the test suite's pool factory, which builds handles directly through
@@ -1985,7 +1955,7 @@ fn i256_to_py(py: Python<'_>, value: I256) -> PyResult<Py<PyAny>> {
     Ok(signed.into_pyobject(py)?.into_any().unbind())
 }
 
-/// The swap-simulation read's family arm (ADR-037/t2): the computed read is
+/// The swap-simulation read's family arm (ADR-037): the computed read is
 /// a sum by family, carried as data (never a subclass test).
 #[pyclass(
     name = "SwapReadFamily",
@@ -2003,7 +1973,7 @@ pub enum PySwapReadFamily {
     ConcentratedLiquidity,
 }
 
-/// THE computed swap-simulation read (ADR-037/t2): `Pool.simulate` returns
+/// THE computed swap-simulation read (ADR-037): `Pool.simulate` returns
 /// this value; every refusal RAISES [`SwapRefused`] instead of borrowing a
 /// status key. The arm is named by [`Self::family`] (data, never a subclass
 /// test); the arm's own fields carry its end state (the other arm's are
@@ -2090,7 +2060,7 @@ impl PySwapRead {
     }
 }
 
-/// The swap-simulation refusal vocabulary (ADR-037/t2): the kind the ONE
+/// The swap-simulation refusal vocabulary (ADR-037): the kind the ONE
 /// Python adapter maps to the companions' exception tree.
 // `hash` rides with `eq`: a refusal kind crosses as a VALUE (`==`/`in`), never
 // as a class-attribute singleton — the seam builds a fresh instance per
@@ -2141,7 +2111,8 @@ pub(crate) fn swap_refused_err(
     let typed = (|| -> PyResult<PyErr> {
         let kind_arg = Bound::new(py, kind)?;
         let word_arg: Bound<'_, PyAny> = match word {
-            // `i32::into_pyobject` is infallible; the arm documents that.
+            // `i32::into_pyobject` is infallible, so the error arm is
+            // uninhabited.
             Some(w) => match w.into_pyobject(py) {
                 Ok(o) => o.into_any(),
                 Err(e) => match e {},
@@ -2847,7 +2818,7 @@ impl PyReservePairView {
     }
 }
 
-/// The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
+/// The concentrated liquidity tick-map coverage discriminant crossing the FFI:
 /// Python compares this enum instead of probing a stringified twin.
 /// Mirrors `degenbot_pools::PoolTickCoverage` (the fact's home).
 #[pyclass(
@@ -2973,7 +2944,7 @@ impl PyConcentratedLiquidityView {
     }
 
     /// The bitmap WORD positions the pool knows (the load-bearing key set).
-    /// The per-word bitmap VALUE is retired — it derives from `tick_data`.
+    /// The per-word bitmap VALUE derives from `tick_data` and is not carried.
     #[getter]
     fn tick_bitmap<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PySet>> {
         let set = PySet::empty(py)?;
@@ -3022,17 +2993,13 @@ impl PyBalanceVectorView {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Family arm views.
-//
-// The structural views above are per-call snapshots: the caller reads them and
-// owns the values. The family arms are handles instead — the pool handle,
-// narrowed to one registered family — because their methods are live state
-// reads and swap calculations, not snapshots of one.
+// Family arm views: the structural views above are per-call snapshots — the
+// caller reads them and owns the values. The family arms are handles instead —
+// the pool handle, narrowed to one registered family — because their methods
+// are live state reads and swap calculations, not snapshots of one.
 // `PyLiquidityPool::curve` / `balancer_weighted` / `balancer_stable` refuse a
-// handle registered under another family, so no arm method re-checks the family
-// or answers a wrong-family sentinel.
-// ---------------------------------------------------------------------------
+// handle registered under another family, so no arm method re-checks the
+// family or answers a wrong-family sentinel.
 
 /// A Python list of `U256` values — the arms' per-token vector wire shape.
 fn u256_list(py: Python<'_>, values: &[U256]) -> PyResult<Py<PyAny>> {
@@ -3142,8 +3109,8 @@ impl PyCurveView {
         self.pool.require_slice(py, f)
     }
 
-    /// The Curve state for this handle — [`Self::identity`]'s mutable-slice
-    /// twin.
+    /// The Curve state for this handle — [`Self::identity`]'s immutable
+    /// state-slice twin.
     fn state<U>(&self, py: Python<'_>, f: impl FnOnce(&CurvePoolState) -> U + Send) -> PyResult<U>
     where
         U: Send,
@@ -3526,8 +3493,7 @@ impl PyCurveView {
     /// Rust-owned Curve metapool `get_dy_underlying(i, j, dx, block_number,
     /// override_balances)` on this arm's pool — the single-call shape the
     /// companion `CurveStableswapPool._get_dy_underlying` delegates to.
-    /// Base-pool ops go through the Rust port (`BotCurveBasePoolPort`), so the
-    /// Python `_LazyBasePool` go-between is retired for the swap path.
+    /// Base-pool ops go through the Rust port (`BotCurveBasePoolPort`).
     #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
     fn get_dy_underlying(
         &self,
@@ -3637,12 +3603,11 @@ impl PyCurveView {
         Ok(crate::conversion::alloy::u256_to_py(py, &out)?.unbind())
     }
 
-    // --- Data-provider read-throughs, so the companion's `PerBlockCache`
-    //     reads through the stored trait object rather than holding a Python
-    //     provider mirror (the Balancer `_HandleRateProviderAdapter` shape).
-    //     No provider stored — or a provider error — answers `None`/empty, so
-    //     the Python calc path raises the `MissingCurveData` it already
-    //     expects. ---
+    // Data-provider read-throughs, so the companion's `PerBlockCache` reads
+    // through the stored trait object rather than holding a Python provider
+    // mirror (the Balancer `_HandleRateProviderAdapter` shape). No provider
+    // stored — or a provider error — answers `None`/empty, so the Python calc
+    // path raises the `MissingCurveData` it already expects.
 
     fn fetch_block_number(&self, py: Python<'_>) -> Option<u64> {
         self.curve_provider(py)?.block_number().ok()
@@ -3848,7 +3813,7 @@ impl PyBalancerStableView {
     }
 
     /// The Balancer-stable state for this handle — [`Self::identity`]'s
-    /// mutable-slice twin.
+    /// immutable state-slice twin.
     fn state<U>(
         &self,
         py: Python<'_>,
@@ -3882,8 +3847,8 @@ impl PyBalancerStableView {
         self.identity(py, |id| id.bpt_idx)
     }
 
-    /// Amplification coefficient `amp` (immutable after registration in this
-    /// plan — A ramping is resolved by the builder at registration).
+    /// Amplification coefficient `amp` (immutable after registration — A
+    /// ramping is resolved by the builder at registration).
     #[getter]
     fn amp(&self, py: Python<'_>) -> PyResult<u128> {
         self.identity(py, |id| id.amp)

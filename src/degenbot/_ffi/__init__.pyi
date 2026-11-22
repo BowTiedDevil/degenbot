@@ -830,8 +830,8 @@ class BalancerStableView:
     @property
     def amp(self, /) -> int:
         """
-        Amplification coefficient `amp` (immutable after registration in this
-        plan — A ramping is resolved by the builder at registration).
+        Amplification coefficient `amp` (immutable after registration — A
+        ramping is resolved by the builder at registration).
         """
     @property
     def bpt_index(self, /) -> int | None:
@@ -2305,7 +2305,7 @@ class ConcentratedLiquidityView:
     def tick_bitmap(self, /) -> set:
         """
         The bitmap WORD positions the pool knows (the load-bearing key set).
-        The per-word bitmap VALUE is retired — it derives from `tick_data`.
+        The per-word bitmap VALUE derives from `tick_data` and is not carried.
         """
     @property
     def tick_data(self, /) -> Any: ...
@@ -3085,8 +3085,7 @@ class CurveView:
         Rust-owned Curve metapool `get_dy_underlying(i, j, dx, block_number,
         override_balances)` on this arm's pool — the single-call shape the
         companion `CurveStableswapPool._get_dy_underlying` delegates to.
-        Base-pool ops go through the Rust port (`BotCurveBasePoolPort`), so the
-        Python `_LazyBasePool` go-between is retired for the swap path.
+        Base-pool ops go through the Rust port (`BotCurveBasePoolPort`).
         """
     def get_lp_token(self, /) -> Erc20Token | None:
         """
@@ -3572,7 +3571,7 @@ class Pool:
     def calculate_tokens_out(self, /, zero_for_one: bool, amount_in: Any) -> Any:
         """
         Calculate the output token amount for a given input amount.
-        Surfaces the cdbc03bb on-chain-equivalent revert: when the constant-
+        Surfaces the on-chain-equivalent revert: when the constant-
         product / concentrated liquidity swap math overflows a `uint256` intermediate (mirroring
         on-chain `getAmountOut` `SafeMath` revert), this raises `ValueError` so the
         Python companion can translate it to a domain `LiquidityPoolError`.
@@ -3645,7 +3644,7 @@ class Pool:
     @property
     def deployer(self, /) -> str:
         """
-        The CREATE2 deployer this pool's address was verified against (Fork A).
+        The CREATE2 deployer this pool's address was verified against.
         The JSON row's `deployer` (or the factory for ``null``), resolved at
         registration. V2 and V3 pools carry this; other registered families
         return an empty string; raises if the id is not registered.
@@ -3654,7 +3653,7 @@ class Pool:
     def dex(self, /) -> DexIdentity | None:
         """
         The resolved `DexIdentity` for this pool's registered variant, with the
-        JSON-sourced deployer + `init_hash` merged in (Fork A). `None` if
+        JSON-sourced deployer + `init_hash` merged in. `None` if
         not a V2 pool. The Python companion reads this to recover deployer /
         init-hash without taking constructor args. Protocol-const fields
         (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
@@ -3706,13 +3705,15 @@ class Pool:
         """
     def get_token0(self, /) -> Any | None:
         """
-        `PyErc20Token` handle for token0, or `None` if not registered in the
-        shared `BotState`.
+        Token0 companion handle: `Erc20Token`, or `NativeToken` for V4's
+        zero-address currency. `None` when the registered family has no token
+        field or the address is not registered in the shared `BotState`.
         """
     def get_token1(self, /) -> Any | None:
         """
-        `PyErc20Token` handle for token1, or `None` if not registered in the
-        shared `BotState`.
+        Token1 companion handle: `Erc20Token`, or `NativeToken` for V4's
+        zero-address currency. `None` when the registered family has no token
+        field or the address is not registered in the shared `BotState`.
         """
     @property
     def hook_address(self, /) -> str:
@@ -3746,15 +3747,14 @@ class Pool:
         """
         The pool key's `fee` pips — the LP fee on a static pool, and the
         `0x800000` dynamic-fee sentinel (NOT a price) on a dynamic-fee pool,
-        which registers like any other since F1. `0` if not a V4 pool.
+        which registers like any other. `0` if not a V4 pool.
         """
     @property
     def pool_family(self, /) -> str:
         """
         The pool-family tag for this handle's registered pool (`"v2"`,
         `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
-        `"balancer-stable"`). Raises if unregistered — a handle always
-        references a registered pool, so the `""` sentinel is retired.
+        `"balancer-stable"`). Raises if unregistered.
         This is the uniform family-guard primitive every `from_handle`
         seam asserts against — dispatches on the `PoolEntry` variant
         directly, so it is correct for every registered family (unlike
@@ -3807,7 +3807,7 @@ class Pool:
         advancing either clock, so a split-seed (price at HEAD, tick map at the
         DB block) pool keeps a non-empty journal for mid-window reorg restore.
 
-        Test-fixture door (ADR-084 D2(b) disposition): production seeding is
+        Test-fixture door (ADR-084 D2(b)): production seeding is
         the construction arm's — the V3 construction arm seeds atomically with
         registration (ADR-085 D5) — so this pymethod's only remaining caller is
         the test suite's pool factory, which builds handles directly through
@@ -4141,7 +4141,7 @@ class PoolKind:
 @final
 class PoolTickCoverage:
     """
-    The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
+    The concentrated liquidity tick-map coverage discriminant crossing the FFI:
     Python compares this enum instead of probing a stringified twin.
     Mirrors `degenbot_pools::PoolTickCoverage` (the fact's home).
     """
@@ -4535,7 +4535,7 @@ class StrategyReadinessView:
 @final
 class SwapRead:
     """
-    THE computed swap-simulation read (ADR-037/t2): `Pool.simulate` returns
+    THE computed swap-simulation read (ADR-037): `Pool.simulate` returns
     this value; every refusal RAISES [`SwapRefused`] instead of borrowing a
     status key. The arm is named by [`Self::family`] (data, never a subclass
     test); the arm's own fields carry its end state (the other arm's are
@@ -4591,7 +4591,7 @@ class SwapRead:
 @final
 class SwapReadFamily:
     """
-    The swap-simulation read's family arm (ADR-037/t2): the computed read is
+    The swap-simulation read's family arm (ADR-037): the computed read is
     a sum by family, carried as data (never a subclass test).
     """
 
@@ -4610,7 +4610,7 @@ class SwapReadFamily:
 @final
 class SwapRefusalKind:
     """
-    The swap-simulation refusal vocabulary (ADR-037/t2): the kind the ONE
+    The swap-simulation refusal vocabulary (ADR-037): the kind the ONE
     Python adapter maps to the companions' exception tree.
     """
 
