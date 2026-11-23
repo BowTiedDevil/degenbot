@@ -233,7 +233,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     /// succeeds and proves the address isn't any of those (the parser skips
     /// the log); a failed lookup is `Err` — the parse aborts loudly, never a
     /// silent skip.
-    fn classify_token_type(
+    pub(super) fn classify_token_type(
         &mut self,
         token_address: Address,
     ) -> Result<Option<TokenType>, ParseError> {

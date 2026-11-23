@@ -336,8 +336,7 @@ pub(super) async fn process_chunk_on_conn(
             dispatch.gho_underlying_address,
             dispatch.gho_vtoken_address,
             conn,
-            &tx_hashes_refs,
-            candidate.evidence.tx().hash().0,
+            &candidate.evidence,
             &discounts,
             ctx.substrate_mut(),
         )

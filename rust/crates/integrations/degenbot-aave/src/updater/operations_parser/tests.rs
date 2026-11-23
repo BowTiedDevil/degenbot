@@ -1,7 +1,43 @@
-use super::util::{CompanionSide, EventDisposition, EventOwnership, LiquidationWindow};
+use super::liquidation::{CallOwnership, LiquidationCallScope};
+use super::util::{CompanionSide, EventDisposition, EventOwnership};
 use super::*;
 use crate::operations::{LiquidationGroup, LiquidationPattern};
 use crate::updater::run::substrate::ChunkSubstrate;
+use alloy::primitives::B256;
+use degenbot_core::canonical_head::{CallRef, ChainAnchor, TxRef};
+
+// ── the call-census fixtures ──────────────────────────────────────────────
+
+/// The transaction the call-census fixtures describe.
+fn call_fixture_tx() -> TxRef {
+    let anchor = ChainAnchor::new(1, 100, B256::repeat_byte(0xAA), B256::repeat_byte(0xBB))
+        .expect("the fixture anchor is a complete identity");
+    TxRef::new(anchor, B256::repeat_byte(0xCC), 0).expect("the fixture transaction is complete")
+}
+
+/// A call census in which the frame at `path` emitted every `log_indices` entry.
+fn call_census(path: &[u64], log_indices: impl IntoIterator<Item = u64>) -> CallOwnership {
+    let call = CallRef::new(call_fixture_tx(), path.to_vec());
+    CallOwnership::stating(log_indices.into_iter().map(|index| (index, call.clone())))
+}
+
+/// A census in which every scaled event of `events` and the `anchor` were emitted by
+/// the transaction's root call: one liquidation sub-call holding them all.
+fn root_call_census(events: &[ScaledTokenEvent<'_>], anchor: u64) -> CallOwnership {
+    call_census(
+        &[],
+        events
+            .iter()
+            .map(|event| event.log_index)
+            .chain(std::iter::once(anchor)),
+    )
+}
+
+/// The scope the `LiquidationCall` at `anchor` closes in `census`.
+fn scope_at(anchor: u64, census: &CallOwnership) -> LiquidationCallScope {
+    LiquidationCallScope::closing_at(anchor, census)
+        .expect("the census names the call that emitted the anchor")
+}
 
 #[test]
 fn amounts_match_exact_below_threshold() {
@@ -1311,36 +1347,52 @@ fn analyze_user_liquidation_count_counts_per_user() {
     // User B: 1 liquidation (single, bad-debt path).
     let b1 = liquidation_call_log(30, collateral, debt_weth, user_b, U256::from(500));
     let events: Vec<&Log> = vec![&a1, &a2, &b1];
-    let counts = TransactionOperationsParser::analyze_user_liquidation_count(&events);
+    let counts =
+        TransactionOperationsParser::analyze_user_liquidation_count(&events, Address::ZERO);
     assert_eq!(counts.get(&user_a), Some(&2));
     assert_eq!(counts.get(&user_b), Some(&1));
 }
 
-/// `LiquidationWindow` is half-open and anchored on the previous
-/// `LiquidationCall`: consecutive liquidations own disjoint ranges, and the
-/// first one owns everything before it.
+/// `LiquidationCallScope` names the call frame that closed a liquidation: its
+/// logs are the frame's whole execution subtree before the `LiquidationCall`,
+/// so sibling calls own disjoint logs and a nested sub-call is inside its
+/// parent's scope.
 #[test]
-fn liquidation_windows_partition_a_transaction_between_its_anchors() {
-    let anchors = [
-        liquidation_call_log(40, Address::ZERO, Address::ZERO, Address::ZERO, U256::ZERO),
-        liquidation_call_log(90, Address::ZERO, Address::ZERO, Address::ZERO, U256::ZERO),
-    ];
-    let all_events: Vec<&Log> = anchors.iter().collect();
+fn liquidation_call_scopes_follow_the_execution_subtree() {
+    let calls = call_census(&[0], [5, 10, 11])
+        .stating_more(call_census(&[1], [20, 30]))
+        .stating_more(call_census(&[1, 0], [21, 22]));
 
-    let first = LiquidationWindow::ending_at(&all_events, 40);
-    let second = LiquidationWindow::ending_at(&all_events, 90);
+    let first = scope_at(10, &calls);
+    let second = scope_at(30, &calls);
 
     assert!(
-        first.owns(0),
-        "the first liquidation owns the transaction's opening logs"
+        first.owns(5, &calls),
+        "the first liquidation owns the frame's opening logs"
     );
-    assert!(first.owns(39));
-    assert!(!first.owns(40), "an anchor belongs to no window");
-    assert!(!first.owns(41));
-    assert!(second.owns(41), "the second starts after the first anchor");
-    assert!(second.owns(89));
-    assert!(!second.owns(90));
-    assert!(!second.owns(39), "windows never overlap");
+    assert!(!first.owns(10, &calls), "an anchor belongs to no scope");
+    assert!(
+        !first.owns(11, &calls),
+        "a log after the anchor is outside it"
+    );
+    assert!(!first.owns(20, &calls), "a sibling frame is another scope");
+    assert!(
+        second.owns(20, &calls),
+        "the second scope owns its own frame's logs"
+    );
+    assert!(
+        second.owns(21, &calls),
+        "a nested sub-call's logs are inside the frame that emitted the anchor"
+    );
+    assert!(!second.owns(30, &calls));
+    assert!(
+        !first.owns(21, &calls),
+        "scopes never overlap across sibling frames"
+    );
+    assert!(
+        !LiquidationCallScope::closing_at(10, &calls).is_some_and(|scope| scope.owns(20, &calls)),
+        "a log the trace does not attribute is nobody's"
+    );
 }
 
 /// `collect_collateral_events`: the `collateral_burn` vs `collateral_transfers`
@@ -1386,12 +1438,15 @@ fn collect_collateral_events_burn_vs_transfers_split() {
     let events = vec![burn, transfer, other_burn];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
+    let census = root_call_census(&events, 100);
+    let scope = scope_at(100, &census);
     let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
         &ownership,
-        LiquidationWindow::ending_at(&[], 100),
+        &scope,
+        &census,
         &assigned,
     );
     assert!(
@@ -1460,12 +1515,15 @@ fn collect_collateral_events_skips_erc20_fee_transfer_to_treasury_in_liquidation
     let events = vec![burn, erc20_fee_transfer, bt_fee_transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
+    let census = root_call_census(&events, 100);
+    let scope = scope_at(100, &census);
     let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
         &ownership,
-        LiquidationWindow::ending_at(&[], 100),
+        &scope,
+        &census,
         &assigned,
     );
     // Burn must be found.
@@ -1523,12 +1581,15 @@ fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
     let events = vec![burn, pair_transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
+    let census = root_call_census(&events, 100);
+    let scope = scope_at(100, &census);
     let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
         &ownership,
-        LiquidationWindow::ending_at(&[], 100),
+        &scope,
+        &census,
         &assigned,
     );
     assert!(scan.burn.is_some(), "burn collected");
@@ -1570,12 +1631,15 @@ fn collect_collateral_events_no_burn_only_transfers() {
     let events = vec![transfer];
     let ownership = EventOwnership::classify(&events);
     let assigned = HashSet::new();
+    let census = root_call_census(&events, 100);
+    let scope = scope_at(100, &census);
     let scan = TransactionOperationsParser::collect_collateral_events(
         user,
         Some(a_token),
         &events,
         &ownership,
-        LiquidationWindow::ending_at(&[], 100),
+        &scope,
+        &census,
         &assigned,
     );
     assert!(
@@ -1589,9 +1653,9 @@ fn collect_collateral_events_no_burn_only_transfers() {
 // ── the collateral refusal's diagnostics ──────────────────────────────────
 //
 // A liquidation with no collateral event refuses with a payload naming the
-// `LiquidationCall` anchor, the [`LiquidationWindow`] bounds, and why every
-// in-window candidate was rejected. Its consumer is one `AAVE-PARSE-FAIL` log
-// line (`updater/run/process.rs`), so it stays single-line and bounded.
+// `LiquidationCall` anchor, the call frame the scan was bounded to, and why
+// every in-call candidate was rejected. Its consumer is one `AAVE-PARSE-FAIL`
+// log line (`updater/run/process.rs`), so it stays single-line and bounded.
 
 /// The pool the refusal fixtures' parser is constructed for.
 fn liquidation_fixture_pool() -> Address {
@@ -1612,8 +1676,7 @@ fn fresh_db_with_liquidation_reserves(
     {
         let conn = db.lock();
         conn.execute(
-            "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
-             VALUES (1, 1, 'mainnet', 1, NULL)",
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) VALUES (1, 1, 'mainnet', 1, NULL)",
             [],
         )
         .unwrap();
@@ -1671,8 +1734,8 @@ fn fresh_db_with_liquidation_reserves(
 }
 
 /// Drive `create_liquidation_operation` for `anchors[anchor_index]` and return
-/// the collateral guard's refusal payload. Every entry of `anchors` is a
-/// `LiquidationCall`, so that anchor's window opens after its predecessor.
+/// the collateral guard's refusal payload. `calls` states which call emitted every
+/// log of the fixture, so each anchor's scan is bounded to its own frame.
 #[expect(clippy::too_many_arguments)] // one arg per fixture axis
 fn refused_liquidation_payload(
     collateral_asset: Address,
@@ -1681,6 +1744,7 @@ fn refused_liquidation_payload(
     v_token: Address,
     anchors: &[Log],
     scaled: &[ScaledTokenEvent<'static>],
+    calls: &CallOwnership,
     anchor_index: usize,
     claimed: &[u64],
 ) -> String {
@@ -1706,6 +1770,7 @@ fn refused_liquidation_payload(
         scaled,
         &ownership,
         &all_events,
+        Some(calls),
         &mut assigned,
     ) {
         Ok(_) => panic!("the fixture carries no collateral event for this liquidation"),
@@ -1714,10 +1779,10 @@ fn refused_liquidation_payload(
     }
 }
 
-/// Acceptance 1: the refusal names the `LiquidationCall` anchor and the window
-/// bounds the scan was limited to, on one log line.
+/// Acceptance 1: the refusal names the `LiquidationCall` anchor and the call
+/// frame the scan was bounded to, on one log line.
 #[test]
-fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
+fn collateral_refusal_names_the_anchor_and_the_call() {
     let user = Address::repeat_byte(0xA0);
     let other_user = Address::repeat_byte(0xA1);
     let collateral_asset = Address::repeat_byte(0xB0);
@@ -1729,8 +1794,8 @@ fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
         liquidation_call_log(10, collateral_asset, debt_asset, other_user, U256::from(1)),
         liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
     ];
-    // The user's collateral Burn is emitted inside the PREVIOUS liquidation's
-    // window, so this liquidation's own window carries no candidate at all.
+    // The user's collateral Burn was emitted inside the PREVIOUS liquidation's
+    // call frame, so this liquidation's own frame carries no candidate at all.
     let scaled = [scaled_event(
         5,
         ScaledTokenEventType::CollateralBurn,
@@ -1739,6 +1804,7 @@ fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
         U256::from(500),
         None,
     )];
+    let calls = call_census(&[0], [5, 10]).stating_more(call_census(&[1], [30]));
 
     let payload = refused_liquidation_payload(
         collateral_asset,
@@ -1747,6 +1813,7 @@ fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
         v_token,
         &anchors,
         &scaled,
+        &calls,
         1,
         &[],
     );
@@ -1756,16 +1823,16 @@ fn collateral_refusal_names_the_anchor_and_the_window_bounds() {
         "the payload names the anchor that closed the sub-call: {payload}"
     );
     assert!(
-        payload.contains("window: 11..30"),
-        "the payload names the window bounds: {payload}"
+        payload.contains("call: [1]"),
+        "the payload names the call frame: {payload}"
     );
     assert!(
         payload.contains(&user.to_string()),
         "the payload names the user: {payload}"
     );
     assert!(
-        payload.contains("in-window: 0") && payload.contains("rejected in-window logs: none"),
-        "an empty window says so instead of dumping the transaction: {payload}"
+        payload.contains("in-call: 0") && payload.contains("rejected in-call logs: none"),
+        "an empty call says so instead of dumping the transaction: {payload}"
     );
     assert!(
         !payload.contains('\n'),
@@ -1793,7 +1860,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
         liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
     ];
     let scaled = [
-        // Outside this liquidation's window (log 5 < 11).
+        // Outside this liquidation's call frame (the earlier frame emitted it).
         scaled_event(
             5,
             ScaledTokenEventType::CollateralBurn,
@@ -1802,7 +1869,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             U256::from(500),
             None,
         ),
-        // In window, but another user's burn.
+        // In the frame, but another user's burn.
         scaled_event(
             12,
             ScaledTokenEventType::CollateralBurn,
@@ -1811,7 +1878,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             U256::from(500),
             None,
         ),
-        // In window, but another market's collateral token.
+        // In the frame, but another market's collateral token.
         scaled_event(
             14,
             ScaledTokenEventType::CollateralBurn,
@@ -1820,7 +1887,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             U256::from(500),
             None,
         ),
-        // In window and the right token, but the index-less report of a
+        // In the frame and the right token, but the index-less report of a
         // movement: its disposition is never a liquidation collateral event.
         transfer_to_event(
             16,
@@ -1830,7 +1897,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             a_token,
             U256::from(500),
         ),
-        // In window and the right token, but an interest burn of the aToken is
+        // In the frame and the right token, but an interest burn of the aToken is
         // not the liquidation's collateral debit.
         scaled_event(
             18,
@@ -1840,7 +1907,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             U256::from(500),
             Some(ray),
         ),
-        // In window and the right kind, but the mint increases the position:
+        // In the frame and the right kind, but the mint increases the position:
         // the interest-exceeds debit slot requires amount < balance_increase.
         scaled_event(
             20,
@@ -1850,7 +1917,7 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             U256::from(500),
             Some(ray),
         ),
-        // In window and would-be the collateral debit, but an earlier
+        // In the frame and would-be the collateral debit, but an earlier
         // operation already claimed it.
         scaled_event(
             22,
@@ -1861,6 +1928,8 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
             None,
         ),
     ];
+    let calls =
+        call_census(&[0], [5, 10]).stating_more(call_census(&[1], [12, 14, 16, 18, 20, 22, 30]));
 
     let payload = refused_liquidation_payload(
         collateral_asset,
@@ -1869,17 +1938,18 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
         v_token,
         &anchors,
         &scaled,
+        &calls,
         1,
         &[22],
     );
 
     assert!(
-        payload.contains("scaled events: 7") && payload.contains("in-window: 6"),
-        "the payload counts every scaled candidate and the window's share: {payload}"
+        payload.contains("scaled events: 7") && payload.contains("in-call: 6"),
+        "the payload counts every scaled candidate and the call's share: {payload}"
     );
     for reason in [
         "already claimed: 1",
-        "outside window: 1",
+        "outside call: 1",
         "wrong token: 1",
         "wrong disposition: 1",
         "wrong kind: 1",
@@ -1896,17 +1966,17 @@ fn collateral_refusal_tallies_every_scaled_candidate_once() {
         "no candidate matched: {payload}"
     );
     assert!(
-        payload.contains("rejected in-window logs: 12, 14, 16, 18, 20, 22"),
-        "the payload names the rejected in-window candidates: {payload}"
+        payload.contains("rejected in-call logs: 12, 14, 16, 18, 20, 22"),
+        "the payload names the rejected in-call candidates: {payload}"
     );
 }
 
-/// The window is the coarsest filter. A candidate that is both claimed and
-/// outside this liquidation's window is the starved-liquidation case — an
-/// earlier liquidation took the leg — so it is attributed `outside window`, and
-/// never named as a rejected IN-WINDOW log.
+/// The call is the coarsest filter. A candidate that is both claimed and outside
+/// this liquidation's call frame is the starved-liquidation case — an earlier
+/// liquidation took the leg — so it is attributed `outside call`, and never named
+/// as a rejected IN-CALL log.
 #[test]
-fn a_claimed_candidate_outside_the_window_is_attributed_to_the_window() {
+fn a_claimed_candidate_outside_the_call_is_attributed_to_the_call() {
     let user = Address::repeat_byte(0xA0);
     let other_user = Address::repeat_byte(0xA1);
     let collateral_asset = Address::repeat_byte(0xB0);
@@ -1919,7 +1989,7 @@ fn a_claimed_candidate_outside_the_window_is_attributed_to_the_window() {
         liquidation_call_log(30, collateral_asset, debt_asset, user, U256::from(1)),
     ];
     // The user's collateral Burn (log 5) was already claimed by the earlier
-    // liquidation — and it is outside this liquidation's window (11..30).
+    // liquidation — and the earlier frame emitted it.
     let scaled = [scaled_event(
         5,
         ScaledTokenEventType::CollateralBurn,
@@ -1928,6 +1998,7 @@ fn a_claimed_candidate_outside_the_window_is_attributed_to_the_window() {
         U256::from(500),
         None,
     )];
+    let calls = call_census(&[0], [5, 10]).stating_more(call_census(&[1], [30]));
 
     let payload = refused_liquidation_payload(
         collateral_asset,
@@ -1936,25 +2007,26 @@ fn a_claimed_candidate_outside_the_window_is_attributed_to_the_window() {
         v_token,
         &anchors,
         &scaled,
+        &calls,
         1,
         &[5],
     );
 
     assert!(
-        payload.contains("outside window: 1"),
-        "the claimed out-of-window leg is attributed outside window: {payload}"
+        payload.contains("outside call: 1"),
+        "the claimed out-of-call leg is attributed outside call: {payload}"
     );
     assert!(
         payload.contains("already claimed: 0"),
-        "an out-of-window leg is never counted as an in-window claim: {payload}"
+        "an out-of-call leg is never counted as an in-call claim: {payload}"
     );
     assert!(
-        payload.contains("in-window: 0"),
-        "the out-of-window candidate never inflates the in-window count: {payload}"
+        payload.contains("in-call: 0"),
+        "the out-of-call candidate never inflates the in-call count: {payload}"
     );
     assert!(
-        payload.contains("rejected in-window logs: none"),
-        "the out-of-window candidate is never named as in-window: {payload}"
+        payload.contains("rejected in-call logs: none"),
+        "the out-of-call candidate is never named as in-call: {payload}"
     );
 }
 
@@ -1971,16 +2043,17 @@ fn collateral_refusal_stays_one_line_at_receipt_scale() {
     let a_token = Address::repeat_byte(0xB1);
     let other_a_token = Address::repeat_byte(0xB2);
     let debt_asset = Address::repeat_byte(0xD0);
-    let v_token = Address::repeat_byte(0xD1);
+    let v_token: Address = Address::repeat_byte(0xD1);
     let ray = U256::from(1_000_000_000_u64);
 
     let anchors = [
         liquidation_call_log(78, collateral_asset, debt_asset, other_user, U256::from(1)),
         liquidation_call_log(196, collateral_asset, debt_asset, user, U256::from(1)),
     ];
-    // 218 candidates over the receipt's log range. The window this liquidation
-    // owns is 79..196, and every one of its 117 candidates is rejected: half
-    // another user's burns, half the user's burns of another aToken.
+    // 218 candidates over the receipt's log range. Logs 79..196 were emitted by
+    // the refusing liquidation's own frame, and every one of those 117 is
+    // rejected: half another user's burns, half the user's burns of another
+    // aToken.
     let scaled: Vec<ScaledTokenEvent<'static>> = (0..218)
         .map(|log_index| {
             if (79..196).contains(&log_index) {
@@ -2015,6 +2088,7 @@ fn collateral_refusal_stays_one_line_at_receipt_scale() {
             }
         })
         .collect();
+    let calls = call_census(&[0], 0..79).stating_more(call_census(&[1], 79..218));
 
     let payload = refused_liquidation_payload(
         collateral_asset,
@@ -2023,6 +2097,7 @@ fn collateral_refusal_stays_one_line_at_receipt_scale() {
         v_token,
         &anchors,
         &scaled,
+        &calls,
         1,
         &[],
     );
@@ -2035,21 +2110,21 @@ fn collateral_refusal_stays_one_line_at_receipt_scale() {
     );
     assert!(
         payload.contains("scaled events: 218")
-            && payload.contains("in-window: 117")
-            && payload.contains("outside window: 101"),
+            && payload.contains("in-call: 117")
+            && payload.contains("outside call: 101"),
         "the receipt-scale counts stay readable: {payload}"
     );
     assert!(
         payload.contains("(+109 more)"),
-        "the rejected in-window exemplars are capped at 8 of 117: {payload}"
+        "the rejected in-call exemplars are capped at 8 of 117: {payload}"
     );
 }
 
-/// Acceptance 4: the block-26_458_346 shape — the collateral leg exists, but it
-/// belongs to an earlier liquidation of the same user, so this liquidation's own
-/// window holds only rejects. The refusal says so.
+/// Acceptance 4: the block-26_458_346 shape — the collateral leg exists, but an
+/// earlier liquidation of the same user emitted it, so this liquidation's own
+/// call frame holds only rejects. The refusal says so.
 #[test]
-fn liquidation_whose_collateral_leg_lives_in_another_window_refuses_with_diagnostics() {
+fn liquidation_whose_collateral_leg_lives_in_another_call_refuses_with_diagnostics() {
     let user = Address::repeat_byte(0xA0);
     let other_user = Address::repeat_byte(0xA1);
     let collateral_asset = Address::repeat_byte(0xB0);
@@ -2074,7 +2149,7 @@ fn liquidation_whose_collateral_leg_lives_in_another_window_refuses_with_diagnos
             U256::from(500),
             None,
         ),
-        // This liquidation's window (97..196) holds three rejects.
+        // This liquidation's own frame holds three rejects.
         scaled_event(
             100,
             ScaledTokenEventType::CollateralBurn,
@@ -2100,15 +2175,19 @@ fn liquidation_whose_collateral_leg_lives_in_another_window_refuses_with_diagnos
             U256::from(500),
         ),
     ];
+    let calls = call_census(&[0], [78])
+        .stating_more(call_census(&[1], [89, 96]))
+        .stating_more(call_census(&[2], [100, 150, 191, 196]));
 
-    let all_events: Vec<&Log> = anchors.iter().collect();
+    let earlier = scope_at(96, &calls);
+    let later = scope_at(196, &calls);
     assert!(
-        LiquidationWindow::ending_at(&all_events, 96).owns(89),
+        earlier.owns(89, &calls),
         "the fixture's collateral leg belongs to the earlier liquidation"
     );
     assert!(
-        !LiquidationWindow::ending_at(&all_events, 196).owns(89),
-        "and it is outside the refusing liquidation's own window"
+        !later.owns(89, &calls),
+        "and it is outside the refusing liquidation's own call frame"
     );
 
     let payload = refused_liquidation_payload(
@@ -2118,21 +2197,22 @@ fn liquidation_whose_collateral_leg_lives_in_another_window_refuses_with_diagnos
         v_token,
         &anchors,
         &scaled,
+        &calls,
         2,
         &[],
     );
 
     for expected in [
         "LiquidationCall log 196",
-        "window: 97..196",
+        "call: [2]",
         "scaled events: 4",
-        "in-window: 3",
-        "outside window: 1",
+        "in-call: 3",
+        "outside call: 1",
         "wrong user: 1",
         "wrong token: 1",
         "wrong disposition: 1",
         "matched: 0",
-        "rejected in-window logs: 100, 150, 191",
+        "rejected in-call logs: 100, 150, 191",
     ] {
         assert!(
             payload.contains(expected),
@@ -2487,8 +2567,8 @@ fn aave_scaled_log(
 
 /// The Umbrella deficit-coverage triplet — an ERC20 `Transfer` report, its
 /// scaled `BalanceTransfer` report, and the recipient's `Burn` — parses into
-/// one `DeficitCoverage` operation that owns all three logs, so none of them
-/// survives into `unassigned_events`.
+/// one `DeficitCoverage` operation that owns all three logs, so the receipt's
+/// census attributes all three to that operation.
 #[test]
 fn deficit_coverage_triplet_claims_every_log_it_owns() {
     use degenbot_decoders::aave_event_decoder::{AAVE_BALANCE_TRANSFER_TOPIC, AAVE_BURN_TOPIC};
@@ -2556,16 +2636,199 @@ fn deficit_coverage_triplet_claims_every_log_it_owns() {
         vec![216],
         "the triplet's scaled BalanceTransfer report is the operation's paired balance transfer"
     );
-    assert!(
-        !parsed
-            .unassigned_events
-            .iter()
-            .any(|log| log.log_index == Some(216)),
-        "the paired BalanceTransfer must reach the claim set; unassigned: {:?}",
-        parsed
-            .unassigned_events
-            .iter()
-            .map(|log| log.log_index)
-            .collect::<Vec<_>>()
+    for log_index in [214_u64, 216, 217] {
+        assert_eq!(
+            parsed.ownership.owner(log_index),
+            Some(LogOwner::Operation {
+                operation_id: op.operation_id
+            }),
+            "the triplet's log {log_index} is owned by the operation, not left over"
+        );
+    }
+}
+
+// ── the receipt's ownership census (ADR-105 D5) ───────────────────────────
+
+/// The Pool address the census fixtures' parser is constructed for.
+fn census_pool() -> Address {
+    Address::repeat_byte(0x99)
+}
+
+/// A log carrying `topic0` from `emitter`, with the indexed fields given.
+fn log_with_topic(idx: u64, emitter: Address, topics: Vec<alloy::primitives::B256>) -> Log {
+    aave_scaled_log(idx, emitter, topics, &[])
+}
+
+/// A log emitted by this market's Pool that the decoder cannot name means the
+/// decoder knows less than the chain stated: the transaction is refused, never
+/// silently swept into the ignored pile.
+#[test]
+fn an_unrecognized_log_from_the_market_pool_refuses_the_transaction() {
+    let a_token = Address::from([0x98; 20]);
+    let db = fresh_db_with_aave_reserve(a_token);
+    let conn = db.lock();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
+            .unwrap();
+    let unknown = log_with_topic(10, census_pool(), vec![B256::repeat_byte(0x5A)]);
+    let events: Vec<&Log> = vec![&unknown];
+
+    match parser.parse(&events, [0u8; 32]) {
+        Err(ParseError::Ownership(OwnershipRefusal::UnrecognizedLog {
+            log_index,
+            emitter,
+            ..
+        })) => {
+            assert_eq!(log_index, 10);
+            assert_eq!(emitter, census_pool());
+        }
+        other => panic!("an unrecognized Pool log refuses: {other:?}"),
+    }
+}
+
+/// A genuinely unrelated log (another protocol's emitter, a topic Aave does not
+/// own) is `OutOfScope`: deliberately irrelevant, never unknown, so the
+/// transaction parses and the census says why the log is not owned.
+#[test]
+fn a_genuinely_unrelated_log_is_out_of_scope() {
+    let a_token = Address::from([0x98; 20]);
+    let db = fresh_db_with_aave_reserve(a_token);
+    let conn = db.lock();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
+            .unwrap();
+    // A Uniswap V3 `Swap` and a reserve underlying's `Transfer`.
+    let foreign = log_with_topic(10, Address::repeat_byte(0x77), vec![B256::from([0xC4; 32])]);
+    let underlying = erc20_transfer_log(
+        11,
+        Address::repeat_byte(0x01),
+        Address::repeat_byte(0x02),
+        Address::repeat_byte(0x03),
+        U256::from(5),
     );
+    let events: Vec<&Log> = vec![&foreign, &underlying];
+
+    let parsed = parser
+        .parse(&events, [0u8; 32])
+        .expect("unrelated logs are out of scope, not refusals");
+
+    assert_eq!(
+        parsed.ownership.owner(10),
+        Some(LogOwner::OutOfScope(OutOfScope::ForeignEmitter))
+    );
+    assert_eq!(
+        parsed.ownership.owner(11),
+        Some(LogOwner::OutOfScope(OutOfScope::UntrackedToken)),
+        "a reserve underlying's movement is not this market's scaled balance"
+    );
+    assert_eq!(parsed.ownership.census().total(), 2);
+}
+
+/// The committed `035ce3da2` case: a `ProxyCreated` whose id names no tracked
+/// component is out of scope, a tracked component's deployment is a market
+/// configuration role, and neither suppresses an unrecognized market log's
+/// refusal.
+#[test]
+fn an_untracked_proxy_component_is_out_of_scope_and_a_tracked_one_is_configuration() {
+    use degenbot_decoders::aave_event_decoder::AAVE_PROXY_CREATED_TOPIC;
+
+    let a_token = Address::from([0x98; 20]);
+    let db = fresh_db_with_aave_reserve(a_token);
+    let conn = db.lock();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
+            .unwrap();
+    let metrics_controller = Address::repeat_byte(0x81);
+    let mut pool_id = [0u8; 32];
+    pool_id[..4].copy_from_slice(b"POOL");
+    let untracked = log_with_topic(
+        10,
+        census_pool(),
+        vec![
+            AAVE_PROXY_CREATED_TOPIC,
+            B256::repeat_byte(0xA5),
+            addr_topic(metrics_controller),
+            addr_topic(Address::repeat_byte(0x82)),
+        ],
+    );
+    let tracked = log_with_topic(
+        11,
+        census_pool(),
+        vec![
+            AAVE_PROXY_CREATED_TOPIC,
+            B256::from(pool_id),
+            addr_topic(census_pool()),
+            addr_topic(Address::repeat_byte(0x83)),
+        ],
+    );
+    let events: Vec<&Log> = vec![&untracked, &tracked];
+
+    let parsed = parser
+        .parse(&events, [0u8; 32])
+        .expect("neither proxy deployment is a refusal");
+    assert_eq!(
+        parsed.ownership.owner(10),
+        Some(LogOwner::OutOfScope(OutOfScope::UntrackedProxyComponent)),
+        "the incentives controller is not a role this market tracks"
+    );
+    assert_eq!(
+        parsed.ownership.owner(11),
+        Some(LogOwner::Role(NonOperationRole::MarketConfiguration)),
+        "a tracked Pool deployment is a configuration role"
+    );
+
+    let unrecognized = log_with_topic(12, census_pool(), vec![B256::repeat_byte(0x5A)]);
+    let with_unknown: Vec<&Log> = vec![&untracked, &tracked, &unrecognized];
+    assert!(
+        matches!(
+            parser.parse(&with_unknown, [0u8; 32]),
+            Err(ParseError::Ownership(OwnershipRefusal::UnrecognizedLog {
+                log_index: 12,
+                ..
+            }))
+        ),
+        "the out-of-scope proxy case never suppresses an expected unknown"
+    );
+}
+
+/// A scaled report nobody accounts for ends the parse unowned: the receipt says
+/// an operation owns it, so the transaction is refused rather than silently
+/// dropping the movement.
+#[test]
+fn an_uncovered_scaled_report_refuses_the_transaction() {
+    use degenbot_decoders::aave_event_decoder::AAVE_BALANCE_TRANSFER_TOPIC;
+
+    let a_token = Address::from([0x98; 20]);
+    let db = fresh_db_with_aave_reserve(a_token);
+    let conn = db.lock();
+    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
+            .unwrap();
+    let user = Address::from([0x53; 20]);
+    let recipient = Address::from([0xD4; 20]);
+    let index = U256::from(1_000_000_000u64) * U256::from(1_000_000_000u64);
+    // The index-bearing report of a movement whose index-less report the receipt
+    // does not carry: nothing can own it.
+    let report = aave_scaled_log(
+        10,
+        a_token,
+        vec![
+            AAVE_BALANCE_TRANSFER_TOPIC,
+            addr_topic(user),
+            addr_topic(recipient),
+        ],
+        &[U256::from(500), index],
+    );
+    let events: Vec<&Log> = vec![&report];
+
+    match parser.parse(&events, [0u8; 32]) {
+        Err(ParseError::Ownership(OwnershipRefusal::UncoveredOperationLog {
+            log_index, ..
+        })) => assert_eq!(log_index, 10),
+        other => panic!("an unowned scaled report refuses: {other:?}"),
+    }
 }

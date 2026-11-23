@@ -1,18 +1,21 @@
+use super::liquidation::CallOwnership;
 use super::{
-    aave_event_decoder, log_idx_value, EventOwnership, HashSet, Log, Operation, ParseError,
-    ScaledTokenEvent, TransactionOperationsParser,
+    aave_event_decoder, log_idx_value, Address, EventOwnership, HashSet, Log, Operation,
+    ParseError, ScaledTokenEvent, TransactionOperationsParser,
 };
 
 impl<'a> TransactionOperationsParser<'a, '_> {
     // ── the per-pool-event dispatch (`_create_operation_from_pool_event`) ──
 
+    #[expect(clippy::too_many_arguments)] // one arg per parse coordinate
     pub(super) fn create_operation_from_pool_event(
         &mut self,
         operation_id: u32,
         pool_event: &'a Log,
         scaled_events: &[ScaledTokenEvent<'a>],
         ownership: &EventOwnership,
-        all_events: &'a [&'a Log],
+        all_events: &[&'a Log],
+        calls: Option<&CallOwnership>,
         assigned_indices: &mut HashSet<u64>,
     ) -> Result<Operation<'a>, ParseError> {
         let topic = pool_event
@@ -45,6 +48,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 scaled_events,
                 ownership,
                 all_events,
+                calls,
                 assigned_indices,
             )
         } else if topic == aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC {
@@ -57,20 +61,28 @@ impl<'a> TransactionOperationsParser<'a, '_> {
     }
 }
 
-/// Extract the pool events from a `&[&Log]` slice. Sorted by logIndex.
-pub(super) fn extract_pool_events<'a>(events: &[&'a Log]) -> Vec<&'a Log> {
-    let mut pool: Vec<&Log> = events
+/// Extract this market's pool events from a `&[&Log]` slice. Sorted by logIndex.
+pub(super) fn extract_pool_events<'a>(events: &[&'a Log], pool: Address) -> Vec<&'a Log> {
+    let mut pool_events: Vec<&Log> = events
         .iter()
         .copied()
-        .filter(|l| is_pool_event_log(l))
+        .filter(|l| is_pool_event_log(l, pool))
         .collect();
-    pool.sort_by_key(|l| log_idx_value(l));
-    pool
+    pool_events.sort_by_key(|l| log_idx_value(l));
+    pool_events
 }
 
-/// `true` if the log is one of the 6 pool-event anchors (Supply/Withdraw/
-/// Borrow/Repay/LiquidationCall/DeficitCreated).
-fn is_pool_event_log(log: &Log) -> bool {
+/// `true` if `log` is one of the 6 pool-event anchors (Supply/Withdraw/Borrow/
+/// Repay/LiquidationCall/DeficitCreated) **emitted by this market's Pool**.
+///
+/// The emitter is half the identity: another Aave deployment in the same
+/// transaction (a V2 `LendingPool`, another market's Pool) emits the same
+/// signatures, and its events are not this market's operations. A receipt carries
+/// the whole transaction, so the signature alone no longer names an anchor.
+pub(super) fn is_pool_event_log(log: &Log, pool: Address) -> bool {
+    if log.address() != pool {
+        return false;
+    }
     let Some(t) = log.topics().first() else {
         return false;
     };

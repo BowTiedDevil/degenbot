@@ -67,11 +67,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use degenbot_db::{AaveGhoAsset, AssetRow, DbError, DegenbotDb, ScaledTokenPosition};
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
+use crate::operations::TokenType;
 use crate::updater::operations_parser::addr_to_hex;
 
 /// The per-statement bind-parameter ceiling (the `liquidity_updater.rs`
@@ -879,9 +880,49 @@ impl ChunkSubstrate {
 
     // ── contracts + the GHO row ─────────────────────────────────────────
 
-    /// The `lookup_pool_revision_on_conn` cache shell (the parser's
-    /// per-parse read). Missing row / NULL revision → `None` (the
-    /// substrate's flatten).
+    /// The market's tracked token census, read from the prefetched asset rows and
+    /// the chain's GHO row — deliberately no SQL.
+    ///
+    /// Every aToken row is a collateral series, every vToken row a debt series, and
+    /// the GHO discount token its own series; an address outside this census is not
+    /// a token this market tracks, so a receipt log it emits is out of scope rather
+    /// than a question for the database. The complete receipt carries far more
+    /// emitters than the filtered acquisition named, so answering the census from
+    /// the prefetched rows keeps a batch of unrelated logs from turning into a
+    /// probe apiece.
+    pub(crate) fn market_token_census(&self) -> HashMap<Address, TokenType> {
+        let mut census: HashMap<Address, TokenType> = HashMap::new();
+        for asset in self.assets_by_id.values() {
+            if let Ok(address) = asset.a_token_address.parse() {
+                census.insert(address, TokenType::Atoken);
+            }
+            if let Ok(address) = asset.v_token_address.parse() {
+                census.insert(address, TokenType::Vtoken);
+            }
+        }
+        if let Some(gho) = &self.gho {
+            if let Some(address) = gho.v_token_address.as_ref().and_then(|a| a.parse().ok()) {
+                census.insert(address, TokenType::Vtoken);
+            }
+            if let Some(address) = gho
+                .v_gho_discount_token
+                .as_ref()
+                .and_then(|a| a.parse().ok())
+            {
+                census.insert(address, TokenType::GhoDiscount);
+            }
+        }
+        census
+    }
+
+    /// Whether the cache holds prefetched asset rows: when it does, the market's
+    /// token census is answerable in memory and needs no probe.
+    pub(crate) fn has_prefetched_assets(&self) -> bool {
+        !self.assets_by_id.is_empty()
+    }
+
+    /// The `lookup_pool_revision_on_conn` cache shell (the parser's per-parse
+    /// read). Missing row / NULL revision → `None` (the substrate's flatten).
     ///
     /// # Errors
     ///

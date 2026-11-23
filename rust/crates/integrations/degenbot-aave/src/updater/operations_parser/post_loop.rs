@@ -30,14 +30,6 @@ impl<'a> TransactionOperationsParser<'a, '_> {
             if ev.caller_address != Some(self.pool_address) {
                 continue;
             }
-            // Skip pure-interest accrual (amount == balance_increase).
-            let bal_inc = ev.balance_increase.unwrap_or(U256::ZERO);
-            if ev.amount == bal_inc {
-                // Pure-accrual Mint — not a MintToTreasury.
-                assigned_indices.insert(ev.log_index);
-                continue;
-            }
-
             // Determine the underlying asset (the Mint event's aToken → asset row).
             let asset_row = self
                 .substrate

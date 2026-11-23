@@ -322,18 +322,20 @@ impl Operation<'_> {
     /// Mark every log this operation owns as claimed. The parser claims only
     /// through here, so an operation's ownership has one definition.
     pub fn claim_into(&self, claimed: &mut HashSet<u64>) {
-        if let Some(pool_ev) = self.pool_event {
-            claimed.insert(pool_ev_idx(pool_ev));
-        }
-        for ev in &self.scaled_events {
-            claimed.insert(ev.log_index);
-        }
-        for ev in &self.transfer_events {
-            claimed.insert(log_idx(ev));
-        }
-        for ev in &self.balance_transfer_events {
-            claimed.insert(log_idx(ev));
-        }
+        claimed.extend(self.claimed_log_indices());
+    }
+
+    /// Every log index this operation consumed: its Pool anchor, its
+    /// scaled-token events, and its transfer reports. The receipt's ownership
+    /// ledger claims these, so one operation is the one owner of every log it
+    /// reads (ADR-105 D5).
+    pub fn claimed_log_indices(&self) -> impl Iterator<Item = u64> + '_ {
+        self.pool_event
+            .map(log_idx)
+            .into_iter()
+            .chain(self.scaled_events.iter().map(|ev| ev.log_index))
+            .chain(self.transfer_events.iter().map(|log| log_idx(log)))
+            .chain(self.balance_transfer_events.iter().map(|log| log_idx(log)))
     }
 }
 
@@ -342,11 +344,6 @@ impl Operation<'_> {
 /// has one, but the field is `Option` on alloy's `Log`).
 fn log_idx(log: &Log) -> u64 {
     log.log_index.unwrap_or(0)
-}
-/// The Pool-event variant's `log_index` equivalent (Pool events are raw logs
-/// held by reference in `Operation.pool_event`).
-fn pool_ev_idx(log: &Log) -> u64 {
-    log_idx(log)
 }
 
 // ── liquidation-pattern types ─────────────────────────────────────────────

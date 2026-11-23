@@ -44,8 +44,9 @@
 use super::run::substrate::ChunkSubstrate;
 use crate::operations::{
     Operation, OperationType, ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType,
-    SCALED_AMOUNT_POOL_REVISION, TOKEN_AMOUNT_MATCH_TOLERANCE,
+    TokenType, SCALED_AMOUNT_POOL_REVISION, TOKEN_AMOUNT_MATCH_TOLERANCE,
 };
+use crate::updater::evidence::TransactionEvidence;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
@@ -55,9 +56,10 @@ use degenbot_decoders::aave_event_decoder::{
 };
 
 use rusqlite::OptionalExtension;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod liquidation;
+pub mod ownership;
 mod pool_events;
 mod post_loop;
 mod scaled_tokens;
@@ -66,16 +68,20 @@ mod util;
 mod validation;
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests;
 
 #[cfg(test)]
 mod receipt_repro;
 
+pub use ownership::{
+    LogOwner, NonOperationRole, OutOfScope, OwnershipCensus, OwnershipRefusal, ReceiptOwnership,
+};
 pub use util::amounts_match_with_tolerance;
 pub(crate) use util::{addr_to_hex, log_idx_value, parse_address};
-use util::{is_erc20_transfer_log, is_minted_to_treasury_log, EventOwnership};
+use util::{is_minted_to_treasury_log, EventOwnership};
 
+use liquidation::CallOwnership;
 use pool_events::extract_pool_events;
 
 // ── the parser struct ─────────────────────────────────────────────────────
@@ -141,6 +147,20 @@ pub enum ParseError {
     /// An RPC-style `ray_div` math error from the `MintToTreasury` v8 branch.
     #[error("ray-div math error: {0}")]
     RayMath(#[from] crate::WadRayError),
+    /// The transaction's receipt could not be given exactly one owner per log:
+    /// two operations claim one log, an operation claims a log the receipt
+    /// settled as a role, an Aave log ended the parse unowned, or a market
+    /// contract emitted a log the decoder cannot name (ADR-105 D5).
+    #[error("receipt ownership refused: {0}")]
+    Ownership(#[from] OwnershipRefusal),
+    /// The operation at `log_index` is named by a CALL (a liquidation's
+    /// collateral leg), and this parse carries no call evidence — a receipt
+    /// cannot name the sub-call that emitted the leg (ADR-105 D2).
+    #[error("log {log_index} requires call evidence, and this parse carries none")]
+    MissingCallEvidence {
+        /// The log whose owner is named by a call.
+        log_index: u64,
+    },
 }
 
 // ── the entry-point types ─────────────────────────────────────────────────
@@ -156,8 +176,10 @@ pub struct TransactionOperations<'a> {
     /// The parsed operations (in the order the parser produced them —
     /// pool-event-dispatched first, then the phase-4 post-loop appends).
     pub operations: Vec<Operation<'a>>,
-    /// Logs that weren't matched to any Operation.
-    pub unassigned_events: Vec<&'a Log>,
+    /// The transaction's receipt with exactly one owner per log: an operation, a
+    /// recognized non-operation role, or `OutOfScope` (ADR-105 D5). The parse
+    /// refuses to return until that census is total.
+    pub ownership: ReceiptOwnership,
 }
 
 // ── the parser impl ───────────────────────────────────────────────────────
@@ -223,24 +245,105 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         util::are_compatible_transfer_types(ev1, ev2)
     }
 
+    /// The emitters this market tracks as its own tokens.
+    ///
+    /// A token event from an emitter outside this set is another market's series
+    /// or a reserve underlying: the receipt settles it as out of scope, and it
+    /// never becomes an operation source (ADR-105 D5).
+    ///
+    /// The prefetched asset rows answer the census in memory. Only a cache with no
+    /// prefetched rows (the lazy cache) has to probe the token tables, and its
+    /// answers are cached for the chunk exactly as the per-log decode already
+    /// cached them.
+    ///
+    /// # Errors
+    ///
+    /// A token-table lookup failure on the probing path surfaces as
+    /// [`ParseError::Substrate`].
+    fn market_tokens(
+        &mut self,
+        decoded: &[Option<DecodedAaveEvent>],
+    ) -> Result<BTreeMap<Address, TokenType>, ParseError> {
+        let mut tokens: BTreeMap<Address, TokenType> =
+            self.substrate.market_token_census().into_iter().collect();
+        if let Some(gho_vtoken) = self.gho_vtoken_address {
+            tokens.insert(gho_vtoken, TokenType::Vtoken);
+        }
+        if self.substrate.has_prefetched_assets() {
+            return Ok(tokens);
+        }
+        for decoded in decoded.iter().flatten() {
+            let emitter = match decoded {
+                DecodedAaveEvent::ScaledTokenMint(ev) => ev.token_address,
+                DecodedAaveEvent::ScaledTokenBurn(ev) => ev.token_address,
+                DecodedAaveEvent::ScaledTokenBalanceTransfer(ev) => ev.token_address,
+                DecodedAaveEvent::Erc20Transfer(ev) => ev.token_address,
+                _ => continue,
+            };
+            if tokens.contains_key(&emitter) {
+                continue;
+            }
+            if let Some(kind) = self.classify_token_type(emitter)? {
+                tokens.insert(emitter, kind);
+            }
+        }
+        Ok(tokens)
+    }
+
     // ── the `parse()` scaffold ──
 
-    /// Parse the tx's logs into [`TransactionOperations`]. The entry point
-    /// the orchestrator calls per-tx inside the chunk-tx loop.
+    /// Parse the tx's logs into [`TransactionOperations`], receipt-only.
+    ///
+    /// This is the receipt-only entry point: the logs ARE the evidence, so an
+    /// operation whose legs a CALL names (a liquidation's collateral sub-call)
+    /// is refused with [`ParseError::MissingCallEvidence`] rather than
+    /// attributed by a log window. The orchestrator uses
+    /// [`Self::parse_evidence`], which carries the transaction's bound evidence.
     ///
     /// # Errors
     /// Returns [`ParseError`] on any builder-matching failure (the caller
-    /// rolls back the chunk-tx). Validator-level assertion failures are
-    /// routed to `Operation.validation_errors` (non-fatal — the caller can
-    /// decide).
-    #[expect(
-        clippy::missing_panics_doc,
-        clippy::too_many_lines,
-        clippy::panic_in_result_fn
-    )] // parse() is intrinsic — parity-drift mirror
+    /// rolls back the chunk-tx), on a receipt that cannot be owned (ADR-105 D5),
+    /// and on call-backed operations this parse carries no call evidence for.
+    /// Validator-level assertion failures are routed to
+    /// `Operation.validation_errors` (non-fatal — the caller can decide).
     pub fn parse(
         &mut self,
         events: &'a [&'a Log],
+        tx_hash: [u8; 32],
+    ) -> Result<TransactionOperations<'a>, ParseError> {
+        self.parse_inner(events, None, tx_hash)
+    }
+
+    /// Parse the transaction its bound evidence describes (ADR-105 D2, D5).
+    ///
+    /// The complete receipt is the log set — every log of it receives one
+    /// owner — and, when the evidence carries the transaction's call trace, the
+    /// call that emitted each receipt log, which is what names a liquidation's
+    /// collateral legs. A receipt-only transaction is parsed from its receipt and
+    /// never acquires a trace or a call path.
+    ///
+    /// # Errors
+    ///
+    /// Every [`Self::parse`] refusal, and the ownership refusals of the complete
+    /// receipt.
+    pub fn parse_evidence(
+        &mut self,
+        evidence: &'a TransactionEvidence,
+        tx_hash: [u8; 32],
+    ) -> Result<TransactionOperations<'a>, ParseError> {
+        let events: Vec<&'a Log> = evidence.logs();
+        let calls = match evidence {
+            TransactionEvidence::ReceiptOnly(_) => None,
+            TransactionEvidence::TraceBacked(joined) => Some(CallOwnership::of(joined)),
+        };
+        self.parse_inner(&events, calls.as_ref(), tx_hash)
+    }
+
+    #[expect(clippy::too_many_lines, clippy::panic_in_result_fn)] // parse() is intrinsic — parity-drift mirror
+    fn parse_inner(
+        &mut self,
+        events: &[&'a Log],
+        calls: Option<&CallOwnership>,
         tx_hash: [u8; 32],
     ) -> Result<TransactionOperations<'a>, ParseError> {
         assert!(
@@ -250,28 +353,42 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         let block_number = events.first().and_then(|l| l.block_number).unwrap_or(0);
 
         // Step 1: identify pool events (anchors). .
-        let pool_events = extract_pool_events(events);
-        // Step 2: decode scaled-token events (mint/burn/balance_transfer/transfer).
+        let pool_events = extract_pool_events(events, self.pool_address);
+        // Step 2: decode every log ONCE — the receipt's ownership census and the
+        // market's scaled events read the same decode. A token event emitted by a
+        // series this market does not track is another market's (or an
+        // underlying's) movement: out of scope, never an operation source.
+        let decoded: Vec<Option<DecodedAaveEvent>> = events
+            .iter()
+            .map(|ev| aave_event_decoder::decode_aave_log(ev))
+            .collect();
+        let tokens = self.market_tokens(&decoded)?;
         let mut scaled_events: Vec<ScaledTokenEvent<'a>> = Vec::new();
-        for ev in events {
-            if let Some(decoded) = aave_event_decoder::decode_aave_log(ev) {
-                match decoded {
-                    DecodedAaveEvent::ScaledTokenMint(m) => {
-                        scaled_events.push(self.decode_mint_event(ev, &m)?);
-                    }
-                    DecodedAaveEvent::ScaledTokenBurn(b) => {
-                        scaled_events.push(self.decode_burn_event(ev, &b)?);
-                    }
-                    DecodedAaveEvent::ScaledTokenBalanceTransfer(bt) => {
-                        scaled_events.push(self.decode_balance_transfer_event(ev, &bt)?);
-                    }
-                    DecodedAaveEvent::Erc20Transfer(t) => {
-                        if let Some(s) = self.decode_transfer_event(ev, &t)? {
-                            scaled_events.push(s);
-                        }
-                    }
-                    _ => {} // pool events are handled separately in step 1.
+        for (ev, decoded) in events.iter().zip(&decoded) {
+            match decoded {
+                Some(DecodedAaveEvent::ScaledTokenMint(m))
+                    if tokens.contains_key(&m.token_address) =>
+                {
+                    scaled_events.push(self.decode_mint_event(ev, m)?);
                 }
+                Some(DecodedAaveEvent::ScaledTokenBurn(b))
+                    if tokens.contains_key(&b.token_address) =>
+                {
+                    scaled_events.push(self.decode_burn_event(ev, b)?);
+                }
+                Some(DecodedAaveEvent::ScaledTokenBalanceTransfer(bt))
+                    if tokens.contains_key(&bt.token_address) =>
+                {
+                    scaled_events.push(self.decode_balance_transfer_event(ev, bt)?);
+                }
+                Some(DecodedAaveEvent::Erc20Transfer(t))
+                    if tokens.contains_key(&t.token_address) =>
+                {
+                    if let Some(s) = self.decode_transfer_event(ev, t)? {
+                        scaled_events.push(s);
+                    }
+                }
+                _ => {} // pool and other Aave events are classified by the receipt census.
             }
         }
         scaled_events.sort_by_key(|e| e.log_index);
@@ -282,10 +399,28 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         // Builders consume these dispositions instead of re-deriving pairing
         // rules or coordinating through the claim set.
         let ownership = EventOwnership::classify(&scaled_events);
+        // Step 2c: the receipt's total census — every log is an operation's, a
+        // recognized role, or deliberately out of scope, before any operation
+        // exists. The parse then claims into it and closes it.
+        let mut receipt = ReceiptOwnership::classify(
+            events,
+            &decoded,
+            &scaled_events,
+            &ownership,
+            &tokens,
+            self.pool_address,
+        )?;
 
-        // Step 3: group into operations.
+        // Step 3: group into operations. The claim set starts with every log the
+        // receipt already settled as a terminal role: a builder that consults it
+        // skips those logs by construction, and a builder that would claim one
+        // is refused when the ledger is closed.
         let mut operations: Vec<Operation<'a>> = Vec::new();
-        let mut assigned_log_indices: HashSet<u64> = HashSet::new();
+        let mut assigned_log_indices: HashSet<u64> = events
+            .iter()
+            .map(|event| log_idx_value(event))
+            .filter(|log_index| receipt.is_terminal_role(*log_index))
+            .collect();
         let mut next_op_id: u32 = 0;
 
         for pool_event in pool_events {
@@ -295,6 +430,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
                 &scaled_events,
                 &ownership,
                 events,
+                calls,
                 &mut assigned_log_indices,
             )?;
             op.claim_into(&mut assigned_log_indices);
@@ -306,7 +442,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         let minted_to_treasury_events: Vec<&Log> = events
             .iter()
             .copied()
-            .filter(|l| is_minted_to_treasury_log(l))
+            .filter(|l| l.address() == self.pool_address && is_minted_to_treasury_log(l))
             .collect();
         let mint_to_treasury_ops = self.create_mint_to_treasury_operations(
             &scaled_events,
@@ -354,17 +490,16 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         }
         operations.extend(transfer_ops);
 
-        // Step 4f: unassigned events (the ERC20-Transfer filter).
-        let unassigned_events = events
-            .iter()
-            .copied()
-            .filter(|l| {
-                let idx = log_idx_value(l);
-                !assigned_log_indices.contains(&idx) && !is_erc20_transfer_log(l)
-            })
-            .collect();
+        // Step 5: every operation claims the logs it consumed, then the receipt
+        // must be owned exactly once: a log two operations claim, a log an
+        // operation claims that the receipt settled as a role, and a log still
+        // expecting an owner are all refusals (ADR-105 D5).
+        for op in &operations {
+            receipt.claim_operation(op)?;
+        }
+        receipt.conclude()?;
 
-        // Step 5: validators (per-op).
+        // Step 6: validators (per-op).
         for op in &mut operations {
             Self::validate_operation(op);
         }
@@ -373,7 +508,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             tx_hash,
             block_number,
             operations,
-            unassigned_events,
+            ownership: receipt,
         })
     }
 }

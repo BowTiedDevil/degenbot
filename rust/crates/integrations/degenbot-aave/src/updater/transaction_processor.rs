@@ -50,6 +50,7 @@ use alloy::rpc::types::Log;
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 use rusqlite::Connection;
 
+use super::evidence::TransactionEvidence;
 use super::run::substrate::ChunkSubstrate;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -113,8 +114,7 @@ pub fn process_transaction(
     gho_token_address: Option<Address>,
     gho_vtoken_address: Option<Address>,
     conn: &Connection,
-    tx_logs: &[&Log],
-    tx_hash: [u8; 32],
+    evidence: &TransactionEvidence,
     discounts: &HashMap<Address, U256>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<Vec<AaveChunkEvent>, ProcessTxError> {
@@ -127,12 +127,13 @@ pub fn process_transaction(
         conn,
         &mut *substrate,
     )?;
-    let parsed = parser.parse(tx_logs, tx_hash)?;
+    let tx_logs: Vec<&Log> = evidence.logs();
+    let parsed = parser.parse_evidence(evidence, evidence.tx().hash().0)?;
 
     // Build the GHO-discount context once per tx (the
     // `discount_updates_by_log_index` map + the `bad_debt_users` set): the
     // DISCOUNT_PERCENT_UPDATED scan + the DEFICIT_CREATED scan.
-    let gho_ctx = GhoDiscountContext::new(tx_logs, discounts, gho_vtoken_address);
+    let gho_ctx = GhoDiscountContext::new(&tx_logs, discounts, gho_vtoken_address, pool_address);
 
     // Build the per-tx liquidation-pattern context (the port of
     // `_preprocess_liquidation_aggregates` → `detect_liquidation_patterns`).
@@ -1073,11 +1074,18 @@ impl<'a> GhoDiscountContext<'a> {
     /// Construct the context by scanning `tx_logs` once: the
     /// `DISCOUNT_PERCENT_UPDATED` scan plus the `DEFICIT_CREATED` scan the
     /// bad-debt-liquidation verdict reads.
+    ///
+    /// Each scan is scoped to the contract that emits it for THIS market: the GHO
+    /// vToken reports a user's discount and the Pool reports its own deficit. A
+    /// receipt carries the whole transaction, so another deployment emitting the
+    /// same signature names the same user but is another market's discount or
+    /// write-off, never this one's.
     #[must_use]
     pub fn new(
         tx_logs: &[&Log],
         discounts: &'a HashMap<Address, U256>,
         gho_vtoken_address: Option<Address>,
+        pool_address: Address,
     ) -> Self {
         use degenbot_decoders::aave_event_decoder::{
             AAVE_DEFICIT_CREATED_TOPIC, AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
@@ -1089,7 +1097,10 @@ impl<'a> GhoDiscountContext<'a> {
             if topics.is_empty() {
                 continue;
             }
-            if topics[0] == AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC && topics.len() >= 2 {
+            if topics[0] == AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC
+                && gho_vtoken_address == Some(log.address())
+                && topics.len() >= 2
+            {
                 // DiscountPercentUpdated(user indexed, oldDiscountPercent).
                 // topics[1] = the user; data word 0 = the OLD discount.
                 let user = topic_to_address(topics[1]);
@@ -1098,7 +1109,10 @@ impl<'a> GhoDiscountContext<'a> {
                     .entry(user)
                     .or_default()
                     .push((log.log_index.unwrap_or(0), old_discount));
-            } else if topics[0] == AAVE_DEFICIT_CREATED_TOPIC && topics.len() >= 2 {
+            } else if topics[0] == AAVE_DEFICIT_CREATED_TOPIC
+                && log.address() == pool_address
+                && topics.len() >= 2
+            {
                 // DeficitCreated(user indexed, debtAsset indexed, amount).
                 // topics[1] = the user whose debt is written off.
                 let user = topic_to_address(topics[1]);
@@ -2096,6 +2110,18 @@ mod tests {
     // ── GhoDiscountContext ─────────────────────────────────────────────
 
     /// Build a synthetic `DISCOUNT_PERCENT_UPDATED` log.
+    /// The market's GHO vToken for the discount-context fixtures: the contract
+    /// that reports a user's discount.
+    fn fixture_gho_vtoken() -> Address {
+        Address::from([0xAB; 20])
+    }
+
+    /// The market's Pool for the discount-context fixtures: the contract that
+    /// reports its own deficit.
+    fn fixture_pool() -> Address {
+        Address::from([0x99; 20])
+    }
+
     fn make_discount_updated_log(idx: u64, user: Address, old_discount: u64) -> Log {
         use degenbot_decoders::aave_event_decoder::AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC;
         let mut data = vec![0u8; 32];
@@ -2110,7 +2136,7 @@ mod tests {
         user_topic[12..].copy_from_slice(user.as_slice());
         make_log(
             idx,
-            Address::ZERO,
+            fixture_gho_vtoken(),
             vec![AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC, B256::from(user_topic)],
             Bytes::from(data),
         )
@@ -2130,7 +2156,7 @@ mod tests {
             });
         make_log(
             idx,
-            Address::ZERO,
+            fixture_pool(),
             vec![
                 degenbot_decoders::aave_event_decoder::AAVE_DEFICIT_CREATED_TOPIC,
                 B256::from(user_topic),
@@ -2144,7 +2170,7 @@ mod tests {
         let discounts = HashMap::new();
         let user = Address::from([0x42; 20]);
         let logs: Vec<&Log> = Vec::new();
-        let ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        let ctx = GhoDiscountContext::new(&logs, &discounts, None, fixture_pool());
         // V1 (discount supported): default is 0 (no entry in discounts map).
         assert_eq!(ctx.effective_discount(user, 0, 1), U256::ZERO);
         // V4 (no discount support): always 0.
@@ -2160,7 +2186,12 @@ mod tests {
         let user = Address::from([0x42; 20]);
         discounts.insert(user, U256::from(3_000u64)); // 30% discount
         let logs: Vec<&Log> = Vec::new();
-        let ctx = GhoDiscountContext::new(&logs, &discounts, Some(Address::ZERO));
+        let ctx = GhoDiscountContext::new(
+            &logs,
+            &discounts,
+            Some(fixture_gho_vtoken()),
+            fixture_pool(),
+        );
         assert_eq!(ctx.effective_discount(user, 50, 2), U256::from(3_000u64));
     }
 
@@ -2174,7 +2205,12 @@ mod tests {
         let log_refs: Vec<&Log> = vec![&log1, &log2];
         let mut discounts = HashMap::new();
         discounts.insert(user, U256::from(5_000u64)); // snapshot default
-        let ctx = GhoDiscountContext::new(&log_refs, &discounts, None);
+        let ctx = GhoDiscountContext::new(
+            &log_refs,
+            &discounts,
+            Some(fixture_gho_vtoken()),
+            fixture_pool(),
+        );
         // Before log1 (idx=10): default (5000).
         assert_eq!(ctx.effective_discount(user, 5, 2), U256::from(5_000u64));
         // After log1 but before log2 (idx 20): the OLD value of log1 = 1000.
@@ -2193,7 +2229,7 @@ mod tests {
         let other_deficit = make_deficit_created_log(7, other);
         let logs: Vec<&Log> = vec![&deficit_log, &other_deficit];
         let discounts = HashMap::new();
-        let ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        let ctx = GhoDiscountContext::new(&logs, &discounts, None, fixture_pool());
         assert!(
             ctx.is_bad_debt(user),
             "user with DEFICIT_CREATED is bad debt"
@@ -2213,7 +2249,7 @@ mod tests {
         let gho_vtoken = Address::from([0xAB; 20]);
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
-        let ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        let ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken), fixture_pool());
         assert!(ctx.is_gho_vtoken(gho_vtoken));
         assert!(!ctx.is_gho_vtoken(Address::from([0xCD; 20])));
     }
@@ -2335,7 +2371,7 @@ mod tests {
         let conn = db.lock();
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
-        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(vtoken));
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(vtoken), fixture_pool());
         let mut events: Vec<AaveChunkEvent> = Vec::new();
         let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
         dispatch_interest_accrual(
@@ -2880,7 +2916,7 @@ mod tests {
         // skips the mint (0 mints across both ops).
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
-        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, None, fixture_pool());
         let mut events: Vec<AaveChunkEvent> = Vec::new();
         dispatch_liquidation(
             &op0,
@@ -3151,7 +3187,7 @@ mod tests {
         // DEFICIT_CREATED log (topic1 = user).
         let deficit_log = make_log(
             666,
-            Address::from([0xAB; 20]),
+            fixture_pool(),
             vec![
                 AAVE_DEFICIT_CREATED_TOPIC,
                 B256::left_padding_from(user.as_slice()),
@@ -3160,7 +3196,7 @@ mod tests {
         );
         let logs: Vec<&Log> = vec![&deficit_log];
         let discounts = HashMap::new();
-        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken), fixture_pool());
         assert!(
             gho_ctx.is_bad_debt(user),
             "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
@@ -3350,7 +3386,7 @@ mod tests {
 
         let deficit_log = make_log(
             666,
-            Address::from([0xAB; 20]),
+            fixture_pool(),
             vec![
                 AAVE_DEFICIT_CREATED_TOPIC,
                 B256::left_padding_from(user.as_slice()),
@@ -3360,7 +3396,7 @@ mod tests {
         let logs: Vec<&Log> = vec![&deficit_log];
         let mut discounts = HashMap::new();
         discounts.insert(user, discount_percent);
-        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken), fixture_pool());
         assert!(
             gho_ctx.is_bad_debt(user),
             "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
@@ -3511,7 +3547,7 @@ mod tests {
 
         let deficit_log = make_log(
             666,
-            Address::from([0xAB; 20]),
+            fixture_pool(),
             vec![
                 AAVE_DEFICIT_CREATED_TOPIC,
                 B256::left_padding_from(user.as_slice()),
@@ -3521,7 +3557,7 @@ mod tests {
         let logs: Vec<&Log> = vec![&deficit_log];
         let mut discounts = HashMap::new();
         discounts.insert(user, discount_percent);
-        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken), fixture_pool());
         assert!(
             gho_ctx.is_bad_debt(user),
             "fixture: the DEFICIT_CREATED log must flag the user as bad-debt",
@@ -3670,7 +3706,7 @@ mod tests {
             &op,
             1,
             &conn,
-            &GhoDiscountContext::new(&[], &HashMap::new(), None),
+            &GhoDiscountContext::new(&[], &HashMap::new(), None, fixture_pool()),
             &mut liq_patterns,
             &mut events,
             &mut HashMap::new(),
@@ -3861,6 +3897,158 @@ mod tests {
                 .balance_delta,
             expected,
             "the scaled_delta route and the event datum compute the identical delta"
+        );
+    }
+    use degenbot_decoders::aave_event_decoder::{
+        AAVE_DEFICIT_CREATED_TOPIC, AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
+    };
+
+    /// A reserve's Pool contract for the discount-context fixtures.
+    fn pool() -> Address {
+        Address::repeat_byte(0x99)
+    }
+
+    /// The market's GHO variable-debt token for the discount-context fixtures.
+    fn gho_vtoken() -> Address {
+        Address::repeat_byte(0x6A)
+    }
+
+    /// A contract that is not this market's: another deployment's Pool or GHO
+    /// token emits the same signatures.
+    fn foreign() -> Address {
+        Address::repeat_byte(0x77)
+    }
+
+    fn user() -> Address {
+        Address::repeat_byte(0xA0)
+    }
+
+    fn topic_of(address: Address) -> B256 {
+        B256::left_padding_from(address.as_slice())
+    }
+
+    fn event_log(
+        log_index: u64,
+        emitter: Address,
+        signature: B256,
+        indexed: &[Address],
+        words: &[U256],
+    ) -> Log {
+        let mut topics = vec![signature];
+        topics.extend(indexed.iter().map(|address| topic_of(*address)));
+        let mut data = Vec::with_capacity(32 * words.len());
+        for word in words {
+            data.extend_from_slice(&word.to_be_bytes::<32>());
+        }
+        Log {
+            inner: AlloyLog::new_unchecked(emitter, topics, Bytes::from(data)),
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(log_index),
+            removed: false,
+        }
+    }
+
+    fn discount_update(log_index: u64, emitter: Address, old_percent: u64) -> Log {
+        event_log(
+            log_index,
+            emitter,
+            AAVE_DISCOUNT_PERCENT_UPDATED_TOPIC,
+            &[user()],
+            &[U256::from(old_percent), U256::from(0)],
+        )
+    }
+
+    fn deficit_created(log_index: u64, emitter: Address) -> Log {
+        event_log(
+            log_index,
+            emitter,
+            AAVE_DEFICIT_CREATED_TOPIC,
+            &[user(), Address::repeat_byte(0x01)],
+            &[U256::from(1)],
+        )
+    }
+
+    fn effective_discount(logs: &[Log], snapshot: u64, at_log_index: u64) -> U256 {
+        let discounts: HashMap<Address, U256> =
+            [(user(), U256::from(snapshot))].into_iter().collect();
+        let refs: Vec<&Log> = logs.iter().collect();
+        let context = GhoDiscountContext::new(&refs, &discounts, Some(gho_vtoken()), pool());
+        context.effective_discount(user(), at_log_index, 1)
+    }
+
+    fn is_bad_debt(logs: &[Log]) -> bool {
+        let discounts: HashMap<Address, U256> = HashMap::new();
+        let refs: Vec<&Log> = logs.iter().collect();
+        let context = GhoDiscountContext::new(&refs, &discounts, Some(gho_vtoken()), pool());
+        context.is_bad_debt(user())
+    }
+
+    /// Control: the GHO vToken's own `DiscountPercentUpdated` is the market's
+    /// discount report, so its old percent is the discount in effect after it.
+    #[test]
+    fn the_gho_vtoken_discount_update_is_read() {
+        let logs = [discount_update(10, gho_vtoken(), 200)];
+
+        assert_eq!(
+            effective_discount(&logs, 50, 20),
+            U256::from(200),
+            "the GHO vToken's report becomes the effective discount"
+        );
+    }
+
+    /// A receipt carries the whole transaction, so another deployment's GHO token
+    /// can emit the same signature. Its report is not this market's discount.
+    #[test]
+    fn a_foreign_discount_update_is_ignored() {
+        let logs = [
+            discount_update(10, gho_vtoken(), 200),
+            discount_update(15, foreign(), 999),
+        ];
+
+        assert_eq!(
+            effective_discount(&logs, 50, 20),
+            U256::from(200),
+            "only the market's own GHO vToken reports its discount"
+        );
+    }
+
+    /// A foreign report is not a fallback either: with no market report, the
+    /// pre-transaction snapshot stands.
+    #[test]
+    fn a_foreign_discount_update_never_becomes_the_default() {
+        let logs = [discount_update(10, foreign(), 999)];
+
+        assert_eq!(
+            effective_discount(&logs, 50, 20),
+            U256::from(50),
+            "the snapshot is the only default"
+        );
+    }
+
+    /// Control: the Pool's own `DeficitCreated` is the bad-debt signal.
+    #[test]
+    fn the_pool_deficit_created_marks_bad_debt() {
+        let logs = [deficit_created(10, pool())];
+
+        assert!(
+            is_bad_debt(&logs),
+            "the Pool's report marks the user bad debt"
+        );
+    }
+
+    /// A foreign contract's `DeficitCreated` names the same user but is another
+    /// deployment's write-off, so it never marks this market's user bad debt.
+    #[test]
+    fn a_foreign_deficit_created_does_not_mark_bad_debt() {
+        let logs = [deficit_created(10, foreign())];
+
+        assert!(
+            !is_bad_debt(&logs),
+            "only this market's Pool reports its own deficit"
         );
     }
 }

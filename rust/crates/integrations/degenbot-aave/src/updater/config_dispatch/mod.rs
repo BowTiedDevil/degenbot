@@ -257,6 +257,17 @@ async fn dispatch_single_config_event(
     Ok(ev)
 }
 
+/// Whether `id` names a proxy component this market tracks: the Pool or the
+/// Pool Configurator. Any other `ProxyCreated` id names a component outside the
+/// market's tracked roles, so its deployment is deliberately out of scope rather
+/// than refused (the `035ce3da2` incentives-controller case). The receipt's
+/// ownership census is the caller that needs this distinction.
+#[must_use]
+pub(super) fn tracks_proxy_id(id: &alloy::primitives::B256) -> bool {
+    id.as_slice() == revision::POOL_PROXY_ID
+        || id.as_slice() == revision::POOL_CONFIGURATOR_PROXY_ID
+}
+
 /// Resolve the upgrade-transition config events (`Upgraded`,
 /// `PoolUpdated`, `PoolConfiguratorUpdated`, `PoolDataProviderUpdated`,
 /// `AddressSet`, `ProxyCreated`). Extracted from

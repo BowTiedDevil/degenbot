@@ -8,11 +8,6 @@ pub(super) fn is_minted_to_treasury_log(log: &Log) -> bool {
     log.topics().first() == Some(&aave_event_decoder::AAVE_MINTED_TO_TREASURY_TOPIC)
 }
 
-/// `true` if the log is a plain ERC20 `Transfer` event.
-pub(super) fn is_erc20_transfer_log(log: &Log) -> bool {
-    log.topics().first() == Some(&aave_event_decoder::ERC20_TRANSFER_TOPIC)
-}
-
 /// Read the `logIndex` of a `Log` as a `u64` (`0` if absent — every RPC-fetched
 /// receipt has one).
 pub(crate) fn log_idx_value(log: &Log) -> u64 {
@@ -121,7 +116,7 @@ pub(super) fn are_compatible_transfer_types(
 
 /// Which semantic event a [`EventDisposition::Companion`] report mirrors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CompanionSide {
+pub enum CompanionSide {
     Mint,
     Burn,
 }
@@ -278,51 +273,6 @@ impl EventOwnership {
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.dispositions.len()
-    }
-}
-
-/// One liquidation's own slice of a transaction: the logs emitted after the
-/// previous `LiquidationCall` and before this one.
-///
-/// Aave emits a `liquidationCall`'s legs (the seized-collateral `Burn` or
-/// interest-exceeds `Mint`, the movement and protocol-fee `BalanceTransfer`
-/// reports, the debt `Burn`) before the `LiquidationCall` event that closes the
-/// sub-call, and never interleaves two sub-calls. A transaction that liquidates
-/// the same user twice against the same collateral asset therefore carries two
-/// disjoint legs, and only the window says which is which.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct LiquidationWindow {
-    start: u64,
-    end: u64,
-}
-
-impl LiquidationWindow {
-    /// The window closed by `anchor`, opened after the previous
-    /// `LiquidationCall` in the transaction (none for the first).
-    pub(super) fn ending_at(all_events: &[&Log], anchor: u64) -> Self {
-        let previous = all_events
-            .iter()
-            .filter(|log| {
-                log.topics().first() == Some(&aave_event_decoder::AAVE_LIQUIDATION_CALL_TOPIC)
-            })
-            .map(|log| log_idx_value(log))
-            .filter(|index| *index < anchor)
-            .max();
-        Self {
-            start: previous.map_or(0, |index| index + 1),
-            end: anchor,
-        }
-    }
-
-    /// `true` when the log was emitted inside this liquidation's sub-call.
-    pub(super) fn owns(self, log_index: u64) -> bool {
-        (self.start..self.end).contains(&log_index)
-    }
-
-    /// The half-open `(start, end)` bounds the window owns, for a refusal that
-    /// must name the range it looked in.
-    pub(super) fn bounds(self) -> (u64, u64) {
-        (self.start, self.end)
     }
 }
 
