@@ -176,6 +176,7 @@ fn evm_sim_success_path_dual_driver_parity() {
             provider: &provider,
             base_fee_next: SMOKE_BASE_FEE_NEXT,
             current_block: SMOKE_CURRENT_BLOCK,
+            based_on: None,
             block_timestamp: SMOKE_BLOCK_TIMESTAMP,
             block_priority_fees: None,
         },

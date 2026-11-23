@@ -1476,6 +1476,7 @@ fn simulation_block(provider: &AlloyProvider) -> SimulationBlock<'_> {
         provider,
         base_fee_next: BASE_FEE,
         current_block: BLOCK,
+        based_on: None,
         block_timestamp: 0,
         block_priority_fees: None,
     }

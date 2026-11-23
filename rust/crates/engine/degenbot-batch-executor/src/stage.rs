@@ -127,6 +127,24 @@ pub(crate) struct SimStage {
     pub(crate) warm_cache: Option<Arc<RwLock<degenbot_simulation::WarmCodeCacheInner>>>,
 }
 
+/// The block facts one batch's fan-out simulates against.
+///
+/// `current_block` is the consumer's execution clock — executor targeting and
+/// the batch records. `based_on` is the batch's SOLVE anchor (ADR-105 D10): the
+/// exact block the simulation's chain-state reads are pinned to, which can sit
+/// one block behind the clock. Carrying both as separate fields is what keeps a
+/// read from being served at the clock.
+fn simulation_block<'a>(provider: &'a AlloyProvider, work: &BatchWork) -> SimulationBlock<'a> {
+    SimulationBlock {
+        provider,
+        base_fee_next: work.base_fee_next,
+        current_block: work.execution_block,
+        based_on: work.based_on,
+        block_timestamp: work.block_timestamp,
+        block_priority_fees: work.block_priority_fees.clone(),
+    }
+}
+
 impl SimStage {
     /// Build the stage from the verdict-named policy and the sim-side handles:
     /// the ONE place the deployment registry and the encode posture are
@@ -350,13 +368,7 @@ impl SimStage {
             })
             .collect();
         let provider = Arc::clone(&cfg.provider);
-        let block = SimulationBlock {
-            provider: &provider,
-            base_fee_next: work.base_fee_next,
-            current_block: work.execution_block,
-            block_timestamp: work.block_timestamp,
-            block_priority_fees: work.block_priority_fees.clone(),
-        };
+        let block = simulation_block(&provider, work);
         let fanout = degenbot_arbitrage::dispatch_admitted_across_deployments(
             std::mem::take(&mut batch.candidates),
             degenbot_arbitrage::FanOutInputs {
@@ -732,6 +744,72 @@ mod tests {
             profitable: std::iter::once((candidate_id, profitable(candidate_id))).collect(),
             ..FanoutResults::default()
         }
+    }
+
+    /// The batch's solve anchor rides the fan-out's block facts beside the
+    /// consumer clock: an interleaved N/N+1 pair keeps two exact solve
+    /// identities while both are executed at one clock block, and a batch with
+    /// no exact anchor carries none (the fan-out's cold, unfenced read).
+    #[tokio::test]
+    async fn the_fan_out_block_facts_carry_the_batch_solve_anchor_beside_the_clock() {
+        let provider = AlloyProvider::new("http://127.0.0.1:1", 0)
+            .await
+            .expect("a lazy provider constructs offline");
+        let anchor = |number: u64, hash: [u8; 32]| {
+            degenbot_core::canonical_head::ChainAnchor::new(
+                1,
+                number,
+                alloy::primitives::B256::new(hash),
+                alloy::primitives::B256::new([0x90; 32]),
+            )
+            .expect("the fixture anchor names its whole identity")
+        };
+        let work = |based_on| BatchWork {
+            rows: Vec::new(),
+            payloads: Vec::new(),
+            based_on,
+            execution_block: BLOCK,
+            base_fee_next: 1,
+            block_timestamp: 7,
+            block_priority_fees: None,
+            lineage: degenbot_bot::telemetry::BlockLineage::unattached(BLOCK),
+        };
+
+        let n = work(Some(anchor(BLOCK - 1, [0xaa; 32])));
+        let n_plus_one = work(Some(anchor(BLOCK, [0xbb; 32])));
+        let first = simulation_block(&provider, &n);
+        let second = simulation_block(&provider, &n_plus_one);
+
+        assert_eq!(
+            first.current_block, BLOCK,
+            "the execution clock stays the consumer's block"
+        );
+        assert_eq!(second.current_block, BLOCK);
+        assert_eq!(
+            first.based_on.map(|anchor| anchor.number()),
+            Some(BLOCK - 1),
+            "N's sim reads at N"
+        );
+        assert_eq!(
+            second.based_on.map(|anchor| anchor.number()),
+            Some(BLOCK),
+            "N+1's sim reads at N+1"
+        );
+        assert_ne!(
+            first.based_on, second.based_on,
+            "the interleaved pair keeps two exact solve identities"
+        );
+        assert_eq!(
+            first.block_timestamp, n.block_timestamp,
+            "the environment's timestamp is the work's own fact"
+        );
+
+        let unanchored = simulation_block(&provider, &work(None));
+        assert_eq!(
+            unanchored.based_on, None,
+            "a batch with no exact anchor carries none into the fan-out"
+        );
+        assert_eq!(unanchored.current_block, BLOCK);
     }
 
     /// A profitable result whose path identity the batch cannot recover is

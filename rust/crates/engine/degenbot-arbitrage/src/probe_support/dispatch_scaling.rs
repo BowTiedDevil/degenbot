@@ -35,8 +35,8 @@
 //! # The legs
 //!
 //! - [`Leg::OffLegacy`] — the shipped posture: a session warm cache WITHOUT the
-//!   delta opt-in, so the fan-out pays the anchor identity read and its ONE
-//!   storage prefetch batch and requests no BAL anywhere.
+//!   delta opt-in, so the fan-out pays its ONE storage prefetch batch at the
+//!   work item's solve anchor and requests no BAL anywhere.
 //! - [`Leg::ReadyCurrent`] — the delta opt-in, with the session's canonical-head
 //!   pipeline having settled the previous head and the current one BEFORE the
 //!   fan-out: the fan-out reads the current generation and pays no prefetch.
@@ -520,6 +520,10 @@ fn fan_out(
         provider,
         base_fee_next: 1_000_000_000u128,
         current_block: BLOCK,
+        based_on: Some(
+            degenbot_core::canonical_head::ChainAnchor::new(1, BLOCK, CURRENT, PREVIOUS)
+                .expect("the lab chain names the head's whole identity"),
+        ),
         block_timestamp: 0,
         block_priority_fees: Some(BlockPriorityFees {
             block: BLOCK,
@@ -787,8 +791,14 @@ async fn settle(
 async fn lane_label(
     provider: &AlloyProvider,
     cache: &Arc<parking_lot::RwLock<WarmCodeCacheInner>>,
-    anchor: u64,
+    number: u64,
 ) -> String {
+    // The lab chain has exactly two heads, so a height names one block.
+    let anchor = if number == BLOCK {
+        ReadAnchor::identified(BLOCK, CURRENT)
+    } else {
+        ReadAnchor::identified(number, PREVIOUS)
+    };
     let selection = select_dispatch_storage(provider, cache, anchor).await;
     match selection.outcome.reason() {
         Some(reason) => format!("{}/{reason}", selection.outcome.mode()),
@@ -1973,9 +1983,9 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
             }
 
             let anchor = if shape == "previous-block" {
-                BLOCK - 1
+                ReadAnchor::identified(BLOCK - 1, PREVIOUS)
             } else {
-                BLOCK
+                ReadAnchor::identified(BLOCK, CURRENT)
             };
             let started = Instant::now();
             let selection = select_dispatch_storage(&provider, &cache, anchor).await;
@@ -2006,8 +2016,7 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
 
 /// The wait-shapes table: what each shape paid, wall for wall. `wait_us` is the
 /// production selection's own figure — the `wait_us` a fan-out's diagnostic row
-/// reports — and `selection wall` is the measured wall of the whole selection,
-/// its lineage read included.
+/// reports — and `selection wall` is the measured wall of the whole selection.
 #[must_use]
 pub fn render_wait_shapes(shapes: &[WaitShape]) -> String {
     let mut out = String::new();
@@ -2017,7 +2026,7 @@ pub fn render_wait_shapes(shapes: &[WaitShape]) -> String {
          The three shapes the terminal-state wait distinguishes, each against a\n\
          deliberately slow preparation. `wait_us` is the production selection's own\n\
          wait figure — the one a fan-out's diagnostic row reports — and `selection wall`\n\
-         is the measured wall of the whole selection, its lineage read included. A\n\
+         is the measured wall of the whole selection. A\n\
          selection at the exact in-flight head joins the head's EXISTING preparation,\n\
          so its `wait_us` is the same-block remaining wait it actually paid; the\n\
          previous anchor never waits; an explicit terminal failure falls back after one\n\
@@ -2058,8 +2067,9 @@ pub fn render_cost_attribution(bench: &Bench, shapes: &[WaitShape]) -> String {
            fan-out width and never on a fan-out's path: ONE BAL fetch per accepted head\n\
            (the dispatch leg fetches none — `bal` is 0 on every measured leg), prepare\n\
            (list fetch + full decode) and apply (the one synchronous transition).\n\
-         - **Per-fan-out** — what every dispatch pays at its anchor: ONE header/identity\n\
-           read (every leg), then the representation's own storage work — the legacy\n\
+         - **Per-fan-out** — what every dispatch pays at its anchor: NO identity read\n\
+           (the work item names its own solve anchor), then the representation's own\n\
+           storage work — the legacy\n\
            lane's ONE prefetch batch plus its members and ONE dynamic serial read the\n\
            derivation cannot cover; the covered ready lane's zero batch and zero\n\
            dynamic read; the unknown ready lane's ONE dynamic read. A wait is paid only\n\
@@ -2172,7 +2182,7 @@ fn render_wait_figures(shapes: &[WaitShape], out: &mut String) {
         "\nWait figures, from the terminal-wait shapes (measured, never asserted): the\n\
          same-block remaining wait is {inflight} us — the actual remaining wait a fan-out at\n\
          the exact in-flight head paid (`wait_us` of the same-block-in-flight shape; its\n\
-         selection wall {wall} us includes the lineage read) — against the previous anchor's\n\
+         selection wall {wall} us is the whole query) — against the previous anchor's\n\
          fast path ({previous} us) and the explicit terminal failure's one wait ({failure} us)\n\
          before its legacy fallback.\n\n",
         inflight = figure("same-block-in-flight", |shape| shape.wait_us),

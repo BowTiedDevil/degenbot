@@ -137,6 +137,7 @@ fn smoke_block(provider: &AlloyProvider) -> degenbot_arbitrage::SimulationBlock<
         provider,
         base_fee_next: SMOKE_BASE_FEE_NEXT,
         current_block: SMOKE_CURRENT_BLOCK,
+        based_on: None,
         block_timestamp: SMOKE_BLOCK_TIMESTAMP,
         block_priority_fees: None,
     }

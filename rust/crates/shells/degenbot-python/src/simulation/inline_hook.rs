@@ -587,6 +587,7 @@ impl InlineSimulator for InlineSimHook {
                                 provider: &provider,
                                 base_fee_next,
                                 current_block: req.sim_block,
+                                based_on: None,
                                 block_timestamp: req.block_timestamp,
                                 block_priority_fees: None,
                             },

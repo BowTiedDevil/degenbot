@@ -403,3 +403,74 @@ class TestSolvedButUnencodable:
         assert "encoder arm" in lines[0], (
             f"the line must name the unencodable class, got {lines[0]}"
         )
+
+
+#: The exact identity a scripted batch may name beside its `solve_block`.
+_SOLVE_HASH = "0x" + "b1" * 32
+_SOLVE_PARENT_HASH = "0x" + "a0" * 32
+
+
+def _anchored_batch(solve_block: int, **kwargs: Any) -> dict[str, Any]:
+    """One batch event naming its exact solve anchor as primitives."""
+    batch = _batch_event(solve_block, **kwargs)
+    batch.update({
+        "chain_id": 1,
+        "solve_block_hash": _SOLVE_HASH,
+        "solve_block_parent_hash": _SOLVE_PARENT_HASH,
+    })
+    return batch
+
+
+class TestScriptedSolveAnchorProjection:
+    """The scripted batch's solve anchor is a primitive projection.
+
+    The stream's Python shape carries the block stamp; a script that also knows
+    the block's identity names it with primitives, and the seam builds the
+    validated core anchor from them (ADR-105 D1/D10). An unprojected batch keeps
+    its pre-anchor behavior, and a partial projection is refused rather than
+    zero-filled.
+    """
+
+    async def test_a_complete_primitive_anchor_projection_is_accepted(
+        self, nxm2bf_v2_engine_and_path
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        executor = _executor(engine)
+        consumer = SessionConsumer.scripted(
+            executor,
+            [
+                _block_event(100),
+                _anchored_batch(100, payloads={path_id: inline_sim_payload(path_id)}),
+            ],
+        )
+
+        report = await consumer.run()
+        assert report["batches"] == 1, "the anchored batch is consumed like any other"
+        batch = await executor.next_outcome()
+        assert batch is not None
+        assert [rec.candidate_id.path_id for rec in batch.records] == [path_id]
+
+    async def test_a_bytes_anchor_projection_is_accepted(self, nxm2bf_v2_engine_and_path) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        executor = _executor(engine)
+        batch = _anchored_batch(100, payloads={path_id: inline_sim_payload(path_id)})
+        batch["solve_block_hash"] = bytes.fromhex("b1" * 32)
+        batch["solve_block_parent_hash"] = bytes.fromhex("a0" * 32)
+        consumer = SessionConsumer.scripted(executor, [_block_event(100), batch])
+
+        report = await consumer.run()
+        assert report["batches"] == 1
+
+    @pytest.mark.parametrize(
+        "missing",
+        ["chain_id", "solve_block_hash", "solve_block_parent_hash"],
+    )
+    def test_a_partial_anchor_projection_is_refused(
+        self, nxm2bf_v2_engine_and_path, missing: str
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+        batch = _anchored_batch(100)
+        del batch[missing]
+
+        with pytest.raises(ValueError, match="solve anchor"):
+            SessionConsumer.scripted(_executor(engine), [_block_event(100), batch])

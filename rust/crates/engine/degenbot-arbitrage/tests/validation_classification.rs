@@ -307,6 +307,7 @@ fn run_fanout_with_subscriber(
         provider: &provider,
         base_fee_next: BASE_FEE,
         current_block: BLOCK,
+        based_on: None,
         block_timestamp: 0,
         block_priority_fees: None,
     };

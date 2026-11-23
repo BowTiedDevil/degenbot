@@ -2337,6 +2337,7 @@ mod tests {
                 provider,
                 base_fee_next: 1_000_000_000u128,
                 current_block: 100,
+                based_on: None,
                 block_timestamp: 0,
                 block_priority_fees: Some(BlockPriorityFees {
                     block: 100,

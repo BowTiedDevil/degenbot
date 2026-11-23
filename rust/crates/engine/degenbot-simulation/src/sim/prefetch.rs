@@ -99,7 +99,7 @@ use degenbot_rpc::provider::AlloyProvider;
 
 use super::hot_slots::HotSlotStore;
 use super::state_override::SettlementWarmup;
-use super::storage_memo::{ReadAnchor, StorageMemo};
+use super::storage_memo::StorageMemo;
 
 /// The most slots one prefetch batch may carry. A batch is ONE round trip, so
 /// this is a transport-payload bound, not a latency bound: the widest fan-out
@@ -706,40 +706,6 @@ pub fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
     Some(tokio::task::block_in_place(|| handle.block_on(future)))
 }
 
-/// Resolve the read anchor at `block`: its canonical hash, in ONE
-/// [`AlloyProvider::get_block_hash_at`] round trip.
-///
-/// [`ReadAnchor`] keys the per-anchor memo, and the number alone cannot fence
-/// it: a same-height reorg replaces the block without moving the height, so the
-/// hash is what mints a fresh memo instead of serving the abandoned block's
-/// words. One identity read per fan-out against the cold storage chain the memo
-/// saves on that anchor's later fan-outs.
-///
-/// Degrades like the lane around it: no block at `block`,
-/// or an RPC failure answers the number-only anchor ([`ReadAnchor::at`]) — the
-/// fence weakens to the pre-hash scope, the fan-out never fails.
-#[must_use]
-pub async fn resolve_read_anchor(provider: &AlloyProvider, block: u64) -> ReadAnchor {
-    match provider.get_block_hash_at(block).await {
-        Ok(Some(hash)) => ReadAnchor::identified(block, hash),
-        Ok(None) => {
-            diag!(
-                domain = sim,
-                anchor = block,
-                "read anchor unfenced: the node has no block at this anchor"
-            );
-            ReadAnchor::at(block)
-        }
-        Err(error) => {
-            diag!(
-                domain = sim,
-                anchor = block,
-                "read anchor unfenced: {error}"
-            );
-            ReadAnchor::at(block)
-        }
-    }
-}
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -1143,25 +1109,6 @@ mod tests {
             .map(|(address, slot)| db.get_storage(address, slot).expect("read"))
             .collect();
         (values, forwards.load(Ordering::Relaxed))
-    }
-
-    /// A fan-out with no ambient runtime cannot drive its anchor identity, so
-    /// the drive seam answers nothing and the caller's key degrades to the
-    /// number-only fence: the run continues on the pre-hash scope rather than
-    /// failing on a read it cannot make.
-    #[test]
-    fn an_anchor_without_an_ambient_runtime_is_unfenced() {
-        let stub = ChainStub::new();
-        let provider = stub.provider();
-
-        assert!(
-            block_on_ambient(resolve_read_anchor(&provider, 7)).is_none(),
-            "nothing can be driven without a runtime"
-        );
-        assert!(
-            stub.packets().is_empty(),
-            "no identity read is even attempted"
-        );
     }
 
     /// The lane's contract in one test: one batch round trip seeds the anchor's

@@ -137,6 +137,12 @@ pub struct ReadAnchor {
 
 impl ReadAnchor {
     /// A number-only anchor: the memo retires when the height moves.
+    ///
+    /// The INGRESS form. A simulation read takes its identity from the work
+    /// item's solve anchor ([Self::identified], via `From<ChainAnchor>`) and
+    /// never from this constructor; this one exists for an observation that
+    /// could not resolve a block hash, and it fences nothing a same-height reorg
+    /// could replace.
     #[must_use]
     pub const fn at(number: u64) -> Self {
         Self { number, hash: None }

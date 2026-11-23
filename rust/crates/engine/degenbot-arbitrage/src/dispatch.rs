@@ -36,10 +36,10 @@
 //! BEFORE any candidate runs.
 //!
 //! - OFF — the default, and the shipped posture — is the legacy lane
-//!   unchanged: the number+hash read anchor, the ONE prefetch batch, and the
-//!   same telemetry, with no BAL request anywhere.
-//! - ON resolves the anchor's exact lineage `(number, hash)` in one header read
-//!   and ASKS the session's one `BalHeadDriver` what that exact anchor answers.
+//!   unchanged: the work item's exact solve anchor, the ONE prefetch batch, and
+//!   the same telemetry, with no BAL request anywhere.
+//! - ON ASKS the session's one `BalHeadDriver` what the work item's exact solve
+//!   anchor answers (no header read: the identity arrived with the work).
 //!   The selection queries; it never delivers, prepares, applies, or claims a
 //!   preparation. That work belongs to the session's canonical-head pipeline,
 //!   which runs on the pump's accepted-header edge — off every fan-out's path.
@@ -114,6 +114,7 @@ use crate::{
     SimResult, SimulateContext, SimulatePath,
 };
 
+use degenbot_simulation::sim::ReadAnchor;
 /// The capital posture a deployment carries — read here to skip composing a path
 /// list for a `Production` fan-out, whose plan writes nothing.
 use degenbot_simulation::ProbeCapital;
@@ -686,6 +687,26 @@ struct LeafInputs<'a> {
         Option<Arc<RwLock<degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner>>>,
 }
 
+/// The exact chain-state read identity one fan-out simulates against.
+///
+/// The work item's [`crate::SimulationBlock::based_on`] IS the solve anchor
+/// (ADR-105 D10): the block identity the solver's state view named, carried as a
+/// value. Every simulation read — the RPC batch tag, the per-anchor memo, the
+/// prefetch batch, the BAL generation — pins to it, never to the consumer's
+/// execution clock, which can be one block ahead and would read pre-update state
+/// the solver never saw.
+///
+/// An item that resolved no exact anchor (a cold-start/registration sweep, a
+/// probe) reads at `solved_block` — the promoted block its rows name — through
+/// the number-only ingress anchor. That anchor is the pre-fence form: it matches
+/// only another number-only observation at the same height, never a hashed solve
+/// anchor, so it can neither serve nor be served by an exact branch's memo.
+fn solve_read_anchor(block: &crate::SimulationBlock<'_>, solved_block: u64) -> ReadAnchor {
+    block
+        .based_on
+        .map_or_else(|| ReadAnchor::at(solved_block), ReadAnchor::from)
+}
+
 /// Simulate `candidates` with `inputs`, then categorize, feed back, record, and
 /// sort them into `outcome`.
 #[expect(
@@ -827,21 +848,24 @@ fn simulate_leaf(
                 // + the override params projected from this strategy's
                 // `SimulateContext` (ADR-019 D7, decision R — the engine stays
                 // generic over strategy config; it never names `SimulateContext`).
-                // The shared-EVM sim anchor: the pump pre-promotes
-                // `active_block = max(drain_block, pool_state_head)` and threads it
-                // as each candidate's `solve_block`, so every candidate in the
-                // batch carries the SAME promoted block (the pool-state head). This
-                // `max` over `solve_block` is therefore a defensive no-op that
-                // returns that shared promoted block — kept as an invariant
-                // assertion, not a re-anchor. Simulating at the lagging Python
-                // clock fetched PRE-update state (state-ahead-of-clock desync) and
-                // mismatched the solver's head math; one
-                // head-anchored shared EVM reproduces every candidate exactly.
-                let sim_block = candidates
+                // The shared-EVM sim anchor is the work item's SOLVE anchor
+                // (ADR-105 D10): the exact block identity the solver's state view
+                // named, carried as a value. Every chain-state read (the RPC tag,
+                // the memo, the prefetch batch, the BAL generation) is pinned to
+                // it — never to the consumer's execution clock, which can be one
+                // block ahead and would fetch pre-update state the solver never
+                // saw. An item that resolved no exact anchor (a cold-start or
+                // registration sweep, a probe) reads at the promoted block its
+                // rows name; the pump threads that one block as every candidate's
+                // `solve_block`, so the `max` is the invariant assertion, not a
+                // re-anchor.
+                let solved_block = candidates
                     .iter()
                     .map(|c| c.solve_block)
                     .max()
                     .unwrap_or(ctx.block.current_block);
+                let read_anchor = solve_read_anchor(&ctx.block, solved_block);
+                let sim_block = read_anchor.number;
                 // The engine fan-out (ADR-089): `Evm2BlockSimHandle` + the
                 // seam drive every candidate.
                 // The warm-code cache arc; degrade to a fresh per-call cache if
@@ -854,7 +878,7 @@ fn simulate_leaf(
                     degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner::shared_default,
                 );
                     // Cross-fan-out: the storage memo is scoped to the
-                    // read anchor (`sim_block` — the block the fallback tags every
+                    // read anchor (`read_anchor` — the block the fallback tags every
                     // RPC read with), not to this fan-out. Every dispatch at this
                     // anchor shares one memo, so a block's fan-outs pay the cold
                     // chain once; the session-owned slot retires it (and every
@@ -862,30 +886,30 @@ fn simulate_leaf(
                     // rewind. The degrade path above mints a per-call cache, hence
                     // a fresh slot with the per-call scope.
                     //
-                    // The anchor is a BLOCK, not a height: its hash rides the key
-                    // (`ReadAnchor`), so a same-height reorg — the anchor number
-                    // unchanged, the canonical block replaced — mints a fresh memo
-                    // instead of serving the abandoned block's words. The identity
-                    // is resolved HERE, one `eth_getBlockByNumber` per fan-out
-                    // against the cold storage chain the memo saves on this
-                    // anchor's later fan-outs, and BEFORE any guard is taken
-                    // (never across provider I/O). A failed read degrades to the
-                    // number-only anchor, never a wrong one.
+                    // The anchor is the work item's SOLVE identity (ADR-105 D10),
+                    // never the consumer's execution clock: it is a BLOCK, not a
+                    // height, and its hash rides the key (`ReadAnchor`), so a
+                    // same-height reorg — the anchor number unchanged, the block
+                    // replaced — mints a fresh memo instead of serving the
+                    // abandoned branch's words. The identity is NOT re-read here:
+                    // the solver's state view already resolved it, and re-reading
+                    // the canonical block would let the fan-out read at an
+                    // identity that contradicts the rows it is simulating. An item
+                    // with no exact anchor falls back to the number-only anchor at
+                    // its promoted block — a cold, unfenced memo, never a wrong
+                    // one.
                     // The storage representation this fan-out reads through:
                     // the legacy per-anchor memo (the default) or a ready BAL
-                    // delta generation. The selection resolves the anchor either
-                    // way — one identity read with the opt-in OFF, one whole
-                    // (number, hash) header read with it ON — and, ON, only
-                    // ASKS what this exact anchor answers: the session's
-                    // canonical-head pipeline delivered, prepared and applied
-                    // every accepted head off this path, so a fan-out generates
-                    // no BAL work. A fan-out at the exact head whose
-                    // preparation is in flight JOINS that preparation and
+                    // delta generation. ON only ASKS what this exact anchor
+                    // answers: the session's canonical-head pipeline delivered,
+                    // prepared and applied every accepted head off this path, so a
+                    // fan-out generates no BAL work. A fan-out at the exact head
+                    // whose preparation is in flight JOINS that preparation and
                     // waits for its terminal result; every real terminal cold
-                    // outcome — an abandoned or unclaimed preparation
-                    // included — reports Legacy with its reason, so the
-                    // fallback is the existing memo + prefetch lane and no
-                    // parent value is served on it.
+                    // outcome — an abandoned or unclaimed preparation included —
+                    // reports Legacy with its reason, so the fallback is the
+                    // existing memo + prefetch lane and no parent value is served
+                    // on it.
                     // The selection is driven to completion here — the ONE
                     // future this fan-out awaits before the storage view is
                     // constructed. Only the exact current head with a live
@@ -896,23 +920,23 @@ fn simulate_leaf(
                         degenbot_simulation::sim::evm2::warm_code_cache::select_dispatch_storage(
                             ctx.block.provider,
                             &evm2_warm_cache,
-                            sim_block,
+                            read_anchor,
                         ),
                     )
                     .unwrap_or_else(|| {
                         // No ambient runtime could drive the selection: the
-                        // same degrade the anchor read has — the number-only
-                        // anchor, and the honest label.
+                        // caller's anchor and the honest label.
                         degenbot_simulation::sim::evm2::warm_code_cache::DispatchStorageSelection::degraded(
                             evm2_warm_cache.read().delta_dispatch().is_none(),
-                            sim_block,
+                            read_anchor,
                         )
                     });
                     diag!(
                         domain = sim,
                         current_block,
                         anchor = sim_block,
-                        anchor_fenced = selection.anchor.hash.is_some(),
+                        anchor_hash = ?read_anchor.hash,
+                        parent_hash = ?ctx.block.based_on.map(|anchor| anchor.parent_hash()),
                         storage = selection.outcome.mode(),
                         reason = ?selection.outcome.reason(),
                         wait_us = u64::try_from(selection.wait.as_micros()).unwrap_or(u64::MAX),
@@ -999,7 +1023,7 @@ fn simulate_leaf(
                             domain = sim,
                             current_block,
                             anchor = sim_block,
-                            anchor_fenced = read_anchor.hash.is_some(),
+                            anchor_hash = ?read_anchor.hash,
                             derived = prefetch.derived,
                             learned = prefetch.learned,
                             hook = prefetch.hook,
@@ -1354,11 +1378,22 @@ mod tests {
         provider: &'a AlloyProvider,
         deployment: &'a SimulationDeployment,
     ) -> SimulateContext<'a> {
+        ctx_anchored(provider, deployment, None)
+    }
+
+    /// The same block facts, naming the exact solve anchor the batch was solved
+    /// on — the shape the session's stage hands the fan-out.
+    pub(super) fn ctx_anchored<'a>(
+        provider: &'a AlloyProvider,
+        deployment: &'a SimulationDeployment,
+        based_on: Option<degenbot_core::canonical_head::ChainAnchor>,
+    ) -> SimulateContext<'a> {
         SimulateContext {
             block: SimulationBlock {
                 provider,
                 base_fee_next: 1_000_000_000u128, // 1 gwei
                 current_block: 100,
+                based_on,
                 block_timestamp: 0,
                 block_priority_fees: Some(BlockPriorityFees {
                     block: 100,
@@ -1763,7 +1798,7 @@ mod tests {
 
         /// The lane's wire signature: dispatched storage-batch packets and the
         /// total members they carried, plus the chain's current canonical block
-        /// hash and the identity reads that observed it.
+        /// hash and any identity read a caller still makes.
         #[derive(Clone, Default)]
         pub struct Recorder {
             pub storage_batches: Arc<AtomicU64>,
@@ -1781,8 +1816,8 @@ mod tests {
                 self.storage_members.load(Ordering::Relaxed)
             }
 
-            /// The anchor-identity reads the fan-outs dispatched
-            /// (`eth_getBlockByNumber`).
+            /// Any anchor-identity read dispatched (`eth_getBlockByNumber`);
+            /// a fan-out names its own solve anchor and dispatches none.
             pub fn block_reads(&self) -> u64 {
                 self.block_reads.load(Ordering::Relaxed)
             }
@@ -2054,9 +2089,14 @@ mod tests {
     /// number unchanged, the block hash replaced — retires the anchor's memo,
     /// so the fan-out reading the replacement pays its own cold chain instead of
     /// being served the abandoned block's words. Between two fan-outs at one
-    /// block (number AND hash) the memo still shares exactly as before.
+    /// block (number AND hash) the memo still shares exactly as before. The
+    /// identity is the WORK ITEM's solve anchor: the fan-out re-reads nothing.
     #[expect(clippy::expect_used)] // test-only: runtime build + thread join
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the reorg fence's three fan-outs and their wire evidence read best as one pass"
+    )]
     fn a_same_height_reorg_retires_the_anchors_storage_memo() {
         use alloy::primitives::B256;
         use prefetch_transport::Recorder;
@@ -2065,6 +2105,17 @@ mod tests {
         // The block every fan-out pins: one height, one canonical hash.
         recorder.reorg_at_same_height(B256::new([0xa1; 32]));
         let provider = prefetch_transport::provider(&recorder);
+        let branch = |hash: [u8; 32]| {
+            degenbot_core::canonical_head::ChainAnchor::new(
+                1,
+                100,
+                B256::new(hash),
+                B256::new([0xa0; 32]),
+            )
+            .expect("the fixture anchor names its whole identity")
+        };
+        let abandoned = branch([0xa1; 32]);
+        let replacement = branch([0xb2; 32]);
         let suppression = Arc::new(Mutex::new(PathSuppression::new()));
         let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
         let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
@@ -2089,7 +2140,7 @@ mod tests {
 
                     let _first = dispatch_test_leaf(
                         cands.clone(),
-                        &ctx(&provider, &deployment),
+                        &ctx_anchored(&provider, &deployment, Some(abandoned)),
                         &suppression,
                         100,
                         0,
@@ -2105,7 +2156,7 @@ mod tests {
                     // fan-out dispatches no batch at all.
                     let _second = dispatch_test_leaf(
                         cands.clone(),
-                        &ctx(&provider, &deployment),
+                        &ctx_anchored(&provider, &deployment, Some(abandoned)),
                         &suppression,
                         100,
                         0,
@@ -2121,7 +2172,7 @@ mod tests {
                     recorder.reorg_at_same_height(B256::new([0xb2; 32]));
                     let reorg_run = dispatch_test_leaf(
                         cands,
-                        &ctx(&provider, &deployment),
+                        &ctx_anchored(&provider, &deployment, Some(replacement)),
                         &suppression,
                         100,
                         0,
@@ -2160,7 +2211,10 @@ mod tests {
             "the replacement's batch carries the same derived + learned set the abandoned \
              block's did"
         );
-        assert_eq!(reads, 3, "one anchor-identity read per fan-out, never more");
+        assert_eq!(
+            reads, 0,
+            "no fan-out resolves an identity: the work item's solve anchor names the block"
+        );
 
         // Verdict identity across the fence: the fence changes which memo serves
         // the reads, never the fan-out's outcome.
@@ -2500,13 +2554,11 @@ mod delta_dispatch_tests {
     /// Drive `selection` while the gate holds its head's fetch, asserting on
     /// every drive step that it has NOT resolved: the release-gated state
     /// transition that proves a live claim's selection waits for its terminal
-    /// result. Returns once the selection's lineage read has landed and the
-    /// selection is parked on that wait.
-    async fn assert_waits<F>(rec: &DeltaRecorder, selection: &mut std::pin::Pin<Box<F>>)
+    /// result.
+    async fn assert_waits<F>(selection: &mut std::pin::Pin<Box<F>>)
     where
         F: Future<Output = DispatchStorageSelection>,
     {
-        let head_reads_before = rec.head_reads();
         for _ in 0..64 {
             tokio::task::yield_now().await;
             assert!(
@@ -2516,21 +2568,7 @@ mod delta_dispatch_tests {
                     .is_pending(),
                 "a selection at a live claim waits for its terminal result, never resolves early"
             );
-            if rec.head_reads() > head_reads_before {
-                // The lineage read landed: one more drive parks the selection
-                // on the live claim's completion, and it must still wait.
-                tokio::task::yield_now().await;
-                assert!(
-                    selection
-                        .as_mut()
-                        .poll(&mut Context::from_waker(Waker::noop()))
-                        .is_pending(),
-                    "the selection waits on the live claim, never resolves before its terminal"
-                );
-                return;
-            }
         }
-        panic!("the selection's one lineage read never landed");
     }
 
     /// Drive `selection` to its answer while the gate still holds its head's
@@ -2569,9 +2607,70 @@ mod delta_dispatch_tests {
         handle.join().expect("fan-out thread")
     }
 
+    /// The read identity is the work item's solve anchor, never the consumer's
+    /// execution clock: two interleaved batches executed at one clock block but
+    /// solved at different blocks read at their OWN blocks, and a same-height
+    /// pair reads at two different identities (the reorg fence).
+    #[test]
+    fn the_sim_read_anchor_is_the_solve_anchor_never_the_execution_clock() {
+        let recorder = DeltaRecorder::default();
+        let provider = provider(&recorder);
+        let deployment = super::tests::deployment(Bytes::from_static(&[0xfe]));
+        let parent = B256::new([0xa0; 32]);
+        let root = B256::new([0xa1; 32]);
+        let child = B256::new([0xb1; 32]);
+        let replacement = B256::new([0xb2; 32]);
+        let anchor = |number, hash, parent_hash| {
+            degenbot_core::canonical_head::ChainAnchor::new(1, number, hash, parent_hash)
+                .expect("the fixture anchor names its whole identity")
+        };
+
+        let n = anchor(BLOCK - 1, root, parent);
+        let n_plus_one = anchor(BLOCK, child, root);
+        let reorged = anchor(BLOCK, replacement, root);
+
+        let work_n = super::tests::ctx_anchored(&provider, &deployment, Some(n));
+        let work_n_plus_one = super::tests::ctx_anchored(&provider, &deployment, Some(n_plus_one));
+        let work_reorged = super::tests::ctx_anchored(&provider, &deployment, Some(reorged));
+
+        assert_eq!(
+            work_n.block.current_block, work_n_plus_one.block.current_block,
+            "both batches are executed at the same consumer clock"
+        );
+        assert_eq!(
+            super::solve_read_anchor(&work_n.block, BLOCK),
+            ReadAnchor::from(n),
+            "the N batch reads at N, not at the clock"
+        );
+        assert_eq!(
+            super::solve_read_anchor(&work_n_plus_one.block, BLOCK),
+            ReadAnchor::from(n_plus_one),
+            "the N+1 batch reads at N+1, not at the clock"
+        );
+        assert_eq!(
+            super::solve_read_anchor(&work_reorged.block, BLOCK),
+            ReadAnchor::from(reorged),
+            "the replacement block is a different identity at the same height"
+        );
+        assert_ne!(
+            super::solve_read_anchor(&work_n_plus_one.block, BLOCK),
+            super::solve_read_anchor(&work_reorged.block, BLOCK),
+            "a same-height reorg can never share the abandoned branch's memo"
+        );
+
+        // An item with no exact anchor reads at its promoted block, unfenced.
+        let unanchored = super::tests::ctx(&provider, &deployment);
+        assert_eq!(
+            super::solve_read_anchor(&unanchored.block, BLOCK),
+            ReadAnchor::at(BLOCK),
+            "an anchor-less item degrades to a cold number-only anchor"
+        );
+    }
+
     /// The selection is a QUERY, never a producer: a head that never arrived on
-    /// the canonical-head edge takes the legacy lane, and the fan-out's whole
-    /// traffic is the ONE header read — no BAL request exists anywhere.
+    /// the canonical-head edge takes the legacy lane, and the query spends NO
+    /// read at all — the anchor is the caller's solve identity, not something
+    /// to resolve.
     #[test]
     fn dispatch_never_prepares_a_bal_and_a_never_delivered_head_takes_the_legacy_lane() {
         let recorder = DeltaRecorder::default();
@@ -2581,7 +2680,12 @@ mod delta_dispatch_tests {
         let rec = recorder.clone();
         let (selection, wire) = std::thread::spawn(move || {
             rt.block_on(async {
-                let selection = select_dispatch_storage(&provider, &delta_cache(), BLOCK).await;
+                let selection = select_dispatch_storage(
+                    &provider,
+                    &delta_cache(),
+                    ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+                )
+                .await;
                 (selection, rec.wire())
             })
         })
@@ -2591,17 +2695,9 @@ mod delta_dispatch_tests {
         assert!(!selection.is_delta(), "an undelivered head serves nothing");
         assert_eq!(selection.outcome.reason(), Some("undelivered"));
         assert_eq!(recorder.bal_requests(), 0, "the selection prepares no BAL");
-        assert_eq!(
-            wire.iter()
-                .filter(|request| request.starts_with("eth_getBlockByNumber"))
-                .count(),
-            1,
-            "the exact-lineage read still happens: {wire:#?}"
-        );
-        assert_eq!(
-            wire.len(),
-            1,
-            "the header read is the fan-out's only traffic: {wire:#?}"
+        assert!(
+            wire.is_empty(),
+            "the query resolves no identity, so it dispatches nothing: {wire:#?}"
         );
     }
 
@@ -2641,8 +2737,12 @@ mod delta_dispatch_tests {
                 wait_bal_in_flight(&rec).await;
                 let fetches_before = rec.bal_requests();
 
-                let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
-                assert_waits(&rec, &mut selection).await;
+                let mut selection = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
+                assert_waits(&mut selection).await;
 
                 rec.release_bal();
                 let selection = tokio::time::timeout(TEST_TIMEOUT, selection)
@@ -2719,9 +2819,12 @@ mod delta_dispatch_tests {
                 let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
                 let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
                 let bot_state = Arc::new(StateLock::new(BotState::new()));
+                let based_on =
+                    degenbot_core::canonical_head::ChainAnchor::new(1, BLOCK, child, root)
+                        .expect("the scripted head names its whole identity");
                 let outcome = dispatch_test_leaf(
                     cands,
-                    &super::tests::ctx(&provider, &deployment),
+                    &super::tests::ctx_anchored(&provider, &deployment, Some(based_on)),
                     &suppression,
                     BLOCK,
                     0,
@@ -2789,7 +2892,11 @@ mod delta_dispatch_tests {
 
                 // The gate stays closed: resolving at all inside these drive
                 // steps is the proof that the previous anchor never waits.
-                let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK - 1));
+                let mut selection = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK - 1, root),
+                ));
                 let selection = drive_to_resolution(&mut selection).await;
                 rec.release_bal();
                 prepared.await.expect("the head's preparation settles");
@@ -2839,8 +2946,12 @@ mod delta_dispatch_tests {
                     let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                     wait_bal_in_flight(&rec).await;
 
-                    let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
-                    assert_waits(&rec, &mut selection).await;
+                    let mut selection = Box::pin(select_dispatch_storage(
+                        &provider,
+                        &cache,
+                        ReadAnchor::identified(BLOCK, child),
+                    ));
+                    assert_waits(&mut selection).await;
 
                     rec.release_bal();
                     let selection = tokio::time::timeout(TEST_TIMEOUT, selection)
@@ -2937,8 +3048,12 @@ mod delta_dispatch_tests {
                 });
                 wait_bal_in_flight(&rec).await;
 
-                let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
-                assert_waits(&rec, &mut selection).await;
+                let mut selection = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
+                assert_waits(&mut selection).await;
 
                 // The claim is dropped without settling anything.
                 cancel_tx.send(()).expect("the test holds the cancel side");
@@ -2956,7 +3071,11 @@ mod delta_dispatch_tests {
 
                 // A selection arriving after the abandonment resolves
                 // immediately: nothing is left to wait for.
-                let mut late = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
+                let mut late = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
                 let late = drive_to_resolution(&mut late).await;
                 assert_eq!(late.outcome.reason(), Some("abandoned"));
                 assert_eq!(
@@ -2994,7 +3113,11 @@ mod delta_dispatch_tests {
                 let fetches_before = rec.bal_requests();
                 let _ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
 
-                let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
+                let mut selection = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
                 let selection = drive_to_resolution(&mut selection).await;
                 (
                     selection.outcome.reason().map(str::to_owned),
@@ -3119,10 +3242,18 @@ mod delta_dispatch_tests {
 
                 let fetches_before = rec.bal_requests();
                 let batches_before = rec.storage_batches();
-                let mut first = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
-                let mut second = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
-                assert_waits(&rec, &mut first).await;
-                assert_waits(&rec, &mut second).await;
+                let mut first = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
+                let mut second = Box::pin(select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                ));
+                assert_waits(&mut first).await;
+                assert_waits(&mut second).await;
 
                 rec.release_bal();
                 let (first, second) =
@@ -3169,7 +3300,12 @@ mod delta_dispatch_tests {
         let (selection,) = std::thread::spawn(move || {
             rt.block_on(async {
                 let cache = empty_cache();
-                let selection = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                let selection = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+                )
+                .await;
                 (selection,)
             })
         })
@@ -3181,16 +3317,20 @@ mod delta_dispatch_tests {
         assert_eq!(
             selection.anchor,
             ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
-            "the legacy anchor is still the number+hash identity read"
+            "the legacy anchor is the caller's exact solve identity"
         );
         assert_eq!(recorder_thread.bal_requests(), 0, "no BAL while disabled");
-        assert_eq!(recorder_thread.head_reads(), 1, "one identity read");
+        assert_eq!(
+            recorder_thread.head_reads(),
+            0,
+            "the query resolves no identity of its own"
+        );
     }
 
     /// A head the pipeline delivered and settled READY answers the fan-out, and
-    /// the selection's WHOLE traffic is the ONE header read: no BAL request and
-    /// no prefetch batch rides the fan-out (a ready lane skips the batch, and the
-    /// query never generates storage work).
+    /// the selection spends NO traffic at all: no BAL request, no prefetch batch,
+    /// and no identity read — the caller already named the exact anchor, so the
+    /// query has nothing to resolve.
     #[test]
     fn dispatch_selects_delta_when_the_head_settled_ready_and_pays_no_prefetch_batch() {
         let recorder = DeltaRecorder::default();
@@ -3220,7 +3360,12 @@ mod delta_dispatch_tests {
                     .await;
                     let bal_before = rec.bal_requests();
                     rec.clear_wire();
-                    let selection = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                    let selection = select_dispatch_storage(
+                        &provider,
+                        &cache,
+                        ReadAnchor::identified(BLOCK, child),
+                    )
+                    .await;
                     let wire = rec.wire();
                     let settled = driver.snapshot(ReadAnchor::identified(BLOCK, child));
                     let hub_is_the_generation = match &selection.storage {
@@ -3257,14 +3402,9 @@ mod delta_dispatch_tests {
             bal_after, bal_before,
             "the selection requests no BAL: the pipeline fetched it"
         );
-        assert_eq!(
-            wire.len(),
-            1,
-            "one header read, no prefetch batch and no BAL: {wire:#?}"
-        );
         assert!(
-            wire[0].starts_with("eth_getBlockByNumber"),
-            "the ONE request is the exact-lineage read: {wire:#?}"
+            wire.is_empty(),
+            "no identity read, no prefetch batch and no BAL: {wire:#?}"
         );
     }
 
@@ -3305,8 +3445,18 @@ mod delta_dispatch_tests {
                     anchored(ReadAnchor::identified(BLOCK, child), parent),
                 )
                 .await;
-                let lagging = select_dispatch_storage(&provider, &cache, BLOCK - 1).await;
-                let two_below = select_dispatch_storage(&provider, &cache, BLOCK - 2).await;
+                let lagging = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK - 1, parent),
+                )
+                .await;
+                let two_below = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK - 2, grandparent),
+                )
+                .await;
                 (lagging, two_below)
             })
         })
@@ -3353,7 +3503,12 @@ mod delta_dispatch_tests {
                     matches!(outcome, HeadOutcome::Settled(_)),
                     "the head settled, cold"
                 );
-                select_dispatch_storage(&provider, &cache, BLOCK).await
+                select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+                )
+                .await
             })
         })
         .join()
@@ -3397,8 +3552,18 @@ mod delta_dispatch_tests {
                     .await;
                     let stats_before = driver.stats();
                     let bal_before = rec.bal_requests();
-                    let settled = select_dispatch_storage(&provider, &cache, BLOCK).await;
-                    let repeated = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                    let settled = select_dispatch_storage(
+                        &provider,
+                        &cache,
+                        ReadAnchor::identified(BLOCK, child),
+                    )
+                    .await;
+                    let repeated = select_dispatch_storage(
+                        &provider,
+                        &cache,
+                        ReadAnchor::identified(BLOCK, child),
+                    )
+                    .await;
                     let stats_after = driver.stats();
                     (
                         settled,
@@ -3467,7 +3632,12 @@ mod delta_dispatch_tests {
                     anchored(ReadAnchor::identified(BLOCK, child), root),
                 )
                 .await;
-                let selection = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                let selection = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                )
+                .await;
                 (selection, rec.bal_requests(), rec.wire())
             })
         })
@@ -3534,7 +3704,12 @@ mod delta_dispatch_tests {
                     anchored(ReadAnchor::identified(BLOCK, child), root),
                 )
                 .await;
-                let settled = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                let settled = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, child),
+                )
+                .await;
                 let held = match &settled.storage {
                     FanOutStorage::Delta(hub) => Arc::clone(hub),
                     FanOutStorage::Legacy => panic!("the consecutive head settled ready"),
@@ -3547,7 +3722,12 @@ mod delta_dispatch_tests {
                     anchored(ReadAnchor::identified(BLOCK, replacement), root),
                 )
                 .await;
-                let after = select_dispatch_storage(&provider, &cache, BLOCK).await;
+                let after = select_dispatch_storage(
+                    &provider,
+                    &cache,
+                    ReadAnchor::identified(BLOCK, replacement),
+                )
+                .await;
                 (held, after, rec.bal_requests())
             })
         })
@@ -3602,7 +3782,8 @@ mod delta_dispatch_tests {
                     let divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
                     let fot = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
                     let bot_state = Arc::new(StateLock::new(BotState::new()));
-                    let ctx = super::tests::ctx(&provider, &deployment);
+                    let ctx =
+                        super::tests::ctx_anchored(&provider, &deployment, Some(child_anchor()));
                     let run =
                         |cands: Vec<crate::DispatchCandidate>,
                          cache: Option<Arc<RwLock<WarmCodeCacheInner>>>| {
@@ -3738,6 +3919,12 @@ mod delta_dispatch_tests {
 
     /// The candidates both lanes simulate: two different sizes, so a lane's cap
     /// or pre-filter cannot pass for parity by accident.
+    /// The scripted chain's head anchor: `BLOCK` built on `ROOT`.
+    fn child_anchor() -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_core::canonical_head::ChainAnchor::new(1, BLOCK, CHILD, ROOT)
+            .expect("the scripted head names its whole identity")
+    }
+
     fn parity_candidates() -> Vec<DispatchCandidate> {
         vec![
             super::tests::candidate(70, 1_000_000_000_000_000_000u128, 1_000),
@@ -3774,7 +3961,7 @@ mod delta_dispatch_tests {
         let filters = fresh_filters();
         dispatch_test_leaf(
             parity_candidates(),
-            &super::tests::ctx(provider, deployment),
+            &super::tests::ctx_anchored(provider, deployment, Some(child_anchor())),
             &filters.suppression,
             BLOCK,
             0,
@@ -4025,11 +4212,11 @@ mod delta_dispatch_tests {
         let (legacy, session) = (&evidence.legacy, &evidence.session);
 
         assert!(
-            evidence
+            !evidence
                 .session_wire
                 .iter()
                 .any(|request| request.starts_with("eth_getBlockByNumber")),
-            "the legacy lane pays its one identity read: {:#?}",
+            "the OFF lane resolves no identity: the work item's solve anchor names it: {:#?}",
             evidence.session_wire
         );
         assert!(

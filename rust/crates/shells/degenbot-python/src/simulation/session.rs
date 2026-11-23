@@ -719,12 +719,10 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
         })),
         "batch" => {
             let solve_block = field_u64(dict, "solve_block")?;
+            let solve_anchor = solve_anchor_from_py(dict, solve_block)?;
             let mut batch = ResultBatch {
                 solve_block,
-                // A Python-built batch states no exact anchor: the projection
-                // carries the block stamp only (the solve anchor projection is
-                // the dependent simulation/executor/Python task's).
-                solve_anchor: None,
+                solve_anchor,
                 timestamp: optional_u64(dict, "timestamp")?.unwrap_or_default(),
                 base_fee_per_gas: optional_u64(dict, "base_fee_per_gas")?,
                 gas_used: optional_u64(dict, "gas_used")?.unwrap_or_default(),
@@ -736,8 +734,14 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
                 payloads: hashbrown::HashMap::default(),
                 // A scripted (Python-built) batch carries no exporter context:
                 // its downstream spans are deliberate roots, never a guess at
-                // an ancestor this seam cannot see.
-                lineage: degenbot_bot::telemetry::BlockLineage::unattached(solve_block),
+                // an ancestor this seam cannot see. The solve anchor, when the
+                // script names one, rides along so the spans and the simulation
+                // reads name the same exact block.
+                lineage: match solve_anchor {
+                    Some(anchor) => degenbot_bot::telemetry::BlockLineage::unattached(solve_block)
+                        .with_anchor(anchor),
+                    None => degenbot_bot::telemetry::BlockLineage::unattached(solve_block),
+                },
             };
             if let Some(payloads) = dict.get_item("payloads")? {
                 if !payloads.is_none() {
@@ -833,6 +837,68 @@ fn field_u64(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<u64> {
     dict.get_item(key)?
         .ok_or_else(|| PyValueError::new_err(format!("scripted session event missing '{key}'")))?
         .extract()
+}
+
+/// The scripted batch's optional exact solve anchor, projected from
+/// primitives.
+///
+/// The stream's Python shape carries the block stamp; a script that also knows
+/// the block's identity names it as `chain_id`, `solve_block_hash`, and
+/// `solve_block_parent_hash` (a hex string or 32 bytes). All three or none: a
+/// partial triple is an ingress error, never a zero-filled anchor (ADR-105 D1),
+/// and the anchor's height IS the batch's `solve_block`, so the two can never
+/// name different blocks.
+fn solve_anchor_from_py(
+    dict: &Bound<'_, PyDict>,
+    solve_block: u64,
+) -> PyResult<Option<degenbot_core::canonical_head::ChainAnchor>> {
+    let chain_id = optional_u64(dict, "chain_id")?;
+    let hash = optional_hash(dict, "solve_block_hash")?;
+    let parent_hash = optional_hash(dict, "solve_block_parent_hash")?;
+    match (chain_id, hash, parent_hash) {
+        (None, None, None) => Ok(None),
+        (Some(chain_id), Some(hash), Some(parent_hash)) => {
+            degenbot_core::canonical_head::ChainAnchor::new(
+                chain_id,
+                solve_block,
+                hash,
+                parent_hash,
+            )
+            .map(Some)
+            .map_err(|error| {
+                PyValueError::new_err(format!(
+                    "scripted session event's solve anchor for block {solve_block}: {error}"
+                ))
+            })
+        }
+        _ => Err(PyValueError::new_err(
+            "a scripted session batch names its solve anchor with chain_id, solve_block_hash, \
+             and solve_block_parent_hash together",
+        )),
+    }
+}
+
+/// An optional hash event field: a hex string or exactly 32 bytes.
+fn optional_hash(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<alloy::primitives::B256>> {
+    let Some(value) = dict.get_item(key)?.filter(|value| !value.is_none()) else {
+        return Ok(None);
+    };
+    if let Ok(text) = value.extract::<String>() {
+        return text
+            .parse::<alloy::primitives::B256>()
+            .map(Some)
+            .map_err(|error| {
+                PyValueError::new_err(format!("scripted session event '{key}': {error}"))
+            });
+    }
+    let bytes: Vec<u8> = value.extract()?;
+    alloy::primitives::B256::try_from(bytes.as_slice())
+        .map(Some)
+        .map_err(|_| {
+            PyValueError::new_err(format!(
+                "scripted session event '{key}' must be a 32-byte hash"
+            ))
+        })
 }
 
 /// An optional `u64` event field (`None`/absent = `None`).

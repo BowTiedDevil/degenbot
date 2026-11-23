@@ -80,8 +80,20 @@ pub struct SimulationBlock<'a> {
     /// The base fee of the next block (wei/gas) — the fee floor the simulated
     /// transactions run under and the pricing half of the built-in fee sizing.
     pub base_fee_next: u128,
-    /// The block the batch is simulated at.
+    /// The consumer's execution clock: executor targeting, the batch records,
+    /// and the fan-out-trace row's block — never the chain-state read position.
     pub current_block: u64,
+    /// The exact solve anchor these facts belong to (ADR-105 D10): the block
+    /// identity the solver's state view named when it produced the rows, which
+    /// is the block every simulation READ is pinned to.
+    ///
+    /// Distinct from [`Self::current_block`] on purpose. The consumer's clock
+    /// may be one block ahead of the solve, and the two must never be read for
+    /// each other: a state read tagged with the clock fetches pre-update state
+    /// the solver never saw. `None` only for a work item whose solve resolved
+    /// no exact identity (a cold-start/registration sweep, a probe), which then
+    /// reads at the promoted block its rows name — an unfenced, cold memo.
+    pub based_on: Option<degenbot_core::canonical_head::ChainAnchor>,
     /// The timestamp of `current_block` (the EVM's `block.timestamp`, so a V2
     /// pair's `_update()` computes a correct `timeElapsed`).
     pub block_timestamp: u64,
@@ -97,6 +109,7 @@ impl std::fmt::Debug for SimulationBlock<'_> {
             .field("rpc_url", &self.provider.rpc_url())
             .field("base_fee_next", &self.base_fee_next)
             .field("current_block", &self.current_block)
+            .field("based_on", &self.based_on)
             .field("block_timestamp", &self.block_timestamp)
             .field("block_priority_fees", &self.block_priority_fees)
             .finish()

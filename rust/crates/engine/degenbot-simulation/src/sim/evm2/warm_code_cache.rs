@@ -34,10 +34,8 @@ use crate::sim::evm2::bal_heads::BalHeadPipeline;
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, DeltaHub, Retention, DEFAULT_MAX_DEPTH};
 use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
-use crate::sim::prefetch::resolve_read_anchor;
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
-use degenbot_core::diag;
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
@@ -57,10 +55,11 @@ pub const WARM_CODE_CACHE_TTL_BLOCKS: u64 = 10_000;
 /// requested at all — the session installs no driver, so there is no code path
 /// that could issue one.
 ///
-/// ON resolves the fan-out anchor's exact lineage `(number, hash)` in ONE header
-/// read and asks the session's one [`BalHeadDriver`] what that exact anchor
-/// answers. The driver holds the session's delta cache, so every fan-out at that
-/// exact head shares ONE generation and repeats no BAL work. The head's
+/// ON asks the session's one [`BalHeadDriver`] what the fan-out's exact solve
+/// anchor answers — the identity arrived with the work item, so the selection
+/// reads no header. The driver holds the session's delta cache, so every
+/// fan-out at that exact head shares ONE generation and repeats no BAL work.
+/// The head's
 /// relevance set is the session's
 /// ([`path_relevance_addresses`](crate::sim::prefetch::path_relevance_addresses)
 /// over the registered paths and the settlement identities) and its retention is
@@ -233,13 +232,13 @@ impl DispatchStorageSelection {
     }
 
     /// The selection a fan-out degrades to when no ambient runtime can drive
-    /// [`select_dispatch_storage`]: the number-only anchor and the honest
-    /// label — `Disabled` when the opt-in is off, `LineageUnreadable` when it
-    /// is on (no lineage was read, so no head could answer).
+    /// [`select_dispatch_storage`]: the caller's exact read anchor and the
+    /// honest label — `Disabled` when the opt-in is off, `LineageUnreadable`
+    /// when it is on (no head driver could be reached, so no head could answer).
     #[must_use]
-    pub fn degraded(delta_dispatch_off: bool, block: u64) -> Self {
+    pub fn degraded(delta_dispatch_off: bool, anchor: ReadAnchor) -> Self {
         Self {
-            anchor: ReadAnchor::at(block),
+            anchor,
             storage: FanOutStorage::Legacy,
             outcome: if delta_dispatch_off {
                 StorageSelectionOutcome::Disabled
@@ -251,14 +250,19 @@ impl DispatchStorageSelection {
     }
 }
 
-/// Resolve one fan-out's storage selection at `block` — a QUERY over the
-/// session's delivered heads, never a producer.
+/// Resolve one fan-out's storage selection at `anchor` — a QUERY over the
+/// session's delivered heads, never a producer and never an identity reader.
+///
+/// The anchor is the work item's SOLVE identity (ADR-105 D10): the exact block
+/// the solver's state view named, carried as a value rather than re-resolved
+/// here. A same-height reorg therefore cannot hand the replacement block the
+/// abandoned branch's memo or delta generation — the two branches are two
+/// different anchors, and this seam never asks the node which one is canonical.
 ///
 /// OFF (no [`DeltaDispatchConfig`] on the session) is the legacy path exactly:
-/// the number+hash read anchor and no BAL request anywhere.
+/// the caller's anchor and no BAL request anywhere (and no read of any kind).
 ///
-/// ON resolves the block's exact lineage `(number, hash)` in ONE header read and
-/// asks the session's one [`BalHeadDriver`] — the handle
+/// ON asks the session's one [`BalHeadDriver`] — the handle
 /// [`WarmCodeCacheInner::delta_heads`] mints once per session — what that exact
 /// anchor answers right now:
 ///
@@ -283,49 +287,27 @@ impl DispatchStorageSelection {
 /// Nothing here delivers, prepares, applies, or advances a head. That work
 /// belongs to the session's canonical-head pipeline ([`BalHeadPipeline`]),
 /// which runs it on the block pump's accepted-header edge, off every fan-out's
-/// critical path; a fan-out that waits joins that work, it never starts it. A fan-out
-/// therefore pays at most the ONE header read — the same read the OFF lane pays —
-/// and a head the head edge never delivered answers `undelivered` rather than
-/// being manufactured here.
+/// critical path; a fan-out that waits joins that work, it never starts it. The
+/// query itself reads nothing, and a head the head edge never delivered answers
+/// `undelivered` rather than being manufactured here.
 #[must_use]
 pub async fn select_dispatch_storage(
     provider: &AlloyProvider,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
-    block: u64,
+    anchor: ReadAnchor,
 ) -> DispatchStorageSelection {
     // The session's one head driver, or `None` while the opt-in is off — which
     // is the whole OFF branch: no driver means no generation could exist.
     let heads = { warm_cache.read().delta_heads(provider) };
     let Some(heads) = heads else {
-        // Off: the legacy anchor read, and nothing that could request a BAL.
+        // Off: the caller's anchor, and nothing that could request a BAL.
         return DispatchStorageSelection {
-            anchor: resolve_read_anchor(provider, block).await,
+            anchor,
             storage: FanOutStorage::Legacy,
             outcome: StorageSelectionOutcome::Disabled,
             wait: Duration::ZERO,
         };
     };
-
-    // The opt-in's ONE header read: the whole lineage, never one read per hash.
-    let lineage = match provider.get_block_lineage_at(block).await {
-        Ok(Some(lineage)) => lineage,
-        other => {
-            if let Err(error) = other {
-                diag!(
-                    domain = sim,
-                    anchor = block,
-                    "delta head lineage unreadable: {error}"
-                );
-            }
-            return DispatchStorageSelection {
-                anchor: ReadAnchor::at(block),
-                storage: FanOutStorage::Legacy,
-                outcome: StorageSelectionOutcome::LineageUnreadable,
-                wait: Duration::ZERO,
-            };
-        }
-    };
-    let anchor = ReadAnchor::from(lineage);
 
     // The whole selection: what this exact anchor answers. Every settled,
     // previous-window and terminal-cold view resolves on the wait's first,
@@ -978,6 +960,70 @@ mod tests {
             pipeline.driver().and_then(|driver| driver.delivered()),
             None,
             "arming delivers no head and fetches nothing"
+        );
+    }
+
+    /// The production selection is a QUERY at the exact solve anchor: the anchor
+    /// arrives from the work item's solve identity, so the seam resolves no
+    /// identity of its own. The transport here panics on ANY request, so a
+    /// selection that read a header or a hash would fail instead of answering.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_production_selection_names_the_solve_anchor_without_reading_one() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let provider = forbidden_provider();
+        let anchor = ReadAnchor::identified(100, B256::new([0xaa; 32]));
+
+        let selection = select_dispatch_storage(&provider, &inner, anchor).await;
+        assert_eq!(
+            selection.anchor, anchor,
+            "the selection names the caller's exact anchor, never a re-read one"
+        );
+        assert_eq!(selection.outcome, StorageSelectionOutcome::Disabled);
+        assert!(!selection.is_delta(), "the opt-out lane is the legacy memo");
+        assert_eq!(
+            inner.read().storage_memo_for(anchor).stats(),
+            (0, 0),
+            "selecting a lane reads nothing"
+        );
+    }
+
+    /// A same-height reorg replaces the block without moving the height. The
+    /// two branches' solve anchors are different identities, so the second
+    /// fan-out's memo must be minted fresh — the abandoned block's words can
+    /// never be served at the replacement.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_same_height_reorg_cannot_reuse_the_production_selections_memo() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let provider = forbidden_provider();
+        let abandoned = ReadAnchor::identified(100, B256::new([0xaa; 32]));
+        let replacement = ReadAnchor::identified(100, B256::new([0xbb; 32]));
+        let slot = U256::from(7u64);
+
+        let pre = select_dispatch_storage(&provider, &inner, abandoned).await;
+        let pre_memo = inner.read().storage_memo_for(pre.anchor);
+        pre_memo.put(Address::ZERO, slot, U256::from(42u64));
+
+        let post = select_dispatch_storage(&provider, &inner, replacement).await;
+        let post_memo = inner.read().storage_memo_for(post.anchor);
+        assert!(
+            !Arc::ptr_eq(&pre_memo, &post_memo),
+            "the replacement block is a different anchor at the same height"
+        );
+        assert_eq!(
+            post_memo.get(Address::ZERO, slot),
+            None,
+            "the abandoned block's word is unreachable from the replacement block"
+        );
+        assert_eq!(
+            pre_memo.get(Address::ZERO, slot),
+            Some(U256::from(42u64)),
+            "the abandoned memo keeps only its own branch's values"
+        );
+
+        let same = inner.read().storage_memo_for(post.anchor);
+        assert!(
+            Arc::ptr_eq(&same, &post_memo),
+            "the same exact anchor keeps sharing its memo"
         );
     }
 
