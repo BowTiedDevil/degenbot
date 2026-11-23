@@ -177,12 +177,12 @@ pub(super) fn guard_terminal_transaction_identity(
     Ok(())
 }
 
-/// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
-/// body). Per candidate transaction: re-resolve the GHO vToken revision, run the
-/// discount pre-pass + the configuration dispatch + `process_transaction`, and
-/// persist THAT tx's canonical deltas — configuration and operation effects
-/// through the one writer — BEFORE the next tx's reads (per-tx apply: the
-/// config-revision and ops-balance surfaces read fresh per-tx state).
+/// The per-chunk RESOLUTION phase: no write transaction, and no chunk write.
+/// Per candidate transaction: re-resolve the GHO vToken revision, run the
+/// pre-block discount reads + the configuration dispatch +
+/// `process_transaction`, reduce each into canonical deltas, and advance the
+/// projection view in canonical event order (so tx N+1 reads what tx N wrote).
+/// The deltas travel to [`persist_chunk`], the chunk's only writer.
 ///
 /// Each candidate arrives with its bound `TransactionEvidence` (ADR-105 D2): the
 /// caller acquired the transaction's complete receipt and, where a parse leg is
@@ -191,12 +191,9 @@ pub(super) fn guard_terminal_transaction_identity(
 /// always read — complete-receipt ownership is the ownership stage's vocabulary,
 /// not a change to the operation outputs — while the transaction identity it
 /// parses under now comes from that evidence.
-/// The `last_update_block` stamp is the LAST write (end-of-chunk). Held
-/// inside the caller's `Transaction`; on `Err` the caller drops the tx
-/// (rollback).
 ///
 /// Extracted from [`run_aave_update`] to keep the loop fn readable + to
-/// localize the `await_holding_lock` allow (the `&Transaction` borrow across
+/// localize the `await_holding_lock` allow (the connection guard across
 /// `.await` — safe under `block_on`'s single-thread poll).
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) async fn resolve_chunk(

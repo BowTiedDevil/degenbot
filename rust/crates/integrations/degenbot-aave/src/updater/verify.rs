@@ -14,10 +14,9 @@
 //! The verification pass reads each position's on-chain state and reconciles it
 //! against the committed rows; the `DEAD_ADDRESS` / `ZERO_ADDRESS` skip is part
 //! of the contract (an address with no state has nothing to reconcile). The
-//! reads are batched, not per-position: the scaled-token checks + the GHO
-//! discount check flatten their calls into one `multicall3_batch` per position
-//! kind, and the stkAAVE check batches its `balanceOf` calls through
-//! `degenbot_rpc::erc20::balance_of_batch`.
+//! reads are batched, not per-position: every check flattens its calls into one
+//! `BlockReads::batch` per position kind, hash-pinned to the exact anchor the
+//! gate states (ADR-105 D3).
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};

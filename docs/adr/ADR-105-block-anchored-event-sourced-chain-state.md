@@ -188,7 +188,8 @@ decision, so the ADR can be read against code instead of intent.
   with its receipt in any identity fact.
 - **D3** — `BlockReads` is the hash-pinned read view (`{blockHash,
   requireCanonical}`, `ExactReadError` separating an unsupported capability from a
-  failed read). The chunk's SQLite write transaction covers no acquisition:
+  failed read) and the one production read view. The chunk's SQLite write
+  transaction covers no acquisition:
   `resolve_chunk` runs under the connection handle and `persist_chunk` opens the
   transaction, so verification truth is acquired before the lock and only
   compared inside it.
@@ -257,10 +258,6 @@ retirement (ADR-087), not a compatibility shim.
   ledger keeps a *role* unless an operation claims them (asserted on the real
   218-log receipt). A receipt *is* one transaction, qualified by its `TxRef`, so
   the key has no broader scope to widen to.
-- **`RevisionMemo`'s numeric key** — the read it memoizes is a height-pinned
-  `eth_call`; widening the key to a branch needs the hash-pinned read below. The
-  memo lives one chunk, and a chunk is acquired under one terminal anchor, so a
-  number key cannot observe two branches.
 - **`aave_v3_markets.last_update_block`** — retired as the *completeness* claim
   (D8), which no code reads it as any more. It survives as the numeric *range*
   claim, and a chunk that journals nothing has no position to journal, so the
@@ -268,9 +265,16 @@ retirement (ADR-087), not a compatibility shim.
 
 ### Deviations this ADR does not yet claim
 
-- **Driver prose.** `run.rs`'s driver docs still describe the pre-cutover
-  transaction shape (RPC under the chunk transaction). The code implements D3/D4;
-  the prose is stale.
+None open at 2026-11-23. The two that stood at the ONNSDV cutover — height-pinned
+configuration/verification reads (closed by the exact-read adoption below) and
+driver prose that still described RPC under the chunk transaction (closed by
+stating the resolve/persist split) — are retired.
+
+One read-shape distinction is deliberate, not a parallel path: `BlockReads` is
+the exact view every Aave read uses, while the generic `multicall3_batch` remains
+for the lanes that address a block by tag (the pool liquidity verifier, the
+connector index, the ERC-20 read family's own transports). They are two pin
+policies over one batch contract, not two implementations of one read.
 
 ### Exact reads landed (2026-11-23)
 

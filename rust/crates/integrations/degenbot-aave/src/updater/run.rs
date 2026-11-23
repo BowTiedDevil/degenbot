@@ -397,33 +397,36 @@ pub struct RunSpec {
 /// travel as one [`RunSpec`].
 ///
 /// Per market per chunk:
-/// 1. `fetch_aave_chunk_logs` returns the raw `Vec<Log>` sorted by
-///    `(block_number, log_index)`.
+/// 1. Resolve the range's terminal `ChainAnchor` and acquire the chunk's
+///    logs; every candidate transaction carries its complete receipt (and, for
+///    a call-named leg, its trace) as `TransactionEvidence`.
 /// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
-/// 3. Open ONE `Transaction`. For each tx group, re-resolve the GHO vToken
-///    revision (per-tx, sees prior txs' `Upgraded` writes), build the
-///    discount snapshot (RPC + the DB-cache path), dispatch the configuration
-///    events (RPC for revisions and metadata plus the substrate lookups),
-///    persist each configuration delta to `conn` as it is dispatched (so the
-///    ops parser sees it), run `process_transaction` (the operations parser,
-///    sync, substrate lookups, then its canonical deltas persisted), and
-///    advance the projection view in canonical event order across both
-///    families (so tx N+1 reads what tx N wrote).
-/// 4. Stamp `last_update_block = chunk_end` as the LAST write (end-of-chunk).
-///    The caller's `Transaction` commits (or drops, rolling back). The stamp
-///    is the LAST write.
+/// 3. Resolve OUTSIDE the chunk's write transaction: for each tx group,
+///    re-resolve the GHO vToken revision, read the pre-block discount facts,
+///    dispatch the configuration events, and run `process_transaction`,
+///    reducing each event into a canonical delta and advancing the projection
+///    view in canonical event order (so tx N+1 reads what tx N wrote). Every
+///    read is hash-pinned to the position it observes.
+/// 4. Acquire the verification gates' chain truth, also outside the
+///    transaction.
+/// 5. Open ONE `Transaction` and persist: the chunk's deltas through the one
+///    writer, the reserve-data flush, the zero-position cleanup, the projection
+///    unit (journal + exact cursor + checkpoint), then the
+///    `last_update_block = chunk_end` stamp as the LAST write. The pre-commit
+///    comparisons run next, still inside the transaction and with no RPC, and
+///    the commit follows.
 ///
 /// # The chunk-atomicity invariant (LOAD-BEARING)
 ///
-/// ONE `Transaction` per chunk. Failure mid-chunk → drop the tx → the whole
-/// chunk reverts → `last_update_block` unchanged → a restart re-processes the
-/// chunk clean (no skipped blocks, no partial commit). The Transaction is
-/// held open across the per-tx RPC (the discount pre-pass + the config dispatch
-/// do substrate lookups + writes via `get_or_create_*` that MUST be atomic with
-/// the chunk; the apply is the last step). The ONE `get_runtime().block_on`
-/// polls the whole driver future on the calling thread, so the `!Send`
-/// `&Transaction` borrow (and the `db.lock()` guard) across `.await` are
-/// safe (single-thread poll — no other runtime worker can touch this future).
+/// ONE `Transaction` per chunk, opened after resolution. Failure anywhere in
+/// the chunk body → drop the tx → the chunk's writes revert →
+/// `last_update_block` unchanged → a restart re-processes the chunk clean (no
+/// skipped blocks, no partial commit). Resolution holds the connection guard,
+/// never a write transaction (ADR-105 D3/D4), and the identity rows its
+/// `get_or_create_*` calls commit are inert until the chunk's deltas reference
+/// them. The ONE `get_runtime().block_on` polls the whole driver future on the
+/// calling thread, so the `db.lock()` guard across `.await` is safe
+/// (single-thread poll — no other runtime worker can touch this future).
 ///
 /// # Shared runtime
 ///
@@ -645,12 +648,13 @@ impl Drop for ChunkTx<'_> {
 ///
 /// # The `await_holding_lock` expectation
 ///
-/// The chunk body holds `db.lock()` (the writeable `Connection`) across the
-/// per-tx RPC `.await`s (config dispatch + verify). Sound because the
-/// driver future is never polled concurrently: the entry fn's `block_on`
-/// polls it on the calling thread only, so no other thread can contend the
-/// guard mid-await. This is the pre-existing shape (the guard already spanned
-/// each `rt.block_on` call) — the single future just makes it explicit.
+/// The chunk body holds `db.lock()` (the writable `Connection`) across the
+/// resolution phase's RPC `.await`s (config dispatch, pre-block discount
+/// facts, the verification gates' chain truth). No SQLite transaction is open
+/// across those awaits: `transaction()` is opened after resolution and covers
+/// only SQL. Sound because the driver future is never polled concurrently —
+/// the entry fn's `block_on` polls it on the calling thread only, so no other
+/// thread can contend the guard mid-await.
 ///
 /// # Errors
 ///
