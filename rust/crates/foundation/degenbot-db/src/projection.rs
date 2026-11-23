@@ -45,9 +45,28 @@ use crate::connection::DegenbotDb;
 use crate::rows::decode::decode_u256;
 use crate::schema::ScaledTokenPosition;
 
+/// The session reorg window: how many blocks of journal and checkpoint history a
+/// projection retains (ADR-105 D9).
+///
+/// The depth is the policy the pool journals already hold (`JOURNAL_DEPTH` = 8):
+/// one session window, not a second one. Retention is pruned on every committed
+/// projection unit, so the retained evidence is bounded by this window and a
+/// reorg deeper than it is an explicit recovery-required refusal rather than a
+/// silent unbounded trace.
+pub const REORG_WINDOW_BLOCKS: u64 = 8;
+
 /// The projection unit writer (the write substrate, ADR-070).
 #[cfg(any(test, feature = "writer"))]
 mod persist;
+/// The retained-window reads and the market-scoped restore a reorg recovery
+/// commits (ADR-105 D9).
+mod recovery;
+
+pub use recovery::{
+    read_retained_checkpoints_on_conn, read_retained_journal_on_conn, CheckpointBoundary,
+};
+#[cfg(any(test, feature = "writer"))]
+pub use recovery::{restore_projection_on_conn, ProjectionRecovery, RecoveryRestore};
 
 /// One exact chain position: the block identity, the transaction identity, and
 /// the block-wide log index.
@@ -206,6 +225,20 @@ pub struct CheckpointPositionState {
 pub struct CheckpointAsset {
     /// `aave_v3_assets.id`.
     pub asset_id: i64,
+    /// The asset's e-mode category, when it belongs to one.
+    pub e_mode_category_id: Option<i64>,
+    /// The price source the reserve resolves at.
+    pub price_source: Option<String>,
+    /// The block the reserve's indices were last written at.
+    pub last_update_block: Option<u64>,
+    /// The reserve's settled liquidity index.
+    pub liquidity_index: U256,
+    /// The reserve's settled liquidity rate.
+    pub liquidity_rate: U256,
+    /// The reserve's settled borrow index.
+    pub borrow_index: U256,
+    /// The reserve's settled borrow rate.
+    pub borrow_rate: U256,
     /// The underlying token's address mapping.
     pub underlying_address: String,
     /// The aToken's address mapping.
@@ -267,6 +300,76 @@ pub struct CheckpointUser {
     pub gho_discount: i64,
     /// The observed stkAAVE balance; `None` until the column is observed.
     pub stk_aave_balance: Option<U256>,
+    /// The user's settled e-mode category.
+    pub e_mode: i64,
+    /// The collateral asset the user is isolated to, when isolated.
+    pub isolation_mode_collateral_asset_id: Option<i64>,
+    /// The user's isolation-mode debt ceiling.
+    pub isolation_mode_debt: U256,
+}
+
+/// One reserve's settled collateral configuration at a checkpoint's cursor: the
+/// fields the reserve's configuration bitmap decodes into, which are the values a
+/// recovery must restore rather than leave the abandoned branch's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the four booleans are the bitmap's own flags, restored as one configuration row"
+)]
+pub struct CheckpointAssetConfig {
+    /// `aave_v3_assets.id`.
+    pub asset_id: i64,
+    /// The reserve's loan-to-value ratio.
+    pub ltv: i64,
+    /// The reserve's liquidation threshold.
+    pub liquidation_threshold: i64,
+    /// The reserve's liquidation bonus.
+    pub liquidation_bonus: i64,
+    /// The reserve's own e-mode category.
+    pub e_mode_category_id: Option<i64>,
+    /// Whether borrowing is enabled.
+    pub borrowing_enabled: bool,
+    /// Whether stable borrowing is enabled.
+    pub stable_borrowing_enabled: bool,
+    /// Whether flash loans are enabled.
+    pub flash_loan_enabled: bool,
+    /// Whether the reserve is used in isolation mode.
+    pub isolation_mode: bool,
+    /// Whether the reserve is borrowable in isolation mode.
+    pub borrowable_in_isolation: bool,
+    /// The isolation-mode debt ceiling, when one is set.
+    pub debt_ceiling: Option<U256>,
+}
+
+/// One user's settled collateral flag for one reserve at a checkpoint's cursor:
+/// the `ReserveUsedAsCollateral` resolution state a rewind must restore rather
+/// than leave the abandoned branch's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheckpointUserCollateral {
+    /// `aave_v3_users.id`.
+    pub user_id: i64,
+    /// `aave_v3_assets.id`.
+    pub asset_id: i64,
+    /// Whether the reserve counts as collateral for the user.
+    pub enabled: bool,
+}
+
+/// One e-mode category definition at a checkpoint's cursor: the row an
+/// `EModeCategoryAdded` delta writes and a rewind must restore or remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointEModeCategory {
+    /// The category id the reserve configuration references.
+    pub category_id: i64,
+    /// The category's label, when one was recorded.
+    pub label: Option<String>,
+    /// The category's loan-to-value ratio.
+    pub ltv: i64,
+    /// The category's liquidation threshold.
+    pub liquidation_threshold: i64,
+    /// The category's liquidation bonus.
+    pub liquidation_bonus: i64,
+    /// The category's price source, when one is set.
+    pub price_source: Option<String>,
 }
 
 /// The resume state a checkpoint carries besides the exact cursor it is
@@ -285,8 +388,6 @@ pub struct ProjectionCheckpoint<'a> {
     /// The positions the reducing view held; the writer fills the rest from the
     /// market's own settled rows.
     pub positions: &'a [CheckpointPositionState],
-    /// The reserve identities resolution classifies tokens by.
-    pub assets: &'a [CheckpointAsset],
     /// The contract endpoints and revisions resolution targets.
     pub contracts: &'a [CheckpointContract],
     /// The chain's GHO row, when the chain has one.
@@ -322,8 +423,14 @@ pub struct ProjectionCheckpointRow {
     pub contracts: Vec<CheckpointContract>,
     /// The chain's GHO row, when the chain has one.
     pub gho: Option<CheckpointGho>,
-    /// The per-user discount state resolution reads at tx start.
+    /// The per-user state resolution reads at tx start.
     pub users: Vec<CheckpointUser>,
+    /// The reserves' settled collateral configurations.
+    pub asset_configs: Vec<CheckpointAssetConfig>,
+    /// The users' settled collateral flags at the checkpointed cursor.
+    pub user_collaterals: Vec<CheckpointUserCollateral>,
+    /// The e-mode category definitions in force at the checkpointed cursor.
+    pub emode_categories: Vec<CheckpointEModeCategory>,
 }
 
 /// What the caller expects the market's cursor to be (the writer-fence token).
@@ -618,6 +725,53 @@ pub enum ProjectionError {
         /// The market the unit belongs to.
         market_id: i64,
     },
+    /// A recovery's common ancestor is not the journal entry it claims: the
+    /// retained evidence holds no row at that sequence with that position.
+    #[error("market {market_id} retains no journal entry {sequence} at the recovery ancestor")]
+    RecoveryAncestorNotRetained {
+        /// The market the recovery belongs to.
+        market_id: i64,
+        /// The sequence the recovery claims.
+        sequence: i64,
+    },
+    /// A recovery's ancestor is not at or before the committed cursor, so it
+    /// cannot be a position the market's own journal produced.
+    #[error("market {market_id} recovery ancestor is not at or before the committed cursor")]
+    RecoveryAncestorNotHeld {
+        /// The market the recovery belongs to.
+        market_id: i64,
+    },
+    /// A recovery's restored state names a user the market does not hold.
+    #[error("market {market_id} restored user id={user_id}, which the market does not hold")]
+    RecoveryUserNotInMarket {
+        /// The market the recovery belongs to.
+        market_id: i64,
+        /// The user row id the checkpoint states.
+        user_id: i64,
+    },
+    /// A recovery's restored state names a contract role the market does not
+    /// hold.
+    #[error("market {market_id} restored contract {role:?}, which the market does not hold")]
+    RecoveryContractNotInMarket {
+        /// The market the recovery belongs to.
+        market_id: i64,
+        /// The role name the checkpoint states.
+        role: String,
+    },
+    /// A recovery's restored state names a reserve the market does not hold.
+    #[error("market {market_id} restored asset id={asset_id}, which the market does not hold")]
+    RecoveryAssetNotInMarket {
+        /// The market the recovery belongs to.
+        market_id: i64,
+        /// The asset row id the checkpoint states.
+        asset_id: i64,
+    },
+    /// A recovery's restored state names a GHO row the chain does not hold.
+    #[error("restored GHO row id={gho_id}, which the chain does not hold")]
+    RecoveryGhoNotInChain {
+        /// The GHO row id the checkpoint states.
+        gho_id: i64,
+    },
 }
 
 /// The canonical hex form of a hash column (`0x`-prefixed, lowercase).
@@ -759,73 +913,85 @@ pub fn read_journal_on_conn(
     let mut rows = statement.query(params![market_id])?;
     let mut journal = Vec::new();
     while let Some(row) = rows.next()? {
-        let anchor = decode_anchor(
-            row.get::<_, i64>(2)?,
-            row.get::<_, i64>(3)?,
-            &row.get::<_, String>(4)?,
-            &row.get::<_, String>(5)?,
-        )?;
-        let position = LogCoordinate::new(
-            anchor,
-            decode_hash(&row.get::<_, String>(6)?)?,
-            u64::try_from(row.get::<_, i64>(7)?)
-                .map_err(|_| ProjectionError::Decode("tx index".to_string()))?,
-            u64::try_from(row.get::<_, i64>(8)?)
-                .map_err(|_| ProjectionError::Decode("log index".to_string()))?,
-        );
-        let entity: Option<String> = row.get(11)?;
-        let generation = match entity {
-            None => None,
-            Some(entity) => {
-                let kind: String = row.get(12)?;
-                let revision: Option<i64> = row.get(13)?;
-                let activation = match kind.as_str() {
-                    "seed" => GenerationActivation::Seed,
-                    "event" => {
-                        let activation_anchor = decode_anchor(
-                            row.get::<_, i64>(14)?,
-                            row.get::<_, i64>(15)?,
-                            &row.get::<_, String>(16)?,
-                            &row.get::<_, String>(17)?,
-                        )?;
-                        GenerationActivation::Event(LogCoordinate::new(
-                            activation_anchor,
-                            decode_hash(&row.get::<_, String>(18)?)?,
-                            u64::try_from(row.get::<_, i64>(19)?)
-                                .map_err(|_| ProjectionError::Decode("tx index".to_string()))?,
-                            u64::try_from(row.get::<_, i64>(20)?)
-                                .map_err(|_| ProjectionError::Decode("log index".to_string()))?,
-                        ))
-                    }
-                    other => {
-                        return Err(ProjectionError::Decode(format!(
-                            "generation activation kind {other:?}"
-                        )))
-                    }
-                };
-                Some(GenerationRecord {
-                    entity,
-                    activation,
-                    revision: revision
-                        .map(|revision| {
-                            u32::try_from(revision).map_err(|_| {
-                                ProjectionError::Decode(format!("revision {revision}"))
-                            })
-                        })
-                        .transpose()?,
-                })
-            }
-        };
-        journal.push(DeltaJournalRow {
-            sequence: row.get(0)?,
-            position_ordinal: row.get(1)?,
-            position,
-            generation,
-            encoding_version: row.get(9)?,
-            encoding: row.get(10)?,
-        });
+        journal.push(decode_journal_row(row)?);
     }
     Ok(journal)
+}
+
+/// One journal row's decoded form: the eleven leading columns plus the ten
+/// generation columns its optional left join supplies. Both journal readers
+/// select those twenty-one values in this order.
+fn decode_journal_row(row: &rusqlite::Row<'_>) -> Result<DeltaJournalRow, ProjectionError> {
+    let anchor = decode_anchor(
+        row.get::<_, i64>(2)?,
+        row.get::<_, i64>(3)?,
+        &row.get::<_, String>(4)?,
+        &row.get::<_, String>(5)?,
+    )?;
+    let position = LogCoordinate::new(
+        anchor,
+        decode_hash(&row.get::<_, String>(6)?)?,
+        u64::try_from(row.get::<_, i64>(7)?)
+            .map_err(|_| ProjectionError::Decode("tx index".to_string()))?,
+        u64::try_from(row.get::<_, i64>(8)?)
+            .map_err(|_| ProjectionError::Decode("log index".to_string()))?,
+    );
+    let entity: Option<String> = row.get(11)?;
+    let generation = match entity {
+        None => None,
+        Some(entity) => {
+            let kind: String = row.get(12)?;
+            let revision: Option<i64> = row.get(13)?;
+            let activation = match kind.as_str() {
+                "seed" => GenerationActivation::Seed,
+                "event" => {
+                    let activation_anchor = decode_anchor(
+                        row.get::<_, i64>(14)?,
+                        row.get::<_, i64>(15)?,
+                        &row.get::<_, String>(16)?,
+                        &row.get::<_, String>(17)?,
+                    )?;
+                    GenerationActivation::Event(LogCoordinate::new(
+                        activation_anchor,
+                        decode_hash(&row.get::<_, String>(18)?)?,
+                        u64::try_from(row.get::<_, i64>(19)?)
+                            .map_err(|_| ProjectionError::Decode("tx index".to_string()))?,
+                        u64::try_from(row.get::<_, i64>(20)?)
+                            .map_err(|_| ProjectionError::Decode("log index".to_string()))?,
+                    ))
+                }
+                other => {
+                    return Err(ProjectionError::Decode(format!(
+                        "generation activation kind {other:?}"
+                    )))
+                }
+            };
+            Some(GenerationRecord {
+                entity,
+                activation,
+                revision: revision
+                    .map(|revision| {
+                        u32::try_from(revision)
+                            .map_err(|_| ProjectionError::Decode(format!("revision {revision}")))
+                    })
+                    .transpose()?,
+            })
+        }
+    };
+    Ok(DeltaJournalRow {
+        sequence: row.get(0)?,
+        position_ordinal: row.get(1)?,
+        position,
+        generation,
+        encoding_version: row.get(9)?,
+        encoding: row.get(10)?,
+    })
+}
+
+/// A checkpoint's stored decimal wide value.
+fn decode_wide(value: &str) -> Result<U256, ProjectionError> {
+    decode_u256(value)
+        .map_err(|error| ProjectionError::Decode(format!("checkpoint value {value:?}: {error}")))
 }
 
 /// A checkpoint's stored revision column: a non-negative `u32` fact.
@@ -1023,12 +1189,14 @@ fn read_checkpoint_assets(
 ) -> Result<Vec<CheckpointAsset>, ProjectionError> {
     let mut statement = conn.prepare(
         "SELECT asset_id, underlying_address, a_token_address, v_token_address, \
-                a_token_revision, v_token_revision \
+                a_token_revision, v_token_revision, e_mode_category_id, price_source, \
+                last_update_block, liquidity_index, liquidity_rate, borrow_index, borrow_rate \
          FROM aave_v3_checkpoint_assets WHERE checkpoint_id = ?1 ORDER BY asset_id",
     )?;
     let mut rows = statement.query(params![checkpoint_id])?;
     let mut assets = Vec::new();
     while let Some(row) = rows.next()? {
+        let last_update_block: Option<i64> = row.get(8)?;
         assets.push(CheckpointAsset {
             asset_id: row.get(0)?,
             underlying_address: row.get(1)?,
@@ -1036,6 +1204,18 @@ fn read_checkpoint_assets(
             v_token_address: row.get(3)?,
             a_token_revision: decode_revision(row.get(4)?)?,
             v_token_revision: decode_revision(row.get(5)?)?,
+            e_mode_category_id: row.get(6)?,
+            price_source: row.get(7)?,
+            last_update_block: last_update_block
+                .map(|number| {
+                    u64::try_from(number)
+                        .map_err(|_| ProjectionError::Decode(format!("last update {number}")))
+                })
+                .transpose()?,
+            liquidity_index: decode_wide(&row.get::<_, String>(9)?)?,
+            liquidity_rate: decode_wide(&row.get::<_, String>(10)?)?,
+            borrow_index: decode_wide(&row.get::<_, String>(11)?)?,
+            borrow_rate: decode_wide(&row.get::<_, String>(12)?)?,
         });
     }
     Ok(assets)
@@ -1092,13 +1272,15 @@ fn read_checkpoint_users(
     checkpoint_id: i64,
 ) -> Result<Vec<CheckpointUser>, ProjectionError> {
     let mut statement = conn.prepare(
-        "SELECT user_id, address, gho_discount, stk_aave_balance \
+        "SELECT user_id, address, gho_discount, stk_aave_balance, e_mode, \
+                isolation_mode_collateral_asset_id, isolation_mode_debt \
          FROM aave_v3_checkpoint_users WHERE checkpoint_id = ?1 ORDER BY user_id",
     )?;
     let mut rows = statement.query(params![checkpoint_id])?;
     let mut users = Vec::new();
     while let Some(row) = rows.next()? {
         let balance: Option<String> = row.get(3)?;
+        let isolation_debt: String = row.get(6)?;
         users.push(CheckpointUser {
             user_id: row.get(0)?,
             address: row.get(1)?,
@@ -1110,9 +1292,95 @@ fn read_checkpoint_users(
                     })
                 })
                 .transpose()?,
+            e_mode: row.get(4)?,
+            isolation_mode_collateral_asset_id: row.get(5)?,
+            isolation_mode_debt: decode_u256(&isolation_debt).map_err(|error| {
+                ProjectionError::Decode(format!("checkpoint isolation debt: {error}"))
+            })?,
         });
     }
     Ok(users)
+}
+
+fn read_checkpoint_asset_configs(
+    conn: &Connection,
+    checkpoint_id: i64,
+) -> Result<Vec<CheckpointAssetConfig>, ProjectionError> {
+    let mut statement = conn.prepare(
+        "SELECT asset_id, ltv, liquidation_threshold, liquidation_bonus, e_mode_category_id, \
+                borrowing_enabled, stable_borrowing_enabled, flash_loan_enabled, isolation_mode, \
+                borrowable_in_isolation, debt_ceiling \
+         FROM aave_v3_checkpoint_asset_configs WHERE checkpoint_id = ?1 ORDER BY asset_id",
+    )?;
+    let mut rows = statement.query(params![checkpoint_id])?;
+    let mut configs = Vec::new();
+    while let Some(row) = rows.next()? {
+        let debt_ceiling: Option<String> = row.get(10)?;
+        configs.push(CheckpointAssetConfig {
+            asset_id: row.get(0)?,
+            ltv: row.get(1)?,
+            liquidation_threshold: row.get(2)?,
+            liquidation_bonus: row.get(3)?,
+            e_mode_category_id: row.get(4)?,
+            borrowing_enabled: row.get(5)?,
+            stable_borrowing_enabled: row.get(6)?,
+            flash_loan_enabled: row.get(7)?,
+            isolation_mode: row.get(8)?,
+            borrowable_in_isolation: row.get(9)?,
+            debt_ceiling: debt_ceiling
+                .map(|ceiling| {
+                    decode_u256(&ceiling).map_err(|error| {
+                        ProjectionError::Decode(format!("checkpoint debt ceiling: {error}"))
+                    })
+                })
+                .transpose()?,
+        });
+    }
+    Ok(configs)
+}
+
+fn read_checkpoint_user_collaterals(
+    conn: &Connection,
+    id: i64,
+) -> Result<Vec<CheckpointUserCollateral>, ProjectionError> {
+    let mut statement = conn.prepare(
+        "SELECT user_id, asset_id, enabled \
+         FROM aave_v3_checkpoint_user_collaterals WHERE checkpoint_id = ?1 \
+         ORDER BY user_id, asset_id",
+    )?;
+    let mut rows = statement.query(params![id])?;
+    let mut collaterals = Vec::new();
+    while let Some(row) = rows.next()? {
+        collaterals.push(CheckpointUserCollateral {
+            user_id: row.get(0)?,
+            asset_id: row.get(1)?,
+            enabled: row.get(2)?,
+        });
+    }
+    Ok(collaterals)
+}
+
+fn read_checkpoint_emode_categories(
+    conn: &Connection,
+    id: i64,
+) -> Result<Vec<CheckpointEModeCategory>, ProjectionError> {
+    let mut statement = conn.prepare(
+        "SELECT category_id, label, ltv, liquidation_threshold, liquidation_bonus, price_source \
+         FROM aave_v3_checkpoint_emode_categories WHERE checkpoint_id = ?1 ORDER BY category_id",
+    )?;
+    let mut rows = statement.query(params![id])?;
+    let mut categories = Vec::new();
+    while let Some(row) = rows.next()? {
+        categories.push(CheckpointEModeCategory {
+            category_id: row.get(0)?,
+            label: row.get(1)?,
+            ltv: row.get(2)?,
+            liquidation_threshold: row.get(3)?,
+            liquidation_bonus: row.get(4)?,
+            price_source: row.get(5)?,
+        });
+    }
+    Ok(categories)
 }
 
 fn read_checkpoint_row_on_conn(
@@ -1173,6 +1441,9 @@ fn read_checkpoint_row_on_conn(
     let contracts = read_checkpoint_contracts(conn, id)?;
     let gho = read_checkpoint_gho(conn, id)?;
     let users = read_checkpoint_users(conn, id)?;
+    let asset_configs = read_checkpoint_asset_configs(conn, id)?;
+    let user_collaterals = read_checkpoint_user_collaterals(conn, id)?;
+    let emode_categories = read_checkpoint_emode_categories(conn, id)?;
 
     Ok(Some(ProjectionCheckpointRow {
         market_id,
@@ -1187,6 +1458,9 @@ fn read_checkpoint_row_on_conn(
         contracts,
         gho,
         users,
+        asset_configs,
+        user_collaterals,
+        emode_categories,
     }))
 }
 
@@ -1393,7 +1667,6 @@ mod tests {
             encoding_version: "checkpoint/v1",
             generations,
             positions,
-            assets: &[],
             contracts: &[],
             gho: None,
         }

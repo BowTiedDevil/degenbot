@@ -2317,7 +2317,7 @@
           17,
           97,
           20977096,
-          "aave.projection-checkpoint/v2"
+          "aave.projection-checkpoint/v4"
         ]
       ],
       "table": "aave_v3_projection_checkpoints"

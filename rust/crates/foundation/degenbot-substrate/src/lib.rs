@@ -25,6 +25,7 @@
 pub mod account_cache;
 pub mod apply_telemetry;
 pub mod balance_vector_orchestration;
+pub mod commit_refusal;
 pub mod concentrated_liquidity_orchestration;
 pub mod concentrated_liquidity_route;
 pub mod connector_index;

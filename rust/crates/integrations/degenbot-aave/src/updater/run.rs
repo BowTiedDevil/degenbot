@@ -14,6 +14,7 @@ mod apply;
 mod evidence;
 mod fetch;
 mod process;
+mod recovery;
 mod reset;
 pub mod substrate;
 
@@ -262,6 +263,11 @@ pub enum RunError {
     /// so its state rows, journal, and cursor all rolled back (ADR-105 D8).
     #[error("projection persistence error: {0}")]
     Projection(#[from] degenbot_db::ProjectionError),
+    /// A reorg recovery could not be planned, replayed, or committed. Nothing
+    /// moved: the plan and the replay both run before the first write, and the
+    /// caller's transaction covers the restore (ADR-105 D9).
+    #[error("reorg recovery: {0}")]
+    Recovery(#[from] crate::projection::RecoveryError),
     #[error("transaction parse error: {0}")]
     ProcessTx(#[from] ProcessTxError),
     /// A candidate transaction could not be evidence-bound: its block header, its
@@ -676,7 +682,7 @@ async fn run_aave_update_driver(
             market.chain_id
         ))));
     }
-    let last_update_block = market
+    let mut last_update_block = market
         .last_update_block
         .ok_or(RunError::NotBootstrapped(market_id))?;
     // The market's exact projection state: its cursor when one is established,
@@ -708,6 +714,21 @@ async fn run_aave_update_driver(
         Some(bound) => bound,
         None => provider.get_block_number().await?,
     };
+
+    // A committed cursor on an abandoned branch is a reorg, not a resume: the
+    // numeric cursor would report the market as ahead of the head, and no chunk
+    // would ever repair it. Recovery runs BEFORE the range is chosen, with its
+    // chain evidence acquired outside the market's write transaction
+    // (ADR-105 D9).
+    if let Some(recovered) =
+        recovery::recover_market_if_reorged(db, &provider, market_id, last_block).await?
+    {
+        projection_anchor = CursorAnchor::At(recovered);
+        last_update_block = db
+            .fetch_aave_market_row(market_id)?
+            .and_then(|row| row.last_update_block)
+            .ok_or(RunError::NotBootstrapped(market_id))?;
+    }
 
     let from_block = u64::try_from(last_update_block).unwrap_or(0) + 1;
     if from_block > last_block {
@@ -777,6 +798,21 @@ async fn run_aave_update_driver(
         // chunk is durable; the next chunk's writes haven't started).
         if cancel.load(Ordering::Acquire) {
             return Err(RunError::Cancelled);
+        }
+
+        // A reorg between two chunks abandons the cursor the previous chunk
+        // committed. The same seam answers it — one header at the cursor's own
+        // height, the window's headers only on a mismatch, all outside this
+        // iteration's transaction — and the loop resumes at the restored
+        // ancestor (ADR-105 D9).
+        if working_start > from_block {
+            if let Some(recovered) =
+                recovery::recover_market_if_reorged(db, &provider, market_id, last_block).await?
+            {
+                projection_anchor = CursorAnchor::At(recovered);
+                working_start = recovered.position.anchor().number() + 1;
+                continue;
+            }
         }
 
         let chunk_end = last_block.min(working_start + chunk_size - 1);

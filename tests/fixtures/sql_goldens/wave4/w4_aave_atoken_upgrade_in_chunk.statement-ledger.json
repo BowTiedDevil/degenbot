@@ -19,6 +19,11 @@
     {
       "arg_count": 1,
       "rows_changed": 0,
+      "sql": "SELECT chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block, market_id FROM aave_v3_projection_cursors WHERE market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
       "sql": "SELECT id, market_id, name, address, revision FROM aave_v3_contracts WHERE market_id = ?"
     },
     {
@@ -177,9 +182,14 @@
       "sql": "INSERT INTO aave_v3_checkpoint_generations (checkpoint_id, market_id, generation_id) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)"
     },
     {
-      "arg_count": 189,
+      "arg_count": 2,
       "rows_changed": 27,
-      "sql": "INSERT INTO aave_v3_checkpoint_assets (checkpoint_id, asset_id, underlying_address, a_token_address, v_token_address, a_token_revision, v_token_revision) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)"
+      "sql": "INSERT INTO aave_v3_checkpoint_assets (checkpoint_id, asset_id, underlying_address, a_token_address, v_token_address, a_token_revision, v_token_revision, e_mode_category_id, price_source, last_update_block, liquidity_index, liquidity_rate, borrow_index, borrow_rate) SELECT ?, a.id, u.address, at.address, vt.address, a.a_token_revision, a.v_token_revision, a.e_mode_category_id, a.price_source, a.last_update_block, a.liquidity_index, a.liquidity_rate, a.borrow_index, a.borrow_rate FROM aave_v3_assets a JOIN erc20_tokens u ON u.id = a.underlying_asset_id JOIN erc20_tokens at ON at.id = a.a_token_id JOIN erc20_tokens vt ON vt.id = a.v_token_id WHERE a.market_id = ? ORDER BY a.id"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "INSERT INTO aave_v3_checkpoint_asset_configs (checkpoint_id, asset_id, ltv, liquidation_threshold, liquidation_bonus, e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) SELECT ?, c.asset_id, c.ltv, c.liquidation_threshold, c.liquidation_bonus, c.e_mode_category_id, c.borrowing_enabled, c.stable_borrowing_enabled, c.flash_loan_enabled, c.isolation_mode, c.borrowable_in_isolation, c.debt_ceiling FROM aave_v3_asset_configs c JOIN aave_v3_assets a ON a.id = c.asset_id WHERE a.market_id = ? ORDER BY c.asset_id"
     },
     {
       "arg_count": 20,
@@ -194,7 +204,22 @@
     {
       "arg_count": 1,
       "rows_changed": 0,
-      "sql": "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ? ORDER BY id"
+      "sql": "SELECT id, address, gho_discount, stk_aave_balance, e_mode, isolation_mode_collateral_asset_id, isolation_mode_debt FROM aave_v3_users WHERE market_id = ? ORDER BY id"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "INSERT INTO aave_v3_checkpoint_user_collaterals (checkpoint_id, user_id, asset_id, enabled) SELECT ?, c.user_id, c.asset_id, c.enabled FROM aave_v3_user_collateral_configs c JOIN aave_v3_users u ON u.id = c.user_id WHERE u.market_id = ? ORDER BY c.user_id, c.asset_id"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "INSERT INTO aave_v3_checkpoint_emode_categories (checkpoint_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus, price_source) SELECT ?, e.category_id, e.label, e.ltv, e.liquidation_threshold, e.liquidation_bonus, e.price_source FROM aave_v3_emode_categories e WHERE e.market_id = ? ORDER BY e.category_id"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT EXISTS(SELECT ? FROM aave_v3_delta_journal WHERE market_id = ? AND block_number <= ?)"
     },
     {
       "arg_count": 2,
@@ -205,6 +230,11 @@
       "arg_count": 0,
       "rows_changed": 0,
       "sql": "COMMIT"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block, market_id FROM aave_v3_projection_cursors WHERE market_id = ?"
     },
     {
       "arg_count": 2,

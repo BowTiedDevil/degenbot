@@ -5993,7 +5993,7 @@
           60,
           274,
           24247928,
-          "aave.projection-checkpoint/v2"
+          "aave.projection-checkpoint/v4"
         ],
         [
           2,
@@ -6007,7 +6007,7 @@
           204,
           374,
           24247931,
-          "aave.projection-checkpoint/v2"
+          "aave.projection-checkpoint/v4"
         ]
       ],
       "table": "aave_v3_projection_checkpoints"

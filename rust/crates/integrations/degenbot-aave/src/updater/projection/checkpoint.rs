@@ -43,7 +43,7 @@ use crate::updater::run::substrate::ChunkSubstrate;
 /// [`CheckpointState::capture`] records advances this tag, so a recovery can tell
 /// two checkpoint payloads apart without guessing (ADR-105 D7's versioning rule,
 /// applied to the checkpoint family).
-pub const CHECKPOINT_ENCODING_VERSION: &str = "aave.projection-checkpoint/v2";
+pub const CHECKPOINT_ENCODING_VERSION: &str = "aave.projection-checkpoint/v4";
 
 /// Whether the projection unit that journaled `journaled_entries` deltas writes a
 /// checkpoint with its cursor.
@@ -70,9 +70,12 @@ pub struct CheckpointState {
     generations: Vec<GenerationRecord>,
     positions: Vec<CheckpointPositionState>,
     assets: Vec<CheckpointAsset>,
+    asset_configs: Vec<degenbot_db::CheckpointAssetConfig>,
     contracts: Vec<CheckpointContract>,
     gho: Option<CheckpointGho>,
     users: Vec<degenbot_db::CheckpointUser>,
+    user_collaterals: Vec<degenbot_db::CheckpointUserCollateral>,
+    emode_categories: Vec<degenbot_db::CheckpointEModeCategory>,
     cursor: Option<degenbot_db::LogCoordinate>,
 }
 
@@ -98,10 +101,13 @@ impl CheckpointState {
         Self {
             generations,
             positions,
-            assets: substrate.capture_assets(),
+            assets: Vec::new(),
+            asset_configs: Vec::new(),
             contracts: substrate.capture_contracts(),
             gho: substrate.capture_gho(),
             users: Vec::new(),
+            user_collaterals: Vec::new(),
+            emode_categories: Vec::new(),
             cursor: None,
         }
     }
@@ -113,7 +119,6 @@ impl CheckpointState {
             encoding_version: CHECKPOINT_ENCODING_VERSION,
             generations: &self.generations,
             positions: &self.positions,
-            assets: &self.assets,
             contracts: &self.contracts,
             gho: self.gho.as_ref(),
         }
@@ -127,9 +132,12 @@ impl CheckpointState {
             generations: row.generations.clone(),
             positions: row.positions.clone(),
             assets: row.assets.clone(),
+            asset_configs: row.asset_configs.clone(),
             contracts: row.contracts.clone(),
             gho: row.gho.clone(),
             users: row.users.clone(),
+            user_collaterals: row.user_collaterals.clone(),
+            emode_categories: row.emode_categories.clone(),
             cursor: Some(row.position),
         }
     }
@@ -172,6 +180,13 @@ impl CheckpointState {
         }
     }
 
+    /// The complete user set the checkpoint states — the market's own enumeration
+    /// at the checkpointed cursor.
+    #[must_use]
+    pub fn users(&self) -> &[degenbot_db::CheckpointUser] {
+        &self.users
+    }
+
     /// The user state the checkpoint states, by address.
     #[must_use]
     pub fn user(&self, address: &str) -> Option<&degenbot_db::CheckpointUser> {
@@ -190,10 +205,30 @@ impl CheckpointState {
         &self.positions
     }
 
-    /// The reserve identities resolution classifies tokens by.
+    /// The reserves' identities, revisions, and settled configuration.
     #[must_use]
     pub fn assets(&self) -> &[CheckpointAsset] {
         &self.assets
+    }
+
+    /// The reserves' settled collateral configurations.
+    #[must_use]
+    pub fn asset_configs(&self) -> &[degenbot_db::CheckpointAssetConfig] {
+        &self.asset_configs
+    }
+
+    /// The users' settled collateral flags — the `ReserveUsedAsCollateral`
+    /// resolution state a rewind restores.
+    #[must_use]
+    pub fn user_collaterals(&self) -> &[degenbot_db::CheckpointUserCollateral] {
+        &self.user_collaterals
+    }
+
+    /// The e-mode category definitions in force — the rows an
+    /// `EModeCategoryAdded` delta writes.
+    #[must_use]
+    pub fn emode_categories(&self) -> &[degenbot_db::CheckpointEModeCategory] {
+        &self.emode_categories
     }
 
     /// The contract endpoints and revisions resolution targets.
@@ -240,7 +275,7 @@ fn restored_generation(record: &GenerationRecord) -> Result<GenerationRef, super
 }
 
 /// The exact chain position a stored coordinate names.
-fn log_ref(at: degenbot_db::LogCoordinate) -> Result<LogRef, super::ProjectionError> {
+pub(super) fn log_ref(at: degenbot_db::LogCoordinate) -> Result<LogRef, super::ProjectionError> {
     let anchor = at.anchor();
     let tx = TxRef::new(anchor, at.tx_hash(), at.tx_index()).map_err(|error| {
         ProjectionError::EntityKey {
@@ -368,6 +403,13 @@ mod restore_tests {
             v_token_address: GHO_VTOKEN.to_string(),
             a_token_revision: 1,
             v_token_revision,
+            e_mode_category_id: None,
+            price_source: None,
+            last_update_block: None,
+            liquidity_index: U256::ZERO,
+            liquidity_rate: U256::ZERO,
+            borrow_index: U256::ZERO,
+            borrow_rate: U256::ZERO,
         }
     }
 
@@ -377,6 +419,9 @@ mod restore_tests {
             address: USER.to_string(),
             gho_discount: discount,
             stk_aave_balance: balance,
+            e_mode: 0,
+            isolation_mode_collateral_asset_id: None,
+            isolation_mode_debt: U256::ZERO,
         }
     }
 
@@ -404,6 +449,9 @@ mod restore_tests {
             contracts,
             gho,
             users: vec![user(42, None)],
+            asset_configs: Vec::new(),
+            user_collaterals: Vec::new(),
+            emode_categories: Vec::new(),
         }
     }
 
@@ -430,6 +478,46 @@ mod restore_tests {
 
     fn class(state: &CheckpointState) -> DiscountPath {
         classify_discount_prepass(state.discount_prepass_inputs(USER))
+    }
+
+    /// The two resolution families a rewind restores arrive from the checkpoint
+    /// row alone: the users' collateral flags and the e-mode category
+    /// definitions travel with the state, and a restored state exposes them for
+    /// the recovery writer (payload v4).
+    #[test]
+    fn a_restored_checkpoint_states_the_collateral_flags_and_emode_categories() {
+        let mut stored = row(
+            coordinate(100, 7),
+            Vec::new(),
+            Vec::new(),
+            None,
+            vec![asset(1)],
+        );
+        stored.user_collaterals = vec![degenbot_db::CheckpointUserCollateral {
+            user_id: 42,
+            asset_id: 1,
+            enabled: true,
+        }];
+        stored.emode_categories = vec![degenbot_db::CheckpointEModeCategory {
+            category_id: 4,
+            label: Some("stablecoins".to_string()),
+            ltv: 900,
+            liquidation_threshold: 950,
+            liquidation_bonus: 1010,
+            price_source: None,
+        }];
+
+        let state = CheckpointState::restore(&stored);
+        assert_eq!(state.user_collaterals(), stored.user_collaterals);
+        assert_eq!(state.emode_categories(), stored.emode_categories);
+        assert_eq!(
+            state.wire().encoding_version,
+            super::CHECKPOINT_ENCODING_VERSION
+        );
+        assert!(
+            super::CHECKPOINT_ENCODING_VERSION.ends_with("/v4"),
+            "the payload states the version its families belong to"
+        );
     }
 
     /// (a) The transaction-start discount classification before and after the

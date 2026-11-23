@@ -443,23 +443,32 @@ fn write_checkpoint_resume_state(
     checkpoint_id: i64,
     checkpoint: &ProjectionCheckpoint<'_>,
 ) -> Result<(), ProjectionError> {
-    let rows = value_rows(checkpoint.assets, |_, asset| {
-        vec![
-            rusqlite::types::Value::Integer(checkpoint_id),
-            rusqlite::types::Value::Integer(asset.asset_id),
-            rusqlite::types::Value::Text(asset.underlying_address.clone()),
-            rusqlite::types::Value::Text(asset.a_token_address.clone()),
-            rusqlite::types::Value::Text(asset.v_token_address.clone()),
-            rusqlite::types::Value::Integer(i64::from(asset.a_token_revision)),
-            rusqlite::types::Value::Integer(i64::from(asset.v_token_revision)),
-        ]
-    });
-    insert_rows_exact(
-        conn,
-        "INTO aave_v3_checkpoint_assets (checkpoint_id, asset_id, underlying_address, \
-            a_token_address, v_token_address, a_token_revision, v_token_revision)",
-        7,
-        &rows,
+    conn.execute(
+        "INSERT INTO aave_v3_checkpoint_assets \
+            (checkpoint_id, asset_id, underlying_address, a_token_address, v_token_address, \
+             a_token_revision, v_token_revision, e_mode_category_id, price_source, \
+             last_update_block, liquidity_index, liquidity_rate, borrow_index, borrow_rate) \
+         SELECT ?1, a.id, u.address, at.address, vt.address, a.a_token_revision, \
+                a.v_token_revision, a.e_mode_category_id, a.price_source, a.last_update_block, \
+                a.liquidity_index, a.liquidity_rate, a.borrow_index, a.borrow_rate \
+         FROM aave_v3_assets a \
+         JOIN erc20_tokens u ON u.id = a.underlying_asset_id \
+         JOIN erc20_tokens at ON at.id = a.a_token_id \
+         JOIN erc20_tokens vt ON vt.id = a.v_token_id \
+         WHERE a.market_id = ?2 ORDER BY a.id",
+        params![checkpoint_id, unit.market_id],
+    )?;
+    conn.execute(
+        "INSERT INTO aave_v3_checkpoint_asset_configs \
+            (checkpoint_id, asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+             e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
+             flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
+         SELECT ?1, c.asset_id, c.ltv, c.liquidation_threshold, c.liquidation_bonus, \
+                c.e_mode_category_id, c.borrowing_enabled, c.stable_borrowing_enabled, \
+                c.flash_loan_enabled, c.isolation_mode, c.borrowable_in_isolation, c.debt_ceiling \
+         FROM aave_v3_asset_configs c JOIN aave_v3_assets a ON a.id = c.asset_id \
+         WHERE a.market_id = ?2 ORDER BY c.asset_id",
+        params![checkpoint_id, unit.market_id],
     )?;
 
     let rows = value_rows(checkpoint.contracts, |_, contract| {
@@ -502,9 +511,29 @@ fn write_checkpoint_resume_state(
     let users = market_users_on_conn(conn, checkpoint_id, unit.market_id)?;
     insert_rows_exact(
         conn,
-        "INTO aave_v3_checkpoint_users (checkpoint_id, user_id, address, gho_discount,             stk_aave_balance)",
-        5,
+        "INTO aave_v3_checkpoint_users (checkpoint_id, user_id, address, gho_discount, \
+            stk_aave_balance, e_mode, isolation_mode_collateral_asset_id, isolation_mode_debt)",
+        8,
         &users,
+    )?;
+
+    conn.execute(
+        "INSERT INTO aave_v3_checkpoint_user_collaterals \
+            (checkpoint_id, user_id, asset_id, enabled) \
+         SELECT ?1, c.user_id, c.asset_id, c.enabled \
+         FROM aave_v3_user_collateral_configs c \
+         JOIN aave_v3_users u ON u.id = c.user_id \
+         WHERE u.market_id = ?2 ORDER BY c.user_id, c.asset_id",
+        params![checkpoint_id, unit.market_id],
+    )?;
+    conn.execute(
+        "INSERT INTO aave_v3_checkpoint_emode_categories \
+            (checkpoint_id, category_id, label, ltv, liquidation_threshold, \
+             liquidation_bonus, price_source) \
+         SELECT ?1, e.category_id, e.label, e.ltv, e.liquidation_threshold, \
+                e.liquidation_bonus, e.price_source \
+         FROM aave_v3_emode_categories e WHERE e.market_id = ?2 ORDER BY e.category_id",
+        params![checkpoint_id, unit.market_id],
     )?;
     Ok(())
 }
@@ -519,7 +548,9 @@ fn market_users_on_conn(
     market_id: i64,
 ) -> Result<Vec<Vec<rusqlite::types::Value>>, ProjectionError> {
     let mut statement = conn.prepare(
-        "SELECT id, address, gho_discount, stk_aave_balance            FROM aave_v3_users WHERE market_id = ?1 ORDER BY id",
+        "SELECT id, address, gho_discount, stk_aave_balance, e_mode, \
+                isolation_mode_collateral_asset_id, isolation_mode_debt \
+         FROM aave_v3_users WHERE market_id = ?1 ORDER BY id",
     )?;
     let mut rows = statement.query(params![market_id])?;
     let mut values = Vec::new();
@@ -531,6 +562,12 @@ fn market_users_on_conn(
             rusqlite::types::Value::Text(row.get(1)?),
             rusqlite::types::Value::Integer(row.get(2)?),
             balance.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text),
+            rusqlite::types::Value::Integer(row.get(4)?),
+            row.get::<_, Option<i64>>(5)?.map_or(
+                rusqlite::types::Value::Null,
+                rusqlite::types::Value::Integer,
+            ),
+            rusqlite::types::Value::Text(row.get(6)?),
         ]);
     }
     Ok(values)
@@ -1241,7 +1278,56 @@ pub fn write_projection_unit_on_conn(
     if let Some(checkpoint) = unit.checkpoint {
         write_checkpoint(conn, unit, &checkpoint, &cursor)?;
     }
+    prune_retention(conn, unit.market_id, position.anchor().number())?;
     Ok(Some(cursor))
+}
+
+/// Prune the evidence that has fallen out of the session reorg window, so a
+/// market's journal and checkpoints are bounded by the window rather than by how
+/// long the market has run (ADR-105 D9).
+///
+/// The newest checkpoint at or below the window's floor is the deepest restore
+/// point a recovery can use, so it is retained: the oldest retained journal row
+/// keeps its own checkpoint, and every row (and checkpoint) before it is
+/// evidence no recovery can reach.
+fn prune_retention(conn: &Connection, market_id: i64, head: u64) -> Result<(), ProjectionError> {
+    let Some(floor) = head.checked_sub(crate::projection::REORG_WINDOW_BLOCKS) else {
+        return Ok(());
+    };
+    let outside: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM aave_v3_delta_journal WHERE market_id = ?1 \
+         AND block_number <= ?2)",
+        params![market_id, index_column(floor, "window floor")?],
+        |row| row.get(0),
+    )?;
+    if !outside {
+        return Ok(());
+    }
+    let oldest_inside: i64 = conn.query_row(
+        "SELECT MIN(sequence) FROM aave_v3_delta_journal WHERE market_id = ?1 \
+         AND block_number > ?2",
+        params![market_id, index_column(floor, "window floor")?],
+        |row| row.get(0),
+    )?;
+    for table in super::recovery::CHECKPOINT_CHILD_TABLES {
+        conn.execute(
+            &format!(
+                "DELETE FROM {table} WHERE checkpoint_id IN (SELECT id FROM \
+                 aave_v3_projection_checkpoints WHERE market_id = ?1 AND journal_sequence < ?2)"
+            ),
+            params![market_id, oldest_inside],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM aave_v3_projection_checkpoints WHERE market_id = ?1 \
+         AND journal_sequence < ?2",
+        params![market_id, oldest_inside],
+    )?;
+    conn.execute(
+        "DELETE FROM aave_v3_delta_journal WHERE market_id = ?1 AND sequence < ?2",
+        params![market_id, oldest_inside],
+    )?;
+    Ok(())
 }
 
 /// The unit's numeric range claim must advance past the committed one: a range

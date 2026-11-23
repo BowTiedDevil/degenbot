@@ -109,15 +109,20 @@ pub use ops::{
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
 pub use pathfinding::{is_protocol_native_sentinel, PathEdge, PathGraphData};
-#[cfg(any(test, feature = "writer"))]
-pub use projection::write_projection_unit_on_conn;
 pub use projection::{
     read_checkpoint_on_conn, read_journal_on_conn, read_latest_checkpoint_on_conn,
-    read_projection_cursor_on_conn, CheckpointAsset, CheckpointContract, CheckpointGho,
-    CheckpointPositionState, CheckpointUser, CursorAnchor, DeltaJournalEntry, DeltaJournalRow,
+    read_projection_cursor_on_conn, read_retained_checkpoints_on_conn,
+    read_retained_journal_on_conn, CheckpointAsset, CheckpointAssetConfig, CheckpointBoundary,
+    CheckpointContract, CheckpointEModeCategory, CheckpointGho, CheckpointPositionState,
+    CheckpointUser, CheckpointUserCollateral, CursorAnchor, DeltaJournalEntry, DeltaJournalRow,
     GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCheckpoint,
     ProjectionCheckpointRow, ProjectionCursor, ProjectionError, ProjectionUnit,
+    REORG_WINDOW_BLOCKS,
 };
+#[cfg(any(test, feature = "writer"))]
+pub use projection::{restore_projection_on_conn, write_projection_unit_on_conn};
+#[cfg(any(test, feature = "writer"))]
+pub use projection::{ProjectionRecovery, RecoveryRestore};
 pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
     LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,

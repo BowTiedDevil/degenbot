@@ -104,7 +104,7 @@ const EXPECTED_APPLIED_EVENTS: usize = 20;
 /// batched state INSERTs, and the five resume-state reads/INSERTs (assets,
 /// contracts, GHO, users). The journal cost is per DISTINCT identity, never per
 /// delta, and the checkpoint cost is per market entity, never per delta.
-const EXPECTED_LEDGER_STATEMENTS: usize = 75;
+const EXPECTED_LEDGER_STATEMENTS: usize = 80;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -554,13 +554,16 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         "the stamp did not move past the pin"
     );
 
-    // The no-op restart's serving stats: zero round trips - the restart
-    // invariant's RPC face (the cursor check is pure SQL).
+    // The no-op restart's serving stats: the recovery fence's ONE header read
+    // and nothing else. The restart invariant's RPC face is now "no chunk
+    // evidence", not "no read at all": a committed cursor can be on an
+    // abandoned branch, and the head's silence is exactly the case a reorg
+    // below the cursor produces (ADR-105 D9).
     let after_restart = transport.served_snapshot();
     assert_eq!(
         after_restart.served - served.served,
-        0,
-        "the restart no-op must serve nothing"
+        1,
+        "the restart serves the one header the recovery fence needs"
     );
 }
 

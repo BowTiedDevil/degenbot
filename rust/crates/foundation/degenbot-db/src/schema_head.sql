@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_assets (
 	v_token_address VARCHAR(42) NOT NULL,
 	a_token_revision INTEGER NOT NULL,
 	v_token_revision INTEGER NOT NULL,
+	e_mode_category_id INTEGER,
+	price_source VARCHAR(42),
+	last_update_block INTEGER,
+	liquidity_index VARCHAR(78) NOT NULL DEFAULT '0',
+	liquidity_rate VARCHAR(78) NOT NULL DEFAULT '0',
+	borrow_index VARCHAR(78) NOT NULL DEFAULT '0',
+	borrow_rate VARCHAR(78) NOT NULL DEFAULT '0',
 	PRIMARY KEY (checkpoint_id, asset_id),
 	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
 	CHECK (length(underlying_address) > 0 AND length(a_token_address) > 0 AND length(v_token_address) > 0),
@@ -122,12 +129,51 @@ CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_users (
 	address VARCHAR(42) NOT NULL,
 	gho_discount INTEGER NOT NULL,
 	stk_aave_balance VARCHAR(78),
+	e_mode INTEGER NOT NULL,
+	isolation_mode_collateral_asset_id INTEGER,
+	isolation_mode_debt VARCHAR(78) NOT NULL,
 	PRIMARY KEY (checkpoint_id, user_id),
 	UNIQUE (checkpoint_id, address),
 	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
 	CHECK (length(address) > 0),
 	CHECK (gho_discount >= 0),
 	CHECK (stk_aave_balance IS NULL OR length(stk_aave_balance) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_asset_configs (
+	checkpoint_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	ltv INTEGER NOT NULL,
+	liquidation_threshold INTEGER NOT NULL,
+	liquidation_bonus INTEGER NOT NULL,
+	e_mode_category_id INTEGER,
+	borrowing_enabled BOOLEAN NOT NULL,
+	stable_borrowing_enabled BOOLEAN NOT NULL,
+	flash_loan_enabled BOOLEAN NOT NULL,
+	isolation_mode BOOLEAN NOT NULL,
+	borrowable_in_isolation BOOLEAN NOT NULL,
+	debt_ceiling VARCHAR(78),
+	PRIMARY KEY (checkpoint_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_user_collaterals (
+	checkpoint_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	enabled BOOLEAN NOT NULL,
+	PRIMARY KEY (checkpoint_id, user_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_emode_categories (
+	checkpoint_id INTEGER NOT NULL,
+	category_id INTEGER NOT NULL,
+	label TEXT,
+	ltv INTEGER NOT NULL,
+	liquidation_threshold INTEGER NOT NULL,
+	liquidation_bonus INTEGER NOT NULL,
+	price_source VARCHAR(42),
+	PRIMARY KEY (checkpoint_id, category_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (category_id > 0)
 );
 CREATE TABLE IF NOT EXISTS aave_v3_collateral_positions (
 	id INTEGER NOT NULL,

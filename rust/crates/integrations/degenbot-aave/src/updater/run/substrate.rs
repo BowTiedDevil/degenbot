@@ -1113,23 +1113,6 @@ impl ChunkSubstrate {
     /// The reserve identities this resolution cache holds, in asset-id order —
     /// the checkpoint's asset family (ADR-105 D8, D9). The prefetch loads every
     /// market asset, so a chunk-boundary capture is complete.
-    pub(crate) fn capture_assets(&self) -> Vec<degenbot_db::CheckpointAsset> {
-        let mut assets: Vec<degenbot_db::CheckpointAsset> = self
-            .assets_by_id
-            .values()
-            .map(|asset| degenbot_db::CheckpointAsset {
-                asset_id: asset.id,
-                underlying_address: asset.underlying_token_address.clone(),
-                a_token_address: asset.a_token_address.clone(),
-                v_token_address: asset.v_token_address.clone(),
-                a_token_revision: asset.a_token_revision,
-                v_token_revision: asset.v_token_revision,
-            })
-            .collect();
-        assets.sort_by_key(|asset| asset.asset_id);
-        assets
-    }
-
     /// The contract endpoints and revisions this resolution cache holds, in role
     /// order — the checkpoint's endpoint family. The prefetch loads every market
     /// contract role, so a chunk-boundary capture is complete.

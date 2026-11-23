@@ -23,7 +23,9 @@ use degenbot_core::canonical_head::LogRef;
 
 mod checkpoint;
 mod configuration;
+mod decode;
 mod journal;
+pub mod recovery;
 mod reduce;
 
 pub use checkpoint::{
@@ -31,9 +33,14 @@ pub use checkpoint::{
     DiscountPrepassInputs, CHECKPOINT_ENCODING_VERSION,
 };
 pub use configuration::ConfigurationEffect;
+pub use decode::JournaledDelta;
 pub use degenbot_db::ScaledTokenPosition;
 pub use journal::{
     journal_entries, journal_entry, market_projection, MarketProjection, DELTA_ENCODING_VERSION,
+};
+pub use recovery::{
+    plan_recovery, read_retained_evidence, recover_on_conn, restore_projection, CanonicalSegment,
+    Recovery, RecoveryError, RecoveryOutcome, RecoveryPlan, RestoredProjection,
 };
 
 #[cfg(test)]
@@ -619,6 +626,59 @@ pub enum ProjectionError {
     OperationOutOfOrder {
         held: Box<LogRef>,
         arrived: Box<LogRef>,
+    },
+    /// A journaled encoding states a version this vocabulary does not decode: a
+    /// replay would be reading another vocabulary's text.
+    #[error("delta encoding version {version:?} is not the vocabulary's")]
+    DeltaEncodingVersion { version: String },
+    /// A journaled encoding could not be reconstructed into the delta its row
+    /// states: the text and the row disagree, or an effect body is malformed.
+    #[error("journaled delta {encoding:?} is not the delta its row states")]
+    DeltaEncoding { encoding: String },
+    /// A canonical segment is empty: ancestry evidence must name at least one
+    /// block.
+    #[error("the canonical segment names no block")]
+    SegmentEmpty,
+    /// A canonical segment's anchors are not one ascending, contiguous chain.
+    #[error("canonical segment anchor at block {number} does not continue the previous anchor")]
+    SegmentUnordered { number: u64 },
+    /// A canonical segment's anchors name more than one chain.
+    #[error("canonical segment mixes chain {chain_id} and chain {other}")]
+    SegmentChainMismatch { chain_id: u64, other: u64 },
+    /// Recovery found no retained position on the new head's ancestry: the reorg
+    /// is deeper than the retained evidence.
+    #[error(
+        "market {market_id} retains no evidence on the new head's ancestry (retained from block          {retained_from}, ancestry covered from block {covered_from}, deepest retained checkpoint          {deepest_checkpoint:?}): the market requires a known-checkpoint reload or a market reset"
+    )]
+    RetentionExceeded {
+        market_id: i64,
+        head: u64,
+        covered_from: u64,
+        retained_from: u64,
+        deepest_checkpoint: Option<i64>,
+    },
+    /// A recovery selected a checkpoint the market no longer retains.
+    #[error("market {market_id} retains no checkpoint at journal sequence {sequence}")]
+    RecoveryCheckpointMissing { market_id: i64, sequence: i64 },
+    /// A retained checkpoint states another payload version than the vocabulary
+    /// reads.
+    #[error("checkpoint payload version {version:?} is not {expected:?}")]
+    CheckpointEncodingVersion { version: String, expected: String },
+    /// The retained journal is not contiguous from the restore point: a gap means
+    /// the replay would skip evidence.
+    #[error("market {market_id} journal jumps from sequence {held} to {arrived}")]
+    JournalGap {
+        market_id: i64,
+        held: i64,
+        arrived: i64,
+    },
+    /// Restoring and replaying left the projection somewhere other than the
+    /// common ancestor.
+    #[error("market {market_id} replay ended at {held:?} rather than the ancestor {expected:?}")]
+    RecoveryReplayIncomplete {
+        market_id: i64,
+        held: Box<LogRef>,
+        expected: Box<LogRef>,
     },
 }
 

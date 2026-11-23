@@ -105,7 +105,7 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// checkpoint it commits (the settled position rows, the generation lineage it
 /// reads under, and the checkpoint row itself: six statements, fixed per
 /// checkpointed unit).
-const EXPECTED_LEDGER_STATEMENTS: usize = 80;
+const EXPECTED_LEDGER_STATEMENTS: usize = 85;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -535,13 +535,15 @@ fn assert_restart_no_op(
         "the stamp did not move past the pin"
     );
 
-    // The no-op restart's serving stats: zero round trips - the restart
-    // invariant's RPC face (the cursor check is pure SQL).
+    // The no-op restart's serving stats: the recovery fence's ONE header read.
+    // A committed cursor can sit on an abandoned branch, and "the head has not
+    // moved past the cursor" is exactly the shape a reorg below the cursor
+    // produces (ADR-105 D9).
     let after_restart = transport.served_snapshot();
     assert_eq!(
         after_restart.served - served_before,
-        0,
-        "the restart no-op must serve nothing"
+        1,
+        "the restart serves the one header the recovery fence needs"
     );
 }
 

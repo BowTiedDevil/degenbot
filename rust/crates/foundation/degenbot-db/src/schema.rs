@@ -32,7 +32,7 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 /// The open path applies pending steps automatically (ADR-052 D2), so no
 /// consumer calls a migration verb; a binary older than the DB refuses with
 /// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
-pub const RUST_SCHEMA_VERSION: u32 = 6;
+pub const RUST_SCHEMA_VERSION: u32 = 8;
 
 /// Name of the private Rust-owned schema stamp table.
 pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
@@ -122,6 +122,7 @@ pub mod table {
     pub const AAVE_V3_PROJECTION_CURSORS: &str = "aave_v3_projection_cursors";
     /// The per-market canonical delta journal (ADR-105 D7, D8).
     pub const AAVE_V3_DELTA_JOURNAL: &str = "aave_v3_delta_journal";
+    pub const AAVE_V3_CHECKPOINT_ASSET_CONFIGS: &str = "aave_v3_checkpoint_asset_configs";
     /// The generation relationships a journaled delta was reduced under.
     pub const AAVE_V3_GENERATIONS: &str = "aave_v3_generations";
     /// The exact block identities the projection has recorded.

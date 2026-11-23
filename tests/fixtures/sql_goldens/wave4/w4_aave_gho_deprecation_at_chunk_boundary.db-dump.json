@@ -4939,7 +4939,7 @@
           26,
           609,
           22839362,
-          "aave.projection-checkpoint/v2"
+          "aave.projection-checkpoint/v4"
         ],
         [
           2,
@@ -4953,7 +4953,7 @@
           14,
           217,
           22839366,
-          "aave.projection-checkpoint/v2"
+          "aave.projection-checkpoint/v4"
         ]
       ],
       "table": "aave_v3_projection_checkpoints"

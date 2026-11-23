@@ -118,6 +118,16 @@ pub const RUST_MIGRATIONS: &[MigrationStep] = &[
         name: "projection_checkpoint_resume_state",
         sql: PROJECTION_CHECKPOINT_RESUME_DDL,
     },
+    MigrationStep {
+        version: 7,
+        name: "projection_checkpoint_restore_fidelity",
+        sql: PROJECTION_CHECKPOINT_FIDELITY_DDL,
+    },
+    MigrationStep {
+        version: 8,
+        name: "projection_checkpoint_collateral_and_emode_state",
+        sql: PROJECTION_CHECKPOINT_COLLATERAL_EMODE_DDL,
+    },
 ];
 
 /// The v4 → v5 step: the per-market relational Projection checkpoint — the exact
@@ -236,6 +246,103 @@ CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_users (
 \tCHECK (length(address) > 0),
 \tCHECK (gho_discount >= 0),
 \tCHECK (stk_aave_balance IS NULL OR length(stk_aave_balance) > 0)
+);";
+/// The v6 -> v7 step: the checkpoint payload's restore fidelity (ADR-105 D9).
+///
+/// A restored checkpoint must state every field an abandoned unit may have
+/// written, or the abandoned value survives recovery: the per-user e-mode and
+/// isolation state, the reserve's own configuration (price source, indices,
+/// rates, last update block, e-mode category), and the collateral configuration
+/// the reserve's bitmap decodes into.
+///
+/// The two payload tables are re-created rather than altered: the payload's
+/// version advanced with them, so a v6 checkpoint was already unreadable, and a
+/// re-created table keeps the migrated file's schema text identical to
+/// [`SCHEMA_HEAD`] (the mirror this module asserts).
+const PROJECTION_CHECKPOINT_FIDELITY_DDL: &str = "\
+DROP TABLE IF EXISTS aave_v3_checkpoint_assets;
+DROP TABLE IF EXISTS aave_v3_checkpoint_users;
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_assets (
+	checkpoint_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	underlying_address VARCHAR(42) NOT NULL,
+	a_token_address VARCHAR(42) NOT NULL,
+	v_token_address VARCHAR(42) NOT NULL,
+	a_token_revision INTEGER NOT NULL,
+	v_token_revision INTEGER NOT NULL,
+	e_mode_category_id INTEGER,
+	price_source VARCHAR(42),
+	last_update_block INTEGER,
+	liquidity_index VARCHAR(78) NOT NULL DEFAULT '0',
+	liquidity_rate VARCHAR(78) NOT NULL DEFAULT '0',
+	borrow_index VARCHAR(78) NOT NULL DEFAULT '0',
+	borrow_rate VARCHAR(78) NOT NULL DEFAULT '0',
+	PRIMARY KEY (checkpoint_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(underlying_address) > 0 AND length(a_token_address) > 0 AND length(v_token_address) > 0),
+	CHECK (a_token_revision >= 0 AND v_token_revision >= 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_users (
+	checkpoint_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	address VARCHAR(42) NOT NULL,
+	gho_discount INTEGER NOT NULL,
+	stk_aave_balance VARCHAR(78),
+	e_mode INTEGER NOT NULL,
+	isolation_mode_collateral_asset_id INTEGER,
+	isolation_mode_debt VARCHAR(78) NOT NULL,
+	PRIMARY KEY (checkpoint_id, user_id),
+	UNIQUE (checkpoint_id, address),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(address) > 0),
+	CHECK (gho_discount >= 0),
+	CHECK (stk_aave_balance IS NULL OR length(stk_aave_balance) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_asset_configs (
+	checkpoint_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	ltv INTEGER NOT NULL,
+	liquidation_threshold INTEGER NOT NULL,
+	liquidation_bonus INTEGER NOT NULL,
+	e_mode_category_id INTEGER,
+	borrowing_enabled BOOLEAN NOT NULL,
+	stable_borrowing_enabled BOOLEAN NOT NULL,
+	flash_loan_enabled BOOLEAN NOT NULL,
+	isolation_mode BOOLEAN NOT NULL,
+	borrowable_in_isolation BOOLEAN NOT NULL,
+	debt_ceiling VARCHAR(78),
+	PRIMARY KEY (checkpoint_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id)
+);";
+
+/// The v7 → v8 step: the two resolution families a checkpoint must state beside
+/// the per-user and per-reserve fields - the user-to-asset collateral flags
+/// (`ReserveUsedAsCollateral`) and the e-mode category definitions
+/// (`EModeCategoryAdded`), both of which an abandoned branch rewrites.
+///
+/// The same DDL is carried by [`SCHEMA_HEAD`], so a fresh standalone file and a
+/// migrated v7 file converge on one schema; the mirror is asserted in this
+/// module's tests.
+const PROJECTION_CHECKPOINT_COLLATERAL_EMODE_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_user_collaterals (
+	checkpoint_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	enabled BOOLEAN NOT NULL,
+	PRIMARY KEY (checkpoint_id, user_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_emode_categories (
+	checkpoint_id INTEGER NOT NULL,
+	category_id INTEGER NOT NULL,
+	label TEXT,
+	ltv INTEGER NOT NULL,
+	liquidation_threshold INTEGER NOT NULL,
+	liquidation_bonus INTEGER NOT NULL,
+	price_source VARCHAR(42),
+	PRIMARY KEY (checkpoint_id, category_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (category_id > 0)
 );";
 /// The v3 → v4 step: the per-market Projection cursor, the canonical delta
 /// journal, the generation relationships, and the block/transaction identities

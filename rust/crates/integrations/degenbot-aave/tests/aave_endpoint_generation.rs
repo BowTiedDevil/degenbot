@@ -375,10 +375,10 @@ fn address_set_pool_rotation_fetches_new_pool_logs_next_chunk() {
     // wire surface, including chunk 2's new-address Pool pass.
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 16,
+        snapshot.requests, 17,
         "eleven filters issued, none repeated, plus the terminal anchor's chain-id \
-         and header reads and the candidate acquisition (chain binding, block \
-         header, complete receipt)"
+         and header reads, the candidate acquisition (chain binding, block header, \
+         complete receipt), and the second chunk's one-header recovery fence"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),

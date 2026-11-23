@@ -182,7 +182,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_pre_upgrade_control",
         chunks: 2,
-        served: 21,
+        served: 22,
         get_logs: 12,
         eth_calls: 0,
         traces: 0,
@@ -190,7 +190,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_atoken_upgrade_in_chunk",
         chunks: 2,
-        served: 18,
+        served: 19,
         get_logs: 12,
         eth_calls: 1,
         traces: 0,
@@ -198,7 +198,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_upgrade_plus_same_block_config",
         chunks: 2,
-        served: 37,
+        served: 38,
         get_logs: 12,
         eth_calls: 5,
         traces: 0,
@@ -206,7 +206,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_multi_upgrade_one_chunk",
         chunks: 2,
-        served: 32,
+        served: 33,
         get_logs: 12,
         eth_calls: 6,
         traces: 0,
@@ -214,7 +214,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_gho_deprecation_at_chunk_boundary",
         chunks: 2,
-        served: 30,
+        served: 31,
         get_logs: 12,
         eth_calls: 7,
         traces: 0,
@@ -222,7 +222,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
         chunks: 2,
-        served: 5111,
+        served: 5112,
         get_logs: 12,
         eth_calls: 7,
         traces: 3,
