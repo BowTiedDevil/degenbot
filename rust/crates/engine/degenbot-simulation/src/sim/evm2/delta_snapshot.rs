@@ -854,7 +854,7 @@ impl DeltaHub {
     pub fn snapshot_value(&self, address: Address, index: U256) -> Option<StorageValue> {
         let state = self.state.lock();
 
-        state.resolved(&(address, index), self.anchor.number, self.retention)
+        state.resolved(&(address, index), self.anchor.number(), self.retention)
     }
 
     /// Distinct identities the snapshot holds: this generation's own map plus
@@ -875,7 +875,7 @@ impl DeltaHub {
     pub fn live_len(&self) -> usize {
         let state = self.state.lock();
 
-        state.live_len(self.anchor.number, self.retention)
+        state.live_len(self.anchor.number(), self.retention)
     }
 
     /// How many identities this generation itself contributed VALUES for — its
@@ -950,7 +950,7 @@ impl DeltaHub {
         let key = (address, index);
         let origin = {
             let state = self.state.lock();
-            match state.resolved(&key, self.anchor.number, self.retention) {
+            match state.resolved(&key, self.anchor.number(), self.retention) {
                 Some(value) => DeltaReadOrigin::Chain(value),
                 None => DeltaReadOrigin::Hub(self.reads.read_storage(address, index)),
             }
@@ -1001,7 +1001,7 @@ impl DeltaHub {
 
     /// Record one resolved candidate read's use at this generation's block.
     fn touch(&self, key: Slot) {
-        self.state.lock().touch(key, self.anchor.number);
+        self.state.lock().touch(key, self.anchor.number());
     }
 
     /// Settle one hub answer into this generation's own map, stamping the use
@@ -1009,7 +1009,7 @@ impl DeltaHub {
     /// handles coalesced onto settles on each handle's poll — the same value, at
     /// the same generation, with the same stamp.
     fn settle(&self, key: Slot, value: StorageValue) {
-        self.state.lock().settle(key, value, self.anchor.number);
+        self.state.lock().settle(key, value, self.anchor.number());
     }
 
     /// Seal this generation's own map into an immutable node over a base
@@ -1034,7 +1034,7 @@ impl DeltaHub {
         let (base, compaction) = compact_base(
             Arc::clone(&state.node),
             max_depth,
-            self.anchor.number,
+            self.anchor.number(),
             retention,
         );
 
@@ -1075,8 +1075,8 @@ impl StorageView for DeltaHub {
     fn get(&self, address: Address, index: U256) -> Option<StorageValue> {
         let key = (address, index);
         let mut state = self.state.lock();
-        let value = state.resolved(&key, self.anchor.number, self.retention)?;
-        state.touch(key, self.anchor.number);
+        let value = state.resolved(&key, self.anchor.number(), self.retention)?;
+        state.touch(key, self.anchor.number());
         Some(value)
     }
 
@@ -1474,8 +1474,13 @@ impl DeltaSnapshotCache {
 
         let base = base.unwrap_or_else(|| Arc::new(DeltaSnapshot::root()));
 
-        let (values, used, applied) =
-            seed_final_writes(final_writes, relevance, &base, child.number, self.retention);
+        let (values, used, applied) = seed_final_writes(
+            final_writes,
+            relevance,
+            &base,
+            child.number(),
+            self.retention,
+        );
 
         let hub = Arc::new(DeltaHub::generation(
             &self.provider,

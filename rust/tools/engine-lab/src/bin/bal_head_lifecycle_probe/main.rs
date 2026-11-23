@@ -318,9 +318,9 @@ async fn verify_settled_values(
     let view = driver.snapshot(anchor);
     let plant = plant_divergence();
     let outcomes = cold
-        .get_storage_batch_results_at(&keys, BlockId::number(anchor.number))
+        .get_storage_batch_results_at(&keys, BlockId::number(anchor.number()))
         .await
-        .map_err(|error| format!("cold batch at {}: {error}", anchor.number))?;
+        .map_err(|error| format!("cold batch at {}: {error}", anchor.number()))?;
     for ((address, slot), cold_value) in keys.iter().zip(outcomes) {
         let cold_value =
             cold_value.map_err(|error| format!("cold read {address}/{slot}: {error}"))?;
@@ -334,7 +334,7 @@ async fn verify_settled_values(
         if snapshot != Some(cold_value) {
             return Err(format!(
                 "block {}: snapshot {snapshot:?} != cold {cold_value} at {address}/{slot}",
-                anchor.number
+                anchor.number()
             ));
         }
     }

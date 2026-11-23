@@ -69,7 +69,7 @@ pub async fn replay(provider: &AlloyProvider, blocks: &[ParityBlock]) -> ParityR
         if hub.memoized_slots() != delta_hub.snapshot_len() {
             result.mismatches.push(format!(
                 "block {}: snapshot entries control {} vs delta {}",
-                block.anchor.number,
+                block.anchor.number(),
                 hub.memoized_slots(),
                 delta_hub.snapshot_len()
             ));
@@ -85,7 +85,7 @@ pub async fn replay(provider: &AlloyProvider, blocks: &[ParityBlock]) -> ParityR
             if !same {
                 result.mismatches.push(format!(
                     "block {} {address}/{slot}: control {control_value:?} vs delta {delta_value:?}",
-                    block.anchor.number
+                    block.anchor.number()
                 ));
             }
         }
@@ -142,7 +142,7 @@ fn compare_reports(
         if left != right {
             result.mismatches.push(format!(
                 "block {} {field}: control {left} vs delta {right}",
-                block.anchor.number
+                block.anchor.number()
             ));
         }
     }

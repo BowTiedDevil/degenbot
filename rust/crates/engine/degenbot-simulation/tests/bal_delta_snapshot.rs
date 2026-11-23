@@ -666,8 +666,8 @@ async fn assert_refused_link(
     supplied_parent_hash: B256,
     expected: CarryRefusal,
 ) {
-    stub.serve_at(installed.number, address(0x11), U256::from(1u64), 1);
-    let child_hash = child.hash.expect("a refused-link child carries its hash");
+    stub.serve_at(installed.number(), address(0x11), U256::from(1u64), 1);
+    let child_hash = child.hash().expect("a refused-link child carries its hash");
     stub.serve_bal_at(
         child_hash,
         bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(3u64))]),
@@ -749,7 +749,7 @@ async fn refused_lineage_starts_cold_children_on_both_representations() {
     // A number-only parent: its hash cannot be verified.
     assert_refused_link(
         &stub,
-        ReadAnchor::at(HEIGHT),
+        ReadAnchor::unresolved(HEIGHT),
         ReadAnchor::identified(HEIGHT + 1, B256::new([0xdd; 32])),
         parent_hash,
         CarryRefusal::ParentHashUnknown,

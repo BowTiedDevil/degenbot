@@ -245,7 +245,7 @@ retirement (ADR-087), not a compatibility shim.
 
 ### Retained, with the reason it is not a retirement candidate
 
-- **Ingress-only number forms** — `sim::ReadAnchor::at` and telemetry
+- **Ingress-only number forms** — `sim::ReadAnchor::unresolved` and telemetry
   `BlockLineage::unattached` remain for an observation that resolved no header (a
   cold-start sweep, a probe, a lineage with no captured exporter context). ADR-105
   D1 admits a number-only *observation* and refuses it only at the canonical
@@ -455,7 +455,7 @@ accepted header
   → ResultBatch { solve_block, metadata, telemetry BlockLineage }
   → Session BlockNotification { number, metadata } (independent consumer clock)
   → BatchWork { current_block, execution facts, telemetry BlockLineage }
-  → simulation ReadAnchor { number, optional hash }
+  → simulation ReadAnchor { unresolved number | identified number + hash }
   → submission and spans
 ```
 

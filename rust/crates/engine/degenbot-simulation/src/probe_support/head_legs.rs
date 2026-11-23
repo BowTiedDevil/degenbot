@@ -244,7 +244,7 @@ pub async fn waiter_leg(
         if poll_once(advance.as_mut()).await.is_ready() {
             return Err(format!(
                 "head {}: the deferred list did not park the advance",
-                anchor.number
+                anchor.number()
             ));
         }
 
@@ -252,7 +252,7 @@ pub async fn waiter_leg(
         if poll_once(waiter.as_mut()).await.is_ready() {
             return Err(format!(
                 "head {}: the wait resolved before the preparation it joined finished",
-                anchor.number
+                anchor.number()
             ));
         }
 
@@ -264,13 +264,13 @@ pub async fn waiter_leg(
         let (outcome, view) =
             tokio::time::timeout(SETTLE_DEADLINE, async { tokio::join!(advance, waiter) })
                 .await
-                .map_err(|_| format!("head {}: the wait never resolved", anchor.number))?;
+                .map_err(|_| format!("head {}: the wait never resolved", anchor.number()))?;
         let wait = wait_started.elapsed();
 
         let HeadOutcome::Settled(report) = outcome else {
             return Err(format!(
                 "head {}: the claimed advance did not settle: {outcome:?}",
-                anchor.number
+                anchor.number()
             ));
         };
         // The wait answers the head's SETTLED generation: ready when the parent
@@ -286,7 +286,8 @@ pub async fn waiter_leg(
         ) {
             return Err(format!(
                 "head {}: the wait answered {readiness} ({:?}), not the settled generation",
-                anchor.number, view.readiness
+                anchor.number(),
+                view.readiness
             ));
         }
         let prepare = report.bal_latency;
@@ -294,11 +295,11 @@ pub async fn waiter_leg(
             return Err(format!(
                 "head {}: the wait ({wait:?}) is shorter than the prepare wall \
                  ({prepare:?}) it overlapped, so the sample measured no resolution",
-                anchor.number
+                anchor.number()
             ));
         };
         samples.push(WaiterSample {
-            head: anchor.number,
+            head: anchor.number(),
             wait,
             prepare,
             hold,

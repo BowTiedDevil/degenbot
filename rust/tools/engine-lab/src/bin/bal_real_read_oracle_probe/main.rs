@@ -265,7 +265,8 @@ async fn replay_leg(
     if !matches!(report.outcome, CarryOutcome::Cold { .. }) {
         return Err(format!(
             "the exact-anchor generation at {} settled {:?}, not cold",
-            anchor.number, report.outcome
+            anchor.number(),
+            report.outcome
         ));
     }
     let started = Instant::now();
@@ -274,7 +275,7 @@ async fn replay_leg(
     if plant && !plant_one_wei(&mut answers) {
         return Err(format!(
             "the plant found no answer to skew at {}",
-            anchor.number
+            anchor.number()
         ));
     }
     let comparison = compare(&candidate, &answers, cold);
@@ -282,7 +283,7 @@ async fn replay_leg(
     Ok(LegRow::from_facts(LegFacts {
         label,
         candidate,
-        block: anchor.number,
+        block: anchor.number(),
         relevance: relevance.len(),
         keys,
         comparison,
@@ -314,9 +315,9 @@ async fn replay_expiry_leg(
     plant: bool,
 ) -> Result<LegRow, String> {
     let parent_number = anchor
-        .number
+        .number()
         .checked_sub(1)
-        .ok_or_else(|| format!("{} has no parent block", anchor.number))?;
+        .ok_or_else(|| format!("{} has no parent block", anchor.number()))?;
     let (parent_anchor_hash, grandparent_hash) = header(provider, parent_number).await?;
     let parent_anchor = ReadAnchor::identified(parent_number, parent_anchor_hash);
     let cache = DeltaSnapshotCache::with_retention(provider, Retention::IdleBlocks(0));
@@ -333,7 +334,8 @@ async fn replay_expiry_leg(
     if !matches!(report.outcome, CarryOutcome::Carried { .. }) {
         return Err(format!(
             "the expiry leg's child {} settled {:?}, not carried",
-            anchor.number, report.outcome
+            anchor.number(),
+            report.outcome
         ));
     }
     // Identities the parent generation serves and the child neither writes nor
@@ -367,7 +369,7 @@ async fn replay_expiry_leg(
         .filter(|key| !cold_map.contains_key(key))
         .collect();
     if !missing.is_empty() {
-        cold_map.extend(cold_values(cold_provider, anchor.number, &missing).await?);
+        cold_map.extend(cold_values(cold_provider, anchor.number(), &missing).await?);
     }
     let started = Instant::now();
     let mut answers = read_generation(&hub, &read_keys).await?;
@@ -379,13 +381,13 @@ async fn replay_expiry_leg(
     if expired_still_served != 0 {
         return Err(format!(
             "{expired_still_served} expired identities were served from the snapshot at {}",
-            anchor.number
+            anchor.number()
         ));
     }
     if plant && !plant_one_wei(&mut answers) {
         return Err(format!(
             "the plant found no answer to skew at {}",
-            anchor.number
+            anchor.number()
         ));
     }
     let comparison = compare(&candidate, &answers, &cold_map);
@@ -393,7 +395,7 @@ async fn replay_expiry_leg(
     Ok(LegRow::from_facts(LegFacts {
         label: "expiry".to_string(),
         candidate,
-        block: anchor.number,
+        block: anchor.number(),
         relevance: relevance.len(),
         keys: &read_keys,
         comparison,

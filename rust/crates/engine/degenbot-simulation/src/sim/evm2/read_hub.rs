@@ -545,7 +545,7 @@ impl ReadHub {
     /// misses — the slots assistance did not cover — are visible afterwards as
     /// fresh rounds in [`Self::stats`].
     pub async fn prefetch_bal(&self, plan: &BalPlan) -> BalPrefetchReport {
-        let Some(hash) = self.anchor.hash else {
+        let Some(hash) = self.anchor.hash() else {
             return BalPrefetchReport {
                 skip: Some(BalSkip::NoAnchorHash),
                 ..BalPrefetchReport::default()
@@ -657,7 +657,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_storage_batch_results_at(keys, BlockId::number(self.anchor.number))
+            .get_storage_batch_results_at(keys, BlockId::number(self.anchor.number()))
             .await
     }
 
@@ -670,7 +670,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_accounts_batch_at(addresses, BlockId::number(self.anchor.number))
+            .get_accounts_batch_at(addresses, BlockId::number(self.anchor.number()))
             .await
     }
 
@@ -903,7 +903,7 @@ impl PreparedBal {
     /// unknown reads take the ordinary dynamic path.
     pub async fn prepare(provider: &AlloyProvider, anchor: ReadAnchor) -> Self {
         let started = Instant::now();
-        let (final_writes, skip) = match anchor.hash {
+        let (final_writes, skip) = match anchor.hash() {
             None => (Vec::new(), Some(BalSkip::NoAnchorHash)),
             Some(hash) => match fetch_bal_seed(provider, hash, &BalPlan::default()).await {
                 Ok(seed) => (seed.writes, None),
@@ -928,7 +928,7 @@ impl PreparedBal {
     /// The block hash the list was fetched by, when the anchor carried one.
     #[must_use]
     pub const fn hash(&self) -> Option<B256> {
-        self.anchor.hash
+        self.anchor.hash()
     }
 
     /// Why the list could not be read; `None` when it decoded. A prepared skip
@@ -1017,10 +1017,10 @@ pub(crate) fn classify_link(
     let Some(parent) = parent else {
         return Some(CarryRefusal::NoParent);
     };
-    if parent.number.checked_add(1) != Some(child.number) {
+    if parent.number().checked_add(1) != Some(child.number()) {
         return Some(CarryRefusal::NotConsecutive);
     }
-    match parent.hash {
+    match parent.hash() {
         None => Some(CarryRefusal::ParentHashUnknown),
         Some(hash) if hash != child_parent_hash => Some(CarryRefusal::ParentHashMismatch),
         Some(_) => None,

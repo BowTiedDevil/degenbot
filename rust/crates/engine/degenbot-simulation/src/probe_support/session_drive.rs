@@ -354,7 +354,7 @@ async fn drive_lane(run: &LaneRun<'_, '_>, worker: usize) -> Result<LaneOutcome,
     let local = run.shared.is_none().then(|| {
         ReadHub::new(
             run.provider,
-            ReadAnchor::at(run.rows.first().map_or(0, |r| r.block)),
+            ReadAnchor::unresolved(run.rows.first().map_or(0, |r| r.block)),
         )
     });
     let hub: ReadLane<'_> = run
@@ -490,7 +490,7 @@ pub async fn drive_lanes(
     // A per-worker-hub leg mints one hub per lane inside the drive; a shared
     // hub is either the caller's (a seeded or carried snapshot) or a fresh one.
     let owned = (external.is_none() && plan.shared_hub)
-        .then(|| ReadHub::new(provider, ReadAnchor::at(block)));
+        .then(|| ReadHub::new(provider, ReadAnchor::unresolved(block)));
     let shared = external.or(owned.as_ref().map(ReadLane::Full));
     let drain = shared.map(|lane| HubDrain::new(lane.hub(), plan.policy));
 

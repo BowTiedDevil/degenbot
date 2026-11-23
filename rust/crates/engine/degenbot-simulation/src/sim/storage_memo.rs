@@ -37,6 +37,7 @@
 //! AND the block's canonical hash - and a replacement block mints a fresh memo
 //! exactly as a moved height does.
 
+use alloy::eips::{BlockId, RpcBlockHash};
 use alloy::primitives::{Address, StorageValue, B256, U256};
 use degenbot_core::canonical_head::ChainAnchor;
 use parking_lot::Mutex;
@@ -113,26 +114,36 @@ impl StorageMemo {
 /// The block a memo's values were read at - the key [`StorageMemoCache`] shares
 /// and retires on.
 ///
-/// `number` is the block the RPC fallback tags every read with; `hash` is that
-/// block's canonical identity, the reorg fence. Both must match for a fan-out
+/// An anchor is ONE of two observations, never a blend: [`Self::identified`]
+/// names a block by its height AND its canonical hash (the reorg fence), and
+/// [`Self::unresolved`] names only the height. Both always match for a fan-out
 /// to inherit an installed memo: a same-height reorg leaves the number alone
-/// and changes only the hash, so only a hashed key can see it. A resolved
-/// [`ChainAnchor`] converts into one directly - the canonical head pipeline's
-/// exact identity is this observation's identified form.
+/// and changes only the hash, so only an identified key can see it. A resolved
+/// [`ChainAnchor`] converts into the identified form directly - the canonical
+/// head pipeline's exact identity IS this observation.
 ///
-/// `hash: None` ([`Self::at`]) is the INGRESS-ONLY form (ADR-105 D1): a
-/// number-only observation - the caller could not resolve the block's identity
-/// (no ambient runtime, an RPC failure, a caller that never asks) - so the
-/// memo retires on the number alone, the pre-fence scope, never a wrong one.
-/// It never claims to be the canonical block: an observation must resolve its
-/// block hash (and, at the canonical boundary, its parent linkage) before it
-/// names a [`ChainAnchor`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReadAnchor {
-    /// The block number every read held by the memo is pinned to.
-    pub number: u64,
-    /// The canonical hash of that block, when the caller resolved it.
-    pub hash: Option<B256>,
+/// The unresolved form is the INGRESS-ONLY observation (ADR-105 D1): the caller
+/// could not resolve the block's identity (no ambient runtime, an RPC failure,
+/// a caller that never asks), so the memo retires on the number alone, the
+/// pre-fence scope, never a wrong one. It never claims to be the canonical
+/// block: an observation must resolve its block hash (and, at the canonical
+/// boundary, its parent linkage) before it names a [`ChainAnchor`].
+///
+/// The form is private, so the two halves of a block's identity cannot move
+/// apart: every anchor is minted by a constructor or the [`ChainAnchor`]
+/// conversion and read through [`Self::number`] / [`Self::hash`].
+/// [`Self::block_id`] is the one total conversion into a transport block id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadAnchor(AnchorState);
+
+/// The two observation forms of a [`ReadAnchor`], private to the constructors
+/// that keep every identified anchor's number and hash one identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum AnchorState {
+    /// The height alone - an observation that resolved no block hash.
+    Unresolved(u64),
+    /// The height and the block's own canonical hash.
+    Identified { number: u64, hash: B256 },
 }
 
 impl ReadAnchor {
@@ -144,16 +155,59 @@ impl ReadAnchor {
     /// could not resolve a block hash, and it fences nothing a same-height reorg
     /// could replace.
     #[must_use]
-    pub const fn at(number: u64) -> Self {
-        Self { number, hash: None }
+    pub const fn unresolved(number: u64) -> Self {
+        Self(AnchorState::Unresolved(number))
     }
 
     /// The anchor of `number`, identified by its canonical `hash`.
     #[must_use]
     pub const fn identified(number: u64, hash: B256) -> Self {
-        Self {
-            number,
-            hash: Some(hash),
+        Self(AnchorState::Identified { number, hash })
+    }
+
+    /// The block number every read held by the memo is pinned to.
+    #[must_use]
+    pub const fn number(&self) -> u64 {
+        match self.0 {
+            AnchorState::Unresolved(number) | AnchorState::Identified { number, .. } => number,
+        }
+    }
+
+    /// The block's canonical hash, when the observation resolved one.
+    #[must_use]
+    pub const fn hash(&self) -> Option<B256> {
+        match self.0 {
+            AnchorState::Unresolved(_) => None,
+            AnchorState::Identified { hash, .. } => Some(hash),
+        }
+    }
+
+    /// Whether this observation names its block's canonical hash.
+    #[must_use]
+    pub const fn is_identified(&self) -> bool {
+        matches!(self.0, AnchorState::Identified { .. })
+    }
+
+    /// Whether this observation names only its height.
+    #[must_use]
+    pub const fn is_unresolved(&self) -> bool {
+        matches!(self.0, AnchorState::Unresolved(_))
+    }
+
+    /// The transport block id this observation names - the one conversion a
+    /// read takes from an anchor.
+    ///
+    /// An identified anchor is requested BY ITS CANONICAL HASH (EIP-1898,
+    /// `requireCanonical`), so a node either answers at exactly that block or
+    /// refuses; it is never silently answered with a same-height replacement.
+    /// An unresolved anchor has no hash to request by and names its height.
+    #[must_use]
+    pub const fn block_id(&self) -> BlockId {
+        match self.0 {
+            AnchorState::Unresolved(number) => BlockId::number(number),
+            AnchorState::Identified { hash, .. } => {
+                BlockId::Hash(RpcBlockHash::from_hash(hash, Some(true)))
+            }
         }
     }
 }
@@ -273,10 +327,10 @@ mod tests {
     #[test]
     fn an_anchor_move_retires_the_memo() {
         let cache = StorageMemoCache::new();
-        let old = cache.for_anchor(ReadAnchor::at(100));
+        let old = cache.for_anchor(ReadAnchor::unresolved(100));
         old.put(Address::ZERO, SLOT, StorageValue::from(42u64));
 
-        let moved = cache.for_anchor(ReadAnchor::at(101));
+        let moved = cache.for_anchor(ReadAnchor::unresolved(101));
         assert!(
             !Arc::ptr_eq(&old, &moved),
             "a moved anchor needs a new memo"
@@ -286,7 +340,7 @@ mod tests {
             None,
             "the new anchor starts cold — the old anchor's values are not carried"
         );
-        assert_eq!(cache.anchor(), Some(ReadAnchor::at(101)));
+        assert_eq!(cache.anchor(), Some(ReadAnchor::unresolved(101)));
         // The retired memo still holds what it read — for the fan-outs already
         // pinned at ITS anchor, never for the moved one.
         assert_eq!(
@@ -380,7 +434,7 @@ mod tests {
         let warm = cache.for_anchor(ReadAnchor::identified(100, B256::new([0xaa; 32])));
         warm.put(Address::ZERO, SLOT, StorageValue::from(42u64));
 
-        let unresolved = cache.for_anchor(ReadAnchor::at(100));
+        let unresolved = cache.for_anchor(ReadAnchor::unresolved(100));
         assert!(
             !Arc::ptr_eq(&warm, &unresolved),
             "an unidentified anchor is never assumed to be an installed one"
@@ -397,10 +451,10 @@ mod tests {
     #[test]
     fn a_backward_anchor_move_never_shadows_the_new_value() {
         let cache = StorageMemoCache::new();
-        let rewound_from = cache.for_anchor(ReadAnchor::at(100));
+        let rewound_from = cache.for_anchor(ReadAnchor::unresolved(100));
         rewound_from.put(Address::ZERO, SLOT, StorageValue::from(42u64));
 
-        let rewound_to = cache.for_anchor(ReadAnchor::at(99));
+        let rewound_to = cache.for_anchor(ReadAnchor::unresolved(99));
         assert!(
             !Arc::ptr_eq(&rewound_from, &rewound_to),
             "a rewind is an anchor move like any other"

@@ -462,7 +462,7 @@ fn address(tag: u8) -> Address {
 async fn duplicate_storage_reads_share_one_fetch() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let first = hub.read_storage(address(0x11), slot());
     let second = hub.read_storage(address(0x11), slot());
@@ -497,7 +497,7 @@ async fn duplicate_storage_reads_share_one_fetch() {
 async fn distinct_storage_reads_share_one_batch() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let first = hub.read_storage(address(0x11), slot());
     let other_account = hub.read_storage(address(0x12), slot());
@@ -540,7 +540,7 @@ async fn distinct_storage_reads_share_one_batch() {
 async fn duplicate_account_reads_share_one_fetch() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let first = hub.read_account(address(0x21));
     let second = hub.read_account(address(0x21));
@@ -574,7 +574,7 @@ async fn duplicate_account_reads_share_one_fetch() {
 async fn one_round_dispatches_both_batch_kinds() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let word = hub.read_storage(address(0x11), slot());
     let first_account = hub.read_account(address(0x21));
@@ -627,7 +627,7 @@ async fn one_round_dispatches_both_batch_kinds() {
 async fn a_memoized_read_does_not_reach_the_chain() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let first = hub.read_storage(address(0x11), slot());
     let first_account = hub.read_account(address(0x21));
@@ -656,7 +656,7 @@ async fn a_memoized_read_does_not_reach_the_chain() {
 async fn a_refused_account_member_fails_only_its_requester() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let refused = hub.read_account(REFUSED);
     let served = hub.read_account(address(0x21));
@@ -692,7 +692,7 @@ async fn a_refused_account_member_fails_only_its_requester() {
 async fn a_refused_storage_member_fails_only_its_requester() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
 
     let refused = hub.read_storage(REFUSED, slot());
     let served = hub.read_storage(address(0x11), slot());
@@ -775,7 +775,7 @@ async fn a_refused_storage_member_fails_only_its_requester() {
 async fn a_failed_round_fails_its_requesters_and_a_later_read_retries() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
     stub.set_down(true);
 
     let word = hub.read_storage(address(0x11), slot());
@@ -826,7 +826,7 @@ async fn a_failed_round_fails_its_requesters_and_a_later_read_retries() {
 async fn a_cancelled_round_frees_its_in_flight_identities() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
     stub.park();
 
     let abandoned = hub.read_storage(address(0x11), slot());
@@ -875,7 +875,7 @@ async fn a_cancelled_round_frees_its_in_flight_identities() {
 async fn a_read_registered_during_a_round_joins_that_round() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let hub = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let hub = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
     stub.park();
 
     let first = hub.read_storage(address(0x11), slot());
@@ -1032,7 +1032,7 @@ async fn an_empty_account_row_is_memoized_only_at_its_anchor() {
         stub.packets()
     );
 
-    let moved = cache.for_anchor(ReadAnchor::at(HEIGHT + 1));
+    let moved = cache.for_anchor(ReadAnchor::unresolved(HEIGHT + 1));
     let fresh = moved.read_account(address(0x21));
     let moved_report = moved.drain_round().await;
     assert_eq!(moved_report.account_members, 1, "{moved_report:?}");
@@ -1778,7 +1778,8 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
     // A number-only parent: its hash cannot verify the child's parent hash, so
     // the link is unverifiable, never assumed.
     {
-        let (cache, _parent) = settled_parent(&stub, &provider, ReadAnchor::at(HEIGHT)).await;
+        let (cache, _parent) =
+            settled_parent(&stub, &provider, ReadAnchor::unresolved(HEIGHT)).await;
         let (child, report) = cache
             .advance_bal(
                 ReadAnchor::identified(HEIGHT + 1, child_hash),
@@ -1809,7 +1810,11 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
         )
         .await;
         let (child, report) = cache
-            .advance_bal(ReadAnchor::at(HEIGHT + 1), parent_hash, &[address(0x11)])
+            .advance_bal(
+                ReadAnchor::unresolved(HEIGHT + 1),
+                parent_hash,
+                &[address(0x11)],
+            )
             .await;
         assert_eq!(
             report.outcome,
@@ -2808,7 +2813,7 @@ async fn bal_seeding_is_exact_hash_anchored_and_never_crosses_anchors() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
-    let unanchored = ReadHub::new(&provider, ReadAnchor::at(HEIGHT));
+    let unanchored = ReadHub::new(&provider, ReadAnchor::unresolved(HEIGHT));
     let report = unanchored.prefetch_bal(&BalPlan::default()).await;
     assert_eq!(report.skip, Some(BalSkip::NoAnchorHash), "{report:?}");
     assert!(

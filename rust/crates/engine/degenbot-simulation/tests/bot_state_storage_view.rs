@@ -177,7 +177,7 @@ fn a_storage_view_serves_a_hit_and_settles_a_miss() {
 #[test]
 fn a_legacy_memo_view_keeps_the_existing_call_sites_working() {
     let cache = StorageMemoCache::new();
-    let memo = cache.for_anchor(ReadAnchor::at(HEIGHT));
+    let memo = cache.for_anchor(ReadAnchor::unresolved(HEIGHT));
     let mut db =
         BotStateDb::new(&NO_SIM_ANCHOR, CountingDb::serving(42)).with_storage_memo(memo.clone());
 

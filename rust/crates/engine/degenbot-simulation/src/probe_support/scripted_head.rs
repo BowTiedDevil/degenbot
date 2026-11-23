@@ -75,9 +75,9 @@ pub fn head(number: u64, hash: B256, parent_hash: B256) -> ChainAnchor {
 #[must_use]
 pub fn anchored(anchor: ReadAnchor, parent_hash: B256) -> ChainAnchor {
     let hash = anchor
-        .hash
+        .hash()
         .expect("only an identified observation resolves to a chain anchor");
-    head(anchor.number, hash, parent_hash)
+    head(anchor.number(), hash, parent_hash)
 }
 
 /// The settled report of one successful apply.

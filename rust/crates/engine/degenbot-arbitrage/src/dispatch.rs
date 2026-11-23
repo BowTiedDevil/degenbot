@@ -704,7 +704,7 @@ struct LeafInputs<'a> {
 fn solve_read_anchor(block: &crate::SimulationBlock<'_>, solved_block: u64) -> ReadAnchor {
     block
         .based_on
-        .map_or_else(|| ReadAnchor::at(solved_block), ReadAnchor::from)
+        .map_or_else(|| ReadAnchor::unresolved(solved_block), ReadAnchor::from)
 }
 
 /// Simulate `candidates` with `inputs`, then categorize, feed back, record, and
@@ -865,7 +865,7 @@ fn simulate_leaf(
                     .max()
                     .unwrap_or(ctx.block.current_block);
                 let read_anchor = solve_read_anchor(&ctx.block, solved_block);
-                let sim_block = read_anchor.number;
+                let sim_block = read_anchor.number();
                 // The engine fan-out (ADR-089): `Evm2BlockSimHandle` + the
                 // seam drive every candidate.
                 // The warm-code cache arc; degrade to a fresh per-call cache if
@@ -935,7 +935,7 @@ fn simulate_leaf(
                         domain = sim,
                         current_block,
                         anchor = sim_block,
-                        anchor_hash = ?read_anchor.hash,
+                        anchor_hash = ?read_anchor.hash(),
                         parent_hash = ?ctx.block.based_on.map(|anchor| anchor.parent_hash()),
                         storage = selection.outcome.mode(),
                         reason = ?selection.outcome.reason(),
@@ -1023,7 +1023,7 @@ fn simulate_leaf(
                             domain = sim,
                             current_block,
                             anchor = sim_block,
-                            anchor_hash = ?read_anchor.hash,
+                            anchor_hash = ?read_anchor.hash(),
                             derived = prefetch.derived,
                             learned = prefetch.learned,
                             hook = prefetch.hook,
@@ -2662,7 +2662,7 @@ mod delta_dispatch_tests {
         let unanchored = super::tests::ctx(&provider, &deployment);
         assert_eq!(
             super::solve_read_anchor(&unanchored.block, BLOCK),
-            ReadAnchor::at(BLOCK),
+            ReadAnchor::unresolved(BLOCK),
             "an anchor-less item degrades to a cold number-only anchor"
         );
     }

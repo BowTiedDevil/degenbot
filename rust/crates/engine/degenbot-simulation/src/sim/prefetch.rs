@@ -1124,7 +1124,7 @@ mod tests {
         let provider = stub.provider();
         let cache = StorageMemoCache::new();
         let anchor = 100u64;
-        let memo = cache.for_anchor(ReadAnchor::at(anchor));
+        let memo = cache.for_anchor(ReadAnchor::unresolved(anchor));
         let paths = [path(vec![v2_hop(POOL_1), v3_hop(POOL_3)])];
         let slots = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &executor_facts());
 
@@ -1167,7 +1167,7 @@ mod tests {
         // The un-prefetched run: same reads, one forward each.
         let cold = StorageMemoCache::new();
         let (forwarded_values, forwards) =
-            read_through_memo(&slots, &cold.for_anchor(ReadAnchor::at(anchor)));
+            read_through_memo(&slots, &cold.for_anchor(ReadAnchor::unresolved(anchor)));
         assert_eq!(
             usize::try_from(forwards).unwrap(),
             slots.len(),
@@ -1182,7 +1182,7 @@ mod tests {
             prefetched_values, forwarded_values,
             "prefetch ≡ no-prefetch: the served values are the chain's own"
         );
-        assert_eq!(cache.anchor(), Some(ReadAnchor::at(anchor)));
+        assert_eq!(cache.anchor(), Some(ReadAnchor::unresolved(anchor)));
     }
 
     /// A warm memo dispatches no second batch: the same anchor's later fan-out
@@ -1205,7 +1205,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            &cache.for_anchor(ReadAnchor::at(7)),
+            &cache.for_anchor(ReadAnchor::unresolved(7)),
         );
         assert_eq!(first.seeded, first.derived);
         let second = prefetch_paths_into_memo(
@@ -1218,7 +1218,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            &cache.for_anchor(ReadAnchor::at(7)),
+            &cache.for_anchor(ReadAnchor::unresolved(7)),
         );
         assert_eq!(
             second,
@@ -1300,7 +1300,7 @@ mod tests {
         let facts = executor_facts();
         let slots = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
 
-        let seeded = cache.for_anchor(ReadAnchor::at(100));
+        let seeded = cache.for_anchor(ReadAnchor::unresolved(100));
         let report = prefetch_paths_into_memo(
             &provider,
             100,
@@ -1316,7 +1316,7 @@ mod tests {
         assert_eq!(report.seeded, slots.len());
 
         // The anchor moves: the successor memo starts empty — no carried value.
-        let moved = cache.for_anchor(ReadAnchor::at(101));
+        let moved = cache.for_anchor(ReadAnchor::unresolved(101));
         assert!(
             !std::sync::Arc::ptr_eq(&seeded, &moved),
             "the moved anchor mints a fresh memo"
@@ -1550,7 +1550,7 @@ mod tests {
         let provider = stub.provider();
         let cache = StorageMemoCache::new();
         let anchor = 101u64;
-        let memo = cache.for_anchor(ReadAnchor::at(anchor));
+        let memo = cache.for_anchor(ReadAnchor::unresolved(anchor));
         let paths = [path(vec![v2_hop(POOL_1)])];
         let facts = executor_facts();
         let derived = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
@@ -1618,8 +1618,10 @@ mod tests {
         // Verdict identity at the value seam: the learned entries serve the
         // chain's own answers, exactly as a cold run reads them.
         let cold = StorageMemoCache::new();
-        let (cold_values, cold_forwards) =
-            read_through_memo(&plan.slots, &cold.for_anchor(ReadAnchor::at(anchor)));
+        let (cold_values, cold_forwards) = read_through_memo(
+            &plan.slots,
+            &cold.for_anchor(ReadAnchor::unresolved(anchor)),
+        );
         assert_eq!(
             usize::try_from(cold_forwards).unwrap(),
             plan.slots.len(),
@@ -1651,11 +1653,11 @@ mod tests {
         hot.record(100, TOKEN, U256::from(0x99u64));
 
         // The retired anchor's memo: nothing seeded for it.
-        let stale = cache.for_anchor(ReadAnchor::at(100));
+        let stale = cache.for_anchor(ReadAnchor::unresolved(100));
         assert_eq!(stale.stats(), (0, 0));
 
         let anchor = 101u64;
-        let memo = cache.for_anchor(ReadAnchor::at(anchor));
+        let memo = cache.for_anchor(ReadAnchor::unresolved(anchor));
         let plan = prewarm_plan(
             &paths,
             &FamilySlotLayout::PRODUCTION,
@@ -1718,7 +1720,7 @@ mod tests {
         let provider = stub.provider();
         let cache = StorageMemoCache::new();
         let anchor = 100u64;
-        let memo = cache.for_anchor(ReadAnchor::at(anchor));
+        let memo = cache.for_anchor(ReadAnchor::unresolved(anchor));
 
         let hooks = HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC);
         let _ = hooks.record(HOOK, [U256::from(3u64), U256::from(9u64)]);

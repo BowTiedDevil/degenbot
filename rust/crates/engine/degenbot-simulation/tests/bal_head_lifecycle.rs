@@ -261,7 +261,9 @@ async fn a_delivered_head_serves_the_cold_path_until_its_bal_applies() {
         "the settled head carries the parent's word"
     );
     assert_eq!(
-        driver.snapshot(ReadAnchor::at(HEIGHT + 5)).readiness,
+        driver
+            .snapshot(ReadAnchor::unresolved(HEIGHT + 5))
+            .readiness,
         HeadReadiness::Cold(HeadCold::Undelivered),
         "a head never delivered reports itself"
     );
@@ -580,7 +582,7 @@ async fn a_number_only_query_answers_cold_and_takes_the_dynamic_path() {
 
     // The height the driver never received an exact head for: the number-only
     // observation resolves nothing, so the query is the undelivered cold scope.
-    let view = driver.snapshot(ReadAnchor::at(HEIGHT + 1));
+    let view = driver.snapshot(ReadAnchor::unresolved(HEIGHT + 1));
     assert_eq!(
         view.readiness,
         HeadReadiness::Cold(HeadCold::Undelivered),
@@ -1309,7 +1311,7 @@ async fn lifecycle_replay(
         if !is_cold || cold.hub.snapshot_len() != 0 {
             mismatches.push(format!(
                 "block {}: a delivered head served {:?} with {} entries",
-                block.anchor.number,
+                block.anchor.number(),
                 cold.readiness,
                 cold.hub.snapshot_len()
             ));
@@ -1318,7 +1320,7 @@ async fn lifecycle_replay(
         let HeadOutcome::Settled(lifecycle_report) = lifecycle else {
             mismatches.push(format!(
                 "block {}: the advance did not settle: {lifecycle:?}",
-                block.anchor.number
+                block.anchor.number()
             ));
             continue;
         };
@@ -1332,14 +1334,14 @@ async fn lifecycle_replay(
         {
             mismatches.push(format!(
                 "block {}: control {control_report:?} vs lifecycle {lifecycle_report:?}",
-                block.anchor.number
+                block.anchor.number()
             ));
         }
         let view = driver.snapshot(block.anchor);
         if control_hub.snapshot_len() != view.hub.snapshot_len() {
             mismatches.push(format!(
                 "block {}: control {} entries vs lifecycle {}",
-                block.anchor.number,
+                block.anchor.number(),
                 control_hub.snapshot_len(),
                 view.hub.snapshot_len()
             ));
@@ -1354,7 +1356,7 @@ async fn lifecycle_replay(
             if !same {
                 mismatches.push(format!(
                     "block {} {address}/{slot}: control vs lifecycle disagreed",
-                    block.anchor.number
+                    block.anchor.number()
                 ));
             }
         }
