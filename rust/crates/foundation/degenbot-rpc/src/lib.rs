@@ -27,6 +27,7 @@ pub mod abi;
 pub mod backrun_feed;
 pub mod cassette;
 pub mod cassette_replay;
+pub mod chain_evidence;
 pub mod contract;
 pub mod erc20;
 mod error_class;

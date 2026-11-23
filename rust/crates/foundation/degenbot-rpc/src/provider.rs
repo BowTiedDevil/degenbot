@@ -2095,6 +2095,37 @@ impl AlloyProvider {
         Arc::clone(&self.inner)
     }
 
+    /// Issue ONE JSON-RPC request under this provider's retry policy and return
+    /// its decoded answer, leaving the failure unclassified.
+    ///
+    /// The raw seam exists because the caller owns the failure vocabulary: the
+    /// hash-pinned read view ([`crate::chain_evidence::BlockReads`]) must
+    /// separate "this node cannot serve an EIP-1898 request shape" from "this
+    /// read failed", and the shared classification cannot see the caller's
+    /// request shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the classified [`ProviderError`] of the failed request.
+    pub(crate) async fn request_raw<T>(
+        &self,
+        method: &'static str,
+        params: serde_json::Value,
+        context: &str,
+    ) -> ProviderResult<T>
+    where
+        T: serde::de::DeserializeOwned + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    {
+        self.retry_with_backoff(|| async {
+            self.inner
+                .client()
+                .request(method, params.clone())
+                .await
+                .map_err(|e| e.into_provider_error(context))
+        })
+        .await
+    }
+
     /// Execute an `eth_call`.
     ///
     /// # Errors
