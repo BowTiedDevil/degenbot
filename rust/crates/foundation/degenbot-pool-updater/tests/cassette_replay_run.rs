@@ -17,7 +17,7 @@
 //! and a restarted run must be a no-op (the restart invariant over the
 //! replayed surface).
 
-#![expect(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -26,38 +26,45 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use degenbot_db::DegenbotDb;
 use degenbot_pool_updater::{run_pool_update, NoProgress};
-use degenbot_rpc::cassette::Cassette;
+use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::replay_surface::{ReplayCapture, ReplaySurface, POOL_UPDATE_CAPTURE};
 use tempfile::TempDir;
 
+/// The workspace nests every crate manifest four levels under the repository
+/// root.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+}
+
+/// The capture's entry in the committed replay-surface authority
+/// (`tests/fixtures/replay_surfaces/manifest.json`): the one reviewed home of
+/// the RPC counters, the SQL statement count, and the applied deltas the replay
+/// must reproduce — shared with `updater_replay_bench`.
+fn surface_capture() -> ReplayCapture {
+    let surface = ReplaySurface::load_committed(&repo_root())
+        .expect("the committed replay-surface authority must load");
+    surface
+        .capture(POOL_UPDATE_CAPTURE)
+        .expect("the authority governs the pool capture")
+        .clone()
+}
+
 /// The committed golden capture: the Uniswap V3 factory's `PoolCreated` logs
-/// plus the whole-chain V3 Mint/Burn scan over blocks 26102622..=26102626,
+/// plus the whole-chain V3 Mint/Burn scan over the capture's recorded span,
 /// recorded against the live node by the `record_updater_cassette` binary
 /// (`degenbot-fixture-tools`; its `--check` arm re-verifies these bytes offline).
-const CASSETTE_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
-);
+fn committed_cassette(capture: &ReplayCapture) -> Cassette {
+    let path = repo_root().join(&capture.cassette);
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("capture {}: cassette {}: {e}", capture.id, path.display()));
+    verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
+    Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette")
+}
 
 /// The Uniswap V3 factory the capture was recorded against (the recorder's
 /// documented `--factory` for this corpus file).
 const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
-
-/// Independent literal: the exact number of ledger entries the replayed
-/// chunk serves from the cassette per run - the RPC round-trip count of the
-/// run's full surface: one `eth_getLogs` for the factory's `PoolCreated`
-/// pass, one whole-chain `eth_getLogs` for the V3 `Mint`/`Burn` scan, and the
-/// pre-commit verification gate's per-pool `ticks`/`tickBitmap` reads (the
-/// gate runs on every chunk). The RPC counter drift gate: an added or
-/// removed pass (batching, a new scan, a re-fetch) changes this and fails
-/// the plain `cargo test` run.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
-
-/// Independent literal: the serialized payload bytes those served answers
-/// carried (the recorded `result` members in wire form). Ties the suite's
-/// expectation to this corpus file: a re-recorded cassette whose answers
-/// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 5510;
 
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`, so
 /// the run's fetch window is exactly the cassette's recorded span.
@@ -103,12 +110,15 @@ fn committed_pool_count(path: &Path, chain_id: i64) -> i64 {
 
 #[test]
 fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
-    let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
-    let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
+    let capture = surface_capture();
+    let cassette = committed_cassette(&capture);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
-    let span = cassette.provenance.span;
-    assert_eq!(span.from_block, 26_102_622);
-    assert_eq!(span.to_block, 26_102_626);
+    let span = capture.span;
+    assert_eq!(
+        cassette.provenance.span.from_block, span.from_block,
+        "the cassette is the capture's recorded span"
+    );
+    assert_eq!(cassette.provenance.span.to_block, span.to_block);
 
     // D5 injection: the replay transport presents as a live AlloyProvider —
     // the chunk loop runs unchanged, and its answers come only from the
@@ -148,9 +158,16 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         report.chunks_committed, 1,
         "the whole recorded span is one chunk"
     );
+    let applied = capture
+        .pool_applied()
+        .expect("the authority states the pool capture's applied counts");
     assert_eq!(
-        report.total_pools_written, 1,
-        "the committed corpus carries exactly one PoolCreated event in the span — a 0 here would mean decode/apply never ran"
+        report.total_pools_written, applied.pools_written,
+        "the applied pool count drifted — the corpus outcome is not the reviewed expectation"
+    );
+    assert_eq!(
+        report.total_liquidity_applies, applied.liquidity_applies,
+        "the applied liquidity count drifted — the corpus outcome is not the reviewed expectation"
     );
     assert_eq!(
         i64::try_from(report.total_pools_written).unwrap(),
@@ -166,8 +183,8 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
     // Gate: the RPC round-trip drift tripwire. The chunk's fetch surface
     // serves EXACTLY the committed corpus's entries — every request the run
     // issued is a served ledger entry (a fixture gap would be a loud error
-    // mid-run, so `requests == served` here), and the count/bytes are the
-    // independent literals above. A shaping regression (an added pass, a
+    // mid-run, so `requests == served` here) — and the count/bytes are the
+    // authority's reviewed expectation. A shaping regression (an added pass, a
     // dropped scan, a re-recorded corpus) fails this plain assertion.
     let served = transport.served_snapshot();
     assert_eq!(
@@ -175,11 +192,11 @@ fn run_pool_update_commits_the_recorded_span_offline_and_restarts_clean() {
         "every request must be a served ledger entry — a fixture gap is a loud error, not a silent miss"
     );
     assert_eq!(
-        served.served, EXPECTED_RPC_ROUND_TRIPS,
+        served.served, capture.rpc.round_trips,
         "RPC round-trip count drifted — the chunk's fetch surface added or removed a pass"
     );
     assert_eq!(
-        served.response_bytes, EXPECTED_RPC_RESPONSE_BYTES,
+        served.response_bytes, capture.rpc.response_bytes,
         "served response bytes drifted — the corpus's recorded answers changed shape"
     );
 

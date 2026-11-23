@@ -161,6 +161,89 @@ leading-zero digit), not by field — a non-minimal short quantity sent by a nod
 minimal-form spelling in the ledger. Field-aware canonicalization is the v2
 format note, filed for the capture decision (ergo `QR7QVT`).
 
+## The replay-surface authority (the current surface, one committed home)
+
+The per-capture counters on this page no longer have two homes. Before this
+authority the replay suites carried them as literals and `updater_replay_bench`
+carried a second copy, so a bench row and a test assertion could disagree
+without either turning red. They now live in one committed, machine-readable
+file:
+
+`tests/fixtures/replay_surfaces/manifest.json`
+
+read through `degenbot_rpc::replay_surface::ReplaySurface::load_committed` by
+every replay suite (`cassette_replay_run.rs`, `sql_golden_replay.rs`,
+`aave_cassette_replay.rs`, `aave_config_cassette_replay.rs`) and by
+`updater_replay_bench`. The run is always the subject, never the source: each
+suite and every bench iteration compares the observed traffic against the
+committed entry, so no assertion derives its expectation from the run it is
+checking.
+
+### Schema (`degenbot.replay-surface/v1`)
+
+| field | meaning |
+|---|---|
+| `schema` | `degenbot.replay-surface/v1`; any other tag is refused |
+| `captures[]` | one entry per governed capture |
+| `captures[].id` | the capture id: the cassette's file stem |
+| `captures[].kind` | `pool_update` (`run_pool_update`) or `aave_update` (`run_aave_update`) |
+| `captures[].cassette` | the committed cassette, repository-relative |
+| `captures[].span.from_block` / `.to_block` | the recorded span; asserted equal to the cassette's provenance span |
+| `captures[].rpc.round_trips` | ledger entries the replayed run serves |
+| `captures[].rpc.response_bytes` | serialized payload bytes those answers carry |
+| `captures[].sql.statements` | statement-ledger records per chunk apply |
+| `captures[].applied.pools_written` | pool rows the chunk wrote (`pool_update` only) |
+| `captures[].applied.liquidity_applies` | in-scope liquidity applies (`pool_update` only) |
+| `captures[].applied.events_applied` | configuration effects applied (`aave_update` only) |
+
+Parsing is strict: unknown fields, a foreign schema tag, a repeated capture id,
+a backwards span, and an entry whose applied counts do not match its `kind` are
+all refused (`degenbot_rpc::replay_surface::ReplaySurfaceError`). A pool entry
+cannot borrow an event count to make a run match, and an Aave entry cannot
+borrow pool counts.
+
+### Current surface (the authority's values)
+
+| capture | kind | rt | resp bytes | stmts | applied |
+|---|---|---:|---:|---:|---|
+| `pool_update_chunk_26102622-26102626` | pool_update | 7 | 5,510 | 16 | 1 pool, 1 liquidity apply |
+| `aave_update_chunk_26130440-26130445` | aave_update | 19 | 203,117 | 80 | 20 events |
+| `aave_config_chunk_19091050-19091059` | aave_update | 21 | 252,230 | 82 | 32 events |
+
+This table is a transcript of the manifest, not its source; the manifest is the
+reviewed claim. `just bench-updaters` reports the same three rows and asserts
+every counter in them per iteration, and `just test-rust-nextest -p degenbot-rpc
+-E 'test(replay_surface)'` proves each entry still names an existing cassette and
+that cassette's own span.
+
+Every measurement table BELOW this section is history: its timing columns are
+what that run measured, and its counter columns are the values the apply shape
+produced at measurement time. Where a historical row disagrees with the
+authority, the row is history and the authority is current — the drift gates
+watch the authority, never the historical rows.
+
+### Regenerating and reviewing an entry
+
+The authority is reviewed data, not recorder output: no test writes it and
+nothing recomputes it from the run being checked (that would make the assertion
+circular). When a capture is legitimately re-recorded, or a chunk loop's RPC/SQL
+surface really changed:
+
+1. Re-record the cassette through the fixture-tools recorder, then run the
+   replay suite(s) and `just bench-updaters`. Both fail against the stale entry
+   and the failure names the field that moved.
+2. Change ONLY the manifest entry, then re-run the same commands.
+   `test(replay_surface)` re-proves the entry's cassette/span identity.
+3. Review the manifest diff as the surface change: the entry's diff is the
+   reviewed claim and the green suites/bench are its proof. A counter that moved
+   without a manifest diff means something else is wrong — that is the drift
+   gate's whole content.
+
+The gate's negative probe is one manifest edit: change one committed counter
+(this page's example: the pool capture's `rpc.round_trips`) and the pool replay
+suite plus the bench row that reports it both fail with no second literal
+edited; restore it and both pass with the observed counters equal to it again.
+
 ## Baseline (ergo NNCPXA — the measurement gate)
 
 The replay bench's first baseline, recorded — where a chunk spends its time
@@ -228,9 +311,10 @@ What the numbers say (first read, to be re-ranked per fix):
   ×2), pool+gate 7 (+5 `eth_call`s), aave 19 (1 anchor `eth_chainId` + 1
   chain binding + 4 candidate-block headers + 6 `eth_getLogs` + 7 complete
   receipts; no config events in this span → no `eth_call`s, and no
-  `LiquidationCall` → no call trace) — asserted as literals in the replay
-  suites (`EXPECTED_RPC_ROUND_TRIPS`), alongside the statement counts
-  (23/150) and the served-byte totals. The candidate acquisition (ADR-105 D2)
+  `LiquidationCall` → no call trace) — asserted at the time as literals in the
+  replay suites, alongside the statement counts (23/150) and the served-byte
+  totals. The current entries and their one home are the replay-surface
+  authority above. The candidate acquisition (ADR-105 D2)
   is read OUTSIDE the chunk's transaction: it adds round trips and bytes while
   the SQL surface (statement counts) is unchanged.
 - **The dead-query tail is visible by subtraction**: pool chunk wall 4.0 ms
@@ -538,16 +622,17 @@ The apply shape moved after these measurements: derive-once made the read
 pass's FULL map the one derivation, and the apply persists the delta derived
 from it — the "rewrites it all" finding above describes the pre-Perf-B
 full-map persist. The statement counts on this page are their measurement-time
-values; the live chunk loop asserts 16 (`EXPECTED_LEDGER_STATEMENTS` in
-`tests/sql_golden_replay.rs`).
+values; the live chunk loop asserts the authority's `sql.statements` entry
+for the pool capture (16 today).
 
 The same rule holds for the Aave columns: every Aave `stmts` value on this page
 is its measurement-time value. The canonical-delta writer, the per-market
 journal, and the projection checkpoints each added statements after those rows
-were taken, so the live chunk loop asserts `EXPECTED_LEDGER_STATEMENTS` 80 on
-`aave_update_chunk_26130440-26130445` and 85 on
-`aave_config_chunk_19091050-19091059` — the counts `just bench-updaters`
-reports, drift-gated by the replay suites. The round-trip and response-byte
+were taken; the live chunk loop asserts the authority's entries (80 on
+`aave_update_chunk_26130440-26130445`, 82 on
+`aave_config_chunk_19091050-19091059` today — this note recorded 80/85 at the
+time, and the config capture's count moved again afterwards, which is exactly
+why the number has one home). The round-trip and response-byte
 columns did not move with them (19 / 203,117 and 18 / 206,716 at that time),
 because the Aave evidence surface is the terminal-anchor, complete-receipt, and
 trace acquisition, not the write product.
@@ -560,7 +645,8 @@ so the pin changed shape without adding a request), while
 added requests are the parent headers its three burn transactions' pre-block
 stkAAVE seeds resolve before their own reads — an intentional pre-block read
 position is an exact anchor, so that height's identity is a request. Every
-pinned count on this page is drift-gated by the replay suites.
+pinned count on this page is drift-gated; the current values are the
+replay-surface authority's entries above.
 
 ### Projection checkpoints (ergo 7JIC7U — ADR-105 D8, D9: the initial cadence and its measured cost)
 

@@ -19,6 +19,9 @@
 //! - [`read_evidence`] — [`read_evidence::ReadEvidence`], the class one exact
 //!   read carries: a value, an EVM revert, a malformed answer, or a target with
 //!   no code at its anchor.
+//! - [`replay_surface`] — the committed replay-surface authority: the one
+//!   reviewed home of the per-capture RPC/SQL/applied counters the replay
+//!   suites and the replay bench assert against (ADR-068 D6).
 //! - [`subscription`] — the one subscription lifecycle
 //!   (`SubscriptionHandle::apply` over `SubscriptionPhase`), its double buffer
 //!   and `drain_raw`, and the `pump_*` drivers that report into it.
@@ -44,6 +47,7 @@ pub mod pending_tx_stream;
 pub mod provider;
 mod rate_limit;
 pub mod read_evidence;
+pub mod replay_surface;
 mod retry_policy;
 pub mod subscription;
 pub mod tick_bootstrap;

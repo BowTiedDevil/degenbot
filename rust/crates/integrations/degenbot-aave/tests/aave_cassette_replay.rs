@@ -50,14 +50,28 @@ use degenbot_rpc::cassette::{
 };
 use degenbot_rpc::cassette_replay::{CassetteReplayTransport, ServedSnapshot};
 use degenbot_rpc::chain_evidence::{ChainEvidenceError, HeaderRefusal, ProjectionRefusal};
+use degenbot_rpc::replay_surface::{ReplayCapture, ReplaySurface, AAVE_UPDATE_CAPTURE};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-/// The committed golden capture (machine-emitted, drift-gated).
-const CASSETTE_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../../tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json"
-);
+/// The workspace nests every crate manifest four levels under the repository
+/// root.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+}
+
+/// The capture's entry in the committed replay-surface authority
+/// (`tests/fixtures/replay_surfaces/manifest.json`): the one reviewed home of
+/// the RPC counters, the SQL statement count, and the applied events the
+/// replay must reproduce — shared with `updater_replay_bench`.
+fn surface_capture() -> ReplayCapture {
+    let surface = ReplaySurface::load_committed(&repo_root())
+        .expect("the committed replay-surface authority must load");
+    surface
+        .capture(AAVE_UPDATE_CAPTURE)
+        .expect("the authority governs the aave capture")
+        .clone()
+}
 
 /// The committed statement-ledger golden (SQL half of the golden capture).
 const LEDGER_GOLDEN_PATH: &str = concat!(
@@ -75,40 +89,8 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 const SPAN_FROM: u64 = 26_130_440;
 const SPAN_TO: u64 = 26_130_445;
 
-/// Independent literal: the exact number of `ConfigurationEffect`s the recorded
-/// span's chunk apply wrote (the recorder run's report). A fetch/decode/apply
-/// regression that adds or drops applied events fails here before the
-/// byte-diff.
-const EXPECTED_APPLIED_EVENTS: usize = 20;
-
-/// Independent literal: the exact number of statements one chunk apply runs
-/// over this corpus - the N+1 tripwire (a query hoisted out of the per-tx
-/// loop going back in, a per-row re-read, an unbatched revision call's
-/// re-read all change this count and fail the plain run before the
-/// byte-diff consults the committed golden).
-///
-/// The chunk substrate cache collapses the per-event asset/user/position
-/// lookups + the per-tx GHO/revision reads into set-shaped prefetches + a
-/// write-overlay (the config dispatch
-/// and the parser both consult it; the GHO fresh-resolution paths ride
-/// the dirty-marked cache), and the `ReserveDataUpdated` writes flush as
-/// one sorted multi-row UPDATE. 64 = 52 statements of the pre-journal shape
-/// (7 pre-tx run-setup + BEGIN/COMMIT + 7 prefetches + the immediate writes:
-/// user/position INSERTs, position UPDATEs, the collateral-config writes, the
-/// zero-balance DELETEs, the multi-row asset UPDATE, and the end-of-chunk
-/// stamp) plus the projection unit's 12: the market-claim and cursor reads, the
-/// batched block and transaction identity upserts, the batched generation
-/// upsert, the batched journal INSERT, and the cursor INSERT, plus the
-/// projection checkpoint's 11: the market's settled position read, the
-/// generation lineage upsert and lookup, the checkpoint row INSERT, the two
-/// batched state INSERTs, and the five resume-state reads/INSERTs (assets,
-/// contracts, GHO, users). The journal cost is per DISTINCT identity, never per
-/// delta, and the checkpoint cost is per market entity, never per delta.
-const EXPECTED_LEDGER_STATEMENTS: usize = 80;
-
-/// Independent literal: the exact number of ledger entries the replayed
-/// chunk serves from the cassette per run - the RPC round-trip count of the
-/// chunk's acquisition surface. Composition (ADR-105 D2/D5):
+/// The chunk's acquisition-surface composition (ADR-105 D2/D5), pinned
+/// per method below:
 ///
 /// - `eth_chainId` 1 (the terminal anchor's endpoint check) + 1 (the binding the
 ///   candidate-header reads inherit),
@@ -120,14 +102,9 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 80;
 /// - `debug_traceTransaction` 0 (`EXPECTED_TRACE_REQUESTS`: every candidate here is
 ///   receipt-only, so the run pays for no call trace).
 ///
-/// The RPC counter drift gate: an added or removed acquisition read (batching, a
-/// new pass, a re-fetch, an anchor read, a trace on a receipt-only corpus)
-/// changes this and fails the plain `cargo test` run.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 19;
-
 /// Independent literal: the candidate transactions the span's filtered
-/// acquisition names - one complete receipt each (ADR-105 D2). Shared by the
-/// round-trip literal above, so a receipt the run stops paying for is a
+/// acquisition names - one complete receipt each (ADR-105 D2). Its share of the
+/// authority's round-trip count, so a receipt the run stops paying for is a
 /// visible count change rather than a silent savings.
 const EXPECTED_CANDIDATE_TRANSACTIONS: u64 = 7;
 
@@ -140,16 +117,6 @@ const EXPECTED_BLOCK_HEADER_READS: u64 = 4;
 /// transaction in the span carries a `LiquidationCall`, so every candidate is
 /// receipt-only and issues no trace request.
 const EXPECTED_TRACE_REQUESTS: u64 = 0;
-
-/// Independent literal: the serialized payload bytes those served answers
-/// carried (the recorded `result` members in wire form). Ties the suite's
-/// expectation to this corpus file: a re-recorded cassette whose answers
-/// carry different traffic fails here too.
-/// Independent literal: the serialized payload bytes those served answers carried
-/// (the recorded `result` members in wire form). The acquisition's answers now
-/// dominate this number: seven complete receipts and four headers are far larger
-/// than the filtered log passes they accompany (ADR-105 D2).
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 203_117;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
@@ -406,7 +373,10 @@ fn aave_chunk_delta_stream_matches_the_committed_golden() {
 }
 
 fn committed_cassette() -> Cassette {
-    let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
+    let capture = surface_capture();
+    let path = repo_root().join(&capture.cassette);
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("capture {}: cassette {}: {e}", capture.id, path.display()));
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     Cassette::from_json_bytes(&bytes).unwrap()
 }
@@ -414,6 +384,11 @@ fn committed_cassette() -> Cassette {
 #[test]
 #[expect(clippy::too_many_lines)]
 fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
+    let capture = surface_capture();
+    let events = capture
+        .aave_applied()
+        .expect("the authority states the aave capture's applied events")
+        .events_applied;
     let cassette = committed_cassette();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let span = cassette.provenance.span;
@@ -458,8 +433,8 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         "the whole recorded span is one chunk"
     );
     assert_eq!(
-        report.total_events_applied, EXPECTED_APPLIED_EVENTS,
-        "the apply wrote exactly the recorded span's events"
+        report.total_events_applied, events,
+        "the apply wrote exactly the recorded span's events (the authority's reviewed count)"
     );
     assert_eq!(
         market_last_update_block(&path, market_id),
@@ -476,7 +451,7 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
     assert_eq!(progress.market_id, market_id);
     assert_eq!(progress.chunk_start, SPAN_FROM);
     assert_eq!(progress.chunk_end, SPAN_TO);
-    assert_eq!(progress.events_applied, EXPECTED_APPLIED_EVENTS);
+    assert_eq!(progress.events_applied, events);
     assert!(progress.committed, "the chunk committed");
     assert!(progress.is_final, "the chunk is the run's final chunk");
     assert!(
@@ -501,11 +476,11 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         "every request must be a served ledger entry - a fixture gap is a loud error, not a silent miss"
     );
     assert_eq!(
-        served.served, EXPECTED_RPC_ROUND_TRIPS,
+        served.served, capture.rpc.round_trips,
         "RPC round-trip count drifted - the chunk's fetch surface added or removed a pass"
     );
     assert_eq!(
-        served.response_bytes, EXPECTED_RPC_RESPONSE_BYTES,
+        served.response_bytes, capture.rpc.response_bytes,
         "served response bytes drifted - the corpus's recorded answers changed shape"
     );
     // The acquisition shape, per method: one complete receipt per candidate
@@ -690,6 +665,11 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 
 #[test]
 fn aave_chunk_ledger_and_db_dump_match_the_committed_goldens() {
+    let capture = surface_capture();
+    let events = capture
+        .aave_applied()
+        .expect("the authority states the aave capture's applied events")
+        .events_applied;
     let cassette = committed_cassette();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
 
@@ -719,15 +699,15 @@ fn aave_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     )
     .expect("the replayed run must commit cleanly");
     assert_eq!(report.chunks_committed, 1);
-    assert_eq!(report.total_events_applied, EXPECTED_APPLIED_EVENTS);
+    assert_eq!(report.total_events_applied, events);
 
-    // Gate 1: the statement-count assertion (independent literal - the plain
-    // N+1 tripwire).
+    // Gate 1: the statement-count assertion (the authority's reviewed literal -
+    // the plain N+1 tripwire).
     let records = ledger.records().expect("the capture session is armed");
     eprintln!("aave chunk statement count: {}", records.len());
     assert_eq!(
         records.len(),
-        EXPECTED_LEDGER_STATEMENTS,
+        capture.sql.statements,
         "statement count drifted - an N+1 regression added or removed a \
          statement per chunk apply"
     );
@@ -1067,6 +1047,10 @@ fn a_receipt_only_corpus_records_no_trace_answer() {
 
 #[test]
 fn tip_and_explicit_runs_resolve_the_same_terminal_anchor() {
+    let events = surface_capture()
+        .aave_applied()
+        .expect("the authority states the aave capture's applied events")
+        .events_applied;
     let pinned = recorded_terminal_anchor();
     let (explicit, explicit_served) = run_recorded(&committed_cassette(), Some(SPAN_TO));
     let explicit = explicit.expect("the pinned replay must commit");
@@ -1084,7 +1068,7 @@ fn tip_and_explicit_runs_resolve_the_same_terminal_anchor() {
     );
     assert_eq!(explicit.to_block, SPAN_TO);
     assert_eq!(tip.to_block, explicit.to_block);
-    assert_eq!(explicit.total_events_applied, EXPECTED_APPLIED_EVENTS);
+    assert_eq!(explicit.total_events_applied, events);
     assert_eq!(
         tip.total_events_applied, explicit.total_events_applied,
         "the anchor did not change what the chunk applied"

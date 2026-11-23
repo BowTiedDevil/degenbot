@@ -30,9 +30,12 @@
 //! workload facts, not timings) and builds a fresh transport, temp DB, and
 //! ledger per iteration so the measurement overhead is transparent.
 //!
-//! The bench's own correctness is the counter gates: the corpus outcomes it
-//! re-asserts per iteration (one chunk, the recorded pool/event counts) are
-//! the same literals the replay suites gate on.
+//! The bench's own correctness is the counter gates: every iteration asserts
+//! its RPC round trips, served bytes, statement count, and applied
+//! deltas/events against the committed replay-surface authority
+//! (`tests/fixtures/replay_surfaces/manifest.json`) — the same entry the
+//! replay suites assert, so a bench row and a test literal cannot drift into
+//! two independently maintained numbers.
 
 #![expect(clippy::print_stdout)]
 // reason: the printed table IS the bench's interface (the recorder example's
@@ -58,6 +61,9 @@ use degenbot_pool_updater::{
 };
 use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::replay_surface::{
+    ReplayCapture, ReplaySurface, AAVE_CONFIG_CAPTURE, AAVE_UPDATE_CAPTURE, POOL_UPDATE_CAPTURE,
+};
 use tempfile::TempDir;
 
 /// Warm-up iterations (dropped: page cache, allocator, the ledger's first-arm
@@ -70,27 +76,29 @@ const MEASURED_RUNS: usize = 9;
 // ── the corpus (the committed seed cassettes; the same files the replay
 //    suites gate on) ─────────────────────────────────────────────────────────
 
-const POOL_UPDATE_CASSETTE: &str = "pool_update_chunk_26102622-26102626.json";
-const AAVE_UPDATE_CASSETTE: &str = "aave_update_chunk_26130440-26130445.json";
-/// The config-era capture (the pre-lock fact-phase corpus): the GHO-discount
-/// era span 19,091,050..=19,091,059 — THREE variable-debt GHO `Burn`s by the
-/// SAME user in three different txs. The first burn's user is absent from the
-/// harness DB (the discount pre-pass takes the RPC path — the cassette's
-/// single `getDiscountPercent` `eth_call` at block 19,091,050); the two later
-/// same-user txs take the DB-cache path against the row the ops parser
-/// created in the first tx. The recorded cross-tx fact-dependence shape.
-const AAVE_CONFIG_CASSETTE: &str = "aave_config_chunk_19091050-19091059.json";
-
-fn corpus_path(file: &str) -> String {
-    format!(
-        "{}/../../../../tests/fixtures/cassettes/{file}",
-        env!("CARGO_MANIFEST_DIR")
-    )
+/// The workspace nests every crate manifest four levels under the repository
+/// root.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
 }
 
-fn load_cassette(file: &str) -> Cassette {
-    let path = corpus_path(file);
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("corpus {path}: {e}"));
+/// The committed replay-surface authority: the one reviewed home of every
+/// counter this table reports.
+fn committed_surface() -> ReplaySurface {
+    ReplaySurface::load_committed(&repo_root())
+        .expect("the committed replay-surface authority must load")
+}
+
+fn surface_capture<'a>(surface: &'a ReplaySurface, id: &str) -> &'a ReplayCapture {
+    surface
+        .capture(id)
+        .unwrap_or_else(|error| panic!("the replay-surface authority: {error}"))
+}
+
+fn load_cassette(capture: &ReplayCapture) -> Cassette {
+    let path = repo_root().join(&capture.cassette);
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("capture {}: cassette {}: {e}", capture.id, path.display()));
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     Cassette::from_json_bytes(&bytes).unwrap()
 }
@@ -100,35 +108,25 @@ fn load_cassette(file: &str) -> Cassette {
 /// The Uniswap V3 factory the pool captures were recorded against.
 const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
-/// The recorded span's committed outcome literals (the replay suites' gates —
-/// the bench re-asserts them so a corpus/loop drift cannot masquerade as a
-/// timing change).
-const EXPECTED_POOL_POOLS: usize = 1;
 /// The seed corpus's single Mint touches the created pool's two boundary
-/// ticks (the ledger's positions upsert writes 2 rows).
-const EXPECTED_SEED_TOUCHED_TICKS: usize = 2;
-const EXPECTED_AAVE_EVENTS: usize = 20;
-/// The config-era span's applied-event count (the replay suite's measured
-/// literal — GHO debt burns + position/user creation + the USDT/WETH ops).
-const EXPECTED_AAVE_CONFIG_EVENTS: usize = 32;
+/// ticks (the ledger's positions upsert writes 2 rows). A bench-table
+/// denominator, not a replay expectation: the authority carries the applied
+/// deltas, the per-tick columns divide them by this denominator.
+const SEED_TOUCHED_TICKS: usize = 2;
 
 // ── the workloads (what the bench measures, in table order) ────────────────
 
-/// One pool workload's fixed configuration: which seed builds the harness
-/// database and the corpus outcome literals each iteration re-asserts. The
-/// iteration loop varies nothing else; the spec pins the measurement's shape.
+/// One pool workload's fixed configuration: which capture's cassette the
+/// transport replays and which seed builds the harness database. The iteration
+/// loop varies nothing else; the spec pins the measurement's shape, and the
+/// authority pins every counter the iteration re-asserts.
 struct PoolWorkload {
     /// The report table's row label (printed verbatim).
     label: &'static str,
-    /// The committed cassette the transport replays.
-    cassette_file: &'static str,
+    /// The authority's capture id (its cassette and expectations).
+    capture: &'static str,
     /// The harness database seeder (`seed_pool_db`).
     seed_db: fn(&Path, i64, u64) -> std::path::PathBuf,
-    /// Expected `total_pools_written` for the recorded span.
-    expected_pools: usize,
-    /// Expected in-scope liquidity applies (0 = the workload does not gate
-    /// on applies).
-    expected_applies: usize,
     /// Event-touched ticks on the capture's in-scope pool (the per-tick
     /// columns' denominator).
     touched_ticks: usize,
@@ -137,12 +135,10 @@ struct PoolWorkload {
 /// The corpus pool update — the production shape (the pre-commit gate runs on
 /// the chunk like every other run).
 const POOL_UPDATE_WORKLOAD: PoolWorkload = PoolWorkload {
-    label: "pool_update_chunk_26102622-26102626",
-    cassette_file: POOL_UPDATE_CASSETTE,
+    label: POOL_UPDATE_CAPTURE,
+    capture: POOL_UPDATE_CAPTURE,
     seed_db: seed_pool_db,
-    expected_pools: EXPECTED_POOL_POOLS,
-    expected_applies: 0,
-    touched_ticks: EXPECTED_SEED_TOUCHED_TICKS,
+    touched_ticks: SEED_TOUCHED_TICKS,
 };
 
 /// A temp DB with one ACTIVE `uniswap_v3` exchange stamped at `from - 1`
@@ -528,11 +524,11 @@ fn aave_stage_sums(chunks: &[AaveChunkProgress], total: Duration, sql_us: u64) -
 
 /// One measured iteration of the pool workload: fresh transport + temp DB +
 /// ledger, the real chunk loop, the counters off the transport/ledger. The
-/// workload spec selects the harness seed (the seed corpus's exchange-only
-/// seed or the dense capture's deep-map seed) and carries the corpus outcome
-/// literals the iteration re-asserts.
+/// workload spec selects the harness seed; the capture carries every counter
+/// this iteration re-asserts against the replay-surface authority.
 fn pool_iteration(
     cassette: &Cassette,
+    capture: &ReplayCapture,
     chain_id: i64,
     from_block: u64,
     to_block: u64,
@@ -581,20 +577,38 @@ fn pool_iteration(
         report.chunks_committed, 1,
         "the whole recorded span is one chunk"
     );
+    let applied = capture.pool_applied().unwrap_or_else(|| {
+        panic!(
+            "capture {}: a pool workload needs the authority's pool applied counts",
+            capture.id
+        )
+    });
     assert_eq!(
-        report.total_pools_written, workload.expected_pools,
-        "the corpus outcome drifted — this is a fixture problem, not a timing one"
+        report.total_pools_written, applied.pools_written,
+        "the corpus outcome drifted from the replay-surface authority — this is a \
+         fixture/loop problem, not a timing one"
     );
-    if workload.expected_applies > 0 {
-        assert_eq!(
-            report.total_liquidity_applies, workload.expected_applies,
-            "the corpus outcome drifted — this is a fixture problem, not a timing one"
-        );
-    }
+    assert_eq!(
+        report.total_liquidity_applies, applied.liquidity_applies,
+        "the corpus outcome drifted from the replay-surface authority — this is a \
+         fixture/loop problem, not a timing one"
+    );
     let served = transport.served_snapshot();
     assert_eq!(
         served.requests, served.served,
         "every request must be a served ledger entry — a fixture gap is loud"
+    );
+    assert_eq!(
+        served.served, capture.rpc.round_trips,
+        "RPC round trips drifted from the replay-surface authority"
+    );
+    assert_eq!(
+        served.response_bytes, capture.rpc.response_bytes,
+        "served response bytes drifted from the replay-surface authority"
+    );
+    assert_eq!(
+        statements, capture.sql.statements,
+        "the statement count drifted from the replay-surface authority"
     );
     let chunks = collector.0.lock().unwrap().clone();
     (
@@ -606,47 +620,36 @@ fn pool_iteration(
     )
 }
 
-fn measure_pool(workload: &PoolWorkload) -> Measurement {
-    let cassette = load_cassette(workload.cassette_file);
+fn measure_pool(surface: &ReplaySurface, workload: &PoolWorkload) -> Measurement {
+    let capture = surface_capture(surface, workload.capture);
+    let cassette = load_cassette(capture);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
-    let span_from = cassette.provenance.span.from_block;
-    let span_to = cassette.provenance.span.to_block;
+    let span_from = capture.span.from_block;
+    let span_to = capture.span.to_block;
 
-    let mut round_trips: Option<u64> = None;
-    let mut response_bytes: Option<u64> = None;
-    let mut statements: Option<usize> = None;
-    let mut bind_args: Option<u64> = None;
+    // Every iteration asserts its counters against the authority, so the
+    // counters are workload facts by construction (a nondeterministic counter
+    // fails on the iteration that disagrees), and the first iteration's values
+    // are the table's.
+    let mut counters: Option<(u64, u64, usize, u64)> = None;
     let mut samples: Vec<StageTimes> = Vec::new();
 
     for iteration in 0..(WARMUP_RUNS + MEASURED_RUNS) {
         let (rt, bytes, stmts, args, stages) =
-            pool_iteration(&cassette, chain_id, span_from, span_to, workload);
-        // The counters are workload facts, not timings: every iteration must
-        // agree, or the harness is measuring noise.
-        if let (Some(p), Some(b), Some(s), Some(a)) =
-            (round_trips, response_bytes, statements, bind_args)
-        {
-            assert_eq!(p, rt, "round trips must be iteration-stable");
-            assert_eq!(b, bytes, "response bytes must be iteration-stable");
-            assert_eq!(s, stmts, "statement count must be iteration-stable");
-            assert_eq!(a, args, "bind-arg count must be iteration-stable");
-        } else {
-            round_trips = Some(rt);
-            response_bytes = Some(bytes);
-            statements = Some(stmts);
-            bind_args = Some(args);
-        }
+            pool_iteration(&cassette, capture, chain_id, span_from, span_to, workload);
+        counters = Some((rt, bytes, stmts, args));
         if iteration >= WARMUP_RUNS {
             samples.push(stages);
         }
     }
 
+    let (round_trips, response_bytes, statements, bind_args) = counters.unwrap();
     Measurement {
         label: workload.label,
-        round_trips: round_trips.unwrap(),
-        response_bytes: response_bytes.unwrap(),
-        statements: statements.unwrap(),
-        bind_args: bind_args.unwrap(),
+        round_trips,
+        response_bytes,
+        statements,
+        bind_args,
         touched_ticks: workload.touched_ticks,
         median: median(&mut samples),
     }
@@ -655,6 +658,7 @@ fn measure_pool(workload: &PoolWorkload) -> Measurement {
 /// One measured iteration of the Aave workload.
 fn aave_iteration(
     cassette: &Cassette,
+    capture: &ReplayCapture,
     chain_id: i64,
     from_block: u64,
     to_block: u64,
@@ -693,14 +697,33 @@ fn aave_iteration(
         report.chunks_committed, 1,
         "the whole recorded span is one chunk"
     );
+    let events = capture.aave_applied().unwrap_or_else(|| {
+        panic!(
+            "capture {}: an aave workload needs the authority's applied events",
+            capture.id
+        )
+    });
     assert_eq!(
-        report.total_events_applied, EXPECTED_AAVE_EVENTS,
-        "the corpus outcome drifted — this is a fixture problem, not a timing one"
+        report.total_events_applied, events.events_applied,
+        "the corpus outcome drifted from the replay-surface authority — this is a \
+         fixture/loop problem, not a timing one"
     );
     let served = transport.served_snapshot();
     assert_eq!(
         served.requests, served.served,
         "every request must be a served ledger entry — a fixture gap is loud"
+    );
+    assert_eq!(
+        served.served, capture.rpc.round_trips,
+        "RPC round trips drifted from the replay-surface authority"
+    );
+    assert_eq!(
+        served.response_bytes, capture.rpc.response_bytes,
+        "served response bytes drifted from the replay-surface authority"
+    );
+    assert_eq!(
+        statements, capture.sql.statements,
+        "the statement count drifted from the replay-surface authority"
     );
     let chunks = collector.0.lock().unwrap().clone();
     (
@@ -712,17 +735,17 @@ fn aave_iteration(
 }
 
 /// One measured iteration of the config-era Aave workload (the
-/// `aave_config_iteration` twin of [`aave_iteration`]: the config-era seed +
-/// its applied-events literal; the RPC-surface gate rides the served
-/// snapshot — the config-era corpus's 21 round trips ARE the cross-tx
-/// fact-dependence gate (6 getLogs + the discount call + the terminal anchor's
-/// chain-id and header reads + the candidate acquisition: the chain binding,
-/// four candidate-block headers, and four complete receipts + the three
-/// pre-block stkAAVE seed parent headers), since a re-issued
-/// `getDiscountPercent` for the later same-user txs would push the count above
-/// it).
+/// `aave_config_iteration` twin of [`aave_iteration`]: the config-era seed).
+/// The capture is the pre-lock fact-phase corpus: the GHO-discount era span
+/// 19,091,050..=19,091,059 — THREE variable-debt GHO `Burn`s by the SAME user
+/// in three different txs (the first takes the discount `eth_call`, the two
+/// later ones the DB-cache path the ops parser's first-tx writes created).
+/// The authority's round-trip count IS the cross-tx fact-dependence gate: a
+/// re-issued `getDiscountPercent` for the later same-user txs would push the
+/// run above it.
 fn aave_config_iteration(
     cassette: &Cassette,
+    capture: &ReplayCapture,
     chain_id: i64,
     from_block: u64,
     to_block: u64,
@@ -761,9 +784,16 @@ fn aave_config_iteration(
         report.chunks_committed, 1,
         "the whole recorded span is one chunk"
     );
+    let events = capture.aave_applied().unwrap_or_else(|| {
+        panic!(
+            "capture {}: an aave workload needs the authority's applied events",
+            capture.id
+        )
+    });
     assert_eq!(
-        report.total_events_applied, EXPECTED_AAVE_CONFIG_EVENTS,
-        "the corpus outcome drifted — this is a fixture problem, not a timing one"
+        report.total_events_applied, events.events_applied,
+        "the corpus outcome drifted from the replay-surface authority — this is a \
+         fixture/loop problem, not a timing one"
     );
     let served = transport.served_snapshot();
     assert_eq!(
@@ -771,13 +801,18 @@ fn aave_config_iteration(
         "every request must be a served ledger entry — a fixture gap is loud"
     );
     assert_eq!(
-        served.served, 21,
-        "the config-era RPC surface drifted — a re-issued getDiscountPercent for the \
-         later same-user txs (a broken cross-tx fact phase) would show here (21 = 6 \
-         getLogs + the discount call + the terminal anchor's chain-id and header reads \
-         + the candidate acquisition: the chain binding, four candidate-block headers, \
-         and four complete receipts + the three pre-block stkAAVE seed parent headers \
-         whose exact read position is an anchor)"
+        served.served, capture.rpc.round_trips,
+        "the config-era RPC surface drifted from the replay-surface authority — a \
+         re-issued getDiscountPercent for the later same-user txs (a broken cross-tx \
+         fact phase) would show here"
+    );
+    assert_eq!(
+        served.response_bytes, capture.rpc.response_bytes,
+        "served response bytes drifted from the replay-surface authority"
+    );
+    assert_eq!(
+        statements, capture.sql.statements,
+        "the statement count drifted from the replay-surface authority"
     );
     let chunks = collector.0.lock().unwrap().clone();
     (
@@ -791,50 +826,39 @@ fn aave_config_iteration(
 /// One Aave measured-iteration entry point (the [`pool_iteration`] shape for
 /// the pool workloads: fresh transport, harness seed, ledger, the real
 /// chunk loop).
-type AaveIteration = fn(&Cassette, i64, u64, u64) -> (u64, u64, usize, StageTimes);
+type AaveIteration = fn(&Cassette, &ReplayCapture, i64, u64, u64) -> (u64, u64, usize, StageTimes);
 
 fn measure_aave(
+    surface: &ReplaySurface,
     label: &'static str,
-    cassette_file: &str,
+    capture_id: &str,
     iteration_fn: AaveIteration,
 ) -> Measurement {
-    let cassette = load_cassette(cassette_file);
+    let capture = surface_capture(surface, capture_id);
+    let cassette = load_cassette(capture);
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
-    let span_from = cassette.provenance.span.from_block;
-    let span_to = cassette.provenance.span.to_block;
+    let span_from = capture.span.from_block;
+    let span_to = capture.span.to_block;
 
-    let mut round_trips: Option<u64> = None;
-    let mut response_bytes: Option<u64> = None;
-    let mut statements: Option<usize> = None;
-    let mut bind_args: Option<u64> = None;
+    let mut counters: Option<(u64, u64, usize)> = None;
     let mut samples: Vec<StageTimes> = Vec::new();
 
     for iteration in 0..(WARMUP_RUNS + MEASURED_RUNS) {
-        let (rt, bytes, stmts, stages) = iteration_fn(&cassette, chain_id, span_from, span_to);
-        if let (Some(p), Some(b), Some(s), Some(a)) =
-            (round_trips, response_bytes, statements, bind_args)
-        {
-            assert_eq!(p, rt, "round trips must be iteration-stable");
-            assert_eq!(b, bytes, "response bytes must be iteration-stable");
-            assert_eq!(s, stmts, "statement count must be iteration-stable");
-            assert_eq!(a, 0, "aave workload tracks no bind-arg counter");
-        } else {
-            round_trips = Some(rt);
-            response_bytes = Some(bytes);
-            statements = Some(stmts);
-            bind_args = Some(0);
-        }
+        let (rt, bytes, stmts, stages) =
+            iteration_fn(&cassette, capture, chain_id, span_from, span_to);
+        counters = Some((rt, bytes, stmts));
         if iteration >= WARMUP_RUNS {
             samples.push(stages);
         }
     }
 
+    let (round_trips, response_bytes, statements) = counters.unwrap();
     Measurement {
         label,
-        round_trips: round_trips.unwrap(),
-        response_bytes: response_bytes.unwrap(),
-        statements: statements.unwrap(),
-        bind_args: bind_args.unwrap(),
+        round_trips,
+        response_bytes,
+        statements,
+        bind_args: 0,
         touched_ticks: 0,
         median: median(&mut samples),
     }
@@ -853,16 +877,19 @@ fn main() {
     );
     println!();
 
+    let surface = committed_surface();
     let measurements = vec![
-        measure_pool(&POOL_UPDATE_WORKLOAD),
+        measure_pool(&surface, &POOL_UPDATE_WORKLOAD),
         measure_aave(
-            "aave_update_chunk_26130440-26130445",
-            AAVE_UPDATE_CASSETTE,
+            &surface,
+            AAVE_UPDATE_CAPTURE,
+            AAVE_UPDATE_CAPTURE,
             aave_iteration,
         ),
         measure_aave(
+            &surface,
             "aave_config_chunk_19091050-19091059 (discount-path RPC)",
-            AAVE_CONFIG_CASSETTE,
+            AAVE_CONFIG_CAPTURE,
             aave_config_iteration,
         ),
     ];

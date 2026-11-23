@@ -22,9 +22,11 @@
 //! one home per artifact kind: `tests/fixtures/cassettes/` holds RPC
 //! recordings; SQL/DB goldens are a distinct artifact kind with its own home.
 //!
-//! **Statement-count assertion:** [`EXPECTED_LEDGER_STATEMENTS`] is an
-//! independent literal, so an N+1 regression (any added statement per chunk)
-//! fails this plain `cargo test` run even before the byte-diff.
+//! **Statement-count assertion:** the expected count is the committed
+//! replay-surface authority's entry for this capture
+//! (`tests/fixtures/replay_surfaces/manifest.json`, shared with
+//! `updater_replay_bench`), so an N+1 regression (any added statement per
+//! chunk) fails this plain `cargo test` run even before the byte-diff.
 //!
 //! **Negative probes (demonstrated, per artifact type):** mutate one committed
 //! golden (drop a statement entry / flip one dump row) → this gate goes red;
@@ -49,16 +51,29 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_pool_updater::{run_pool_update_on_db, NoProgress};
-use degenbot_rpc::cassette::Cassette;
+use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::replay_surface::{ReplayCapture, ReplaySurface, POOL_UPDATE_CAPTURE};
 use tempfile::TempDir;
 
-/// The committed golden capture the run replays (the corpus home's
-/// `pool_update_chunk_26102622-26102626.json`).
-const CASSETTE_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
-);
+/// The workspace nests every crate manifest four levels under the repository
+/// root.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+}
+
+/// The capture's entry in the committed replay-surface authority
+/// (`tests/fixtures/replay_surfaces/manifest.json`): the one reviewed home of
+/// the SQL statement count, the RPC counters, and the applied deltas — shared
+/// with `cassette_replay_run.rs` and `updater_replay_bench`.
+fn surface_capture() -> ReplayCapture {
+    let surface = ReplaySurface::load_committed(&repo_root())
+        .expect("the committed replay-surface authority must load");
+    surface
+        .capture(POOL_UPDATE_CAPTURE)
+        .expect("the authority governs the pool capture")
+        .clone()
+}
 
 /// The committed statement-ledger golden (SQL half of the golden capture).
 const LEDGER_GOLDEN_PATH: &str = concat!(
@@ -71,34 +86,6 @@ const DUMP_GOLDEN_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/fixtures/sql_goldens/pool_update_chunk_26102622-26102626.db-dump.json"
 );
-
-/// Independent literal: the exact number of statements one chunk apply runs
-/// over this corpus. Any N+1-style regression (a query hoisted out of a loop
-/// going back in, a per-row re-read) changes this and fails the plain test
-/// run — before the byte-diff even consults the committed golden.
-///
-/// Perf B (23 → 21): the delta persist removed the two full-map complement
-/// deletes (`DELETE … WHERE pool_id = ? AND tick NOT IN (?, ?)` and the
-/// `initialization_maps` twin) — a chunk-new pool's drained set is empty, so
-/// the delta path issues no delete at all (both removed statements carried
-/// `rows_changed: 0` on this corpus). The two map READS changed SHAPE, not
-/// count: the full-map SELECTs became the dirty-key IN-form
-/// (`… WHERE pool_id = ? AND tick IN (?, ?)` — the Perf B read surface).
-/// Classified in the task sign-off; the DB dump golden is byte-identical.
-///
-/// BW3 (21 → 19): the word-bitmap VALUE retirement removed the last two
-/// `initialization_maps` statements this corpus ran — its full-map SELECT and
-/// its upsert. The word-KEY read surface is unchanged.
-///
-/// Derive-once (19 → 16): the chunk-new pool now persists the plan delta the
-/// pre-commit gate verified instead of re-deriving it in-transaction, so the
-/// fused path's three re-derivation reads left the chunk apply — the state
-/// pair (`pools.id`/`kind` and the subclass `tick_spacing`/marker) and the
-/// dirty-key `tick IN (...)` map read. The `pools` row read stayed: it now
-/// resolves the id the plan's sentinel `pool_id` 0 keys to after the upsert.
-/// The positions upsert + marker stamp are unchanged, and the DB dump golden
-/// is byte-identical (the persisted map is the same map).
-const EXPECTED_LEDGER_STATEMENTS: usize = 16;
 
 /// The tables one pool-chunk apply touches, in the dump's fixed (alphabetical)
 /// order. `exchanges` is the chunk's commit stamp; `erc20_tokens` the token
@@ -163,10 +150,19 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 /// live-invariant gate (ADR-087 D2): watches the live chunk loop's statement ledger and DB dump against the committed goldens; not tripwire precedent.
 #[test]
 fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
-    let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
+    let capture = surface_capture();
+    let cassette_path = repo_root().join(&capture.cassette);
+    let bytes = std::fs::read(&cassette_path).unwrap_or_else(|e| {
+        panic!(
+            "capture {}: cassette {}: {e}",
+            capture.id,
+            cassette_path.display()
+        )
+    });
+    verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
-    let span = cassette.provenance.span;
+    let span = capture.span;
 
     // D5 injection: the replay transport presents as a live AlloyProvider.
     let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
@@ -192,14 +188,24 @@ fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     )
     .expect("the replayed run must commit cleanly");
     assert_eq!(report.chunks_committed, 1, "one chunk apply");
-    assert_eq!(report.total_pools_written, 1);
+    let applied = capture
+        .pool_applied()
+        .expect("the authority states the pool capture's applied counts");
+    assert_eq!(
+        report.total_pools_written, applied.pools_written,
+        "the applied pool count drifted — the corpus outcome is not the reviewed expectation"
+    );
+    assert_eq!(
+        report.total_liquidity_applies, applied.liquidity_applies,
+        "the applied liquidity count drifted — the corpus outcome is not the reviewed expectation"
+    );
 
-    // Gate 1: the statement-count assertion (independent literal — the plain
-    // N+1 tripwire).
+    // Gate 1: the statement-count assertion (the authority's reviewed
+    // literal — the plain N+1 tripwire).
     let records = ledger.records().expect("the capture session is armed");
     assert_eq!(
         records.len(),
-        EXPECTED_LEDGER_STATEMENTS,
+        capture.sql.statements,
         "statement count drifted — an N+1 regression added or removed a \
          statement per chunk apply"
     );

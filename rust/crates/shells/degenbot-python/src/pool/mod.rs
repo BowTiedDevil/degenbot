@@ -522,7 +522,7 @@ pub mod pool {
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use degenbot_pool_updater::run::RunTerminal;
@@ -698,25 +698,32 @@ mod tests {
         });
     }
 
-    /// The committed golden capture: the Uniswap V3 factory's `PoolCreated`
-    /// logs plus the whole-chain V3 `Mint`/`Burn` scan over blocks
-    /// `26_102_622..=26_102_626`, recorded against the live node by the
-    /// recorder example (drift-gated corpus).
-    const CASSETTE_PATH: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
-    );
-
     /// The Uniswap V3 factory the capture was recorded against.
     const V3_FACTORY: &str = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
-    /// Independent literal: the exact number of ledger entries the replayed
-    /// chunk serves per run — one `eth_getLogs` for the factory's
-    /// `PoolCreated` pass, one whole-chain `eth_getLogs` for the V3
-    /// `Mint`/`Burn` scan, plus the pre-commit verification gate's per-pool
-    /// `ticks`/`tickBitmap` reads (the gate runs on every chunk; the run
-    /// resolves its tip from the pinned span, so no `eth_blockNumber`).
-    const EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
+    /// The workspace nests every crate manifest four levels under the
+    /// repository root.
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+    }
+
+    /// The committed replay-surface authority's entry for the pool capture: the
+    /// one reviewed home of the RPC counters and applied deltas this seam pin
+    /// re-asserts — shared with the replay suites and `updater_replay_bench`.
+    fn surface_capture() -> degenbot_rpc::replay_surface::ReplayCapture {
+        use degenbot_rpc::replay_surface::{ReplaySurface, POOL_UPDATE_CAPTURE};
+
+        let surface = ReplaySurface::load_committed(&repo_root())
+            .expect("the committed replay-surface authority must load");
+        surface
+            .capture(POOL_UPDATE_CAPTURE)
+            .expect("the authority governs the pool capture")
+            .clone()
+    }
+
+    fn cassette_path() -> std::path::PathBuf {
+        repo_root().join(&surface_capture().cassette)
+    }
 
     /// A scratch database under the process temp dir, removed on drop so a
     /// failing assertion cannot leak it.
@@ -768,7 +775,9 @@ mod tests {
     fn committed_cassette() -> (Vec<u8>, degenbot_rpc::cassette::Cassette) {
         use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
 
-        let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
+        let path = cassette_path();
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("the committed cassette {}: {e}", path.display()));
         verify_cassette_bytes(&bytes).expect("the committed cassette passes its drift gate");
         let cassette = Cassette::from_json_bytes(&bytes).expect("a valid cassette");
         (bytes, cassette)
@@ -783,11 +792,18 @@ mod tests {
         use degenbot_rpc::cassette_replay::CassetteReplayTransport;
         use std::sync::atomic::AtomicBool;
 
+        let capture = surface_capture();
+        let applied = capture
+            .pool_applied()
+            .expect("the authority states the pool capture's applied counts");
         let (_bytes, cassette) = committed_cassette();
         let chain_id = i64::try_from(cassette.chain_id).unwrap();
-        let span = cassette.provenance.span;
-        assert_eq!(span.from_block, 26_102_622);
-        assert_eq!(span.to_block, 26_102_626);
+        let span = capture.span;
+        assert_eq!(
+            cassette.provenance.span.from_block, span.from_block,
+            "the cassette is the capture's recorded span"
+        );
+        assert_eq!(cassette.provenance.span.to_block, span.to_block);
 
         let transport = CassetteReplayTransport::new(cassette);
         let provider = transport.as_alloy_provider();
@@ -818,8 +834,12 @@ mod tests {
         );
         assert_eq!(report.chunks_committed, 1, "the whole span is one chunk");
         assert_eq!(
-            report.total_pools_written, 1,
-            "a 0 here would mean decode/apply never ran over the cassette"
+            report.total_pools_written, applied.pools_written,
+            "the applied pool count drifted from the replay-surface authority"
+        );
+        assert_eq!(
+            report.total_liquidity_applies, applied.liquidity_applies,
+            "the applied liquidity count drifted from the replay-surface authority"
         );
 
         let served = transport.served_snapshot();
@@ -828,8 +848,12 @@ mod tests {
             "every request must be a served ledger entry — a fixture gap is loud, not silent"
         );
         assert_eq!(
-            served.served, EXPECTED_RPC_ROUND_TRIPS,
-            "the replayed chunk's fetch surface drifted"
+            served.served, capture.rpc.round_trips,
+            "the replayed chunk's fetch surface drifted from the replay-surface authority"
+        );
+        assert_eq!(
+            served.response_bytes, capture.rpc.response_bytes,
+            "the served response bytes drifted from the replay-surface authority"
         );
     }
 
@@ -882,7 +906,7 @@ mod tests {
 
         // The corpus on disk was never touched: the mutation lived in memory.
         let after =
-            alloy::primitives::keccak256(std::fs::read(CASSETTE_PATH).expect("cassette read"));
+            alloy::primitives::keccak256(std::fs::read(cassette_path()).expect("cassette read"));
         assert_eq!(after, before, "the committed cassette must not be mutated");
 
         // Nothing was written and the restart cursor did not move.

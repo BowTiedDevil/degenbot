@@ -42,27 +42,50 @@ use degenbot_db::DegenbotDb;
 use degenbot_pool_updater::{run_pool_update, NoProgress, RunError};
 use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, CassetteResponse};
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::replay_surface::{ReplayCapture, ReplaySurface, POOL_UPDATE_CAPTURE};
 use tempfile::TempDir;
 
-/// The pool-chunk corpus (recorded by
-/// `record_updater_cassette --kind pool`): the run's fetch surface PLUS the
-/// pre-commit gate's tick/bitmap reads. The aggregate3 Multicall3
-/// attempt against this historical reth state reverted and the batch
-/// degraded to individual `ticks()`/`tickBitmap()` calls - all recorded, so
-/// the replay reproduces the exact read sequence the gate issued live.
-const POOL_CASSETTE_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../../tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json"
-);
+/// The workspace nests every crate manifest four levels under the repository
+/// root.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..")
+}
+
+/// The pool-chunk capture's entry in the committed replay-surface authority:
+/// the one reviewed home of the recorded span and the applied pool count these
+/// probes re-assert (shared with the replay suites and `updater_replay_bench`).
+///
+/// The corpus (recorded by `record_updater_cassette --kind pool`) carries the
+/// run's fetch surface PLUS the pre-commit gate's tick/bitmap reads. The
+/// aggregate3 Multicall3 attempt against this historical reth state reverted and
+/// the batch degraded to individual `ticks()`/`tickBitmap()` calls - all
+/// recorded, so the replay reproduces the exact read sequence the gate issued
+/// live.
+fn surface_capture() -> ReplayCapture {
+    let surface = ReplaySurface::load_committed(&repo_root())
+        .expect("the committed replay-surface authority must load");
+    surface
+        .capture(POOL_UPDATE_CAPTURE)
+        .expect("the authority governs the pool capture")
+        .clone()
+}
+
+fn cassette_path() -> std::path::PathBuf {
+    repo_root().join(&surface_capture().cassette)
+}
+
+fn span_from() -> u64 {
+    surface_capture().span.from_block
+}
+
+fn span_to() -> u64 {
+    surface_capture().span.to_block
+}
 
 const DUMP_GOLDEN_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../../tests/fixtures/sql_goldens/pool_update_chunk_26102622-26102626.db-dump.json"
 );
-
-/// The pinned span the corpus covers.
-const SPAN_FROM: u64 = 26_102_622;
-const SPAN_TO: u64 = 26_102_626;
 
 /// The pool the span's `PoolCreated` event created (the `RunError` names it
 /// checksummed - an independent literal from the committed corpus).
@@ -195,7 +218,7 @@ fn table_rows<'a>(
 
 #[test]
 fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
-    let bytes = std::fs::read(POOL_CASSETTE_PATH).expect("the committed cassette must exist");
+    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -236,13 +259,13 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
     let provider = CassetteReplayTransport::new(mutated).as_alloy_provider();
 
     let dir = TempDir::new().unwrap();
-    let path = seeded_db(dir.path(), chain_id, SPAN_FROM, "probe-a.db");
+    let path = seeded_db(dir.path(), chain_id, span_from(), "probe-a.db");
 
     let err = run_pool_update(
         &path,
         chain_id,
-        Some(SPAN_TO),
-        SPAN_TO - SPAN_FROM + 1,
+        Some(span_to()),
+        span_to() - span_from() + 1,
         10_000,
         provider,
         Arc::new(AtomicBool::new(false)),
@@ -263,7 +286,7 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
         panic!("expected RunError::Verification, got {err:?}");
     };
     assert_eq!(pool, CREATED_POOL_CHECKSUMMED);
-    assert_eq!(*block_number, SPAN_TO, "the gate reads at the chunk end");
+    assert_eq!(*block_number, span_to(), "the gate reads at the chunk end");
     assert!(!divergences.is_empty(), "the divergence list names the lie");
     eprintln!("PROBE A red transcript: {err}");
     eprintln!("PROBE A divergences: {divergences:#?}");
@@ -283,7 +306,7 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
     //     run re-processes the same chunk).
     assert_eq!(
         committed_last_update_block(&path, chain_id),
-        i64::try_from(SPAN_FROM - 1).unwrap(),
+        i64::try_from(span_from() - 1).unwrap(),
         "last_update_block must NOT advance through a verification rollback"
     );
 }
@@ -292,7 +315,7 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
 
 #[test]
 fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
-    let bytes = std::fs::read(POOL_CASSETTE_PATH).expect("the committed cassette must exist");
+    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -322,15 +345,15 @@ fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
 
     let provider = CassetteReplayTransport::new(mutated).as_alloy_provider();
     let dir = TempDir::new().unwrap();
-    let path = seeded_db(dir.path(), chain_id, SPAN_FROM, "probe-b.db");
+    let path = seeded_db(dir.path(), chain_id, span_from(), "probe-b.db");
 
     // Run outcome red: nothing decodes/applies, 0 pools written (vs the
     // committed corpus's 1 - an independent literal).
     let report = run_pool_update(
         &path,
         chain_id,
-        Some(SPAN_TO),
-        SPAN_TO - SPAN_FROM + 1,
+        Some(span_to()),
+        span_to() - span_from() + 1,
         10_000,
         provider,
         Arc::new(AtomicBool::new(false)),
@@ -339,14 +362,18 @@ fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
         false,
     )
     .expect("the run itself completes - the OUTCOME is the red");
+    let committed_pools = surface_capture()
+        .pool_applied()
+        .expect("the authority states the pool capture's applied counts")
+        .pools_written;
     assert_eq!(
         report.total_pools_written, 0,
         "RED: the dropped log means the span's PoolCreated decode/apply \
-         never runs (the committed corpus writes 1)"
+         never runs (the committed corpus writes {committed_pools})"
     );
     eprintln!(
         "PROBE B red transcript: run over the log-dropped cassette wrote {} pools \
-         (the committed golden corpus writes 1)",
+         (the committed golden corpus writes {committed_pools})",
         report.total_pools_written
     );
 
@@ -383,7 +410,7 @@ fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
 
 #[test]
 fn probe_c_mutated_apply_input_turns_the_dump_golden_red() {
-    let bytes = std::fs::read(POOL_CASSETTE_PATH).expect("the committed cassette must exist");
+    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -420,14 +447,14 @@ fn probe_c_mutated_apply_input_turns_the_dump_golden_red() {
 
     let provider = CassetteReplayTransport::new(mutated).as_alloy_provider();
     let dir = TempDir::new().unwrap();
-    let path = seeded_db(dir.path(), chain_id, SPAN_FROM, "probe-c.db");
+    let path = seeded_db(dir.path(), chain_id, span_from(), "probe-c.db");
 
     // The run COMMITS (61 is a valid tick spacing) - the red is the dump.
     let report = run_pool_update(
         &path,
         chain_id,
-        Some(SPAN_TO),
-        SPAN_TO - SPAN_FROM + 1,
+        Some(span_to()),
+        span_to() - span_from() + 1,
         10_000,
         provider,
         Arc::new(AtomicBool::new(false)),
@@ -436,7 +463,13 @@ fn probe_c_mutated_apply_input_turns_the_dump_golden_red() {
         false,
     )
     .expect("the mutated input still decodes to a valid pool");
-    assert_eq!(report.total_pools_written, 1);
+    assert_eq!(
+        report.total_pools_written,
+        surface_capture()
+            .pool_applied()
+            .expect("the authority states the pool capture's applied counts")
+            .pools_written
+    );
 
     let conn =
         rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
