@@ -99,10 +99,17 @@ pub fn reset_market_to_cold_boot(
         )))
     })?;
 
+    let chain = u64::try_from(chain_id).map_err(|_| {
+        RunError::Db(DbError::Decode(format!(
+            "aave_v3_markets id={market_id} carries chain id {chain_id}, which is not a chain identifier"
+        )))
+    })?;
+
     // The activation RPC runs first, ahead of any write; the purge and the
     // re-seed then ride the caller's transaction as pure substrate.
     let metadata = get_runtime().block_on(fetch_activation_metadata(
         provider,
+        chain,
         &ap_address,
         &gho_address,
     ))?;
@@ -117,7 +124,7 @@ pub fn reset_market_to_cold_boot(
         gho_token_address,
         metadata.gho_name.as_deref(),
         metadata.gho_symbol.as_deref(),
-        metadata.gho_decimals,
+        Some(metadata.gho_decimals),
         ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
     )?;
 

@@ -47,6 +47,11 @@ from tests.helpers.aave_logs import (
 #: hash, so a link check reads a real parent rather than the zero word.
 DEFAULT_PARENT_BLOCK_HASH = "0x" + (b"pp" + b"\x00" * 30).hex()
 
+#: The code every served address holds unless the fixture marks it code-less.
+#: The verification and activation gates state a target's code presence at their
+#: anchor, and an EOA answer (`0x`) is a refusal rather than an absence of state.
+DEFAULT_CODE = "0x60006000"
+
 
 def terminal_header(number: int) -> dict[str, str]:
     """The complete header the mock serves for one height.
@@ -226,6 +231,9 @@ class MockRpcRegistry:
     block_number: int
     logs: list[dict[str, Any]] = field(default_factory=list)
     eth_call_responses: dict[str, str] = field(default_factory=dict)
+    #: Lowercased address -> code hex. An address the map does not name holds
+    #: `DEFAULT_CODE`; an address named with `"0x"` holds none.
+    code: dict[str, str] = field(default_factory=dict)
 
 
 class _MockRpcHandler(BaseHTTPRequestHandler):
@@ -287,6 +295,8 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             return self._receipt_result(req)
         if method == "debug_traceTransaction":
             return self._trace_result(req)
+        if method == "eth_getCode":
+            return self._code_result(req)
         if method == "eth_getStorageAt":
             self._require_served_pin(req)
             # The fixture market's addresses are not EIP-1967 proxies, so the
@@ -354,6 +364,18 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             "calls": [],
         }
 
+    def _code_result(self, req: dict[str, Any]) -> str:
+        """The code one address holds at the pinned block.
+
+        The pin is load-bearing here too: a code read served for another block
+        would let a target look deployed (or missing) at a position the gate
+        never named.
+        """
+        self._require_served_pin(req)
+        params = req.get("params", [])
+        address = params[0].lower() if params and isinstance(params[0], str) else ""
+        return self.registry.code.get(address, DEFAULT_CODE)
+
     def _require_served_pin(self, req: dict[str, Any]) -> None:
         """Refuse a hash-pinned id the fixture's headers never named."""
         params = req.get("params", [])
@@ -414,6 +436,7 @@ def mock_rpc_server(
     logs: list[dict[str, Any]],
     block_number: int,
     eth_call_responses: dict[str, str] | None = None,
+    code: dict[str, str] | None = None,
 ) -> Generator[str, None, None]:
     """Start a local mock JSON-RPC server; yield its URL.
 
@@ -421,12 +444,14 @@ def mock_rpc_server(
     `GET_CONFIGURATION_SELECTOR`) to the canned ABI return value — the server
     dispatches `eth_call`s by selector. `ERC20_METADATA_SELECTORS` is answered
     underneath every fixture (a `ReserveInitialized` dispatch reads it), and a
-    caller's own responses win on conflict.
+    caller's own responses win on conflict. `code` maps a lowercased address to
+    the code it holds; every other address holds `DEFAULT_CODE`.
     """
     _MockRpcHandler.registry = MockRpcRegistry(
         block_number=block_number,
         logs=logs,
         eth_call_responses={**ERC20_METADATA_SELECTORS, **(eth_call_responses or {})},
+        code={addr.lower(): hex_code for addr, hex_code in (code or {}).items()},
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MockRpcHandler)
     port = server.server_address[1]

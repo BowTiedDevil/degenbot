@@ -35,6 +35,14 @@ const WARM_CURSOR: i64 = 26_130_445;
 /// The head block the activation metadata reads pin.
 const HEAD: u64 = 16_291_071;
 
+/// The exact identity that head resolves to: the activation's ONE anchor, and
+/// the block hash every activation read is pinned to.
+const HEAD_HASH: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
+const HEAD_PARENT: &str = "0x00000000000000000000000000000000000000000000000000000000000000bb";
+
+/// The code each activation target holds at that anchor.
+const CODE: u64 = 0x6000;
+
 /// The no-arg selectors the activation RPC issues.
 const GET_MARKET_ID_SELECTOR: &str = "0x568ef470";
 const NAME_SELECTOR: &str = "0x06fdde03";
@@ -192,31 +200,57 @@ fn activation_cassette(market_name: &str) -> CassetteReplayTransport {
         serde_json::json!(format!("0x{HEAD:x}")),
     );
 
-    // `getMarketId()` rides the provider's default block tag (alloy's
-    // `Provider::call` pins `pending`).
+    // The activation resolves ONE head anchor before it reads: the chain id, the
+    // head's own header, and then every read pinned to that header's hash.
+    add(
+        "eth_chainId",
+        serde_json::Value::Null,
+        serde_json::json!("0x1"),
+    );
+    add(
+        "eth_getBlockByNumber",
+        serde_json::json!([format!("0x{HEAD:x}"), false]),
+        serde_json::json!({
+            "number": HEAD.to_string(),
+            "hash": HEAD_HASH,
+            "parentHash": HEAD_PARENT,
+        }),
+    );
+
+    let pin = serde_json::json!({"blockHash": HEAD_HASH, "requireCanonical": true});
+
+    // One code read per target: the metadata walk states a target's code
+    // presence at the anchor before it calls it.
+    for target in [POOL_ADDRESS_PROVIDER, GHO] {
+        add(
+            "eth_getCode",
+            serde_json::json!([target.to_lowercase(), pin]),
+            serde_json::json!(format!("{CODE:#x}")),
+        );
+    }
+
     add(
         "eth_call",
         serde_json::json!([
-            {"input": GET_MARKET_ID_SELECTOR, "to": POOL_ADDRESS_PROVIDER.to_lowercase()},
-            "pending"
+            {"data": GET_MARKET_ID_SELECTOR, "to": POOL_ADDRESS_PROVIDER.to_lowercase()},
+            pin
         ]),
         serde_json::json!(abi_string(market_name)),
     );
 
-    let block = HEAD.to_string();
     add(
         "eth_call",
-        serde_json::json!([{"input": NAME_SELECTOR, "to": GHO.to_lowercase()}, block]),
+        serde_json::json!([{"data": NAME_SELECTOR, "to": GHO.to_lowercase()}, pin]),
         serde_json::json!(abi_string("Gho Token")),
     );
     add(
         "eth_call",
-        serde_json::json!([{"input": SYMBOL_SELECTOR, "to": GHO.to_lowercase()}, block]),
+        serde_json::json!([{"data": SYMBOL_SELECTOR, "to": GHO.to_lowercase()}, pin]),
         serde_json::json!(abi_string("GHO")),
     );
     add(
         "eth_call",
-        serde_json::json!([{"input": DECIMALS_SELECTOR, "to": GHO.to_lowercase()}, block]),
+        serde_json::json!([{"data": DECIMALS_SELECTOR, "to": GHO.to_lowercase()}, pin]),
         serde_json::json!(format!("0x{:064x}", 18)),
     );
 

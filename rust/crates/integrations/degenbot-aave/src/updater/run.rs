@@ -20,7 +20,7 @@ pub mod substrate;
 
 pub use activate::{
     activate_aave_market, activate_aave_market_on_conn, deactivate_aave_market, ActivatedMarket,
-    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    ActivationMetadataError, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use apply::{
     apply_aave_chunk_writes_on_conn, apply_canonical_deltas_on_conn, CanonicalDeltaWriteReport,
@@ -332,6 +332,36 @@ pub enum RunError {
     /// is no longer canonical. Raised before the chunk's transaction opens.
     #[error("exact read error: {0}")]
     ExactRead(#[from] degenbot_rpc::chain_evidence::ExactReadError),
+    /// An activation read did not establish a required identity fact — the
+    /// market name, or the GHO token's `decimals()`. Raised in resolution,
+    /// BEFORE the seed transaction opens, so a partial metadata failure can
+    /// never persist a NULL identity fact.
+    #[error("activation metadata: {0}")]
+    ActivationMetadata(Box<ActivationMetadataError>),
+    /// A verification read carried no value for a tracked row: the token
+    /// reverted, answered a payload that is not the declared word, or holds no
+    /// code at the verification anchor. The acquisition refuses instead of
+    /// reading the row as zero; no chunk transaction has opened, so nothing
+    /// rolls back and no cursor moves.
+    #[error("verification evidence: {0}")]
+    VerificationEvidence(Box<crate::verify::VerificationEvidenceError>),
+}
+
+/// The boxed activation refusal keeps `RunError` pointer-sized for the `Err` half
+/// of every run-stage signature; the payload, its chain, and its `Display` are
+/// unchanged, and `?` on the payload's own error still converts.
+impl From<ActivationMetadataError> for RunError {
+    fn from(error: ActivationMetadataError) -> Self {
+        Self::ActivationMetadata(Box::new(error))
+    }
+}
+
+/// The boxed verification refusal, under the same rule as
+/// [`ActivationMetadataError`]'s conversion.
+impl From<crate::verify::VerificationEvidenceError> for RunError {
+    fn from(error: crate::verify::VerificationEvidenceError) -> Self {
+        Self::VerificationEvidence(Box::new(error))
+    }
 }
 
 /// The run's pre-commit verification policy — the core twin of the CLI's

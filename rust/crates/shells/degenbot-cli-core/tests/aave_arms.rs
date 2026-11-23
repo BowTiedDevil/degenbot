@@ -129,6 +129,14 @@ const GHO_TOKEN: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
 /// The head block the activation metadata reads pin.
 const HEAD_BLOCK: u64 = 16_291_071;
 
+/// The exact identity the activation's ONE head anchor resolves to, and the
+/// block hash every activation read is pinned to.
+const HEAD_HASH: &str = "0x00000000000000000000000000000000000000000000000000000000000000aa";
+const HEAD_PARENT: &str = "0x00000000000000000000000000000000000000000000000000000000000000bb";
+
+/// The code each activation target holds at that anchor.
+const TARGET_CODE: &str = "0x6000";
+
 /// The no-arg selectors the activation RPC issues.
 const GET_MARKET_ID_SELECTOR: &str = "0x568ef470";
 const NAME_SELECTOR: &str = "0x06fdde03";
@@ -150,10 +158,75 @@ fn abi_string(value: &str) -> String {
     out
 }
 
+/// One stub answer: the JSON-RPC `result`, or a refusal's code + message.
+enum Answer {
+    Result(serde_json::Value),
+    Error(i64, &'static str),
+}
+
+/// Whether `params` names the fixture's exact head block as EIP-1898 states it.
+fn names_head_pin(params: &serde_json::Value) -> bool {
+    let pin = &params[1];
+    pin["blockHash"].as_str() == Some(HEAD_HASH) && pin["requireCanonical"].as_bool() == Some(true)
+}
+
+/// The head's header, or JSON null for any height the fixture does not hold.
+fn head_header(params: &serde_json::Value) -> serde_json::Value {
+    let asked = params[0]
+        .as_str()
+        .and_then(|raw| u64::from_str_radix(raw.trim_start_matches("0x"), 16).ok());
+    if asked == Some(HEAD_BLOCK) {
+        serde_json::json!({
+            "number": format!("0x{HEAD_BLOCK:x}"),
+            "hash": HEAD_HASH,
+            "parentHash": HEAD_PARENT,
+        })
+    } else {
+        serde_json::Value::Null
+    }
+}
+
+/// The activation metadata one pinned `eth_call` asks for.
+fn activation_call(params: &serde_json::Value, market_name: &str) -> Answer {
+    let call = &params[0];
+    let to = call["to"].as_str().unwrap_or("").to_ascii_lowercase();
+    let input = call
+        .get("data")
+        .or_else(|| call.get("input"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if to == POOL_ADDRESS_PROVIDER.to_ascii_lowercase() && input.starts_with(GET_MARKET_ID_SELECTOR)
+    {
+        Answer::Result(serde_json::json!(abi_string(market_name)))
+    } else if to == GHO_TOKEN.to_ascii_lowercase() {
+        if input.starts_with(NAME_SELECTOR) {
+            Answer::Result(serde_json::json!(abi_string("Gho Token")))
+        } else if input.starts_with(SYMBOL_SELECTOR) {
+            Answer::Result(serde_json::json!(abi_string("GHO")))
+        } else if input.starts_with(DECIMALS_SELECTOR) {
+            Answer::Result(serde_json::json!(format!("0x{:064x}", 18)))
+        } else {
+            Answer::Error(-32_601, "method not found")
+        }
+    } else {
+        Answer::Error(-32_601, "method not found")
+    }
+}
 /// A minimal one-request-per-connection JSON-RPC stub serving the activation
-/// metadata the reset module reads through the CLI's provider: the head block,
-/// `getMarketId()` naming `market_name`, and the GHO token's `name()` /
-/// `symbol()` / `decimals()`. Every other call is a `-32601` refusal.
+/// reads the reset module issues through the CLI's provider, at the wire
+/// contract the activation seam states:
+///
+/// - `eth_chainId` (the anchor's chain) and `eth_blockNumber` (the head height);
+/// - `eth_getBlockByNumber` for the head, answering the header its anchor is
+///   built from (hash + parent hash);
+/// - `eth_getCode` and `eth_call` ONLY under the `{blockHash, requireCanonical:
+///   true}` pin that names that header's hash — an ambient or height-addressed
+///   read is refused, so the stub cannot let an unpinned read pass;
+/// - `getMarketId()` naming `market_name`, and the GHO token's `name()` /
+///   `symbol()` / `decimals()`.
+///
+/// Every other call is a `-32601` refusal.
 struct ResetRpcStub {
     url: String,
     shutdown: Arc<AtomicBool>,
@@ -226,43 +299,40 @@ fn answer_activation(stream: &mut TcpStream, market_name: &str) -> std::io::Resu
         serde_json::from_str(body.trim()).unwrap_or(serde_json::Value::Null);
     let id = request["id"].clone();
     let method = request["method"].as_str().unwrap_or("");
-    let result = match method {
-        "eth_blockNumber" => Some(serde_json::json!(format!("0x{HEAD_BLOCK:x}"))),
-        "eth_call" => {
-            let call = &request["params"][0];
-            let to = call["to"].as_str().unwrap_or("").to_ascii_lowercase();
-            let input = call
-                .get("input")
-                .or_else(|| call.get("data"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if to == POOL_ADDRESS_PROVIDER.to_ascii_lowercase()
-                && input.starts_with(GET_MARKET_ID_SELECTOR)
-            {
-                Some(serde_json::json!(abi_string(market_name)))
-            } else if to == GHO_TOKEN.to_ascii_lowercase() {
-                if input.starts_with(NAME_SELECTOR) {
-                    Some(serde_json::json!(abi_string("Gho Token")))
-                } else if input.starts_with(SYMBOL_SELECTOR) {
-                    Some(serde_json::json!(abi_string("GHO")))
-                } else if input.starts_with(DECIMALS_SELECTOR) {
-                    Some(serde_json::json!(format!("0x{:064x}", 18)))
-                } else {
-                    None
-                }
+    let params = &request["params"];
+    let answer = match method {
+        "eth_chainId" => Answer::Result(serde_json::json!("0x1")),
+        "eth_blockNumber" => Answer::Result(serde_json::json!(format!("0x{HEAD_BLOCK:x}"))),
+        "eth_getBlockByNumber" => Answer::Result(head_header(params)),
+        "eth_getCode" | "eth_call" => {
+            if !names_head_pin(params) {
+                let refusal = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32_000,
+                        "message": format!(
+                            "stub holds no canonical block {}",
+                            params.get(1).unwrap_or(&serde_json::Value::Null)
+                        ),
+                    },
+                });
+                return write_rpc_response(stream, &refusal);
+            }
+            if method == "eth_getCode" {
+                Answer::Result(serde_json::json!(TARGET_CODE))
             } else {
-                None
+                activation_call(params, market_name)
             }
         }
-        _ => None,
+        _ => Answer::Error(-32_601, "method not found"),
     };
-    let response = match result {
-        Some(result) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
-        None => serde_json::json!({
+    let response = match answer {
+        Answer::Result(result) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Answer::Error(code, message) => serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
-            "error": {"code": -32601, "message": "method not found"},
+            "error": {"code": code, "message": message},
         }),
     };
     write_rpc_response(stream, &response)

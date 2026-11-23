@@ -36,6 +36,10 @@ tempfile = { version = "^3.27" }
 # The wave-3 replay suite's negative probes mutate a recorded answer inside
 # the parsed cassette (re-signed through the writer's own digest fn).
 serde_json = { version = "^1" }
+# The scripted chain the activation/verification unit tests read against is an
+# alloy `Transport`, which is a `tower::Service`; same declaration as
+# `degenbot-rpc`'s.
+tower = { version = "^0.5", default-features = false }
 
 [features]
 default = []

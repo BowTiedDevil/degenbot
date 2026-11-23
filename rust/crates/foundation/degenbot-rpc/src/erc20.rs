@@ -49,10 +49,12 @@ use degenbot_core::errors::{ProviderError, ProviderResult};
 use alloy::sol_types::SolCall;
 
 use crate::abi::{selector, ContractRead, IERC20};
+use crate::chain_evidence::{BlockReads, ExactReadError};
 use crate::multicall3::{
     decode_aggregate3_results, encode_aggregate3, multicall3_batch, MulticallOutcome,
     MULTICALL3_ADDRESS,
 };
+use crate::read_evidence::ReadEvidence;
 
 /// Which selector-fallback (and matching decode) contract one metadata read
 /// follows. See the module docs for each variant's exact mechanics.
@@ -133,6 +135,91 @@ pub async fn read(
         meta.decimals = read_uint_field(transport, token, shape, block).await;
     }
     meta
+}
+
+/// One token's metadata as EVIDENCE, read at ONE exact block.
+///
+/// Each field states why it carried no value, so a consumer that needs the
+/// fields can tell a node outage (an outer error) from a token that answers
+/// nonconforming metadata, and a code-less address from a malformed return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataEvidence {
+    /// The `name()` field's evidence.
+    pub name: ReadEvidence<String>,
+    /// The `symbol()` field's evidence.
+    pub symbol: ReadEvidence<String>,
+    /// The `decimals()` field's evidence.
+    pub decimals: ReadEvidence<u64>,
+}
+
+/// Read one token's `name()` / `symbol()` / `decimals()` at [`BlockReads`]'
+/// own anchor, as evidence rather than as absence.
+///
+/// The walk is [`MetadataShape::LowerUpperStopOnCallError`]'s: the lower
+/// spelling first, the upper spelling only when the lower answer does not
+/// decode, and a reverting getter ends its field. The code presence is stated
+/// once per token, so a code-less address is [`ReadEvidence::NoCode`] for every
+/// field instead of three malformed returns.
+///
+/// # Errors
+///
+/// [`ExactReadError`] when the node cannot serve a read at the view's anchor.
+pub async fn read_exact(
+    reads: &BlockReads<'_>,
+    token: Address,
+) -> Result<MetadataEvidence, ExactReadError> {
+    if !reads.code_present(token).await? {
+        return Ok(MetadataEvidence {
+            name: ReadEvidence::NoCode { address: token },
+            symbol: ReadEvidence::NoCode { address: token },
+            decimals: ReadEvidence::NoCode { address: token },
+        });
+    }
+    Ok(MetadataEvidence {
+        name: read_text_exact(reads, token, b"name()", b"NAME()").await?,
+        symbol: read_text_exact(reads, token, b"symbol()", b"SYMBOL()").await?,
+        decimals: read_uint_exact(reads, token).await?,
+    })
+}
+
+/// One text field's spelling walk at an exact view: a decode failure falls
+/// through to the upper spelling, and every other class ends the field.
+async fn read_text_exact(
+    reads: &BlockReads<'_>,
+    token: Address,
+    lower_sig: &[u8],
+    upper_sig: &[u8],
+) -> Result<ReadEvidence<String>, ExactReadError> {
+    let lower = reads
+        .call_evidence::<String>(token, Bytes::copy_from_slice(&selector(lower_sig)))
+        .await?;
+    match lower {
+        ReadEvidence::Malformed { .. } => {
+            reads
+                .call_evidence::<String>(token, Bytes::copy_from_slice(&selector(upper_sig)))
+                .await
+        }
+        evidence => Ok(evidence),
+    }
+}
+
+/// `decimals()`'s spelling walk at an exact view, under the same rule as
+/// [`read_text_exact`].
+async fn read_uint_exact(
+    reads: &BlockReads<'_>,
+    token: Address,
+) -> Result<ReadEvidence<u64>, ExactReadError> {
+    let lower = reads
+        .call_evidence::<u64>(token, Bytes::copy_from_slice(&selector(b"decimals()")))
+        .await?;
+    match lower {
+        ReadEvidence::Malformed { .. } => {
+            reads
+                .call_evidence::<u64>(token, Bytes::copy_from_slice(&selector(b"DECIMALS()")))
+                .await
+        }
+        evidence => Ok(evidence),
+    }
 }
 
 /// Read many tokens' metadata in ordered wire shapes with one

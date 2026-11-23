@@ -15,6 +15,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from degenbot.crypto import function_selector
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
@@ -24,9 +26,11 @@ from tests.helpers.seam import activate_aave_market, deactivate_aave_market
 # The 4-byte selectors the activation path RPCs, derived from the canonical
 # signatures so a transposed digit cannot survive review.
 GET_MARKET_ID_SELECTOR = "0x" + function_selector("getMarketId()").hex()
+GET_MARKET_ID_UPPER_SELECTOR = "0x" + function_selector("GETMARKETID()").hex()
 NAME_SELECTOR = "0x" + function_selector("name()").hex()
 SYMBOL_SELECTOR = "0x" + function_selector("symbol()").hex()
 DECIMALS_SELECTOR = "0x" + function_selector("decimals()").hex()
+DECIMALS_UPPER_SELECTOR = "0x" + function_selector("DECIMALS()").hex()
 
 # Canonical Aave V3 Ethereum mainnet addresses (check the real deployments
 # module).
@@ -54,7 +58,7 @@ def _activate_responses(market_name: str = "Aave Ethereum Market") -> dict[str, 
         GET_MARKET_ID_SELECTOR: _encode_dynamic_string(market_name),
         NAME_SELECTOR: _encode_dynamic_string("GHO Token"),
         SYMBOL_SELECTOR: _encode_dynamic_string("GHO"),
-        DECIMALS_SELECTOR: (18).to_bytes(32, "big").hex(),  # uint256, 0x-prefixed below
+        DECIMALS_SELECTOR: "0x" + (18).to_bytes(32, "big").hex(),
     }
 
 
@@ -207,3 +211,76 @@ def test_deactivate_sets_active_false(tmp_path: Path) -> None:
     deactivate_aave_market(database_path=str(db_path), market_id=result["market_id"])
     market = _dump_market(db_path)
     assert market["active"] == 0, market
+
+
+def _assert_activation_refused(
+    db_path: Path, responses: dict[str, str], code: dict[str, str]
+) -> str:
+    """Drive an activation that must refuse; return its message.
+
+    The mock serves every read the activation needs except the one under test, so
+    a refusal can only come from the evidence that read carried.
+    """
+    with (
+        mock_rpc_server(
+            logs=[], block_number=100, eth_call_responses=responses, code=code
+        ) as rpc_url,
+        pytest.raises(ValueError, match="activation metadata") as refused,
+    ):
+        activate_aave_market(
+            database_path=str(db_path),
+            chain_id=1,
+            pool_address_provider=POOL_ADDRESS_PROVIDER_ADDRESS,
+            gho_token_address=GHO_TOKEN_ADDRESS,
+            rpc_url=rpc_url,
+        )
+    with sqlite_connection(db_path) as connection:
+        markets = connection.execute("SELECT COUNT(*) FROM aave_v3_markets").fetchone()[0]
+        gho_tokens = connection.execute("SELECT COUNT(*) FROM aave_gho_tokens").fetchone()[0]
+    assert markets == 0, "a refused activation writes no market row"
+    assert gho_tokens == 0, "a refused activation writes no GHO row"
+    return str(refused.value)
+
+
+def test_activate_refuses_a_market_id_that_carries_no_string(tmp_path: Path) -> None:
+    """A malformed `getMarketId()` answer is a refusal, not an uppercase retry.
+
+    The uppercase spelling is canned and would succeed, so the assertion is that
+    the refusal happens WITHOUT spending it: only an execution revert says the
+    contract lacks the method.
+    """
+    db_path = _fresh_db(tmp_path)
+    responses = _activate_responses()
+    responses[GET_MARKET_ID_SELECTOR] = "0x0102"
+    # The uppercase spelling ANSWERS, so a fallback that should never happen would
+    # turn this refusal into a successful activation.
+    responses[GET_MARKET_ID_UPPER_SELECTOR] = _encode_dynamic_string("Aave Ethereum Market")
+
+    message = _assert_activation_refused(db_path, responses, code={})
+
+    assert "market id" in message, message
+
+
+def test_activate_refuses_a_gho_token_without_decimals(tmp_path: Path) -> None:
+    """Decimals are required: an unanswered `decimals()` never persists NULL."""
+    db_path = _fresh_db(tmp_path)
+    responses = _activate_responses()
+    # The harness answers ERC-20 metadata underneath every fixture, so the
+    # unanswered spellings are stated as empty returns rather than deleted keys.
+    responses[DECIMALS_SELECTOR] = "0x"
+    responses[DECIMALS_UPPER_SELECTOR] = "0x"
+
+    message = _assert_activation_refused(db_path, responses, code={})
+
+    assert "decimals" in message, message
+
+
+def test_activate_refuses_a_gho_address_holding_no_code(tmp_path: Path) -> None:
+    """A code-less GHO address is evidence, not an absent identity fact."""
+    db_path = _fresh_db(tmp_path)
+
+    message = _assert_activation_refused(
+        db_path, _activate_responses(), code={GHO_TOKEN_ADDRESS: "0x"}
+    )
+
+    assert "no code" in message, message

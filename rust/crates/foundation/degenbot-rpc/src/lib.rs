@@ -16,6 +16,9 @@
 //! - [`erc20`] — ERC-20 `name()`/`symbol()`/`decimals()` reads: the one
 //!   selector/decode/fallback family over [`abi::ContractRead`], with
 //!   single-token and multicall call shapes.
+//! - [`read_evidence`] — [`read_evidence::ReadEvidence`], the class one exact
+//!   read carries: a value, an EVM revert, a malformed answer, or a target with
+//!   no code at its anchor.
 //! - [`subscription`] — the one subscription lifecycle
 //!   (`SubscriptionHandle::apply` over `SubscriptionPhase`), its double buffer
 //!   and `drain_raw`, and the `pump_*` drivers that report into it.
@@ -40,6 +43,7 @@ pub mod offline;
 pub mod pending_tx_stream;
 pub mod provider;
 mod rate_limit;
+pub mod read_evidence;
 mod retry_policy;
 pub mod subscription;
 pub mod tick_bootstrap;

@@ -18,6 +18,9 @@ pub mod run;
 pub mod transaction_processor;
 pub mod verify;
 
+#[cfg(test)]
+pub(crate) mod test_chain;
+
 pub use evidence::{
     bind_transaction_evidence, EvidenceRefusal, EvidenceRequirement, TransactionEvidence,
 };
@@ -39,8 +42,9 @@ pub use projection::{
 pub use run::{
     activate_aave_market, activate_aave_market_on_conn, apply_aave_chunk_writes_on_conn,
     deactivate_aave_market, reset_market_to_cold_boot, run_aave_update, run_aave_update_on_db,
-    AaveChunkProgress, AaveUpdateReport, ActivatedMarket, CanonicalDeltaWriteReport,
-    ChunkWriteReport, EvidenceAcquisitionError, MarketResetFacts, NoProgress, ProgressSink,
-    RunError, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    AaveChunkProgress, AaveUpdateReport, ActivatedMarket, ActivationMetadataError,
+    CanonicalDeltaWriteReport, ChunkWriteReport, EvidenceAcquisitionError, MarketResetFacts,
+    NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use transaction_processor::{process_transaction, ProcessTxError};
+pub use verify::VerificationEvidenceError;

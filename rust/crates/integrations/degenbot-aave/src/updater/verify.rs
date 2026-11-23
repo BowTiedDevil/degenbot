@@ -17,11 +17,20 @@
 //! reads are batched, not per-position: every check flattens its calls into one
 //! `BlockReads::batch` per position kind, hash-pinned to the exact anchor the
 //! gate states (ADR-105 D3).
+//!
+//! Every acquired fact is [`ReadEvidence`]: a reverted call, a payload that is
+//! not the declared word, and a token that holds no code at the anchor are all
+//! refusals ([`VerificationEvidenceError`]), never a zero balance. Only the
+//! explicitly excluded addresses and the revision-deprecated GHO getter skip a
+//! read.
+
+use std::collections::BTreeMap;
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::chain_evidence::{resolve_anchor_at, BlockReads};
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::read_evidence::ReadEvidence;
 use rusqlite::Connection;
 
 use crate::RunError;
@@ -273,9 +282,10 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 ///
 /// Per-position `eth_call`s are batched through Multicall3 `aggregate3`
 /// (with `allowFailure = true` — a reverted sub-call is a typed
-/// [`MulticallOutcome::Reverted`], treated as `actual == 0`, preserving the
-/// prior per-call revert semantics). The market-wide `--verify-all` path is the
-/// win; the per-chunk touched-set path is a wash but harmless.
+/// [`MulticallOutcome::Reverted`], i.e. read EVIDENCE, and evidence that
+/// carries no word refuses the acquisition instead of reading the position as
+/// zero). The market-wide `--verify-all` path is the win; the per-chunk
+/// touched-set path is a wash but harmless.
 ///
 /// Returns the divergence list (empty = no divergence). Each row carries the
 /// human-readable fields needed by the drive harness to emit a NAMED,
@@ -284,10 +294,12 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] on a DB or RPC failure that prevents verification: a
-/// single position's revert-on-call is treated as `actual == 0` and surfaced as
-/// a divergence if the DB expected non-zero, while a transport fault aborts the
-/// verification instead of reporting every position as diverged.
+/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
+/// [`RunError::VerificationEvidence`] refuses the acquisition when a tracked
+/// position's read carries no word (a revert, a short return, or a token with no
+/// code), and [`RunError::ExactRead`] refuses a read the node cannot serve at
+/// the anchor: neither is reported as a divergence, because the verifier has no
+/// evidence to compare either way.
 pub async fn verify_touched_positions_on_conn(
     conn: &Connection,
     provider: &AlloyProvider,
@@ -327,19 +339,129 @@ pub fn load_verification_positions(
     Ok(positions)
 }
 
+/// Why a tracked row's on-chain truth was not acquired.
+///
+/// Each variant carries the read EVIDENCE — which row, which token, and what the
+/// read carried instead of a value. Every one of them refuses the acquisition: a
+/// reverted, short, or code-less read is not a zero balance, and comparing it
+/// would report either a fabricated divergence or a fabricated green.
+#[derive(Debug, thiserror::Error)]
+pub enum VerificationEvidenceError {
+    /// A collateral/debt position's read carried no word.
+    #[error("position {position_id} ({kind:?}) {field} for {user_address} at {token_address}: {evidence}")]
+    Position {
+        /// Collateral (aToken) or debt (vToken).
+        kind: PositionKind,
+        /// The DB surrogate id of the position row.
+        position_id: i64,
+        /// The user the read was issued for.
+        user_address: Address,
+        /// The token the read was issued on.
+        token_address: Address,
+        /// The getter the read asked for.
+        field: &'static str,
+        /// What the read carried.
+        evidence: ReadEvidence<U256>,
+    },
+    /// The stkAAVE balance check's read carried no word.
+    #[error("user {user_id} ({user_address}) stkAAVE balance at {token_address}: {evidence}")]
+    StkAave {
+        /// The DB surrogate id of the user row.
+        user_id: i64,
+        /// The user the read was issued for.
+        user_address: Address,
+        /// The discount token the read was issued on.
+        token_address: Address,
+        /// What the read carried.
+        evidence: ReadEvidence<U256>,
+    },
+    /// The GHO discount check's read carried no word.
+    #[error("user {user_id} ({user_address}) GHO discount at {token_address}: {evidence}")]
+    GhoDiscount {
+        /// The DB surrogate id of the user row.
+        user_id: i64,
+        /// The user the read was issued for.
+        user_address: Address,
+        /// The GHO vToken the read was issued on.
+        token_address: Address,
+        /// What the read carried.
+        evidence: ReadEvidence<U256>,
+    },
+    /// The GHO discount read answered a word outside the stored percent column.
+    #[error("user {user_id} ({user_address}) GHO discount at {token_address} = {value} does not fit a signed 64-bit percent")]
+    GhoDiscountOutOfRange {
+        /// The DB surrogate id of the user row.
+        user_id: i64,
+        /// The user the read was issued for.
+        user_address: Address,
+        /// The GHO vToken the read was issued on.
+        token_address: Address,
+        /// The word the token answered.
+        value: U256,
+    },
+}
+
+/// The getter the position reads ask for, as the refusal names it.
+const BALANCE_GETTER: &str = "scaledBalanceOf";
+/// The index getter the position reads ask for, as the refusal names it.
+const LAST_INDEX_GETTER: &str = "getPreviousIndex";
+
+/// Whether `address` holds code at the view's anchor, read once per distinct
+/// token: one anchor answers for every position on the same token.
+async fn token_code_present(
+    reads: &BlockReads<'_>,
+    cache: &mut BTreeMap<Address, bool>,
+    address: Address,
+) -> Result<bool, RunError> {
+    if let Some(present) = cache.get(&address) {
+        return Ok(*present);
+    }
+    let present = reads.code_present(address).await?;
+    cache.insert(address, present);
+    Ok(present)
+}
+
+/// One position read's word, or the refusal naming the evidence.
+fn position_word(
+    row: &VerificationPosition,
+    getter: &'static str,
+    code_present: bool,
+    outcome: &MulticallOutcome,
+) -> Result<U256, RunError> {
+    match ReadEvidence::<U256>::from_outcome(row.token_address, code_present, outcome) {
+        ReadEvidence::Value(word) => Ok(word),
+        evidence => Err(VerificationEvidenceError::Position {
+            kind: row.kind,
+            position_id: row.position_id,
+            user_address: row.user_address,
+            token_address: row.token_address,
+            field: getter,
+            evidence,
+        }
+        .into()),
+    }
+}
+
 /// The verify pass's chain half: one Multicall3 batch reading
-/// `scaledBalanceOf` + `getPreviousIndex` for every position at
-/// `block_number`. Pure RPC - no SQL - so it runs in resolution, outside the
+/// `scaledBalanceOf` + `getPreviousIndex` for every position at the view's
+/// exact anchor. Pure RPC - no SQL - so it runs in resolution, outside the
 /// chunk's write transaction, and its product is joined back by identity.
+///
+/// The token's code presence is read once per distinct token, so a tracked token
+/// that holds no code at the anchor is [`ReadEvidence::NoCode`] instead of an
+/// empty answer read as a zero balance.
 ///
 /// # Errors
 ///
-/// A transport fault aborts the acquisition instead of reading every position
-/// as zero.
+/// [`RunError::VerificationEvidence`] when a read carries no word (a revert, a
+/// short return, or no code), [`RunError::ExactRead`] when the node cannot serve
+/// a read at the anchor. A transport fault aborts the acquisition instead of
+/// reading every position as zero.
 pub async fn acquire_position_truth(
     reads: &BlockReads<'_>,
     positions: &[VerificationPosition],
 ) -> Result<Vec<PositionTruth>, RunError> {
+    let mut code: BTreeMap<Address, bool> = BTreeMap::new();
     let mut truth: Vec<PositionTruth> = Vec::with_capacity(positions.len());
     for kind in [PositionKind::Collateral, PositionKind::Debt] {
         let rows: Vec<&VerificationPosition> =
@@ -365,11 +487,12 @@ pub async fn acquire_position_truth(
         // stride is exact and the remainder is structurally empty.
         let (result_pairs, _remainder) = results.as_chunks::<2>();
         for (row, chunk) in rows.iter().zip(result_pairs) {
+            let present = token_code_present(reads, &mut code, row.token_address).await?;
             truth.push(PositionTruth {
                 kind,
                 position_id: row.position_id,
-                balance: result_to_u256(&chunk[0]),
-                last_index: result_to_u256(&chunk[1]),
+                balance: position_word(row, BALANCE_GETTER, present, &chunk[0])?,
+                last_index: position_word(row, LAST_INDEX_GETTER, present, &chunk[1])?,
             });
         }
     }
@@ -433,26 +556,6 @@ pub fn compare_position_truth(
         }
     }
     divergences
-}
-
-/// Map one sub-call outcome to a U256: a returned payload of at least 32 bytes
-/// decodes to its big-endian word, while a revert or a short return is
-/// `U256::ZERO` — this verifier's policy that there is nothing to compare
-/// against, matching the prior per-call
-/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics.
-///
-/// A transport fault never reaches here: it has no per-position meaning, so the
-/// batch propagates it and the verification aborts, instead of reading every
-/// position as zero and reporting that the DB disagrees with chain on
-/// everything. The read is a caller-declared `uint256` word rather than a named
-/// getter's answer: Aave's `scaledBalanceOf` / `getPreviousIndex` /
-/// `balanceOf` returns are all generic `uint256` words, so no getter's return
-/// type describes them.
-fn result_to_u256(result: &MulticallOutcome) -> U256 {
-    match result {
-        MulticallOutcome::Returned(bytes) if bytes.len() >= 32 => U256::from_be_slice(&bytes[..32]),
-        MulticallOutcome::Returned(_) | MulticallOutcome::Reverted(_) => U256::ZERO,
-    }
 }
 
 // ── stkAAVE balance + GHO discount verification ─────────────────────────
@@ -680,7 +783,9 @@ fn load_gho_discount_rows(
 ///
 /// # Errors
 ///
-/// A transport fault aborts the acquisition rather than reading every fact as
+/// [`RunError::VerificationEvidence`] when a read carries no word, and
+/// [`RunError::ExactRead`] when the node cannot serve a read at the anchor: a
+/// transport fault aborts the acquisition rather than reading every fact as
 /// zero.
 pub async fn acquire_verification_truth(
     conn: &Connection,
@@ -708,13 +813,26 @@ pub async fn acquire_verification_truth(
                     })
                     .collect();
                 let results = reads.batch(&calls).await?;
-                rows.iter()
-                    .zip(results.iter())
-                    .map(|(row, result)| StkAaveTruth {
-                        user_id: row.user_id,
-                        balance: result_to_u256(result),
-                    })
-                    .collect()
+                let present = reads.code_present(token_address).await?;
+                let mut truth_rows = Vec::with_capacity(rows.len());
+                for (row, result) in rows.iter().zip(results.iter()) {
+                    match ReadEvidence::<U256>::from_outcome(token_address, present, result) {
+                        ReadEvidence::Value(balance) => truth_rows.push(StkAaveTruth {
+                            user_id: row.user_id,
+                            balance,
+                        }),
+                        evidence => {
+                            return Err(VerificationEvidenceError::StkAave {
+                                user_id: row.user_id,
+                                user_address: row.user_address,
+                                token_address,
+                                evidence,
+                            }
+                            .into())
+                        }
+                    }
+                }
+                truth_rows
             }
         }
         None => Vec::new(),
@@ -736,13 +854,37 @@ pub async fn acquire_verification_truth(
                     })
                     .collect();
                 let results = reads.batch(&calls).await?;
-                rows.iter()
-                    .zip(results.iter())
-                    .map(|(row, result)| GhoDiscountTruth {
-                        user_id: row.user_id,
-                        discount: result_to_u256(result).try_into().unwrap_or(i64::MAX),
-                    })
-                    .collect()
+                let present = reads.code_present(v_token_address).await?;
+                let mut truth_rows = Vec::with_capacity(rows.len());
+                for (row, result) in rows.iter().zip(results.iter()) {
+                    match ReadEvidence::<U256>::from_outcome(v_token_address, present, result) {
+                        ReadEvidence::Value(word) => match i64::try_from(word) {
+                            Ok(discount) => truth_rows.push(GhoDiscountTruth {
+                                user_id: row.user_id,
+                                discount,
+                            }),
+                            Err(_) => {
+                                return Err(VerificationEvidenceError::GhoDiscountOutOfRange {
+                                    user_id: row.user_id,
+                                    user_address: row.user_address,
+                                    token_address: v_token_address,
+                                    value: word,
+                                }
+                                .into())
+                            }
+                        },
+                        evidence => {
+                            return Err(VerificationEvidenceError::GhoDiscount {
+                                user_id: row.user_id,
+                                user_address: row.user_address,
+                                token_address: v_token_address,
+                                evidence,
+                            }
+                            .into())
+                        }
+                    }
+                }
+                truth_rows
             }
         }
         None => Vec::new(),
@@ -942,6 +1084,292 @@ pub(crate) fn is_final_chunk(chunk_end: u64, last_block: u64, max_chunks_hit: bo
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    use alloy::primitives::keccak256;
+
+    use crate::updater::test_chain::{Answer, ScriptedChain, HEAD_HASH, HEAD_NUMBER};
+
+    const USER_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
+    const A_TOKEN_ADDRESS: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn a_token() -> Address {
+        A_TOKEN_ADDRESS.parse().expect("the fixture address parses")
+    }
+
+    fn sel(signature: &str) -> [u8; 4] {
+        let hash = keccak256(signature.as_bytes());
+        let mut selector = [0u8; 4];
+        selector.copy_from_slice(&hash[..4]);
+        selector
+    }
+
+    /// One 32-byte word holding `value`.
+    fn word(value: u64) -> Bytes {
+        let mut out = [0u8; 32];
+        out[24..].copy_from_slice(&value.to_be_bytes());
+        Bytes::copy_from_slice(&out)
+    }
+
+    /// A chain serving `scaledBalanceOf` / `getPreviousIndex` on the fixture
+    /// aToken with the given answers.
+    fn position_chain(balance: Answer, last_index: Answer) -> ScriptedChain {
+        ScriptedChain::new()
+            .answer(a_token(), sel("scaledBalanceOf(address)"), balance)
+            .answer(a_token(), sel("getPreviousIndex(address)"), last_index)
+    }
+
+    /// The verification-evidence refusal a `RunError` carries (the payload is
+    /// boxed so `RunError` stays a small `Err`).
+    fn evidence_refusal(error: &RunError) -> Option<&VerificationEvidenceError> {
+        match error {
+            RunError::VerificationEvidence(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Acquire the fixture market's position truth at the scripted chain's exact
+    /// head block.
+    fn acquire(chain: &ScriptedChain, conn: &Connection) -> Result<Vec<PositionTruth>, RunError> {
+        let runtime = degenbot_core::runtime::get_runtime();
+        let provider = runtime.block_on(chain.provider());
+        runtime.block_on(async {
+            let anchor = degenbot_rpc::chain_evidence::resolve_anchor_at(&provider, HEAD_NUMBER)
+                .await
+                .expect("the scripted chain serves its head header");
+            let positions =
+                load_verification_positions(conn, 1, None).expect("the seeded position row loads");
+            acquire_position_truth(&BlockReads::at(&provider, anchor), &positions).await
+        })
+    }
+
+    /// A position whose DB row expects zero PLUS a reverted read is an
+    /// acquisition refusal, never a green comparison: the verifier has no
+    /// evidence that the position is zero.
+    #[test]
+    fn a_reverted_read_for_an_expected_zero_position_refuses_the_acquisition() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "0",
+            Some("1000000000000000000000000000"),
+        );
+        let chain = position_chain(Answer::Revert, Answer::Return(word(27)));
+
+        let result = acquire(&chain, &conn);
+
+        assert!(
+            matches!(
+                result.as_ref().err().and_then(evidence_refusal),
+                Some(VerificationEvidenceError::Position {
+                    field: "scaledBalanceOf",
+                    evidence: ReadEvidence::Reverted(_),
+                    ..
+                })
+            ),
+            "a reverted balance read is evidence that refuses the acquisition instead of reading zero, got {result:?}"
+        );
+    }
+
+    /// A short (or empty) return is malformed evidence: the payload does not
+    /// carry the word the verifier asked for, so it is not a zero balance.
+    #[test]
+    fn a_short_read_refuses_the_acquisition_instead_of_reading_zero() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "0",
+            Some("1000000000000000000000000000"),
+        );
+        let chain = position_chain(Answer::Return(Bytes::new()), Answer::Return(word(27)));
+
+        let result = acquire(&chain, &conn);
+
+        assert!(
+            matches!(
+                result.as_ref().err().and_then(evidence_refusal),
+                Some(VerificationEvidenceError::Position {
+                    evidence: ReadEvidence::Malformed {
+                        expected: "uint256 word",
+                        ..
+                    },
+                    ..
+                })
+            ),
+            "an empty return is malformed evidence, not a zero balance, got {result:?}"
+        );
+    }
+
+    /// A tracked token with no code at the verification anchor is refused:
+    /// there is no state to compare against.
+    #[test]
+    fn a_tracked_token_with_no_code_refuses_the_acquisition() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "0",
+            Some("1000000000000000000000000000"),
+        );
+        let chain =
+            position_chain(Answer::Return(word(0)), Answer::Return(word(27))).no_code(a_token());
+
+        let result = acquire(&chain, &conn);
+
+        assert!(
+            matches!(
+                result.as_ref().err().and_then(evidence_refusal),
+                Some(VerificationEvidenceError::Position {
+                    evidence: ReadEvidence::NoCode { .. },
+                    ..
+                })
+            ),
+            "a code-less tracked token must refuse the acquisition, got {result:?}"
+        );
+    }
+
+    /// The code presence is read once per distinct token, not once per position:
+    /// the verification's read budget stays the batch plus one code read per
+    /// token.
+    #[test]
+    fn the_code_presence_is_read_once_per_distinct_token() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "123456789",
+            Some("1000000000000000000000000000"),
+        );
+        conn.execute(
+            "INSERT INTO aave_v3_users (id, market_id, address, e_mode, gho_discount, isolation_mode_debt) VALUES (2, 1, '0x2222222222222222222222222222222222222222', 0, 0, '0')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance, last_index) VALUES (2, 2, 1, '42', '1000000000000000000000000000')",
+            [],
+        )
+        .unwrap();
+        let chain = position_chain(Answer::Return(word(42)), Answer::Return(word(27)));
+
+        let truth = acquire(&chain, &conn).expect("the scripted answers carry the words");
+        assert_eq!(truth.len(), 2);
+
+        let code_reads = chain
+            .issued()
+            .iter()
+            .filter(|issued| issued.method == "eth_getCode")
+            .count();
+        assert_eq!(
+            code_reads, 1,
+            "one anchor answers for both positions on the token"
+        );
+    }
+
+    /// Seed the GHO substrate one market's discount check reads.
+    fn seed_gho_substrate(conn: &Connection, v_token_revision: i64) {
+        conn.execute_batch(
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) VALUES (1, 1, 'mainnet', 1, 100);
+             INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f');
+             INSERT INTO erc20_tokens (id, chain, address) VALUES (5, 1, '0x7b95ec873268a6bFC6427e7a28e396Db9D0ebc65');
+             INSERT INTO erc20_tokens (id, chain, address) VALUES (6, 1, '0x0000000000000000000000000000000000000056');
+             INSERT INTO aave_gho_tokens (id, token_id, v_token_id) VALUES (1, 1, 5);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, a_token_id, a_token_revision, v_token_id, v_token_revision, liquidity_index, liquidity_rate, borrow_index, borrow_rate) VALUES (2, 1, 1, 6, 1, 5, ?1, '0', '0', '0', '0')",
+            rusqlite::params![v_token_revision],
+        )
+        .unwrap();
+    }
+
+    /// The revision-deprecated GHO getter exclusion stays: a market whose GHO
+    /// vToken revision retired `getDiscountPercent` reads no discount at all.
+    #[test]
+    fn a_deprecated_discount_revision_skips_the_getter() {
+        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        let conn = db.lock();
+        seed_gho_substrate(&conn, GHO_DISCOUNT_DEPRECATION_REVISION);
+
+        assert_eq!(
+            gho_discount_target(&conn, 1, 1).unwrap(),
+            None,
+            "revision {GHO_DISCOUNT_DEPRECATION_REVISION} retired the getter"
+        );
+
+        conn.execute(
+            "UPDATE aave_v3_assets SET v_token_revision = 3 WHERE id = 2",
+            [],
+        )
+        .unwrap();
+        assert!(
+            gho_discount_target(&conn, 1, 1).unwrap().is_some(),
+            "a live discount revision still reads the getter"
+        );
+    }
+
+    /// A transport fault aborts the acquisition with its own classification: it
+    /// is not evidence about positions.
+    #[test]
+    fn a_transport_fault_aborts_the_acquisition_with_its_cause() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "0",
+            Some("1000000000000000000000000000"),
+        );
+        let chain = position_chain(
+            Answer::Refuse {
+                code: -32_603,
+                message: "the node stopped answering".into(),
+            },
+            Answer::Return(word(27)),
+        );
+
+        let result = acquire(&chain, &conn);
+
+        assert!(
+            matches!(
+                result,
+                Err(RunError::ExactRead(
+                    degenbot_rpc::chain_evidence::ExactReadError::Failed {
+                        cause: degenbot_core::errors::ProviderError::RpcError { code: -32_603, .. },
+                        ..
+                    }
+                ))
+            ),
+            "a transport fault keeps its provider classification, got {result:?}"
+        );
+    }
+
+    /// Every position read names the verification anchor: one `{blockHash,
+    /// requireCanonical: true}` pin across the whole batch.
+    #[test]
+    fn every_position_read_names_the_verification_anchor() {
+        let conn = seed_with_position(
+            USER_ADDRESS,
+            A_TOKEN_ADDRESS,
+            "123456789",
+            Some("1000000000000000000000000000"),
+        );
+        let chain = position_chain(Answer::Return(word(123)), Answer::Return(word(27)));
+
+        let truth = acquire(&chain, &conn).expect("the scripted answers carry the words");
+
+        assert_eq!(truth.len(), 1);
+        assert_eq!(truth[0].balance, U256::from(123u64));
+        let pin = serde_json::json!({
+            "blockHash": format!("{HEAD_HASH}"),
+            "requireCanonical": true,
+        });
+        let reads = chain.reads();
+        assert!(!reads.is_empty());
+        for read in reads {
+            assert_eq!(
+                read.block_id(),
+                Some(&pin),
+                "{} did not name the verification anchor",
+                read.method
+            );
+        }
+    }
 
     /// Seed an in-memory `SQLite` `DB` with the minimal aave schema + seed one
     /// collateral position for `(user_id, asset_id)` with the given balance +
