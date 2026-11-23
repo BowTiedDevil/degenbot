@@ -945,6 +945,10 @@ _Avoid_: "offline bench", "fixture benchmark"
 
 ## Aave updater and digest
 
+**Entity generation**:
+One logical protocol entity's lifetime between replacements, identified by the canonical event that activated it. Entity generation is distinct from a block epoch's sequence and a contract's reported revision.
+_Avoid_: "generation" for epoch sequencing or contract revision; "revision" for entity replacement.
+
 **Market reset**:
 Purging one market's rows and re-initializing through the activate seam under a single
 transaction, leaving the market observationally identical to a fresh cold boot.
@@ -1555,6 +1559,48 @@ a V3 pool does).
 **ERC6909 capture**:
 The operator option to take V4 profit as an ERC-6909 claim on the PoolManager instead of
 custody WETH, armed per stream with the on-chain floor check.
+
+## Chain state
+
+**Chain anchor**:
+The exact identity of one block on the currently canonical branch: chain ID, height, block hash, and parent hash. Canonical names branch membership rather than finality; a Chain anchor is distinct from the live-work **Block epoch** and telemetry **Block lineage**.
+_Avoid_: block number as exact chain identity; "block lineage" for chain-parent identity; treating canonical as finalized.
+
+**Event-sourced chain state**:
+Deterministic protocol projections derived from validated canonical chain facts and replayable deltas. It does not imply full state snapshots per block or a generic event-sourcing framework.
+_Avoid_: equating event sourcing with cloned state or a storage framework.
+
+**Projection cursor**:
+The exact chain position through which a projection has advanced, including its terminal Chain anchor and parent linkage. It advances atomically with derived state and never by block number alone.
+_Avoid_: a number-only update cursor; advancing a cursor independently of its projection.
+
+**Canonical delta**:
+A validated, deterministic protocol-state transition produced from canonical facts at an exact position. Recovery applies retained deltas forward; certification independently recomputes them from canonical facts.
+_Avoid_: inverse protocol arithmetic; treating an unvalidated SQL write set as a canonical delta.
+
+**Projection checkpoint**:
+One market's consistent relational projection at a committed Projection cursor, retained for Checkpoint replay. It is never a whole-database snapshot shared by unrelated markets.
+_Avoid_: global database rollback for one market's reorg.
+
+**Projection view**:
+A read-only protocol-state view at an exact position within a canonical block, composed from its preceding state and ordered deltas. It advances through transaction and event application without representing a transactional RPC snapshot or a cloned chain state.
+_Avoid_: treating a post-block RPC read as intra-block state; "snapshot" for a mutable forward-only projection.
+
+**Position-insensitive block fact**:
+A chain value whose interpretation is unchanged by later transactions in its block and may therefore be read from an anchored post-block snapshot.
+_Avoid_: treating every value readable at a block as position-insensitive.
+
+**Position-sensitive state**:
+State whose value depends on its exact transaction or event position within a block. It comes from a Projection view or explicit trace/EVM-replay evidence, never an ordinary post-block RPC read.
+_Avoid_: block-tagged `latest`-style reads for intra-transaction state.
+
+**Receipt ownership**:
+The total assignment of every receipt log to exactly one protocol operation, recognized non-operation role, or `OutOfScope`. An unrecognized log where the protocol model expects coverage is invalid rather than `OutOfScope`.
+_Avoid_: transaction-local log indices as global identity; silently ignoring unrecognized logs.
+
+**Checkpoint replay**:
+Restoring the nearest retained checkpoint preceding a reorg's common ancestor and reapplying canonical deltas forward. A reorg beyond retained evidence requires explicit recovery, not inverse protocol semantics.
+_Avoid_: separate inverse-SQL implementations for forward protocol operations.
 
 ## Block pump and stage machine
 
