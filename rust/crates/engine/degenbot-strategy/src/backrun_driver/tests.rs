@@ -1656,7 +1656,21 @@ use super::driver_policy::{
     head_evidence, initial_wallet_gas_cost, wallet_gas_cost_at, wallet_gas_cost_for_head,
     BaseFeeAnswer, BlockFeeFuture, BlockFeeReader, HeadEvidence,
 };
-use degenbot_eventhub::{Head, HeadMetadata};
+use degenbot_eventhub::{ChainAnchor, Head, HeadMetadata};
+
+fn anchor(number: u64) -> ChainAnchor {
+    ChainAnchor::new(
+        1,
+        number,
+        B256::with_last_byte(0xaa),
+        B256::with_last_byte(0xbb),
+    )
+    .expect("the fixture head names its chain, its hash, and its parent")
+}
+
+fn head_at(number: u64) -> Head {
+    Head::new(anchor(number), None)
+}
 
 /// A scripted block/fee reader: each read answers from a canned result and
 /// records the block number the fee read was asked for, so a test can prove
@@ -1851,10 +1865,7 @@ async fn a_failed_gas_price_refresh_leaves_the_head_unhandled() {
     let dispatcher = Mutex::new(Dispatcher::for_block(5));
     let mut cursor = 5;
 
-    let head = Head {
-        number: 42,
-        metadata: None,
-    };
+    let head = head_at(42);
     let advanced = advance_priced_head(&reader, &head, &cfg, &gate, &dispatcher, &mut cursor).await;
     let error = advanced.expect_err("a refused refresh never handles the head");
 
@@ -1888,10 +1899,7 @@ async fn a_fresh_gas_price_refresh_advances_the_head_and_the_gate() {
     let dispatcher = Mutex::new(Dispatcher::for_block(5));
     let mut cursor = 5;
 
-    let head = Head {
-        number: 42,
-        metadata: None,
-    };
+    let head = head_at(42);
     let advanced = advance_priced_head(&reader, &head, &cfg, &gate, &dispatcher, &mut cursor).await;
     advanced.expect("a fresh price handles the head");
 
@@ -1917,15 +1925,15 @@ async fn a_fresh_gas_price_refresh_advances_the_head_and_the_gate() {
 async fn a_full_head_prices_at_one_point_two_times_the_header_fee_without_a_refetch() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(42), Err(String::from("must not read")));
-    let head = Head {
-        number: 42,
-        metadata: Some(HeadMetadata {
+    let head = Head::new(
+        anchor(42),
+        Some(HeadMetadata {
             timestamp: 0,
             base_fee_per_gas: Some(10_000_000_000),
             gas_used: 0,
             gas_limit: 0,
         }),
-    };
+    );
 
     let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
         .await
@@ -1948,15 +1956,15 @@ async fn a_full_head_prices_at_one_point_two_times_the_header_fee_without_a_refe
 async fn a_proven_legacy_head_uses_the_legacy_fee_policy() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(42), Err(String::from("must not read")));
-    let head = Head {
-        number: 42,
-        metadata: Some(HeadMetadata {
+    let head = Head::new(
+        anchor(42),
+        Some(HeadMetadata {
             timestamp: 0,
             base_fee_per_gas: None,
             gas_used: 0,
             gas_limit: 0,
         }),
-    };
+    );
 
     let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
         .await
@@ -1969,7 +1977,7 @@ async fn a_proven_legacy_head_uses_the_legacy_fee_policy() {
         "the proven legacy state is the header's own evidence"
     );
     assert_eq!(
-        head_evidence(head.metadata.as_ref()),
+        head_evidence(head.metadata()),
         HeadEvidence::Observed(BaseFeeAnswer::MissingBaseFee)
     );
 }
@@ -1980,10 +1988,7 @@ async fn a_proven_legacy_head_uses_the_legacy_fee_policy() {
 async fn a_number_only_head_falls_back_to_the_fee_reader() {
     let cfg = pricing_cfg();
     let reader = FakeFeeReader::new(Ok(42), Ok(BaseFeeAnswer::Fee(10_000_000_000)));
-    let head = Head {
-        number: 42,
-        metadata: None,
-    };
+    let head = head_at(42);
 
     let cost = wallet_gas_cost_for_head(&reader, &head, &cfg)
         .await
@@ -1995,7 +2000,7 @@ async fn a_number_only_head_falls_back_to_the_fee_reader() {
         Some(42),
         "a number-only head falls back to the block read"
     );
-    assert_eq!(head_evidence(head.metadata.as_ref()), HeadEvidence::Unread);
+    assert_eq!(head_evidence(head.metadata()), HeadEvidence::Unread);
 }
 
 /// A closed clock paces without advancing: the loop's head step returns no

@@ -24,6 +24,7 @@ use super::delivery_lifecycle::DeliveryLifecycle;
 use super::session_events::SessionEvent;
 use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
+use crate::arb_engine::SolveStamp;
 use ::degenbot_pools::solve::SolvePathResult;
 use alloy::primitives::U256;
 #[cfg(test)]
@@ -187,12 +188,14 @@ impl DeliveryPolicy {
     pub fn diff_and_send(
         &mut self,
         results: &HashMap<u64, SolvePathResult>,
-        results_block: u64,
+        stamp: SolveStamp,
         anchored: bool,
         metadata: &BlockMetadata,
         inline_payloads: &HashMap<u64, SimulatedPathResult>,
         owner: AdmissionSeam,
     ) {
+        let results_block = stamp.block;
+        let solve_anchor = stamp.anchor;
         // A non-zero `results_block` is the invariant that a batch's candidates
         // are dispatchable: the strategy sims each candidate at its
         // `solve_block` (= `results_block`), so a 0 anchor would execute every
@@ -282,9 +285,10 @@ impl DeliveryPolicy {
         // block span and carried on the batch so every downstream span of this
         // block's work (simulate fan-out, verifier, submit) attaches exactly
         // it, never a neighbouring block's trace family.
-        let lineage = crate::telemetry::BlockLineage::capture(results_block);
+        let lineage = lineage_for(results_block, solve_anchor);
         let batch = ResultBatch {
             solve_block: results_block,
+            solve_anchor,
             timestamp: metadata.timestamp,
             base_fee_per_gas: metadata.base_fee_per_gas,
             gas_used: metadata.gas_used,
@@ -311,13 +315,15 @@ impl DeliveryPolicy {
     /// after engine close (the lifecycle batch contract).
     pub fn emit_single_result_batch(
         &mut self,
-        results_block: u64,
+        stamp: SolveStamp,
         metadata: &BlockMetadata,
         path_id: u64,
         result: &SolvePathResult,
         payload: Option<&SimulatedPathResult>,
         owner: AdmissionSeam,
     ) {
+        let results_block = stamp.block;
+        let solve_anchor = stamp.anchor;
         let anchored = results_block != 0;
         let admitted = self.admit(owner, path_id, result, metadata);
         let mut fresh: Vec<(u64, SolvePathResult)> = Vec::new();
@@ -338,9 +344,10 @@ impl DeliveryPolicy {
         // The publish's exporter lineage, captured ONCE under the entered
         // block span and carried on the batch: a streaming entry's downstream
         // spans attach exactly this block, never a neighbouring one.
-        let lineage = crate::telemetry::BlockLineage::capture(results_block);
+        let lineage = lineage_for(results_block, solve_anchor);
         let batch = ResultBatch {
             solve_block: results_block,
+            solve_anchor,
             timestamp: metadata.timestamp,
             base_fee_per_gas: metadata.base_fee_per_gas,
             gas_used: metadata.gas_used,
@@ -417,15 +424,35 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
         engine.cycle.inline_sim_enabled,
         engine.cycle.inline_sim.is_some(),
     );
+    let coordinates = engine.cycle.cursor.coordinates();
     engine.delivery.diff_and_send(
         &results_snapshot,
-        results_block,
+        SolveStamp {
+            block: results_block,
+            anchor: coordinates.results_anchor,
+        },
         anchored,
         metadata,
         &inline_payloads,
         owner,
     );
 }
+/// The batch's exporter lineage: the publish's span context at `block`, naming
+/// the exact solve anchor when the solve resolved one. Both the batch's
+/// [`crate::arb_engine::ResultBatch::solve_anchor`] and this lineage are built
+/// from the ONE value the caller read off the cursor, so a consumer can never
+/// see two identities for one batch.
+fn lineage_for(
+    block: u64,
+    anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
+) -> crate::telemetry::BlockLineage {
+    let lineage = crate::telemetry::BlockLineage::capture(block);
+    match anchor {
+        Some(anchor) => lineage.with_anchor(anchor),
+        None => lineage,
+    }
+}
+
 /// De-register a path from the engine (machine-direct free-function route).
 ///
 /// Removes the path from the solve state (its registry entry, the
@@ -487,7 +514,10 @@ mod tests {
         policy.delivered.insert(3, solve_result(700));
         policy.diff_and_send(
             &results,
-            42,
+            SolveStamp {
+                block: 42,
+                anchor: None,
+            },
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
@@ -521,7 +551,10 @@ mod tests {
         results.insert(1, solve_result(500));
         policy.diff_and_send(
             &results,
-            7,
+            SolveStamp {
+                block: 7,
+                anchor: None,
+            },
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
@@ -547,7 +580,10 @@ mod tests {
                                               // results_block == 0 (cold start, no solve yet): batch is EMPTY.
         policy.diff_and_send(
             &results,
-            0,
+            SolveStamp {
+                block: 0,
+                anchor: None,
+            },
             false,
             &BlockMetadata::default(),
             &HashMap::default(),
@@ -572,7 +608,10 @@ mod tests {
         // is now delivered as fresh at a valid anchor.
         policy.diff_and_send(
             &results,
-            42,
+            SolveStamp {
+                block: 42,
+                anchor: None,
+            },
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
@@ -682,7 +721,10 @@ mod tests {
 
         policy.diff_and_send(
             &results,
-            42,
+            SolveStamp {
+                block: 42,
+                anchor: None,
+            },
             true,
             &metadata,
             &HashMap::default(),
@@ -709,7 +751,10 @@ mod tests {
 
         policy.diff_and_send(
             &results,
-            43,
+            SolveStamp {
+                block: 43,
+                anchor: None,
+            },
             true,
             &metadata,
             &HashMap::default(),
@@ -748,7 +793,17 @@ mod tests {
         );
         let owner = AdmissionSeam::of_cycle(true, true);
         assert_eq!(owner, AdmissionSeam::InlineSim);
-        policy.diff_and_send(&results, 42, true, &metadata, &HashMap::default(), owner);
+        policy.diff_and_send(
+            &results,
+            SolveStamp {
+                block: 42,
+                anchor: None,
+            },
+            true,
+            &metadata,
+            &HashMap::default(),
+            owner,
+        );
         let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
             .expect("an anchored batch sends");
         assert_eq!(
@@ -779,7 +834,10 @@ mod tests {
 
         policy.diff_and_send(
             &results,
-            10,
+            SolveStamp {
+                block: 10,
+                anchor: None,
+            },
             true,
             &metadata_at_base_fee(5_000_000_000),
             &HashMap::default(),
@@ -792,7 +850,10 @@ mod tests {
         // The same candidate at a base fee whose floor exceeds its margin.
         policy.diff_and_send(
             &results,
-            11,
+            SolveStamp {
+                block: 11,
+                anchor: None,
+            },
             true,
             &metadata_at_base_fee(20_000_000_000),
             &HashMap::default(),
@@ -827,7 +888,10 @@ mod tests {
 
         policy.diff_and_send(
             &results,
-            42,
+            SolveStamp {
+                block: 42,
+                anchor: None,
+            },
             true,
             &metadata,
             &HashMap::default(),

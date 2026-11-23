@@ -1061,7 +1061,7 @@ impl SolveCycle {
                 &mut self.transients.last_arm,
                 &affected,
                 &affected_path_ids,
-                solve_block,
+                &anchor,
             );
         }
         // Also re-solve any paths registered via register_and_solve_path that
@@ -1077,7 +1077,7 @@ impl SolveCycle {
                 &mut ctx,
                 &mut self.transients.last_arm,
                 &affected,
-                solve_block,
+                &anchor,
             );
         }
         solve::fanout_telemetry(
@@ -1121,8 +1121,9 @@ impl SolveCycle {
         if self.test_sync_merge {
             self.drain_merge_inline(staged, registry, delivery);
         }
-        // monotone advance on the block cursor.
-        self.cursor.advance_solved(solve_block);
+        // monotone advance on the block cursor (the exact anchor rides the
+        // same stamp, so the batch this cycle publishes names its block).
+        self.cursor.advance_solved(&anchor);
         // ENQUEUE-END semantics ("return is enqueue-end, not apply-end"): the
         // engine Mutex hold ENDS here; the sidecar
         // re-acquires it per merged straggler.
@@ -1557,8 +1558,17 @@ impl SolveCycle {
             self.results.insert(pid, r);
         }
         // monotone advance on the block cursor (the cold-start
-        // sweep can no longer drag a seeded resume anchor backwards).
-        self.cursor.advance_solved(block_number);
+        // sweep can no longer drag a seeded resume anchor backwards). The
+        // registration sweep's block is the caller's settled boundary, so the
+        // stamp carries no state-head floor; the exact identity is attached only
+        // when the view names this very block.
+        let stamp = {
+            let core = self
+                .core
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+            crate::bot_core::solve_anchor::SolveAnchor::at(block_number).with_state_identity(&core)
+        };
+        self.cursor.advance_solved(&stamp);
         // Intentionally no compute_diff_and_send here: dispatching would
         // advance `delivered` (claiming "Python has seen these") before any
         // channel exists — poisoning the diff for the first real send. The

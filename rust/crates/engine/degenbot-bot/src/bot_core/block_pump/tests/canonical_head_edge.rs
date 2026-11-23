@@ -21,7 +21,7 @@ fn header_hash(number: u64) -> B256 {
 
 /// The exact head one fixture header carries: the session's chain, the
 /// header's own hash, and its parent's.
-fn head(number: u64) -> ChainAnchor {
+fn head_anchor(number: u64) -> ChainAnchor {
     ChainAnchor::new(1, number, header_hash(number), header_hash(number - 1))
         .expect("the fixture header carries every identity field")
 }
@@ -59,7 +59,7 @@ async fn the_head_edge_fires_once_per_accepted_header_and_delivers_that_exact_an
     let heads = sink.canonical_heads();
     assert_eq!(
         heads,
-        vec![head(101), head(102), head(103)],
+        vec![head_anchor(101), head_anchor(102), head_anchor(103)],
         "one head fact per ACCEPTED header, each naming its own exact anchor"
     );
     assert_eq!(
@@ -129,9 +129,24 @@ async fn accepted_headers_arrive_at_the_hub_head_source_and_dropped_ones_do_not(
     .await;
 
     let head = hub.subscribe_head();
+    let published = head.head().expect("the accepted header was published");
     assert_eq!(
-        head.head().map(|head| head.number),
-        Some(101),
+        published.number(),
+        101,
         "the source carries the accepted header, not the dropped one"
+    );
+    assert_eq!(
+        *published.anchor(),
+        head_anchor(101),
+        "the published head names the header's OWN identity — hash and parent \
+         ride the header the ingestion stream already held, with no identity read"
+    );
+    assert_eq!(
+        pump.bot_arc_for_test()
+            .state_arc()
+            .read_at(degenbot_substrate::state_lock::LockSite::Pump)
+            .state_anchor(),
+        Some(head_anchor(101)),
+        "the state view names the same block the head source published"
     );
 }

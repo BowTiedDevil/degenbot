@@ -254,6 +254,7 @@ impl EngineStages {
     pub(crate) fn emit_batch_for_test(&self, solve_block: u64) {
         let batch = ResultBatch {
             solve_block,
+            solve_anchor: None,
             timestamp: 0,
             base_fee_per_gas: None,
             gas_used: 0,
@@ -593,6 +594,9 @@ impl EngineStages {
         let span = tracing::info_span!(
             "degenbot.arb.solve",
             block.number = block,
+            chain_id = tracing::field::Empty,
+            block_hash = tracing::field::Empty,
+            parent_block_hash = tracing::field::Empty,
             cycle.solve_block = tracing::field::Empty,
             // Cold-start trace: the dispatch arm ("detached" |
             // "skipped_empty" | "shed"), recorded at the machine's begin_cycle
@@ -633,10 +637,15 @@ impl EngineStages {
             } else {
                 run_engine_cycle(&mut engine, ticket, block, metadata)
             };
-            // Surface the cycle's anchored block on the span.
+            // Surface the cycle's anchored block on the span, plus the exact
+            // identity the solve resolved (hashes as span ATTRIBUTES only).
             span.record(
                 "cycle.solve_block",
                 engine.cycle.cursor.coordinates().results_block,
+            );
+            crate::telemetry::record_anchor_fields(
+                &span,
+                engine.cycle.cursor.coordinates().results_anchor,
             );
             // Cold-start trace: attribute the cycle arm from the
             // typed OUTCOME, never a post-hoc engine stash.
@@ -951,12 +960,19 @@ impl PumpControl for EngineStages {
             .advance_solved_boundary(solved.block());
     }
     fn set_solve_anchor(&self, anchor: Epoch) {
-        // Machine-direct poke: monotone solve-anchor advance.
-        self.engine
-            .lock()
-            .cycle
-            .cursor
-            .advance_solved(anchor.block());
+        // Machine-direct poke: monotone solve-anchor advance. The resume seed is
+        // a settled boundary, not a state-head floor, so the stamp is exactly
+        // `anchor.block()`; it carries the exact identity only when the state
+        // view already names that block.
+        let mut engine = self.engine.lock();
+        let stamp = {
+            let core = engine
+                .core
+                .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+            crate::bot_core::solve_anchor::SolveAnchor::at(anchor.block())
+                .with_state_identity(&core)
+        };
+        engine.cycle.cursor.advance_solved(&stamp);
     }
     fn record_logs_this_block(&self) {
         // Machine-direct poke: record at least one forward log this block.

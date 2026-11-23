@@ -46,6 +46,11 @@ use degenbot_substrate::{BotState, Epoch};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SolveAnchor {
     epoch: Epoch,
+    /// The exact block identity the solved view names, when the state view has
+    /// been told about this block's header. `None` for a cold-start seed or a
+    /// solve whose block no accepted header named — never a fabricated hash
+    /// (ADR-105 D1).
+    exact: Option<degenbot_core::canonical_head::ChainAnchor>,
 }
 
 impl SolveAnchor {
@@ -57,13 +62,43 @@ impl SolveAnchor {
     pub fn for_head(base: u64, state_head: u64) -> Self {
         Self {
             epoch: Epoch::at(base.max(state_head)),
+            exact: None,
         }
     }
 
-    /// `for_head` against the live state head (engine / verifier paths).
+    /// The anchor of exactly `block`, with no state-head floor: the cold-start
+    /// and resume seeds, whose block is the caller's settled boundary.
+    #[must_use]
+    pub const fn at(block: u64) -> Self {
+        Self {
+            epoch: Epoch::at(block),
+            exact: None,
+        }
+    }
+
+    /// `for_head` against the live state head (engine / verifier paths), with
+    /// the exact anchor the state view names for the resolved block.
     #[must_use]
     pub fn resolve(base: u64, core: &BotState) -> Self {
-        Self::for_head(base, core.pool_state_head())
+        Self::for_head(base, core.pool_state_head()).with_state_identity(core)
+    }
+
+    /// Attach the state view's exact anchor when it names THIS block: a solve at
+    /// block N is anchored by N's identity or by nothing. The number check is
+    /// the whole rule — a state view naming another height (a lagging view, a
+    /// restored branch) yields no anchor rather than a mismatched one.
+    #[must_use]
+    pub fn with_state_identity(mut self, core: &BotState) -> Self {
+        self.exact = core
+            .state_anchor()
+            .filter(|anchor| anchor.number() == self.epoch.block());
+        self
+    }
+
+    /// The solve block's exact anchor, when the view named it.
+    #[must_use]
+    pub const fn exact(&self) -> Option<degenbot_core::canonical_head::ChainAnchor> {
+        self.exact
     }
 
     /// The anchored block.

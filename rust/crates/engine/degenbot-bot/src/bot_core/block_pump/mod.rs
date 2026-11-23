@@ -421,19 +421,29 @@ impl BlockPump {
     /// header the stage machine drops as duplicate or stale publishes nothing.
     /// The header's own fields ride the event: a hub reader sees the block the
     /// pump accepted, with no re-derivation and no second RPC.
-    fn publish_accepted_head(&self, number: u64, metadata: &BlockMetadata) {
+    fn publish_accepted_head(
+        &self,
+        number: u64,
+        metadata: &BlockMetadata,
+        anchor: &degenbot_core::canonical_head::ChainAnchor,
+    ) {
         let Some(head) = self.head_source.as_ref() else {
             return;
         };
-        head.publish(Head {
+        debug_assert_eq!(
+            anchor.number(),
             number,
-            metadata: Some(HeadMetadata {
+            "the published head's anchor is the accepted header's own identity"
+        );
+        head.publish(Head::new(
+            *anchor,
+            Some(HeadMetadata {
                 timestamp: metadata.timestamp,
                 base_fee_per_gas: metadata.base_fee_per_gas,
                 gas_used: metadata.gas_used,
                 gas_limit: metadata.gas_limit,
             }),
-        });
+        ));
     }
 }
 

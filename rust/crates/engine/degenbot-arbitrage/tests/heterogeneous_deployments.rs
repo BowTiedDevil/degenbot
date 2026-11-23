@@ -1427,3 +1427,125 @@ fn the_policy_spellings_are_closed() {
         "the default multi-target policy is ordered first-compatible"
     );
 }
+
+/// Span-field capture for the fan-out's lane spans: field values per span id —
+/// the crate-local observable for span ATTRIBUTES (no exporter needed).
+mod span_capture {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata, Subscriber};
+
+    #[derive(Clone, Default)]
+    pub(super) struct Capture(pub(super) Arc<Mutex<HashMap<u64, HashMap<String, String>>>>);
+
+    pub(super) struct Sink<'a>(pub(super) &'a mut HashMap<String, String>);
+
+    impl Visit for Sink<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0
+                .insert(field.name().to_string(), format!("{value:?}"));
+        }
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.0.insert(field.name().to_string(), value.to_string());
+        }
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.insert(field.name().to_string(), value.to_string());
+        }
+    }
+
+    pub(super) struct CaptureSubscriber(pub(super) Capture);
+
+    impl Subscriber for CaptureSubscriber {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, attributes: &Attributes<'_>) -> Id {
+            let mut map = self.0 .0.lock().expect("the capture map is not poisoned");
+            let id = Id::from_u64(map.len() as u64 + 1);
+            let fields = map.entry(id.clone().into_u64()).or_default();
+            attributes.record(&mut Sink(fields));
+            id
+        }
+        fn record(&self, id: &Id, values: &Record<'_>) {
+            let mut map = self.0 .0.lock().expect("the capture map is not poisoned");
+            let fields = map.entry(id.clone().into_u64()).or_default();
+            values.record(&mut Sink(fields));
+        }
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, _: &Event<'_>) {}
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+}
+
+/// The lane span carries the batch's SOLVE anchor (the lineage's exact block),
+/// never the consumer's execution clock: an interleaved N/N+1 pair keeps two
+/// block identities on two trace families (ADR-105 D10).
+#[tokio::test]
+async fn the_lane_span_names_the_batches_solve_anchor_not_the_execution_clock() {
+    use span_capture::{Capture, CaptureSubscriber};
+
+    use degenbot_core::canonical_head::ChainAnchor;
+
+    let anchor = ChainAnchor::new(
+        1,
+        BLOCK - 1,
+        alloy::primitives::B256::with_last_byte(0xaa),
+        alloy::primitives::B256::with_last_byte(0xbb),
+    )
+    .expect("the fixture solve anchor names its chain, its hash, and its parent");
+    let lineage = degenbot_bot::telemetry::BlockLineage::unattached(BLOCK - 1).with_anchor(anchor);
+
+    let adapter = TargetAdapter::encoder(TARGET_A, prepay_selector(), PREPAY_A, GROSS_A);
+    let registry = DeploymentRegistry::new(vec![deployment(deployment_a(), adapter)])
+        .expect("one entry is a valid registry");
+    let provider = mock_provider();
+    let block = block(&provider);
+    let capture = Capture::default();
+    let subscriber = CaptureSubscriber(capture.clone());
+    let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+    let divergence = Arc::new(Mutex::new(degenbot_arbitrage::PoolDivergence::new()));
+    let fot = Arc::new(Mutex::new(degenbot_arbitrage::FeeOnTransferRegistry::new()));
+    let state = Arc::new(StateLock::new(BotState::new()));
+    let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+    let inputs = FanOutInputs {
+        deployments: &registry,
+        block: &block,
+        // The consumer clock is one block AHEAD of the solve.
+        current_block: BLOCK,
+        lineage: &lineage,
+        target_selection: TargetSelection::AllTargets,
+        path_suppression: &suppression,
+        pool_divergence: &divergence,
+        fot_registry: &fot,
+        bot_state: Some(&state),
+        warm_cache: Some(&warm_cache),
+    };
+    // The lane span is created on the thread polling this future, so a
+    // thread-scoped subscriber captures it without touching the process-global
+    // subscriber slot. An empty candidate set needs no sync-DB bridge, so the
+    // default current-thread test runtime is all this assertion requires.
+    let subscriber_guard = tracing::subscriber::set_default(subscriber);
+    dispatch_across_deployments(Vec::new(), inputs.with_thin_margin(0))
+        .expect("an empty candidate set fans out");
+    drop(subscriber_guard);
+
+    let spans = capture.0.lock().expect("the capture map is not poisoned");
+    let lane = spans
+        .values()
+        .find(|fields| fields.get("block_hash").is_some())
+        .expect("the lane span records the solve anchor");
+    assert_eq!(
+        lane.get("block_hash").map(String::as_str),
+        Some(format!("{:?}", anchor.hash()).as_str()),
+        "the lane span names the batch's solve block, not the executor's clock"
+    );
+    assert_eq!(
+        lane.get("current_block").map(String::as_str),
+        Some("100"),
+        "the policy clock stays the consumer's block"
+    );
+}

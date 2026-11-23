@@ -204,6 +204,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::bot_core::RELEVANT_TOPICS;
 use alloy::primitives::B256;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_substrate::{BlockContext, BlockMetadata, Epoch};
 
 use super::stage_handlers::Stage;
@@ -303,6 +304,11 @@ pub struct StageMachine {
     rewind_seq: u64,
     /// Per-block metadata snapshots (deferred tombstone finalize).
     block_metadata: HashMap<u64, BlockMetadata>,
+    /// Per-block exact anchors, held from the accepted header. A context minted
+    /// for a block names that block's own identity; a block with no recorded
+    /// anchor mints no context (fail-loud: a downstream work item is never
+    /// handed a height-only coordinate, ADR-105 D1).
+    block_anchors: HashMap<u64, ChainAnchor>,
     /// WS-delivery completeness tracker (relevant log indices per block).
     ws_delivered: HashMap<u64, HashSet<u64>>,
     /// [DIAG] + watchdog time anchors, injected as wall-clock ms by the driver.
@@ -347,6 +353,7 @@ impl StageMachine {
             recovery_anchor: Epoch::at(0),
             rewind_seq: 0,
             block_metadata: HashMap::new(),
+            block_anchors: HashMap::new(),
             ws_delivered: HashMap::new(),
             last_header_at_ms: now_ms,
             last_log_at_ms: now_ms,
@@ -411,12 +418,23 @@ impl StageMachine {
 
     /// Mint a `BlockContext` for work about `block` carrying `metadata`:
     /// THE single-answer coordinate (the FSM's rewind generation stamped
-    /// onto the work's block). The driver calls this at every decision
-    /// point that hands work downstream, so every stage work item and
-    /// every verifier anchor carries the same epoch type.
+    /// onto the work's block, plus the block's exact anchor). The driver calls
+    /// this at every decision point that hands work downstream, so every stage
+    /// work item and every verifier anchor carries the same epoch type.
+    ///
+    /// The work item carries the block's exact anchor when an accepted header
+    /// (or a backfill's header read) named it, and states the coordinate alone
+    /// when none did — a fixture block the session never observed, or a state
+    /// head ahead of every header. Absent identity never blocks the work
+    /// (eligibility is unchanged); it only means the batch cannot claim a hash
+    /// (ADR-105 D1).
     #[must_use]
     pub fn context_for(&self, block: u64, metadata: BlockMetadata) -> BlockContext {
-        BlockContext::new(Epoch::with_generation(block, self.rewind_seq), metadata)
+        let epoch = Epoch::with_generation(block, self.rewind_seq);
+        match self.block_anchor_for(block) {
+            Some(anchor) => BlockContext::new(epoch, metadata, anchor),
+            None => BlockContext::without_anchor(epoch, metadata),
+        }
     }
 
     /// A reorg episode opened (the FSM's `Rewind`): the rewind generation
@@ -434,12 +452,26 @@ impl StageMachine {
         // seq bump invalidates every pre-rewind context anyway).
         self.ws_delivered.retain(|&block, _| block < reorg_block);
         self.block_metadata.retain(|&block, _| block < reorg_block);
+        self.block_anchors.retain(|&block, _| block < reorg_block);
     }
 
     /// The snapshotted metadata for `block` (deferred tombstone finalize).
     #[must_use]
     pub fn block_metadata_for(&self, block: u64) -> Option<BlockMetadata> {
         self.block_metadata.get(&block).copied()
+    }
+
+    /// The exact anchor the accepted header for `block` stated.
+    #[must_use]
+    pub fn block_anchor_for(&self, block: u64) -> Option<ChainAnchor> {
+        self.block_anchors.get(&block).copied()
+    }
+
+    /// Record the exact anchor of a block no accepted header named — the
+    /// historical backfill's per-block header read. Only the anchor is written:
+    /// the backfill's metadata and solved-bookkeeping rules are unchanged.
+    pub fn record_block_anchor(&mut self, block: u64, anchor: ChainAnchor) {
+        self.block_anchors.insert(block, anchor);
     }
 
     /// Whether a `WsEvent::Log` is relevant to any tracked pool (the driver's
@@ -625,6 +657,7 @@ impl StageMachine {
         &mut self,
         number: u64,
         metadata: BlockMetadata,
+        anchor: Option<ChainAnchor>,
         now_ms: u64,
     ) -> Vec<StageDecision> {
         let mut decisions = Vec::new();
@@ -638,6 +671,11 @@ impl StageMachine {
             return decisions; // duplicate/stale header — no effect.
         }
         self.block_metadata.insert(number, self.current_metadata);
+        // A header that named no exact identity records none: the block's
+        // coordinate stays metadata-only and no work item can be minted for it.
+        if let Some(anchor) = anchor {
+            self.block_anchors.insert(number, anchor);
+        }
 
         if self.first_header {
             self.first_header = false;
@@ -863,17 +901,21 @@ mod block_clock_contract {
         }
     }
 
+    fn anchor(block: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_substrate::fixture_anchor(block)
+    }
+
     #[test]
     fn header_notify_and_solve_anchor_from_clock() {
         let mut fsm = StageMachine::new(100, 0);
         // First header after resume > current: mark solved + notify, no drain.
-        let d = fsm.on_header(101, meta(101_000), 1_000);
+        let d = fsm.on_header(101, meta(101_000), Some(anchor(101)), 1_000);
         assert!(matches!(d[0], StageDecision::SetLastSolved { block: 101 }));
         assert!(matches!(d[1], StageDecision::Notify { block: 101, .. }));
         assert_eq!(fsm.current_block, 101);
 
         // Sequential header: notify only (never marks solved again).
-        let d = fsm.on_header(102, meta(102_000), 2_000);
+        let d = fsm.on_header(102, meta(102_000), Some(anchor(102)), 2_000);
         assert_eq!(d.len(), 1);
         assert!(matches!(&d[0], StageDecision::Notify { block: 102, .. }));
     }
@@ -882,7 +924,7 @@ mod block_clock_contract {
     fn header_gap_backfills_and_advances_recovery_anchor() {
         let mut fsm = StageMachine::new(100, 0);
         // Non-first-gap: first header to close a gap.
-        let d = fsm.on_header(105, meta(105_000), 1_000);
+        let d = fsm.on_header(105, meta(105_000), Some(anchor(105)), 1_000);
         assert!(d.iter().any(|x| matches!(
             x,
             StageDecision::Backfill {
@@ -896,10 +938,10 @@ mod block_clock_contract {
     #[test]
     fn stale_header_produces_no_effect() {
         let mut fsm = StageMachine::new(100, 0);
-        let _ = fsm.on_header(101, meta(101_000), 1_000);
+        let _ = fsm.on_header(101, meta(101_000), Some(anchor(101)), 1_000);
         let before = fsm.current_block;
         // A duplicate/stale header (< current) must not advance or fire.
-        let d = fsm.on_header(100, meta(100_000), 2_000);
+        let d = fsm.on_header(100, meta(100_000), Some(anchor(100)), 2_000);
         assert!(d.is_empty());
         assert_eq!(fsm.current_block, before);
     }
@@ -910,9 +952,9 @@ mod block_clock_contract {
         // the single-writer recovery anchor — the old inline driver
         // copy did; `on_header` is now the single authority and must too.
         let mut fsm = StageMachine::new(100, 0);
-        let _ = fsm.on_header(101, meta(101_000), 1_000); // contiguous first header
+        let _ = fsm.on_header(101, meta(101_000), Some(anchor(101)), 1_000); // contiguous first header
         assert_eq!(fsm.recovery_anchor, 0);
-        let d = fsm.on_header(105, meta(105_000), 2_000); // non-first gap
+        let d = fsm.on_header(105, meta(105_000), Some(anchor(105)), 2_000); // non-first gap
         assert!(d.iter().any(|x| matches!(
             x,
             StageDecision::Backfill {
@@ -1483,6 +1525,10 @@ mod tracking_mode_contract {
         }
     }
 
+    fn anchor(block: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_substrate::fixture_anchor(block)
+    }
+
     /// One forward log for `block`, delivered and applied in the driver's
     /// order within a loop iteration.
     fn apply_forward(fsm: &mut StageMachine, block: u64) {
@@ -1658,7 +1704,7 @@ mod tracking_mode_contract {
     fn entering_the_window_prunes_the_replaced_segments_bookkeeping() {
         let mut fsm = StageMachine::new(200, 0);
         for block in [201, 202, 203] {
-            fsm.on_header(block, meta(block), block);
+            fsm.on_header(block, meta(block), Some(anchor(block)), block);
             fsm.record_ws_delivered(block, 7);
         }
         assert!(fsm.block_metadata_for(203).is_some());
@@ -1759,7 +1805,7 @@ mod tracking_mode_contract {
     fn the_drain_anchor_keeps_the_suspended_open_block_through_the_window() {
         let mut fsm = StageMachine::new(200, 0);
         // A header races ahead to 205 while only block 203's logs are open.
-        fsm.on_header(205, meta(205), 1);
+        fsm.on_header(205, meta(205), Some(anchor(205)), 1);
         apply_forward(&mut fsm, 203);
         let StageDecision::Drain { block, .. } = fsm.drain_decision(200) else {
             unreachable!("drain_decision must emit a Drain");
@@ -1788,7 +1834,7 @@ mod tracking_mode_contract {
     #[test]
     fn the_header_liveness_probe_keeps_the_suspended_open_block_through_the_window() {
         let mut fsm = StageMachine::new(200, 0);
-        fsm.on_header(202, meta(202), 1);
+        fsm.on_header(202, meta(202), Some(anchor(202)), 1);
         apply_forward(&mut fsm, 201);
         assert!(matches!(
             fsm.on_log(201, true),

@@ -305,7 +305,7 @@ impl SimStage {
                     // finalization re-reads the same nonces afterwards, so a
                     // state write past this gate still drops the candidate.
                     bot_state: cfg.bot_state.as_deref(),
-                    current_block: work.current_block,
+                    current_block: work.execution_block,
                     min_profit_margin_bps: cfg.min_profit_margin_bps,
                     max_candidates: cfg.max_candidates,
                     deployment_id: deployment.deployment_id(),
@@ -353,7 +353,7 @@ impl SimStage {
         let block = SimulationBlock {
             provider: &provider,
             base_fee_next: work.base_fee_next,
-            current_block: work.current_block,
+            current_block: work.execution_block,
             block_timestamp: work.block_timestamp,
             block_priority_fees: work.block_priority_fees.clone(),
         };
@@ -362,7 +362,7 @@ impl SimStage {
             degenbot_arbitrage::FanOutInputs {
                 deployments: &cfg.deployments,
                 block: &block,
-                current_block: work.current_block,
+                current_block: work.execution_block,
                 lineage: &work.lineage,
                 target_selection: cfg.target_selection,
                 path_suppression: &cfg.suppression,
@@ -422,7 +422,7 @@ impl SimStage {
                 failures,
             },
             &batch.path_info_by_id,
-            work.current_block,
+            work.execution_block,
         )
         .map_err(|refusal| refusal.to_string())?;
         batch.outcomes.append(&mut attributed);

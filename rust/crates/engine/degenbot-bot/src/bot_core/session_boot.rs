@@ -459,11 +459,16 @@ fn provision_hosted(
         Some(HostedHeadClock::PumpOwned) => {
             (Some(HostedClockBinding::PumpOwned), Some(head_sender))
         }
-        Some(HostedHeadClock::Watch { ws_url, provider }) => (
+        Some(HostedHeadClock::Watch {
+            ws_url,
+            provider,
+            chain_id,
+        }) => (
             Some(HostedClockBinding::Watch {
                 ws_url,
                 provider,
                 sender: head_sender,
+                chain_id,
             }),
             None,
         ),
@@ -514,6 +519,21 @@ impl Drop for EngineSession {
 mod tests {
     use super::*;
     use degenbot_eventhub::Hub;
+
+    /// A head published at `number` with an exact identity, as every real
+    /// publisher states.
+    fn head_of(number: u64) -> degenbot_eventhub::Head {
+        degenbot_eventhub::Head::new(
+            degenbot_core::canonical_head::ChainAnchor::new(
+                1,
+                number,
+                alloy::primitives::B256::with_last_byte(0xaa),
+                alloy::primitives::B256::with_last_byte(0xbb),
+            )
+            .expect("the fixture head names its chain, its hash, and its parent"),
+            None,
+        )
+    }
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;
     use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
     use degenbot_substrate::connector_index::V2ConnectorIndex;
@@ -963,10 +983,7 @@ mod tests {
                 .driver()
                 .head_publisher()
                 .expect("the pump owns the session's claimed head source")
-                .publish(degenbot_eventhub::Head {
-                    number: 55,
-                    metadata: None,
-                });
+                .publish(head_of(55));
             let fired = tokio::time::timeout(Duration::from_secs(5), fire_rx.recv())
                 .await
                 .expect("the head edge fires inside the window")
@@ -1006,13 +1023,10 @@ mod tests {
                 .driver()
                 .head_publisher()
                 .expect("a hostless boot routes the claimed publisher to the pump")
-                .publish(degenbot_eventhub::Head {
-                    number: 41,
-                    metadata: None,
-                });
+                .publish(head_of(41));
             assert!(head.changed().await.is_ok(), "the publisher is live");
             assert_eq!(
-                head.borrow_and_update().map(|head| head.number),
+                head.borrow_and_update().map(|head| head.number()),
                 Some(41),
                 "the pump's publisher reaches every reader of the session's one source"
             );
@@ -1037,12 +1051,12 @@ mod tests {
                             let observed =
                                 tokio::time::timeout(Duration::from_secs(5), head.changed()).await;
                             let number = match observed {
-                                Ok(Ok(())) => head.borrow_and_update().map(|head| head.number),
+                                Ok(Ok(())) => head.borrow_and_update().map(|head| head.number()),
                                 _ => None,
                             };
                             DriverExit::Halted(format!(
                                 "attached={:?} observed={number:?}",
-                                attached_head.map(|head| head.number)
+                                attached_head.map(|head| head.number())
                             ))
                         })
                     })
@@ -1075,10 +1089,7 @@ mod tests {
                 .driver()
                 .head_publisher()
                 .expect("the pump owns the session's claimed head source")
-                .publish(degenbot_eventhub::Head {
-                    number: 64,
-                    metadata: None,
-                });
+                .publish(head_of(64));
         });
 
         let detail = await_tombstone(&session, &id);

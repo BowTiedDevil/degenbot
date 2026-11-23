@@ -63,8 +63,9 @@ pub(super) fn shed_epoch(
     last_arm: &mut Option<CycleArm>,
     affected: &[AffectedKey],
     affected_path_ids: &HashSet<u64>,
-    solve_block: u64,
+    anchor: &crate::bot_core::solve_anchor::SolveAnchor,
 ) -> CycleOutcome {
+    let solve_block = anchor.block();
     ctx.detached_cycle.shed();
     op_info!(
         domain = solver,
@@ -79,7 +80,7 @@ pub(super) fn shed_epoch(
     );
     // monotone advance on the block cursor (the
     // skipped_empty bookkeeping contract).
-    ctx.cursor.advance_solved(solve_block);
+    ctx.cursor.advance_solved(anchor);
     let arm = CycleArm::Shed {
         keys_affected: affected_path_ids.len(),
         in_flight: ctx
@@ -108,13 +109,14 @@ pub(super) fn skipped_empty_epoch(
     ctx: &mut EpochContext<'_>,
     last_arm: &mut Option<CycleArm>,
     affected: &[AffectedKey],
-    solve_block: u64,
+    anchor: &crate::bot_core::solve_anchor::SolveAnchor,
 ) -> CycleOutcome {
+    let solve_block = anchor.block();
     // Cold-start trace: keys with NO registered paths reach here as a
     // bookkeeping-only pass (span exists, no dispatch) — stamp so the
     // cycle span never reads as arm-less.
     // monotone advance on the block cursor.
-    ctx.cursor.advance_solved(solve_block);
+    ctx.cursor.advance_solved(anchor);
     let arm = CycleArm::SkippedEmpty { keys_affected: 0 };
     *last_arm = Some(arm);
     CycleOutcome {

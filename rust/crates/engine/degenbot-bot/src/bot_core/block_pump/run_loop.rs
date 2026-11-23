@@ -914,6 +914,8 @@ impl BlockPump {
                         epoch.block = number,
                         epoch.seq = epoch_seq,
                         block.number = number,
+                        block.hash = tracing::field::Empty,
+                        chain.id = tracing::field::Empty,
                         // pre-solve gap decomposition, recorded at the settle
                         // point (declared Empty so `record` at settle actually
                         // lands — undeclared fields are silently dropped by
@@ -1031,12 +1033,39 @@ impl BlockPump {
                         gas_used,
                         gas_limit,
                     };
+                    // The header's exact identity, built ONCE from the fields
+                    // the ingestion stream already carried (no second RPC). A
+                    // header that cannot state one (an unconfigured chain id,
+                    // a zero hash) yields no anchor: the block still clocks and
+                    // settles, and its work item states the coordinate alone.
+                    let anchor = match ChainAnchor::new(
+                        self.bot.chain_id(),
+                        number,
+                        hash,
+                        parent_hash,
+                    ) {
+                        Ok(anchor) => Some(anchor),
+                        Err(error) => {
+                            op_error!(
+                                domain = pump,
+                                number,
+                                %error,
+                                "accepted header has no exact chain identity; no anchored work for this block"
+                            );
+                            None
+                        }
+                    };
+                    if let Some(anchor) = anchor.as_ref() {
+                        new_block_span.record("block.hash", tracing::field::display(anchor.hash()));
+                        new_block_span
+                            .record("chain.id", tracing::field::display(anchor.chain_id()));
+                    }
                     // Whether this header was ACCEPTED (the FSM rejected a
                     // duplicate/stale header with no decision at all). The
                     // canonical-head poke below fires exactly once for every
                     // accepted header, and never for a dropped one.
                     let mut accepted = false;
-                    for decision in fsm.on_header(number, metadata, now_ms()) {
+                    for decision in fsm.on_header(number, metadata, anchor, now_ms()) {
                         match decision {
                             StageDecision::Backfill { from, to } => {
                                 // Header-gap catch-up over `[from, to]`
@@ -1098,22 +1127,25 @@ impl BlockPump {
                     // refusal: the sink is never poked with a partial identity,
                     // and the block clock above is untouched either way.
                     if accepted {
-                        match ChainAnchor::new(self.bot.chain_id(), number, hash, parent_hash) {
-                            Ok(head) => self.control.on_canonical_head(&head),
-                            Err(error) => op_error!(
-                                domain = pump,
-                                number,
-                                %error,
-                                "accepted header has no exact chain identity; canonical-head sink not poked"
-                            ),
+                        if let Some(head) = anchor.as_ref() {
+                            self.control.on_canonical_head(head);
+                            // The exact identity the state view now names, so
+                            // solver work resolves its anchor from the view it
+                            // solved against instead of a reconstructed height
+                            // (ADR-105 D10). Streaming-confined: this is the
+                            // block's own apply window.
+                            self.bot
+                                .state_arc()
+                                .write_at(degenbot_substrate::state_lock::LockSite::Pump)
+                                .set_state_anchor(*head);
+                            // The session's ONE head source: the same accepted
+                            // header, published into the hub every strategy's
+                            // head subscription and the hosted head edge read.
+                            // Fired on this edge so a duplicate/stale header
+                            // publishes nothing, and with no RPC — the fields
+                            // ride the header the ingestion stream already held.
+                            self.publish_accepted_head(number, &metadata, head);
                         }
-                        // The session's ONE head source: the same accepted
-                        // header, published into the hub every strategy's head
-                        // subscription and the hosted head edge read. Fired on
-                        // this edge so a duplicate/stale header publishes
-                        // nothing, and with no RPC — the fields ride the
-                        // header the ingestion stream already held.
-                        self.publish_accepted_head(number, &metadata);
                     }
                     // The `PendingSuccessor` / `OpenNew` decisions carry no
                     // pump action beyond the above — the liveness-probe signal

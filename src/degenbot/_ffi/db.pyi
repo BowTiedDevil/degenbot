@@ -558,8 +558,9 @@ def db_backup_database(src: str, dst: str) -> None:
     """
     `degenbot._ffi.db.db_backup_database(src: str, dst: str) -> None`
 
-    Online backup with `PRAGMA integrity_check` assertions on both source and
-    destination. Raises `ValueError` on failure.
+    Pinned-snapshot online backup (ADR-106): the copy is one point-in-time
+    snapshot, verified with `PRAGMA integrity_check`, and published atomically.
+    Raises `ValueError` on failure.
     """
 
 def db_compact_database(path: str) -> None:

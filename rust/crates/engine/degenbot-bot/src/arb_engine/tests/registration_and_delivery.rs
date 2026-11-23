@@ -1134,7 +1134,10 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
     let mut engine = ArbitrageEngine::new();
     set_result_channel(&mut engine, tx);
     // Pump seeds the settled resume boundary (block 500) at resume.
-    engine.cycle.cursor.advance_solved(500);
+    engine
+        .cycle
+        .cursor
+        .advance_solved(&crate::bot_core::solve_anchor::SolveAnchor::at(500));
     assert_eq!(
         engine.cycle.cursor.coordinates().results_block,
         500,
@@ -1188,7 +1191,10 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
     assert!(engine.delivery.delivered.contains_key(&path_id));
     // Never regress a real solve anchor: a later seed must not lower it.
     engine.cycle.cursor.set_results_block_for_test(900);
-    engine.cycle.cursor.advance_solved(600);
+    engine
+        .cycle
+        .cursor
+        .advance_solved(&crate::bot_core::solve_anchor::SolveAnchor::at(600));
     assert_eq!(
         engine.cycle.cursor.coordinates().results_block,
         900,

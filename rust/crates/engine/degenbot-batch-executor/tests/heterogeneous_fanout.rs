@@ -396,7 +396,8 @@ fn work() -> BatchWork {
     BatchWork {
         rows: vec![raw_row()],
         payloads: Vec::new(),
-        current_block: BLOCK,
+        based_on: None,
+        execution_block: BLOCK,
         base_fee_next: 1_000_000_000,
         block_timestamp: 0,
         block_priority_fees: None,

@@ -120,7 +120,9 @@ impl ExecutionProbeRequest {
                 state_nonces,
             }],
             payloads: Vec::new(),
-            current_block: self.current_block,
+            // A probe call solves nothing: the work names no solve anchor.
+            based_on: None,
+            execution_block: self.current_block,
             base_fee_next: self.base_fee_next,
             block_timestamp: self.block_timestamp,
             block_priority_fees: None,

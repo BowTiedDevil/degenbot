@@ -191,6 +191,7 @@ mod tests {
     fn empty_batch(solve_block: u64) -> ResultBatch {
         ResultBatch {
             solve_block,
+            solve_anchor: None,
             timestamp: 1_700_000_000 + solve_block,
             base_fee_per_gas: Some(1_000_000_000),
             gas_used: 15_000_000,

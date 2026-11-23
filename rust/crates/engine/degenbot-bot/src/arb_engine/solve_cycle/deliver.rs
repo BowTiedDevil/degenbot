@@ -80,7 +80,10 @@ pub(super) fn deliver_merged_result(
         let seam = AdmissionSeam::of_cycle(ctx.inline_sim_enabled, ctx.inline_sim.is_some());
         hotpath::measure_block!("merge.delivery_emit", {
             delivery.emit_single_result_batch(
-                solve_block,
+                crate::arb_engine::SolveStamp {
+                    block: solve_block,
+                    anchor: ctx.cursor.coordinates().results_anchor,
+                },
                 metadata,
                 pid,
                 result,

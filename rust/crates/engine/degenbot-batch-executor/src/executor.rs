@@ -201,11 +201,20 @@ pub struct BatchWork {
     /// payload-served set — per-entry presence decides, so a mixed batch only
     /// degrades the payload-less entries).
     pub payloads: Vec<PayloadRow>,
-    /// The block the batch is consumed at.
-    pub current_block: u64,
+    /// The solve anchor these rows were produced against — the block identity
+    /// the solver's state view named when it solved them (ADR-105 D10).
+    ///
+    /// Distinct from [`Self::execution_block`] on purpose: the consumer's clock
+    /// can be one block ahead of the solve, and the two must never be read for
+    /// each other. `None` only for a batch whose solve resolved no exact
+    /// identity (a cold-start/registration sweep).
+    pub based_on: Option<degenbot_core::canonical_head::ChainAnchor>,
+    /// The consumer chain clock the batch is EXECUTED at — executor targeting,
+    /// never the solve identity.
+    pub execution_block: u64,
     /// The base fee of the next block.
     pub base_fee_next: u128,
-    /// The timestamp of `current_block` (the EVM `block.timestamp`).
+    /// The timestamp of `execution_block` (the EVM `block.timestamp`).
     pub block_timestamp: u64,
     /// The latest priority-fee percentiles (p10/p50).
     pub block_priority_fees: Option<degenbot_rpc::BlockPriorityFees>,
@@ -285,7 +294,7 @@ impl SubmitLeaf<BatchWork, SimStageOutput> for EngineLeaves {
         let tx = self.outcome_tx.clone();
         let outcomes = outcome.outcomes.clone();
         let candidates = outcome.submit_candidates.clone();
-        let current_block = work.current_block;
+        let current_block = work.execution_block;
         let lineage = work.lineage.clone();
         Box::pin(async move {
             // Forensic capture BEFORE broadcast: one line per gate-clearing
@@ -690,7 +699,8 @@ mod tests {
         BatchWork {
             rows: Vec::new(),
             payloads: Vec::new(),
-            current_block: block,
+            based_on: None,
+            execution_block: block,
             base_fee_next: 0,
             block_timestamp: 0,
             block_priority_fees: None,
@@ -716,16 +726,16 @@ mod tests {
 
     impl SimLeaf<BatchWork, SimStageOutput> for ReversedFinishSim {
         fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a, SimStageOutput> {
-            let batch = work.current_block - BASE_BLOCK;
+            let batch = work.execution_block - BASE_BLOCK;
             let fail_block = self.fail_block;
             Box::pin(async move {
                 tokio::time::sleep(Duration::from_millis(40 - 10 * batch)).await;
-                if fail_block == Some(work.current_block) {
-                    return Err(format!("sim leaf failed at block {}", work.current_block));
+                if fail_block == Some(work.execution_block) {
+                    return Err(format!("sim leaf failed at block {}", work.execution_block));
                 }
                 let outcome = BatchOutcome {
                     candidate_id: CandidateId::new(batch, test_deployment_id()),
-                    block: work.current_block,
+                    block: work.execution_block,
                     assembly: AssemblyVerdict::Assembled,
                     simulate: Some(SimulateVerdict::Profitable(receipt())),
                     submit: None,
@@ -754,7 +764,7 @@ mod tests {
         ) -> degenbot_submission::SubmitFuture<'a> {
             let order = Arc::clone(&self.order);
             let tx = self.tx.clone();
-            let block = work.current_block;
+            let block = work.execution_block;
             let mut records = outcome.outcomes.clone();
             Box::pin(async move {
                 order.lock().unwrap().push(block);
@@ -961,7 +971,7 @@ mod tests {
                     let outcomes = vec![
                         BatchOutcome {
                             candidate_id: CandidateId::new(1, test_deployment_id()),
-                            block: work.current_block,
+                            block: work.execution_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::Profitable(receipt())),
                             submit: None,
@@ -969,7 +979,7 @@ mod tests {
                         },
                         BatchOutcome {
                             candidate_id: CandidateId::new(2, test_deployment_id()),
-                            block: work.current_block,
+                            block: work.execution_block,
                             assembly: AssemblyVerdict::SkipSuppressed,
                             simulate: None,
                             submit: None,
@@ -977,7 +987,7 @@ mod tests {
                         },
                         BatchOutcome {
                             candidate_id: CandidateId::new(3, test_deployment_id()),
-                            block: work.current_block,
+                            block: work.execution_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::Failed(Box::new(failure))),
                             submit: None,
@@ -985,7 +995,7 @@ mod tests {
                         },
                         BatchOutcome {
                             candidate_id: CandidateId::new(4, test_deployment_id()),
-                            block: work.current_block,
+                            block: work.execution_block,
                             assembly: AssemblyVerdict::Assembled,
                             simulate: Some(SimulateVerdict::GasUnprofitable(receipt())),
                             submit: None,

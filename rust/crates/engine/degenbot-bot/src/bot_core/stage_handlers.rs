@@ -924,7 +924,7 @@ mod conformance {
                 None => Epoch::at(block),
             };
             self.current = Some(epoch);
-            let ctx = BlockContext::new(epoch, Self::meta(block));
+            let ctx = BlockContext::fixture_from(epoch, Self::meta(block));
             self.last_ctx = Some(epoch);
 
             self.advance(Stage::StreamingComplete, backfill)?;
@@ -1567,7 +1567,12 @@ mod conformance {
         /// Feed the machine like the production driver: header + forward
         /// log + apply + settle; return the machine's settle decisions.
         fn settle_block(machine: &mut StageMachine, block: u64, now_ms: u64) -> Vec<StageDecision> {
-            machine.on_header(block, meta(block * 1_000), now_ms);
+            machine.on_header(
+                block,
+                meta(block * 1_000),
+                Some(degenbot_substrate::fixture_anchor(block)),
+                now_ms,
+            );
             assert!(matches!(
                 machine.on_log(block, false),
                 crate::bot_core::LogDecision::DispatchForward

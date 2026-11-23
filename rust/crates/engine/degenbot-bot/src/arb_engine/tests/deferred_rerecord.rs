@@ -102,7 +102,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     let deferred = path_ids[0];
@@ -118,7 +118,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
         verdict: QuiesceVerdict::Settled,
     };
     // Cycle 1: draw, defer, re-record into the ledger at block 100.
-    let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
+    let ctx = BlockContext::fixture(100);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -152,7 +152,7 @@ fn staged_deferred_path_carries_via_the_ledger_and_solves_on_the_retry() {
     // The anchor catches up: the path is no longer future-priced. Cycle 2
     // draws it back from the ledger.
     engine.lock().cycle.force_deferred = None;
-    let ctx = BlockContext::new(Epoch::at(101), BlockMetadata::default());
+    let ctx = BlockContext::fixture(101);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -205,7 +205,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
@@ -227,7 +227,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
         verdict: QuiesceVerdict::Settled,
     };
     // Cycle 1 defers + re-records the deferred path at block 100.
-    let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
+    let ctx = BlockContext::fixture(100);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -257,7 +257,7 @@ fn staged_deferred_retry_expires_after_the_retention_window() {
     // never redrawn.
     engine.lock().cycle.force_deferred = None;
     engine.lock().cycle.set_admission_retention_blocks(0);
-    let ctx = BlockContext::new(Epoch::at(defer_block + 1), BlockMetadata::default());
+    let ctx = BlockContext::fixture(defer_block + 1);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,

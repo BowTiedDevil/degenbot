@@ -103,6 +103,22 @@ impl BlockPump {
                 }
             }
             if !block_logs.is_empty() {
+                // A historical block's identity comes from the node, not from a
+                // live header: one header read resolves the exact anchor, so
+                // the solve it drives names its own block rather than a bare
+                // height (ADR-105 D1). A block whose identity cannot be
+                // resolved gets no work item — the range's applied state and
+                // cursors are untouched.
+                let anchor = self.backfill_anchor(block).await;
+                if let Some(anchor) = anchor {
+                    fsm.record_block_anchor(block, anchor);
+                } else {
+                    op_warn!(
+                        domain = pump,
+                        block,
+                        "backfill: block has no exact chain identity; its work item names the coordinate only"
+                    );
+                }
                 // The backfill solve: the Solved cycle at the block's default
                 // metadata — NO Published row (no `on_publish`): the
                 // backfill applies state without dispatching result batches
@@ -111,8 +127,15 @@ impl BlockPump {
                     fsm,
                     fsm.context_for(block, BlockMetadata::default()),
                     // No live window behind a historical block: nothing to
-                    // attach, so the solve span is an intentional root.
-                    crate::telemetry::BlockLineage::unattached(block),
+                    // attach, so the solve span is an intentional root. The
+                    // anchor still rides the value, so its batch-facing
+                    // identity is exact.
+                    match anchor {
+                        Some(anchor) => {
+                            crate::telemetry::BlockLineage::unattached(block).with_anchor(anchor)
+                        }
+                        None => crate::telemetry::BlockLineage::unattached(block),
+                    },
                     None,
                 );
                 any_processed = true;
@@ -135,6 +158,24 @@ impl BlockPump {
             );
         }
         Ok(())
+    }
+
+    /// The exact anchor of a block the backfill solves, resolved from the
+    /// node's header (one read, no body). `None` when the node holds no block
+    /// there or the header names no identity — never a zero-filled anchor.
+    async fn backfill_anchor(
+        &self,
+        block: u64,
+    ) -> Option<degenbot_core::canonical_head::ChainAnchor> {
+        match self.ingestor.block_lineage(block).await {
+            Ok(anchor) => anchor,
+            Err(error) => {
+                op_error!(domain = pump, block, %error,
+                    "backfill: header read failed; block has no exact anchor"
+                );
+                None
+            }
+        }
     }
 
     /// LOUD assertion of the core WS-delivery invariant (ADR-008 D1): when

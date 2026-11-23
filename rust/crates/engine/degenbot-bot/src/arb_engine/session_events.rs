@@ -222,6 +222,7 @@ mod tests {
     fn batch(n: u64) -> SessionEvent {
         SessionEvent::Batch(Box::new(ResultBatch {
             solve_block: n,
+            solve_anchor: None,
             timestamp: 0,
             base_fee_per_gas: None,
             gas_used: 0,

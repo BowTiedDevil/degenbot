@@ -25,8 +25,8 @@ fn header(number: u64) -> WsEvent {
         base_fee_per_gas: None,
         gas_used: 0,
         gas_limit: 0,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     }
 }
 

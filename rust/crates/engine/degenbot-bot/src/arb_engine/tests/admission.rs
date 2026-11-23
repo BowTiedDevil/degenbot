@@ -88,7 +88,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(400);
     engine.cycle.set_solve_admission(true);
@@ -107,7 +107,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
     let quiesced = QuiesceOutcome {
         verdict: QuiesceVerdict::Settled,
     };
-    let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
+    let ctx = BlockContext::fixture(100);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -171,7 +171,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let mut engine = ArbitrageEngine::new();
     let a = engine.register_v2_pool(
@@ -221,7 +221,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
         verdict: QuiesceVerdict::Settled,
     };
     // Cycle 1 (draw-zero): the shed responds before the merge.
-    let ctx = BlockContext::new(Epoch::at(10), BlockMetadata::default());
+    let ctx = BlockContext::fixture(10);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -259,7 +259,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
         .detached_cycle
         .outstanding
         .store(0, std::sync::atomic::Ordering::Relaxed);
-    let ctx = BlockContext::new(Epoch::at(11), BlockMetadata::default());
+    let ctx = BlockContext::fixture(11);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -324,7 +324,7 @@ fn admission_race_positive_draw_never_sheds() {
     use crate::bot_core::stage_handlers::{
         QuiesceOutcome, QuiesceVerdict, Resolve, Solve, StageHandlers,
     };
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
     engine.cycle.set_solve_admission(true);
@@ -341,7 +341,7 @@ fn admission_race_positive_draw_never_sheds() {
     let quiesced = QuiesceOutcome {
         verdict: QuiesceVerdict::Settled,
     };
-    let ctx = BlockContext::new(Epoch::at(10), BlockMetadata::default());
+    let ctx = BlockContext::fixture(10);
     // DRAW with an EMPTY pipe: budget = 8 -> positive; every key drawn.
     let drawn = stages
         .on_resolve(&Resolve {
@@ -429,7 +429,7 @@ fn admission_race_positive_draw_never_sheds() {
 fn admission_carries_retained_keys_to_a_later_cycle() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let engine = ArbitrageEngine::new();
     let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -453,7 +453,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
         .detached_cycle
         .outstanding
         .store(2, std::sync::atomic::Ordering::Relaxed);
-    let ctx = BlockContext::new(Epoch::at(10), BlockMetadata::default());
+    let ctx = BlockContext::fixture(10);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -477,7 +477,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
         .detached_cycle
         .outstanding
         .store(0, std::sync::atomic::Ordering::Relaxed);
-    let ctx = BlockContext::new(Epoch::at(11), BlockMetadata::default());
+    let ctx = BlockContext::fixture(11);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -496,7 +496,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
         "the overflow stays retained for the next cycle"
     );
     // And the final carry drains on the next empty pipe.
-    let ctx = BlockContext::new(Epoch::at(12), BlockMetadata::default());
+    let ctx = BlockContext::fixture(12);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -518,7 +518,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
 fn admission_retention_window_expires_carried_leads() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let engine = ArbitrageEngine::new();
     let engine = Arc::new(parking_lot::Mutex::new(engine));
@@ -536,7 +536,7 @@ fn admission_retention_window_expires_carried_leads() {
     };
     // head 100, W 5 ⇒ cutoff 95: the block-10 lead expires; the block-100
     // lead is drawn.
-    let ctx = BlockContext::new(Epoch::at(100), BlockMetadata::default());
+    let ctx = BlockContext::fixture(100);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,
@@ -568,7 +568,7 @@ fn admission_retention_window_expires_carried_leads() {
 fn admission_off_keeps_take_all_and_never_sheds() {
     use crate::arb_engine::EngineStages;
     use crate::bot_core::stage_handlers::{QuiesceOutcome, QuiesceVerdict, Resolve, StageHandlers};
-    use degenbot_substrate::{BlockContext, Epoch, EpochDelta};
+    use degenbot_substrate::{BlockContext, EpochDelta};
     use std::sync::Arc;
     let (mut engine, pool_ids, _path_ids) = detached_fixture(0);
     // Stance left OFF; the gauge at the cap must NOT shed.
@@ -611,7 +611,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
     let quiesced = QuiesceOutcome {
         verdict: QuiesceVerdict::Settled,
     };
-    let ctx = BlockContext::new(Epoch::at(10), BlockMetadata::default());
+    let ctx = BlockContext::fixture(10);
     let drawn = stages
         .on_resolve(&Resolve {
             ctx,

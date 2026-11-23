@@ -329,6 +329,7 @@ mod otel_tests {
 #[derive(Clone, Debug)]
 pub struct BlockLineage {
     block: u64,
+    anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
     #[cfg(feature = "otel")]
     context: Option<opentelemetry::trace::SpanContext>,
 }
@@ -354,6 +355,7 @@ impl BlockLineage {
         let sc = span.context().span().span_context().clone();
         Self {
             block,
+            anchor: None,
             context: sc.is_valid().then_some(sc),
         }
     }
@@ -373,18 +375,46 @@ impl BlockLineage {
         #[cfg(feature = "otel")]
         let lineage = Self {
             block,
+            anchor: None,
             context: None,
         };
         #[cfg(not(feature = "otel"))]
-        let lineage = Self { block };
+        let lineage = Self {
+            block,
+            anchor: None,
+        };
         lineage
     }
 
+    /// The same lineage, now naming the exact solve anchor it belongs to.
+    ///
+    /// The anchor is the ONE identity the batch, the executor work, and every
+    /// downstream span share (ADR-105 D10); [`Self::block`] becomes the
+    /// anchor's height, so a lineage can never name one height and another
+    /// block. Constructors stay block-only so an unanchored producer (a
+    /// scripted batch, a historical backfill with no header) is
+    /// representable — and answers `None` from [`Self::anchor`].
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: degenbot_core::canonical_head::ChainAnchor) -> Self {
+        self.anchor = Some(anchor);
+        self
+    }
+
+    /// The exact solve anchor this lineage names, when the producer knew it.
+    #[must_use]
+    pub const fn anchor(&self) -> Option<degenbot_core::canonical_head::ChainAnchor> {
+        self.anchor
+    }
+
     /// The block this lineage belongs to — the SOLVE block, never the
-    /// consumer's clock.
+    /// consumer's clock. When the lineage names an anchor, this IS the anchor's
+    /// height.
     #[must_use]
     pub const fn block(&self) -> u64 {
-        self.block
+        match self.anchor {
+            Some(anchor) => anchor.number(),
+            None => self.block,
+        }
     }
 
     /// The exporter context to parent to, when one was captured.
@@ -446,10 +476,35 @@ pub fn simulate_dispatch_span(
     let span = tracing::info_span!(
         "degenbot.simulate.dispatch",
         current_block,
-        phase_candidate_count = candidate_count
+        phase_candidate_count = candidate_count,
+        chain_id = tracing::field::Empty,
+        block_hash = tracing::field::Empty,
+        parent_block_hash = tracing::field::Empty,
     );
+    record_anchor_fields(&span, lineage.anchor());
     attach_lineage(&span, lineage);
     span
+}
+
+/// Record the exact-anchor span fields on `span`, when the lineage names one.
+///
+/// Hashes travel as span ATTRIBUTES only (ADR-105 D10): never a Prometheus
+/// label, never a metric attribute key. The values are the anchor's own, so an
+/// interleaved N/N+1 pair carries two distinct block identities on two distinct
+/// traces.
+pub fn record_anchor_fields(
+    span: &tracing::Span,
+    anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
+) {
+    let Some(anchor) = anchor else {
+        return;
+    };
+    span.record("chain_id", tracing::field::display(anchor.chain_id()));
+    span.record("block_hash", tracing::field::display(anchor.hash()));
+    span.record(
+        "parent_block_hash",
+        tracing::field::display(anchor.parent_hash()),
+    );
 }
 
 /// Best-effort flush of the `OTel` span exporter.
@@ -608,5 +663,144 @@ mod span_backing_tests {
             super::loop_parent(&super::unbacked_span()).is_none(),
             "an unbacked handle must never be carried either"
         );
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "the lineage tests build fixture anchors and assert on a capture map they own"
+)]
+mod lineage_anchor_tests {
+    use super::*;
+    use degenbot_core::canonical_head::ChainAnchor;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata, Subscriber};
+
+    fn anchor(number: u64, tag: u8) -> ChainAnchor {
+        ChainAnchor::new(
+            1,
+            number,
+            alloy::primitives::B256::with_last_byte(tag),
+            alloy::primitives::B256::with_last_byte(tag.wrapping_sub(1)),
+        )
+        .unwrap()
+    }
+
+    /// Field values per span id — the default-lane observable for span
+    /// ATTRIBUTES (no exporter needed).
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<HashMap<u64, HashMap<String, String>>>>);
+
+    impl Capture {
+        fn of(&self, span: &tracing::Span) -> HashMap<String, String> {
+            let id = span
+                .id()
+                .expect("the capture subscriber mints an id")
+                .into_u64();
+            self.0.lock().unwrap().get(&id).cloned().unwrap_or_default()
+        }
+    }
+
+    struct Sink<'a>(&'a mut HashMap<String, String>);
+
+    impl Visit for Sink<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0
+                .insert(field.name().to_string(), format!("{value:?}"));
+        }
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.0.insert(field.name().to_string(), value.to_string());
+        }
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.insert(field.name().to_string(), value.to_string());
+        }
+    }
+
+    struct CaptureSubscriber(Capture);
+
+    impl Subscriber for CaptureSubscriber {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, attributes: &Attributes<'_>) -> Id {
+            let mut map = self.0 .0.lock().unwrap();
+            let id = Id::from_u64(map.len() as u64 + 1);
+            let fields = map.entry(id.clone().into_u64()).or_default();
+            attributes.record(&mut Sink(fields));
+            id
+        }
+        fn record(&self, id: &Id, values: &Record<'_>) {
+            let mut map = self.0 .0.lock().unwrap();
+            let fields = map.entry(id.clone().into_u64()).or_default();
+            values.record(&mut Sink(fields));
+        }
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, _: &Event<'_>) {}
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+
+    #[test]
+    fn a_lineage_names_its_anchor_height_as_its_block() {
+        let head = anchor(101, 0xaa);
+        let anchored = BlockLineage::unattached(999).with_anchor(head);
+        assert_eq!(anchored.block(), 101, "the anchor owns the height");
+        assert_eq!(anchored.anchor(), Some(head));
+        let bare = BlockLineage::unattached(7);
+        assert_eq!(bare.anchor(), None, "an unanchored producer says so");
+        assert_eq!(bare.block(), 7, "and keeps the height it was handed");
+    }
+
+    #[test]
+    fn interleaved_solve_spans_carry_their_own_exact_block_identity() {
+        let capture = Capture::default();
+        let subscriber = CaptureSubscriber(capture.clone());
+        let n = BlockLineage::unattached(100).with_anchor(anchor(100, 0x10));
+        let n_plus_one = BlockLineage::unattached(101).with_anchor(anchor(101, 0x20));
+        tracing::subscriber::with_default(subscriber, || {
+            let first = simulate_dispatch_span(&n, 101, 3);
+            let second = simulate_dispatch_span(&n_plus_one, 101, 4);
+            let first_fields = capture.of(&first);
+            let second_fields = capture.of(&second);
+            assert_eq!(
+                first_fields.get("block_hash").map(String::as_str),
+                Some(format!("{:?}", alloy::primitives::B256::with_last_byte(0x10)).as_str()),
+                "the N lane span names N's block, not the consumer clock's"
+            );
+            assert_eq!(
+                second_fields.get("block_hash").map(String::as_str),
+                Some(format!("{:?}", alloy::primitives::B256::with_last_byte(0x20)).as_str())
+            );
+            assert_ne!(
+                first_fields.get("block_hash"),
+                second_fields.get("block_hash"),
+                "an interleaved pair never shares one block identity"
+            );
+            assert_eq!(
+                first_fields.get("current_block").map(String::as_str),
+                Some("101"),
+                "the policy clock stays the consumer's block"
+            );
+            assert_eq!(first_fields.get("chain_id").map(String::as_str), Some("1"));
+        });
+    }
+
+    #[test]
+    fn an_unanchored_lineage_records_no_block_hash() {
+        let capture = Capture::default();
+        let subscriber = CaptureSubscriber(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            let span = simulate_dispatch_span(&BlockLineage::unattached(42), 43, 1);
+            let fields = capture.of(&span);
+            assert!(
+                !fields.contains_key("block_hash"),
+                "no anchor, no hash: an unattached lineage is a deliberate root with no identity claim"
+            );
+        });
     }
 }

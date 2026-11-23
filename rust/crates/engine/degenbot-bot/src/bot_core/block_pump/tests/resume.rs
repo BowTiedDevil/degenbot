@@ -31,8 +31,8 @@ async fn notify_block_fires_once_per_accepted_header() {
             base_fee_per_gas: meta_101.base_fee_per_gas,
             gas_used: meta_101.gas_used,
             gas_limit: meta_101.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
         WsEvent::BlockHeader {
             number: 102,
@@ -40,8 +40,8 @@ async fn notify_block_fires_once_per_accepted_header() {
             base_fee_per_gas: meta_102.base_fee_per_gas,
             gas_used: meta_102.gas_used,
             gas_limit: meta_102.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
     ];
     let combined = stream::iter(events).boxed();
@@ -102,8 +102,8 @@ async fn cold_start_anchors_to_first_observed_block() {
             base_fee_per_gas: meta_w.base_fee_per_gas,
             gas_used: meta_w.gas_used,
             gas_limit: meta_w.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
         WsEvent::BlockHeader {
             number: w + 1,
@@ -111,8 +111,8 @@ async fn cold_start_anchors_to_first_observed_block() {
             base_fee_per_gas: meta_w1.base_fee_per_gas,
             gas_used: meta_w1.gas_used,
             gas_limit: meta_w1.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
         WsEvent::Pool(PoolEvent::from_log(tombstone_log)),
     ];
@@ -146,8 +146,8 @@ async fn resume_never_resets_pump_complete_cutoff() {
         base_fee_per_gas: None,
         gas_used: 0,
         gas_limit: 0,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     };
     let bot = Arc::new(Bot::new(1));
     let w = 21_500_000u64;
@@ -249,8 +249,8 @@ async fn resume_boundary_duplicate_dropped_live_block_applied() {
         base_fee_per_gas: None,
         gas_used: 0,
         gas_limit: 0,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     };
     let dup_w = make_v2_sync_log(pool, U256::from(5_500u64), U256::from(900u64), w, false);
     let live_w1 = make_v2_sync_log(pool, U256::from(6_000u64), U256::from(950u64), w + 1, false);
@@ -328,8 +328,8 @@ async fn resume_boundary_reorg_reaches_classifier_not_inline_drop() {
         base_fee_per_gas: None,
         gas_used: 0,
         gas_limit: 0,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     };
     // The WS re-delivers the removed boundary Sync (deep-reorg replay).
     let reorg_w = make_v2_sync_log(pool, U256::from(5_000u64), U256::from(1_000u64), w, true);
@@ -405,8 +405,8 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
         base_fee_per_gas: None,
         gas_used: 0,
         gas_limit: 0,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     };
 
     // Forward: header(w+1) + a live Sync@w+1 -> applied -> both writes
@@ -512,7 +512,7 @@ async fn resume_anchors_to_subscribe_block() {
     // The solve issued before resume anchors the cursor to W (
     // the engine's own cursor; the dissolved coordinator cursor is gone).
     let _ = sink.on_solve(&crate::bot_core::Solve {
-        ctx: BlockContext::new(w, meta_w),
+        ctx: BlockContext::fixture_from(w, meta_w),
         paths: crate::bot_core::AffectedPaths::default(),
         lineage: crate::telemetry::BlockLineage::unattached(w),
     });
@@ -539,8 +539,8 @@ async fn resume_anchors_to_subscribe_block() {
             base_fee_per_gas: meta_w1.base_fee_per_gas,
             gas_used: meta_w1.gas_used,
             gas_limit: meta_w1.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
         WsEvent::BlockHeader {
             number: w + 2,
@@ -548,8 +548,8 @@ async fn resume_anchors_to_subscribe_block() {
             base_fee_per_gas: meta_w2.base_fee_per_gas,
             gas_used: meta_w2.gas_used,
             gas_limit: meta_w2.gas_limit,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
         WsEvent::Pool(PoolEvent::from_log(tombstone_log)),
     ];
@@ -594,17 +594,11 @@ fn driver_drops_reorg_flying_stale_epoch_work() {
 
     // Pre-rewind (reorg-flying) work: an item minted BEFORE the bump in
     // generation 0 — dropped, never applied to the engine.
-    let stale_ctx = BlockContext::new(
-        degenbot_substrate::Epoch::with_generation(100, 0),
-        BlockMetadata::default(),
-    );
+    let stale_ctx = BlockContext::fixture_at(Epoch::with_generation(100, 0));
     assert!(pump.reorg_flying_stale(&fsm, &stale_ctx));
     pump.drive_finalize(
         &fsm,
-        BlockContext::new(
-            degenbot_substrate::Epoch::with_generation(100, 0),
-            BlockMetadata::default(),
-        ),
+        BlockContext::fixture_at(Epoch::with_generation(100, 0)),
     );
     assert!(
         sink.finalized.lock().unwrap().is_empty(),
@@ -618,10 +612,7 @@ fn driver_drops_reorg_flying_stale_epoch_work() {
     );
     pump.drive_finalize(
         &fsm,
-        degenbot_substrate::BlockContext::new(
-            degenbot_substrate::Epoch::with_generation(100, 1),
-            BlockMetadata::default(),
-        ),
+        BlockContext::fixture_at(Epoch::with_generation(100, 1)),
     );
     assert_eq!(sink.finalized.lock().unwrap().len(), 1);
     assert_eq!(sink.finalized.lock().unwrap().first().unwrap().0, 100);

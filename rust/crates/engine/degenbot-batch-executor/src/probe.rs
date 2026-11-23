@@ -433,7 +433,7 @@ mod tests {
 
     impl SimLeaf<BatchWork, SimStageOutput> for ScriptedStage {
         fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a, SimStageOutput> {
-            let block = work.current_block;
+            let block = work.execution_block;
             let delay = self.delay_ms(block);
             let finished = Arc::clone(&self.finished);
             Box::pin(async move {
@@ -471,7 +471,7 @@ mod tests {
 
     impl SimLeaf<BatchWork, SimStageOutput> for WedgeStage {
         fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a, SimStageOutput> {
-            let block = work.current_block;
+            let block = work.execution_block;
             let wedge = self.wedged.contains(&block);
             let entered = Arc::clone(&self.entered);
             let dropped = Arc::clone(&self.dropped);
@@ -539,7 +539,8 @@ mod tests {
         BatchWork {
             rows: Vec::new(),
             payloads: Vec::new(),
-            current_block: block,
+            based_on: None,
+            execution_block: block,
             base_fee_next: 1_000_000_000,
             block_timestamp: 0,
             block_priority_fees: None,

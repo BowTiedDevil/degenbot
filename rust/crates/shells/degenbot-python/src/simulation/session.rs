@@ -721,6 +721,10 @@ fn session_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<SessionEvent> {
             let solve_block = field_u64(dict, "solve_block")?;
             let mut batch = ResultBatch {
                 solve_block,
+                // A Python-built batch states no exact anchor: the projection
+                // carries the block stamp only (the solve anchor projection is
+                // the dependent simulation/executor/Python task's).
+                solve_anchor: None,
                 timestamp: optional_u64(dict, "timestamp")?.unwrap_or_default(),
                 base_fee_per_gas: optional_u64(dict, "base_fee_per_gas")?,
                 gas_used: optional_u64(dict, "gas_used")?.unwrap_or_default(),

@@ -19,6 +19,7 @@ use crate::subscription::{
 };
 use alloy::network::Ethereum;
 use alloy::providers::Provider;
+use degenbot_core::canonical_head::{ChainAnchor, ChainAnchorError};
 use degenbot_eventhub::{Head, HeadMetadata, HeadSender};
 use futures_util::StreamExt;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,6 +40,32 @@ impl Default for HeadWatchConfig {
             watchdog: Duration::from_secs(HEADER_WATCHDOG_SECS),
         }
     }
+}
+
+/// The exact head one observed `newHeads` header states: its own hash and its
+/// parent hash are the header's, the chain is the session's, and the height is
+/// the header's. Pure: the header already carried every identity field, so a
+/// full-header observation spends no request on identity.
+///
+/// # Errors
+///
+/// [`ChainAnchorError`] when the header names no block (a zero hash or zero
+/// parent hash) — a partial identity is refused, never published with a
+/// zero-filled field.
+fn anchored_head(
+    chain_id: u64,
+    header: &alloy::rpc::types::Header,
+) -> Result<Head, ChainAnchorError> {
+    let anchor = ChainAnchor::new(chain_id, header.number, header.hash, header.parent_hash)?;
+    Ok(Head::new(
+        anchor,
+        Some(HeadMetadata {
+            timestamp: header.timestamp,
+            base_fee_per_gas: header.base_fee_per_gas,
+            gas_used: header.gas_used,
+            gas_limit: header.gas_limit,
+        }),
+    ))
 }
 
 /// Why a [`HeadWatch`] could not be created.
@@ -66,7 +93,10 @@ impl HeadWatch {
     ///
     /// `sender` is the hub's one claim ([`degenbot_eventhub::Hub::claim_head_source`]),
     /// handed in by whichever boot hosts this watch: the watch never claims a
-    /// source of its own. The initial subscribe is awaited here so a failure is
+    /// source of its own. `chain_id` is the session's chain: a `newHeads`
+    /// header carries its own hash and parent hash but never the chain it
+    /// belongs to, so the boot states it once and every observed header becomes
+    /// one exact [`degenbot_eventhub::ChainAnchor`] with no identity read. The initial subscribe is awaited here so a failure is
     /// reported synchronously and the caller can fall back to polling. Once
     /// complete, the driving task reconnects in the background on the shared
     /// curve.
@@ -86,6 +116,7 @@ impl HeadWatch {
     pub async fn subscribe(
         sender: HeadSender,
         provider: Arc<dyn Provider<Ethereum>>,
+        chain_id: u64,
         config: HeadWatchConfig,
         spawn_on: tokio::runtime::Handle,
     ) -> Result<Self, HeadWatchError> {
@@ -119,15 +150,14 @@ impl HeadWatch {
                 reconnect,
                 move |header| {
                     tracing::debug!(number = header.number, "head watch header");
-                    sender.publish(Head {
-                        number: header.number,
-                        metadata: Some(HeadMetadata {
-                            timestamp: header.timestamp,
-                            base_fee_per_gas: header.base_fee_per_gas,
-                            gas_used: header.gas_used,
-                            gas_limit: header.gas_limit,
-                        }),
-                    });
+                    match anchored_head(chain_id, &header) {
+                        Ok(head) => sender.publish(head),
+                        Err(error) => tracing::error!(
+                            number = header.number,
+                            %error,
+                            "head watch header names no exact chain identity; head not published"
+                        ),
+                    }
                     true
                 },
                 move || {
@@ -145,5 +175,72 @@ impl HeadWatch {
         });
 
         Ok(Self)
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "the test builds fixture headers and unwraps its own assertions"
+)]
+mod tests {
+    use super::*;
+    use alloy::primitives::B256;
+
+    fn header(number: u64, hash: u8, parent: u8) -> alloy::rpc::types::Header {
+        alloy::rpc::types::Header {
+            hash: B256::with_last_byte(hash),
+            inner: alloy::consensus::Header {
+                number,
+                parent_hash: B256::with_last_byte(parent),
+                timestamp: 7,
+                base_fee_per_gas: Some(9),
+                gas_used: 11,
+                gas_limit: 13,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_full_newheads_header_yields_its_exact_anchor_with_no_identity_read() {
+        let observed = header(101, 0xaa, 0xa0);
+        let head = anchored_head(1, &observed).expect("the header names its block");
+        assert_eq!(
+            head.anchor(),
+            &ChainAnchor::new(
+                1,
+                101,
+                B256::with_last_byte(0xaa),
+                B256::with_last_byte(0xa0)
+            )
+            .unwrap(),
+            "the anchor is the header's own identity, on the session's chain"
+        );
+        assert_eq!(head.number(), 101);
+        let metadata = head.metadata().expect("a full header carries its facts");
+        assert_eq!(metadata.timestamp, 7);
+        assert_eq!(metadata.base_fee_per_gas, Some(9));
+        assert_eq!(metadata.gas_used, 11);
+        assert_eq!(metadata.gas_limit, 13);
+    }
+
+    #[test]
+    fn a_header_with_no_block_hash_is_refused_not_zero_filled() {
+        let mut observed = header(101, 0xaa, 0xa0);
+        observed.hash = B256::ZERO;
+        assert_eq!(
+            anchored_head(1, &observed),
+            Err(ChainAnchorError::MissingBlockHash),
+            "an unnamed block is an ingress refusal"
+        );
+        let mut unparented = header(101, 0xaa, 0x00);
+        unparented.inner.parent_hash = B256::ZERO;
+        assert_eq!(
+            anchored_head(1, &unparented),
+            Err(ChainAnchorError::MissingParentHash)
+        );
     }
 }

@@ -193,11 +193,5 @@ pub(super) async fn wallet_gas_cost_for_head<R: BlockFeeReader + ?Sized>(
     head: &Head,
     cfg: &BackrunConfig,
 ) -> Result<u128, BackrunBootError> {
-    wallet_gas_cost_at(
-        reader,
-        head.number,
-        cfg,
-        head_evidence(head.metadata.as_ref()),
-    )
-    .await
+    wallet_gas_cost_at(reader, head.number(), cfg, head_evidence(head.metadata())).await
 }

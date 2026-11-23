@@ -141,6 +141,23 @@ impl WsIngestor {
         self.provider.get_block_number().await
     }
 
+    /// The exact anchor of `block_number` through the provider that owns the
+    /// live subscriptions: one header read (no body, no transactions), and
+    /// `None` when the node holds no block there or the header names no
+    /// identity. The historical backfill path resolves each block it solves
+    /// through this, so a block read from `eth_getLogs` still gains an exact
+    /// anchor (ADR-105 D1).
+    ///
+    /// # Errors
+    ///
+    /// Provider error (transport / rate-limit).
+    pub async fn block_lineage(
+        &self,
+        block_number: u64,
+    ) -> ProviderResult<Option<degenbot_core::canonical_head::ChainAnchor>> {
+        self.provider.get_block_lineage_at(block_number).await
+    }
+
     /// Fetch a full block through the same provider that owns the live
     /// subscriptions. The Tauri feed uses this to enrich `newHeads` with the
     /// transaction count, which is not part of an Ethereum block header.

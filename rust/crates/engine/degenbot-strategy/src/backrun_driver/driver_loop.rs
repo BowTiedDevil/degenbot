@@ -1264,8 +1264,8 @@ pub(super) async fn advance_priced_head<R: BlockFeeReader + ?Sized>(
     dispatcher
         .lock()
         .expect("dispatcher mutex poisoned")
-        .advance_block(head.number);
-    *current_block = head.number;
+        .advance_block(head.number());
+    *current_block = head.number();
     Ok(())
 }
 
@@ -1417,7 +1417,7 @@ async fn drive(
         let next_head = await_head_advance(&mut head_source).await;
 
         if let Some(head) = next_head {
-            if head.number > current_block {
+            if head.number() > current_block {
                 // A failed gas-price refresh is no price evidence: the head
                 // is skipped unprocessed, so nothing at it composes at the
                 // previous cost and no state claims it was handled.
@@ -1433,13 +1433,13 @@ async fn drive(
                 {
                     tracing::warn!(
                         "gas-price refresh failed - head {} skipped: {error}",
-                        head.number
+                        head.number()
                     );
                     continue;
                 }
                 match build_block_handle(
                     &provider,
-                    head.number,
+                    head.number(),
                     &execution,
                     &runtime.warm_cache,
                     oracle,

@@ -235,6 +235,12 @@ pub struct FanOutInputs<'a> {
     /// [`BlockLineage::unattached`](degenbot_bot::telemetry::BlockLineage::unattached)
     /// — the span is then a deliberate root, never a neighbouring block's
     /// trace family.
+    ///
+    /// This is also the batch's `based_on` identity (ADR-105 D10): the lineage
+    /// carries the exact `ChainAnchor` the solve resolved, and the per-lane
+    /// span records it (hash as a span ATTRIBUTE, never a metric label) beside
+    /// the execution clock, so an interleaved N/N+1 pair keeps two block
+    /// identities on two trace families.
     pub lineage: &'a degenbot_bot::telemetry::BlockLineage,
     /// Which deployments each path is offered to ([`TargetSelection`]).
     pub target_selection: TargetSelection,

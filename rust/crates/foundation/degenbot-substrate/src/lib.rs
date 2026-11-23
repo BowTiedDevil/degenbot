@@ -119,6 +119,8 @@ pub use concentrated_liquidity_orchestration::{
     StagedWordFetch,
 };
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
+#[cfg(any(test, feature = "test-fixtures"))]
+pub use epoch::fixture_anchor;
 pub use epoch::{BlockContext, BlockMetadata, Epoch, StaleEpoch};
 pub use epoch_delta::EpochDelta;
 pub use registration_door::{PoolRegistration, RegistrationVerdict};
@@ -164,6 +166,12 @@ pub struct BotState {
     /// gate, the snapshot seed block, the pump delivery cutoff, and the
     /// per-pool event horizons.
     concentrated_liquidity: ConcentratedLiquidityOrchestration,
+    /// The exact anchor of the newest block this state view was told about
+    /// (written on the accepted-header edge, Streaming-confined). Solver work
+    /// resolves its solve anchor against it through the cheap read guard, so
+    /// the identity a batch names is read from the view it solved against —
+    /// never reconstructed from a bare height (ADR-105 D10).
+    state_anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
 }
 
 impl BotState {
@@ -181,6 +189,7 @@ impl BotState {
             tokens: HashMap::new(),
             accounts: AccountCache::new(),
             concentrated_liquidity: ConcentratedLiquidityOrchestration::new(),
+            state_anchor: None,
         }
     }
 
@@ -189,6 +198,25 @@ impl BotState {
     #[must_use]
     pub const fn accounts(&self) -> &AccountCache {
         &self.accounts
+    }
+
+    /// Record the exact anchor of the block this state view now names.
+    ///
+    /// The accepted-header edge owns this write (the Streaming-stage writer
+    /// window): a replacement, including a same-height branch replacement after
+    /// a reorg, simply names the newer block — no counter or monotone rule,
+    /// because the last header the pump accepted IS the block the state is
+    /// being advanced at.
+    pub fn set_state_anchor(&mut self, anchor: degenbot_core::canonical_head::ChainAnchor) {
+        self.state_anchor = Some(anchor);
+    }
+
+    /// The exact anchor of the newest block this state view was told about.
+    /// `None` before the first accepted header — never a zero-height default
+    /// (ADR-105 D1).
+    #[must_use]
+    pub const fn state_anchor(&self) -> Option<degenbot_core::canonical_head::ChainAnchor> {
+        self.state_anchor
     }
 }
 

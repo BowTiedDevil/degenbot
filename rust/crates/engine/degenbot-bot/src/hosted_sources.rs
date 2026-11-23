@@ -132,6 +132,10 @@ pub enum HostedHeadClock {
         ws_url: String,
         /// The chain-node provider the fallback poller reads.
         provider: Arc<AlloyProvider>,
+        /// The session's chain id — a `newHeads` header carries its own hash and
+        /// parent hash but never the chain it belongs to, so the boot states it
+        /// once and every observed head becomes one exact anchor.
+        chain_id: u64,
     },
     /// No WS feed: the poller is the primary clock.
     Poll {
@@ -170,6 +174,9 @@ pub enum HostedClockBinding {
         provider: Arc<AlloyProvider>,
         /// The claimed publisher the edge and the watch publish through.
         sender: HeadSender,
+        /// The session's chain id, stated once for every observed header's
+        /// anchor (see [`HostedHeadClock::Watch`]).
+        chain_id: u64,
     },
     /// No WS feed: the poller is the primary clock, over the claimed source.
     Poll {
@@ -553,15 +560,21 @@ enum HeadObservation {
     /// trigger.
     Watched(u64),
     /// A head this edge read from its own provider, which the edge must publish
-    /// into the hub so every driver sees it.
-    Polled { number: u64, reason: PollReason },
+    /// into the hub so every driver sees it. The number-only `eth_blockNumber`
+    /// observation is resolved to the block's exact anchor BEFORE it becomes an
+    /// observation, so the head the edge publishes names its block (ADR-105 D1).
+    Polled {
+        anchor: degenbot_core::canonical_head::ChainAnchor,
+        reason: PollReason,
+    },
 }
 
 impl HeadObservation {
     /// The observed block number.
     fn number(self) -> u64 {
         match self {
-            Self::Watched(number) | Self::Polled { number, .. } => number,
+            Self::Watched(number) => number,
+            Self::Polled { anchor, .. } => anchor.number(),
         }
     }
 }
@@ -1078,6 +1091,7 @@ impl Drop for HostedSources {
 async fn connect_head_watch(
     sender: HeadSender,
     ws_url: &str,
+    chain_id: u64,
     runtime: &OwnedPubsubRuntime,
 ) -> Option<Arc<dyn Provider<Ethereum>>> {
     let ws_url = ws_url.to_string();
@@ -1089,6 +1103,7 @@ async fn connect_head_watch(
                 match HeadWatch::subscribe(
                     sender,
                     Arc::clone(&transport),
+                    chain_id,
                     HeadWatchConfig::default(),
                     tokio::runtime::Handle::current(),
                 )
@@ -1197,14 +1212,20 @@ async fn spawn_head_task(
     // when the boot hosts no WS watch (a poll or pump-owned clock, or a WS connect
     // that failed at boot).
     let mut head_transport: Option<Arc<dyn Provider<Ethereum>>> = None;
-    if let HostedClockBinding::Watch { ws_url, sender, .. } = &clock {
+    if let HostedClockBinding::Watch {
+        ws_url,
+        sender,
+        chain_id,
+        ..
+    } = &clock
+    {
         // The WS connect runs on the DEDICATED runtime, so the alloy pubsub
         // service it spawns lives there too — and is cancelled when teardown
         // drops that runtime; the head watch's driving task spawns on the same
         // runtime for the same reason. The runtime is `Some` here by
         // construction: `mint` builds it exactly when the clock is a WS watch.
         let connected = match pubsub_runtime {
-            Some(runtime) => connect_head_watch(sender.clone(), ws_url, runtime).await,
+            Some(runtime) => connect_head_watch(sender.clone(), ws_url, *chain_id, runtime).await,
             None => None,
         };
         if let Some(transport) = connected {
@@ -1253,7 +1274,7 @@ async fn spawn_head_task(
     let mut last_published = source
         .subscription_mut()
         .head()
-        .map_or(0, |head| head.number);
+        .map_or(0, |head| head.number());
     // The owner keeps its own publisher and transport clones; the edge keeps
     // these and drops them on exit.
     let owned_publisher = publisher.clone();
@@ -1332,7 +1353,7 @@ async fn head_iteration(
                 Ok(Ok(())) => source
                     .subscription_mut()
                     .borrow_and_update()
-                    .map(|head| HeadObservation::Watched(head.number)),
+                    .map(|head| HeadObservation::Watched(head.number())),
                 Ok(Err(_)) => {
                     // The feed can deliver no more heads, so an edge with a provider
                     // of its own reads one instead.
@@ -1376,22 +1397,41 @@ async fn poll_head(
     tokio::time::sleep(HEAD_POLL_TICK).await;
     poll(provider)
         .await
-        .map(|number| HeadObservation::Polled { number, reason })
+        .map(|anchor| HeadObservation::Polled { anchor, reason })
 }
 
-async fn poll(provider: Option<&Arc<AlloyProvider>>) -> Option<u64> {
+/// One polled read resolved to an exact anchor: the number-only
+/// `eth_blockNumber` answer is followed by ONE header read for that height, so
+/// the head this edge publishes carries the block's own hash and parent hash —
+/// never a bare height (ADR-105 D1). An unreadable height (no block there, a
+/// header naming no identity) yields no observation; the edge warns and keeps
+/// polling rather than publishing a number it cannot identify.
+async fn poll(
+    provider: Option<&Arc<AlloyProvider>>,
+) -> Option<degenbot_core::canonical_head::ChainAnchor> {
     let provider = provider?;
-    provider.get_block_number().await.ok()
+    let number = provider.get_block_number().await.ok()?;
+    match provider.get_block_lineage_at(number).await {
+        Ok(Some(anchor)) => Some(anchor),
+        Ok(None) => {
+            tracing::warn!(
+                number,
+                "polled head has no exact chain identity; not published"
+            );
+            None
+        }
+        Err(error) => {
+            tracing::warn!(number, %error, "polled head identity read failed; not published");
+            None
+        }
+    }
 }
 
 /// Publish a polled head into the hub head clock. A polled read carries the
 /// block number only, so the metadata is absent and a consumer that needs the
 /// header's fee falls back to its own read.
-fn publish_polled(sender: &HeadSender, number: u64) {
-    sender.publish(Head {
-        number,
-        metadata: None,
-    });
+fn publish_polled(sender: &HeadSender, anchor: &degenbot_core::canonical_head::ChainAnchor) {
+    sender.publish(Head::new(*anchor, None));
 }
 
 /// Publish an observation into the hub head clock when it is the edge's OWN
@@ -1408,10 +1448,11 @@ fn publish_observed(
 ) -> u64 {
     match observation {
         HeadObservation::Watched(_) => last_published,
-        HeadObservation::Polled { number, .. } => {
+        HeadObservation::Polled { anchor, .. } => {
+            let number = anchor.number();
             if number > last_published {
                 if let Some(sender) = sender {
-                    publish_polled(sender, number);
+                    publish_polled(sender, &anchor);
                 }
                 number
             } else {
@@ -1626,6 +1667,22 @@ mod tests {
         alloy::primitives::B256::repeat_byte(0x11)
     }
 
+    /// A published head at `number`: the fixture states an exact identity, as
+    /// every real publisher does.
+    fn head_of(number: u64) -> Head {
+        Head::new(anchor(number), None)
+    }
+
+    fn anchor(number: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            number,
+            alloy::primitives::B256::with_last_byte(0xaa),
+            alloy::primitives::B256::with_last_byte(0xbb),
+        )
+        .expect("the fixture head names its chain, its hash, and its parent")
+    }
+
     fn txpool_hash() -> alloy::primitives::B256 {
         alloy::primitives::B256::repeat_byte(0x22)
     }
@@ -1675,10 +1732,7 @@ mod tests {
         // head (mint alone spawns nothing).
         hosted.start().await.expect("the pump-owned clock starts");
 
-        sender.publish(Head {
-            number: 42,
-            metadata: None,
-        });
+        sender.publish(head_of(42));
         let fired = fire_rx.recv().await.expect("the edge fired");
         assert_eq!(fired, 42, "the trigger carries the observed head");
     }
@@ -1719,10 +1773,7 @@ mod tests {
             .await
             .expect("second start consumes the same head source");
 
-        pump.publish(Head {
-            number: 7,
-            metadata: None,
-        });
+        pump.publish(head_of(7));
         assert_eq!(first_rx.recv().await, Some(7), "the first edge fires");
         assert_eq!(
             second_rx.recv().await,
@@ -1995,6 +2046,7 @@ mod tests {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2023,6 +2075,7 @@ mod tests {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2062,6 +2115,7 @@ mod tests {
                 ws_url: format!("ws://{addr}"),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2116,6 +2170,7 @@ mod tests {
                 ws_url: "ws://127.0.0.1:9".to_string(),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2186,6 +2241,7 @@ mod tests {
                 ws_url: "ws://127.0.0.1:9".to_string(),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2270,6 +2326,7 @@ mod tests {
                 ws_url,
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -2665,6 +2722,7 @@ mod tests {
                 ws_url: "ws://127.0.0.1:9".to_string(),
                 provider: dead_loopback_poll_provider().await,
                 sender,
+                chain_id: 1,
             }),
             None,
         )
@@ -3041,30 +3099,36 @@ mod tests {
         let (hub, sender) = claimed_hub();
         let mut head = hub.subscribe_head();
 
+        let resolved = anchor(9);
         let published = publish_observed(
             Some(&sender),
             HeadObservation::Polled {
-                number: 9,
+                anchor: resolved,
                 reason: PollReason::SourceClosed,
             },
             0,
         );
         assert_eq!(published, 9, "a polled head advances the high-water mark");
         assert_eq!(
-            head.borrow_and_update().map(|head| head.number),
+            head.borrow_and_update().map(|head| head.number()),
             Some(9),
             "the polled head reaches the hub's readers"
         );
         assert_eq!(
-            head.head().and_then(|head| head.metadata),
+            head.head().map(|head| *head.anchor()),
+            Some(resolved),
+            "a polled head is published with the exact anchor its height resolved to"
+        );
+        assert_eq!(
+            head.head().and_then(|head| head.metadata().copied()),
             None,
-            "a polled read carries the block number only"
+            "a resolved number-only read carries no header facts"
         );
 
         let published = publish_observed(Some(&sender), HeadObservation::Watched(12), published);
         assert_eq!(published, 9, "a watched head is not the edge's own read");
         assert_eq!(
-            head.borrow_and_update().map(|head| head.number),
+            head.borrow_and_update().map(|head| head.number()),
             Some(9),
             "the edge did not write the watched head"
         );
@@ -3072,7 +3136,7 @@ mod tests {
         let published = publish_observed(
             Some(&sender),
             HeadObservation::Polled {
-                number: 9,
+                anchor: resolved,
                 reason: PollReason::StaleWatch,
             },
             published,

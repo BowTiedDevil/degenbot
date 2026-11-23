@@ -119,6 +119,7 @@ mod tests {
     fn batch() -> ResultBatch {
         ResultBatch {
             solve_block: 1,
+            solve_anchor: None,
             timestamp: 0,
             base_fee_per_gas: Some(0),
             gas_used: 0,

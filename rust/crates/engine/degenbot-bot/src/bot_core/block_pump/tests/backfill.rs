@@ -88,8 +88,8 @@ async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
         base_fee_per_gas: Some(1_000_000_001),
         gas_used: 10_000_001,
         gas_limit: 30_000_001,
-        hash: alloy::primitives::B256::ZERO,
-        parent_hash: alloy::primitives::B256::ZERO,
+        hash: super::header_hash(),
+        parent_hash: super::header_parent_hash(),
     }];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
@@ -307,8 +307,8 @@ async fn backfill_with_drain_reinjects_events_present_during_backfill() {
             base_fee_per_gas: None,
             gas_used: 0,
             gas_limit: 0,
-            hash: alloy::primitives::B256::ZERO,
-            parent_hash: alloy::primitives::B256::ZERO,
+            hash: super::header_hash(),
+            parent_hash: super::header_parent_hash(),
         },
     ];
     let combined = stream::iter(live)

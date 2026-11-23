@@ -294,6 +294,7 @@ fn session_event(oracle: &Value, event: &Value) -> SessionEvent {
             // dependency here), so it is built through the batch value.
             let mut batch = ResultBatch {
                 solve_block: event["solve_block"].as_u64().unwrap(),
+                solve_anchor: None,
                 timestamp: 0,
                 base_fee_per_gas: None,
                 gas_used: 0,

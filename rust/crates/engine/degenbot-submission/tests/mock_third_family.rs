@@ -115,7 +115,7 @@ impl MockThirdFamily {
         report
             .send(MockRunReport {
                 nonce: lease.nonce(),
-                ticked_head: head.head().map(|head| head.number),
+                ticked_head: head.head().map(|head| head.number()),
             })
             .expect("run report");
         DriverExit::Stopped
@@ -138,10 +138,16 @@ fn registry() -> Arc<RouteRegistry> {
 }
 
 fn head_event(number: u64) -> Head {
-    Head {
-        number,
-        metadata: None,
-    }
+    Head::new(
+        degenbot_eventhub::ChainAnchor::new(
+            1,
+            number,
+            alloy::primitives::B256::with_last_byte(0xaa),
+            alloy::primitives::B256::with_last_byte(0xbb),
+        )
+        .expect("the fixture head names its chain, its hash, and its parent"),
+        None,
+    )
 }
 
 /// The full lifecycle a real family walks: register -> enable -> run through

@@ -39,6 +39,7 @@ pub mod head;
 pub mod hub;
 pub mod pending;
 
+pub use degenbot_core::canonical_head::ChainAnchor;
 pub use event::{PendingTx, PendingTxSource};
 pub use head::{Head, HeadMetadata, HeadSender, HeadSubscription};
 pub use hub::{AlreadyClaimed, Hub, HubError};

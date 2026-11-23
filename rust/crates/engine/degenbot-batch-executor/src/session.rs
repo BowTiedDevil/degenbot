@@ -1137,7 +1137,8 @@ pub fn batch_work(
     BatchWork {
         rows,
         payloads,
-        current_block: clock.current_block,
+        based_on: batch.solve_anchor,
+        execution_block: clock.current_block,
         base_fee_next: clock.base_fee_next,
         block_timestamp: clock.block_timestamp,
         block_priority_fees: None,
@@ -1173,6 +1174,7 @@ mod tests {
     fn empty_batch(solve_block: u64) -> ResultBatch {
         ResultBatch {
             solve_block,
+            solve_anchor: None,
             timestamp: 0,
             base_fee_per_gas: None,
             gas_used: 0,
@@ -1183,6 +1185,27 @@ mod tests {
             removed: Vec::new(),
             payloads: Default::default(),
             lineage: degenbot_bot::telemetry::BlockLineage::unattached(solve_block),
+        }
+    }
+
+    fn anchor(number: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            number,
+            alloy::primitives::B256::with_last_byte(0xaa),
+            alloy::primitives::B256::with_last_byte(0xbb),
+        )
+        .expect("the fixture solve anchor names its chain, its hash, and its parent")
+    }
+
+    /// An empty batch whose solve resolved the exact anchor of `solve_block` —
+    /// the shape the engine publishes for an anchored solve.
+    fn anchored_batch(solve_block: u64) -> ResultBatch {
+        ResultBatch {
+            solve_anchor: Some(anchor(solve_block)),
+            lineage: degenbot_bot::telemetry::BlockLineage::unattached(solve_block)
+                .with_anchor(anchor(solve_block)),
+            ..empty_batch(solve_block)
         }
     }
 
@@ -1253,7 +1276,7 @@ mod tests {
         fn simulate<'a>(&'a self, work: &'a BatchWork) -> SimFuture<'a, SimStageOutput> {
             let fail_on = self.fail_on;
             let passed = Arc::clone(&self.passed);
-            let block = work.current_block;
+            let block = work.execution_block;
             Box::pin(async move {
                 passed.notify_one();
                 if fail_on == Some(block) {
@@ -1489,7 +1512,7 @@ mod tests {
             vec![5, 20],
             "payloads join in path-id order"
         );
-        assert_eq!(work.current_block, 101);
+        assert_eq!(work.execution_block, 101);
         assert_eq!(work.base_fee_next, 1_041_666_666);
         assert_eq!(work.block_timestamp, 1_700_000_101);
         assert!(work.block_priority_fees.is_none());
@@ -1791,6 +1814,72 @@ mod tests {
             consumer.clock().current_block,
             100,
             "a batch never moves the clock"
+        );
+    }
+
+    /// The batch's solve anchor rides its work beside the consumer clock: an
+    /// interleaved N/N+1 pair keeps two distinct solve identities while both
+    /// are executed at the clock's block (ADR-105 D10).
+    #[test]
+    fn an_interleaved_pair_keeps_its_own_solve_anchor_beside_the_consumer_clock() {
+        let clock = BlockClock {
+            current_block: 101,
+            block_timestamp: 7,
+            base_fee_next: 11,
+        };
+        let n = anchored_batch(100);
+        let n_plus_one = anchored_batch(101);
+        let deployment = degenbot_execution::DeploymentId::new(1);
+        let first = batch_work(&n, &clock, deployment);
+        let second = batch_work(&n_plus_one, &clock, deployment);
+
+        assert_eq!(
+            first.based_on,
+            Some(anchor(100)),
+            "the N work names N's solve block"
+        );
+        assert_eq!(
+            second.based_on,
+            Some(anchor(101)),
+            "the N+1 work names N+1's solve block"
+        );
+        assert_ne!(first.based_on, second.based_on, "never one shared identity");
+        assert_eq!(
+            first.execution_block, 101,
+            "the executor clock is the consumer's block, not the solve's"
+        );
+        assert_eq!(second.execution_block, 101);
+        assert_eq!(
+            first.lineage.anchor(),
+            first.based_on,
+            "the work's lineage references the SAME solve anchor"
+        );
+        assert_eq!(first.lineage.block(), 100);
+    }
+
+    /// The stale-batch policy is unchanged: a behind-the-clock batch is counted
+    /// and still consumed at the clock's block, carrying ITS OWN solve anchor.
+    #[test]
+    fn a_stale_batch_keeps_its_own_solve_anchor_and_the_clock_still_owns_placement() {
+        let clock = BlockClock {
+            current_block: 101,
+            block_timestamp: 7,
+            base_fee_next: 11,
+        };
+        assert!(clock.is_stale(100), "the batch is behind the clock");
+        let work = batch_work(
+            &anchored_batch(100),
+            &clock,
+            degenbot_execution::DeploymentId::new(1),
+        );
+        assert_eq!(
+            work.based_on,
+            Some(anchor(100)),
+            "staleness does not rewrite the solve identity"
+        );
+        assert_eq!(
+            work.execution_block, 101,
+            "and consumption still places the work at the clock's block"
         );
     }
 

@@ -58,9 +58,8 @@
 /// discipline, and the one intentional strengthening).
 //
 // The field names are the settled interface — the pre-cursor engine
-// field names carried over verbatim (GLOSSARY.md "Engine block cursor"); the
-// shared `_block` postfix is the point, not an accident.
-#[expect(clippy::struct_field_names)]
+// field names carried over verbatim (GLOSSARY.md "Engine block cursor"). The
+// solve anchor's exact identity rides beside its block stamp.
 #[derive(Debug, Default)]
 pub(crate) struct BlockCursor {
     /// The solve-anchor stamp: the block the MOST RECENT solve
@@ -71,6 +70,11 @@ pub(crate) struct BlockCursor {
     /// `0` = cold start, no solve yet (the delivery policy's anchored gate
     /// defers candidates while 0).
     results_block: u64,
+    /// The exact anchor of `results_block`, when the solve that stamped it was
+    /// resolved from a state view naming that block. Advanced IN LOCKSTEP with
+    /// `results_block` (`AdvanceSolved` pairs the two), so a batch can read the
+    /// identity of the block it solved without re-deriving it from a height.
+    results_anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
     /// Last block number processed by the engine (a solve cycle or a
     /// finalize boundary). `None` means no block has been processed yet.
     /// Used by the pump to determine the backfill boundary on startup, and
@@ -96,11 +100,12 @@ pub(crate) struct BlockCursor {
 /// instead of per-coordinate accessors, so a reader sees a consistent snapshot
 /// and the derivation of a coordinate (e.g. "anchored") has exactly one home.
 // The `_block` postfix is the settled vocabulary the cursor's coordinates carried
-// before the fold (the same names `BlockCursor` keeps); it is the point, not drift.
-#[expect(clippy::struct_field_names)]
+// before the fold (the same names `BlockCursor` keeps).
 pub(crate) struct BlockCoordinates {
     /// The solve-anchor stamp (`0` = cold start, no solve yet).
     pub(crate) results_block: u64,
+    /// The solve anchor's exact identity, when the stamp's solve resolved one.
+    pub(crate) results_anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
     /// The processed boundary (`None` = nothing processed yet).
     pub(crate) last_processed_block: Option<u64>,
     /// The solved boundary (the finalize one-shot guard's left side).
@@ -167,8 +172,17 @@ impl BlockCursor {
     /// resume boundary is a plain advance, and "never regress" holds by
     /// construction — once a real solve has established a (possibly
     /// higher) anchor, no seed can pull it back.
-    pub(crate) fn advance_solved(&mut self, block: u64) {
-        self.results_block = self.results_block.max(block);
+    pub(crate) fn advance_solved(&mut self, anchor: &crate::bot_core::solve_anchor::SolveAnchor) {
+        let block = anchor.block();
+        if block > self.results_block {
+            self.results_block = block;
+            self.results_anchor = anchor.exact();
+        } else if block == self.results_block {
+            // Same height: a later (or re-branched) stamp may name the block's
+            // identity where the earlier one could not. Never clears a known
+            // anchor — a cold seed does not un-name an identified block.
+            self.results_anchor = anchor.exact().or(self.results_anchor);
+        }
     }
     /// Monotone solved-boundary advance (`last_solved_block`) — the
     /// ADR-006 D4 mid-flight-inherit stamp (a late engine inherits the
@@ -191,6 +205,7 @@ impl BlockCursor {
     pub(crate) const fn coordinates(&self) -> BlockCoordinates {
         BlockCoordinates {
             results_block: self.results_block,
+            results_anchor: self.results_anchor,
             last_processed_block: self.last_processed_block,
             last_solved_block: self.last_solved_block,
             has_logs_this_block: self.has_logs_this_block,

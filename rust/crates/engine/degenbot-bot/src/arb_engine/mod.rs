@@ -257,6 +257,21 @@ pub use degenbot_substrate::BlockMetadata;
 // bot_core. Re-exported so external references keep working (same pattern as
 // BlockMetadata above).
 pub use degenbot_core::block_notification::BlockNotification;
+/// One publish's solve identity: the block the solve anchored at, plus that
+/// block's exact anchor when the state view named it.
+///
+/// One value on purpose: the block stamp and the anchor are ALWAYS read from a
+/// single cursor reading (`BlockCoordinates`) and travel together into the batch
+/// and its lineage, so a caller cannot pair one solve's block with another
+/// solve's hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SolveStamp {
+    /// The solve block (`0` = cold start, no solve yet).
+    pub block: u64,
+    /// The solve block's exact anchor, when the solve resolved one.
+    pub anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
+}
+
 /// Incremental result batch pushed to Python via the result channel.
 ///
 /// Each batch contains only paths that changed since the last batch
@@ -265,6 +280,15 @@ pub use degenbot_core::block_notification::BlockNotification;
 pub struct ResultBatch {
     /// The block number these results were solved for
     pub solve_block: u64,
+    /// The exact anchor of `solve_block`, when the solve resolved it from the
+    /// state view that named that block. `None` only for a batch whose solve had
+    /// no exact identity (a cold-start or registration sweep, or the
+    /// metadata-only batch published before the first anchored solve): a
+    /// candidate is never shipped under a fabricated hash (ADR-105 D1/D10).
+    ///
+    /// The batch's [`Self::lineage`] carries the SAME anchor, built from this
+    /// one value at the publish, so the two can never name different blocks.
+    pub solve_anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
     /// Block timestamp
     pub timestamp: u64,
     /// Base fee per gas (None for pre-EIP-1559 blocks)

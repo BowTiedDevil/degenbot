@@ -204,16 +204,50 @@ impl PartialEq<u64> for Epoch {
 pub struct BlockContext {
     epoch: Epoch,
     metadata: BlockMetadata,
+    anchor: Option<degenbot_core::canonical_head::ChainAnchor>,
 }
 
 impl BlockContext {
-    /// Mint a context for `epoch` carrying `metadata`.
+    /// Mint a context for `epoch` carrying `metadata` and the block's exact
+    /// anchor.
     #[must_use]
-    pub fn new(epoch: impl Into<Epoch>, metadata: BlockMetadata) -> Self {
+    pub fn new(
+        epoch: impl Into<Epoch>,
+        metadata: BlockMetadata,
+        anchor: degenbot_core::canonical_head::ChainAnchor,
+    ) -> Self {
         Self {
             epoch: epoch.into(),
             metadata,
+            anchor: Some(anchor),
         }
+    }
+
+    /// Mint a context for a block no accepted header named — a historical
+    /// backfill whose identity read was unavailable, a fixture block the session
+    /// never observed.
+    ///
+    /// The coordinate is still fully specified (height + generation); the
+    /// IDENTITY is honestly absent, so nothing downstream can claim a hash for
+    /// this block. A work item minted this way keeps its eligibility (the solve
+    /// still runs) while the batch it may publish carries no solve anchor
+    /// (ADR-105 D1: never a fabricated identity).
+    #[must_use]
+    pub fn without_anchor(epoch: impl Into<Epoch>, metadata: BlockMetadata) -> Self {
+        Self {
+            epoch: epoch.into(),
+            metadata,
+            anchor: None,
+        }
+    }
+
+    /// The block's exact identity — the anchor every downstream item of this
+    /// epoch names (ADR-105 D10). Carried beside the [`Epoch`] so a work item
+    /// states its height, its rewind generation, and its chain identity as one
+    /// value; a present anchor's height IS [`Self::block`].
+    #[must_use]
+    pub const fn anchor(&self) -> Option<&degenbot_core::canonical_head::ChainAnchor> {
+        self.anchor.as_ref()
     }
 
     /// The (block, generation) coordinate.
@@ -243,6 +277,58 @@ impl BlockContext {
     /// generation or races ahead of the current cursor.
     pub const fn ensure_current(&self, current: Epoch) -> Result<Epoch, StaleEpoch> {
         self.epoch.ensure_current(current)
+    }
+}
+
+/// A deterministic exact anchor for `number`, for fixtures only: the hashes are
+/// derived from the height, so no test fabricates a chain fact by hand.
+///
+/// Test/consumer-fixture door (`test-fixtures`), never compiled into a
+/// production build: the anchor states an identity this process never observed,
+/// which is exactly what a fixture needs and exactly what live ingress forbids.
+///
+/// # Panics
+///
+/// Never in practice: the derived hashes are `number + 1` and `number + 2`, so
+/// neither is zero for any `number`.
+#[cfg(any(test, feature = "test-fixtures"))]
+#[expect(
+    clippy::expect_used,
+    reason = "the fixture hashes are non-zero by construction (height + 1, height + 2)"
+)]
+#[must_use]
+pub fn fixture_anchor(number: u64) -> degenbot_core::canonical_head::ChainAnchor {
+    let hash = |offset: u64| {
+        alloy::primitives::B256::from(
+            alloy::primitives::U256::from(number.wrapping_add(offset)).to_be_bytes::<32>(),
+        )
+    };
+    degenbot_core::canonical_head::ChainAnchor::new(1, number, hash(1), hash(2))
+        .expect("fixture hashes are non-zero")
+}
+
+#[cfg(any(test, feature = "test-fixtures"))]
+impl BlockContext {
+    /// A fixture context for `block`: generation zero, default metadata, and
+    /// the deterministic fixture anchor. Fixture-only (see [`fixture_anchor`]).
+    #[must_use]
+    pub fn fixture(block: u64) -> Self {
+        Self::fixture_from(block, BlockMetadata::default())
+    }
+
+    /// A fixture context at `epoch` (its generation preserved), default
+    /// metadata, and the deterministic fixture anchor.
+    #[must_use]
+    pub fn fixture_at(epoch: Epoch) -> Self {
+        Self::fixture_from(epoch, BlockMetadata::default())
+    }
+
+    /// A fixture context for `epoch` carrying `metadata` and the deterministic
+    /// fixture anchor for its block.
+    #[must_use]
+    pub fn fixture_from(epoch: impl Into<Epoch>, metadata: BlockMetadata) -> Self {
+        let epoch = epoch.into();
+        Self::new(epoch, metadata, fixture_anchor(epoch.block()))
     }
 }
 
@@ -339,23 +425,61 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unwrap_used,
+        reason = "the fixture anchor's fields are non-zero"
+    )]
+    fn anchor(number: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            number,
+            alloy::primitives::B256::with_last_byte(0xaa),
+            alloy::primitives::B256::with_last_byte(0xbb),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn context_carries_epoch_and_metadata() {
-        let ctx = BlockContext::new(Epoch::at(101), meta(101_000));
+        let ctx = BlockContext::new(Epoch::at(101), meta(101_000), anchor(101));
         assert_eq!(ctx.epoch(), Epoch::at(101));
         assert_eq!(ctx.block(), 101);
         assert_eq!(ctx.metadata().timestamp, 101_000);
     }
 
     #[test]
+    fn context_carries_the_exact_anchor_beside_the_epoch() {
+        let head = anchor(101);
+        let ctx = BlockContext::new(Epoch::at(101), meta(1), head);
+        assert_eq!(ctx.anchor(), Some(&head));
+        assert_eq!(
+            ctx.anchor()
+                .map(degenbot_core::canonical_head::ChainAnchor::number),
+            Some(ctx.block()),
+            "a context's block and its anchor's height are one answer"
+        );
+    }
+
+    #[test]
+    fn a_context_for_a_block_no_header_named_states_no_identity() {
+        let ctx = BlockContext::without_anchor(77u64, meta(1));
+        assert_eq!(ctx.block(), 77, "the coordinate is fully specified");
+        assert_eq!(
+            ctx.anchor(),
+            None,
+            "the identity is honestly absent — never a fabricated hash"
+        );
+    }
+
+    #[test]
     fn context_from_a_bare_block_seeds_generation_zero() {
-        let ctx = BlockContext::new(43u64, meta(1));
+        let ctx = BlockContext::new(43u64, meta(1), anchor(43));
         assert_eq!(ctx.epoch(), Epoch::at(43));
     }
 
     #[test]
     fn context_staleness_fails_fast() {
-        let ctx = BlockContext::new(Epoch::at(101), meta(1));
+        let ctx = BlockContext::new(Epoch::at(101), meta(1), anchor(101));
         let current = Epoch::at(101).rewind_to(100); // a reorg landed at 100
         assert!(ctx.ensure_current(current).is_err());
     }

@@ -308,10 +308,16 @@ mod tests {
     }
 
     fn head(number: u64) -> Head {
-        Head {
-            number,
-            metadata: None,
-        }
+        Head::new(
+            degenbot_core::canonical_head::ChainAnchor::new(
+                1,
+                number,
+                B256::with_last_byte(0xaa),
+                B256::with_last_byte(0xbb),
+            )
+            .expect("a fixture head names its chain, its hash, and its parent"),
+            None,
+        )
     }
 
     /// Teardown closure: a claimed clock's subscriptions end when every

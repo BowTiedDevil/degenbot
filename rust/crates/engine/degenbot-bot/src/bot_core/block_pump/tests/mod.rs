@@ -20,6 +20,18 @@ use degenbot_substrate::PoolLookup;
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
+/// A fixture header's own hash. Every real `newHeads` header states one, and
+/// the pump's header edge now refuses a zero hash (it would name no block —
+/// ADR-105 D1), so a fixture header states a deterministic non-zero identity.
+fn header_hash() -> alloy::primitives::B256 {
+    alloy::primitives::B256::repeat_byte(0xaa)
+}
+
+/// The fixture header's parent hash — non-zero for the same reason.
+fn header_parent_hash() -> alloy::primitives::B256 {
+    alloy::primitives::B256::repeat_byte(0xbb)
+}
+
 #[cfg(test)]
 impl BlockPump {
     /// Test-only override of the quiesce-estimator parameters —
@@ -503,8 +515,8 @@ fn gap_burst_stream_with_dirty_edge(
                     base_fee_per_gas: Some(1_000_000_001),
                     gas_used: 10_000_001,
                     gas_limit: 30_000_001,
-                    hash: alloy::primitives::B256::ZERO,
-                    parent_hash: alloy::primitives::B256::ZERO,
+                    hash: header_hash(),
+                    parent_hash: header_parent_hash(),
                 }
             } else {
                 WsEvent::Pool(PoolEvent::from_log(make_v2_sync_log(

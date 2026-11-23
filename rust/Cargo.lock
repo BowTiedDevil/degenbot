@@ -2551,6 +2551,7 @@ name = "degenbot-eventhub"
 version = "0.6.0-alpha.20"
 dependencies = [
  "alloy",
+ "degenbot-core",
  "parking_lot 0.13.0",
  "serde_json",
  "thiserror",
