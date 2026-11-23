@@ -8,6 +8,7 @@
 
 pub mod aave_fetch;
 pub mod config_dispatch;
+pub mod evidence;
 pub mod gho_processor;
 pub mod operations;
 pub mod operations_parser;
@@ -16,6 +17,9 @@ pub mod run;
 pub mod transaction_processor;
 pub mod verify;
 
+pub use evidence::{
+    bind_transaction_evidence, EvidenceRefusal, EvidenceRequirement, TransactionEvidence,
+};
 pub use gho_processor::{
     GhoProcessorError, GhoScaledTokenBurnResult, GhoScaledTokenMintResult, GhoUserOperation,
     UnifiedGhoProcessor,

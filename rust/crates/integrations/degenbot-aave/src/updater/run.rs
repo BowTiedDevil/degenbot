@@ -25,7 +25,7 @@ pub use apply::{
     AaveChunkWriteReport,
 };
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
-use process::{group_logs_by_tx, process_chunk_on_conn};
+use process::{group_logs_by_tx, guard_terminal_transaction_identity, process_chunk_on_conn};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
 
 // ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
@@ -238,6 +238,11 @@ pub enum RunError {
     ProcessTx(#[from] ProcessTxError),
     #[error("runtime error: {0}")]
     Runtime(#[from] std::io::Error),
+    /// A chunk log carried no exact coordinate, or the chunk's log set contradicted
+    /// itself. Raised in the FETCH stage — before the chunk's transaction opens — so
+    /// the cursor cannot advance on log evidence the parse could not place.
+    #[error("chunk log identity: {0}")]
+    LogIdentity(#[from] crate::updater::aave_fetch::LogIdentityRefusal),
     #[error("cancelled by cancel flag at chunk boundary")]
     Cancelled,
     #[error("market {0} not found")]
@@ -839,7 +844,7 @@ async fn run_aave_update_driver(
             let extra =
                 fetch_scaled_token_logs(&fetcher, working_start, chunk_end, &new_tokens).await?;
             chunk_fetch_time += fetch_started.elapsed();
-            merge_chunk_log_extension(&mut logs, extra);
+            merge_chunk_log_extension(&mut logs, extra)?;
         }
         // (c) Same-chunk staleness for the discount token: a
         //     `DiscountTokenUpdated` event in tx N sets the new
@@ -884,7 +889,7 @@ async fn run_aave_update_driver(
                 );
             }
             chunk_fetch_time += fetch_started.elapsed();
-            merge_chunk_log_extension(&mut logs, extra);
+            merge_chunk_log_extension(&mut logs, extra)?;
         }
         // (d) Same-chunk endpoint replacement: an `AddressSet` rotation or a
         //     `PriceOracleUpdated` in tx N repoints a fetch endpoint (POOL/
@@ -907,7 +912,7 @@ async fn run_aave_update_driver(
                 fetch_endpoint_replacement_logs(&fetcher, working_start, chunk_end, &replacements)
                     .await?;
             chunk_fetch_time += fetch_started.elapsed();
-            merge_chunk_log_extension(&mut logs, extra);
+            merge_chunk_log_extension(&mut logs, extra)?;
         }
         if chunk_end == last_block {
             guard_terminal_evidence(terminal, &logs)?;
@@ -922,7 +927,10 @@ async fn run_aave_update_driver(
         );
         fetch_span.record("logs.n", u64::try_from(logs.len()).unwrap_or(u64::MAX));
 
-        let tx_groups = group_logs_by_tx(&logs);
+        let tx_groups = group_logs_by_tx(&logs)?;
+        if chunk_end == last_block {
+            guard_terminal_transaction_identity(terminal, &tx_groups)?;
+        }
 
         // 2. The single-transaction chunk write (chunk atomicity). The per-tx
         //    processing (discount pre-pass + config dispatch + parse) borrows

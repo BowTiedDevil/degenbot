@@ -6,8 +6,9 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256};
 use alloy::rpc::types::Log;
+use degenbot_core::canonical_head::{ChainAnchor, TxRef};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
@@ -16,52 +17,158 @@ use super::substrate::{candidate_addresses, ChunkSubstrate};
 use super::{AaveChunkEvent, RunError};
 use crate::config_dispatch::{ChunkContext, ChunkSpan};
 use crate::transaction_processor::process_transaction;
+use crate::updater::aave_fetch::{ChunkLogFacts, LogIdentityRefusal};
 
-/// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
-/// (the fetcher's `(block_number, log_index)` sort is preserved; the grouping
-/// is stable).
+/// One transaction's grouped logs, carrying the exact coordinates the group
+/// occupies: its block (height AND hash) and its transaction index.
+///
+/// The coordinates are the GROUP's identity, not its first log's: a group is one
+/// transaction of one block, and a transaction reference is built from these facts
+/// plus the anchor the caller is filling (ADR-105 D1, D2). Groups are emitted in
+/// first-seen order, which the fetcher's `(block_number, log_index)` sort makes
+/// chronological.
 #[derive(Debug)]
 pub(super) struct TxGroup<'a> {
     tx_hash: [u8; 32],
     block_number: u64,
+    block_hash: B256,
+    transaction_index: u64,
     logs: Vec<&'a Log>,
 }
 
+impl TxGroup<'_> {
+    /// The group's exact transaction position in `anchor`'s block.
+    ///
+    /// # Errors
+    ///
+    /// [`LogIdentityRefusal::AnchorMismatch`] when the group's block is not the
+    /// anchor's — a same-height branch, or a group lifted from another block.
+    pub(super) fn tx_ref(&self, anchor: ChainAnchor) -> Result<TxRef, LogIdentityRefusal> {
+        if anchor.number() != self.block_number || anchor.hash() != self.block_hash {
+            return Err(LogIdentityRefusal::AnchorMismatch {
+                block_number: self.block_number,
+                block_hash: self.block_hash,
+                anchor_number: anchor.number(),
+                anchor_hash: anchor.hash(),
+            });
+        }
+        TxRef::new(anchor, B256::from(self.tx_hash), self.transaction_index).map_err(|_| {
+            LogIdentityRefusal::MissingTransactionHash {
+                block_number: self.block_number,
+            }
+        })
+    }
+}
+
 /// Group a chunk's logs by `transactionHash`, preserving the
-/// `(block_number, log_index)` sort: the events are pre-sorted,
-/// then bucketed by `tx_hash`; the groups are emitted in first-seen order
-/// (sorted by the group's first log's `(block_number, log_index)`, which the
+/// `(block_number, log_index)` sort: the events are pre-sorted, then bucketed by
+/// `tx_hash`; the groups are emitted in first-seen order (chronological, which the
 /// fetcher's sort guarantees).
-pub(super) fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
-    // The fetcher already sorted by (block_number, log_index), so a stable
-    // insertion-order HashMap preserves chronological group order.
+///
+/// Every log must carry its exact position: a log with no transaction hash, no block
+/// hash, no transaction index, or no block-wide log index has no coordinate to group
+/// by, and a group whose logs disagree about their block or transaction is
+/// contradictory evidence. One block-wide `(block_number, log_index)` also names ONE
+/// log for the WHOLE chunk: a second transaction claiming it is contradictory evidence,
+/// while the same log stated twice is the duplicate/order refusal. Every variant is
+/// raised before the chunk's writes begin (ADR-105 D1).
+///
+/// # Errors
+///
+/// One [`LogIdentityRefusal`] per log that cannot be placed, plus the set-consistency
+/// variants ([`LogIdentityRefusal::ConflictingCoordinates`],
+/// [`LogIdentityRefusal::ForeignBlockInGroup`],
+/// [`LogIdentityRefusal::ForeignTransactionInGroup`],
+/// [`LogIdentityRefusal::LogsOutOfOrder`]).
+pub(super) fn group_logs_by_tx(logs: &[Log]) -> Result<Vec<TxGroup<'_>>, LogIdentityRefusal> {
     let mut order: Vec<[u8; 32]> = Vec::new();
     let mut groups: HashMap<[u8; 32], TxGroup<'_>> = HashMap::new();
+    let mut previous: HashMap<[u8; 32], u64> = HashMap::new();
+    let mut claimed: HashMap<(u64, u64), ChunkLogFacts> = HashMap::new();
     for log in logs {
-        let Some(tx_hash_b256) = log.transaction_hash else {
-            // A fetched log always carries its transaction hash; one without a
-            // hash is dropped rather than grouped.
-            continue;
-        };
-        let tx_hash = tx_hash_b256.0;
-        let block_number = log.block_number.unwrap_or(0);
+        let facts = ChunkLogFacts::of(log)?;
+        let position = facts.position;
+        let coordinate = (position.block_number, position.log_index);
+        if let Some(existing) = claimed.get(&coordinate) {
+            if *existing != facts {
+                return Err(LogIdentityRefusal::ConflictingCoordinates {
+                    block_number: position.block_number,
+                    log_index: position.log_index,
+                });
+            }
+            return Err(LogIdentityRefusal::LogsOutOfOrder {
+                previous: position.log_index,
+                actual: position.log_index,
+            });
+        }
+        claimed.insert(coordinate, facts);
+        let tx_hash = position.transaction_hash.0;
         let entry = groups.entry(tx_hash).or_insert_with(|| {
             order.push(tx_hash);
             TxGroup {
                 tx_hash,
-                block_number,
+                block_number: position.block_number,
+                block_hash: position.block_hash,
+                transaction_index: position.transaction_index,
                 logs: Vec::new(),
             }
         });
+        if entry.block_number != position.block_number {
+            return Err(LogIdentityRefusal::ForeignBlockInGroup {
+                block_number: entry.block_number,
+                actual: position.block_number,
+            });
+        }
+        if entry.block_hash != position.block_hash
+            || entry.transaction_index != position.transaction_index
+        {
+            return Err(LogIdentityRefusal::ForeignTransactionInGroup {
+                transaction_hash: position.transaction_hash,
+            });
+        }
+        if let Some(previous_index) = previous.insert(tx_hash, position.log_index) {
+            if position.log_index <= previous_index {
+                return Err(LogIdentityRefusal::LogsOutOfOrder {
+                    previous: previous_index,
+                    actual: position.log_index,
+                });
+            }
+        }
         entry.logs.push(log);
     }
-    order
+    Ok(order
         .into_iter()
         .map(|k| {
             #[expect(clippy::expect_used)] // `order` yields group keys known to `groups`
             groups.remove(&k).expect("present in order")
         })
-        .collect()
+        .collect())
+}
+
+/// Prove every group emitted at `terminal`'s height belongs to the terminal anchor's
+/// own block, so each one states an exact transaction position under the run's
+/// resolved anchor rather than a height that could have been re-resolved.
+///
+/// This is the per-transaction face of the terminal fence: the height's LOGS are
+/// already checked against the anchor (`place_logs_at`), and this check extends that
+/// identity to the transactions the parsed chunk is about to write, before any of it
+/// touches the database.
+///
+/// # Errors
+///
+/// [`LogIdentityRefusal::AnchorMismatch`] for a terminal-height group whose block hash
+/// is not the anchor's, or [`LogIdentityRefusal::MissingTransactionHash`] when the
+/// group's transaction cannot be named.
+pub(super) fn guard_terminal_transaction_identity(
+    terminal: ChainAnchor,
+    groups: &[TxGroup<'_>],
+) -> Result<(), LogIdentityRefusal> {
+    for group in groups {
+        if group.block_number == terminal.number() {
+            let _ = group.tx_ref(terminal)?;
+        }
+    }
+    Ok(())
 }
 
 /// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
@@ -445,15 +552,15 @@ mod tests {
     /// Build a minimal `alloy::rpc::types::Log` with the given tx hash,
     /// block number, + log index (the grouping key).
     fn make_tx_log(tx_hash: [u8; 32], block_number: u64, log_index: u64) -> Log {
-        use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+        use alloy::primitives::{Bytes, Log as AlloyLog, B256, U256};
         let inner = AlloyLog::new_unchecked(Address::ZERO, vec![], Bytes::new());
         Log {
             inner,
-            block_hash: None,
+            block_hash: Some(B256::from(U256::from(block_number))),
             block_number: Some(block_number),
             block_timestamp: None,
             transaction_hash: Some(B256::from(tx_hash)),
-            transaction_index: None,
+            transaction_index: Some(0),
             log_index: Some(log_index),
             removed: false,
         }
@@ -569,7 +676,7 @@ mod tests {
     #[test]
     fn group_logs_by_tx_empty_returns_empty() {
         let logs: Vec<Log> = vec![];
-        let groups = group_logs_by_tx(&logs);
+        let groups = group_logs_by_tx(&logs).expect("an empty chunk has no log to refuse");
         assert!(groups.is_empty());
     }
 
@@ -581,7 +688,7 @@ mod tests {
             make_tx_log(tx, 100, 1),
             make_tx_log(tx, 100, 2),
         ];
-        let groups = group_logs_by_tx(&logs);
+        let groups = group_logs_by_tx(&logs).expect("the fixture logs carry exact coordinates");
         assert_eq!(groups.len(), 1, "one tx → one group");
         assert_eq!(groups[0].tx_hash, tx);
         assert_eq!(groups[0].logs.len(), 3);
@@ -603,7 +710,7 @@ mod tests {
             // block 101: tx_c's one log.
             make_tx_log(tx_c, 101, 0),
         ];
-        let groups = group_logs_by_tx(&logs);
+        let groups = group_logs_by_tx(&logs).expect("the fixture logs carry exact coordinates");
         assert_eq!(groups.len(), 3);
         // Chronological order: tx_a (block 100, log 0), tx_b (block 100, log 2),
         // tx_c (block 101, log 0).
@@ -617,17 +724,252 @@ mod tests {
         assert_eq!(groups[2].block_number, 101);
     }
 
+    /// The terminal fence extends to transactions: a group at the anchor's height
+    /// must state an exact position under that anchor, and a same-height foreign
+    /// group is refused before the chunk is written.
     #[test]
-    fn group_logs_by_tx_skips_logs_without_tx_hash() {
-        // A fetched log always carries a tx hash; a hash-less one is dropped,
-        // so only the two hashed logs form a group.
+    fn the_terminal_fence_covers_terminal_height_transactions() {
+        use degenbot_core::canonical_head::ChainAnchor;
+
+        let tx = [0xaa; 32];
+        let logs = vec![make_tx_log(tx, 100, 0)];
+        let groups = group_logs_by_tx(&logs).expect("the fixture log carries its coordinates");
+        let anchor = ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::from(alloy::primitives::U256::from(100u64)),
+            alloy::primitives::B256::repeat_byte(0xaa),
+        )
+        .unwrap();
+
+        assert_eq!(guard_terminal_transaction_identity(anchor, &groups), Ok(()));
+
+        let elsewhere = ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::repeat_byte(0xcd),
+            alloy::primitives::B256::repeat_byte(0xaa),
+        )
+        .unwrap();
+        assert!(matches!(
+            guard_terminal_transaction_identity(elsewhere, &groups).unwrap_err(),
+            crate::updater::aave_fetch::LogIdentityRefusal::AnchorMismatch { .. }
+        ));
+    }
+
+    /// A group's block is its own exact identity: the same-height branch a
+    /// number-keyed grouping cannot see is a refusal, not a misplaced group.
+    #[test]
+    fn a_group_cannot_be_attributed_to_another_block_at_its_height() {
+        use degenbot_core::canonical_head::ChainAnchor;
+
+        let tx = [0xaa; 32];
+        let logs = vec![make_tx_log(tx, 100, 0), make_tx_log(tx, 100, 1)];
+        let groups = group_logs_by_tx(&logs).expect("the fixture logs carry exact coordinates");
+        let group = &groups[0];
+
+        let same_height_other_branch = ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::repeat_byte(0xbb),
+            alloy::primitives::B256::repeat_byte(0xaa),
+        )
+        .unwrap();
+        assert!(matches!(
+            group.tx_ref(same_height_other_branch).unwrap_err(),
+            crate::updater::aave_fetch::LogIdentityRefusal::AnchorMismatch { .. }
+        ));
+
+        let anchor = ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::from(alloy::primitives::U256::from(100u64)),
+            alloy::primitives::B256::repeat_byte(0xaa),
+        )
+        .unwrap();
+        let reference = group.tx_ref(anchor).expect("the group is this block's");
+        assert_eq!(reference.hash(), alloy::primitives::B256::from(tx));
+        assert_eq!(reference.index(), 0);
+        assert_eq!(reference.anchor(), &anchor);
+    }
+
+    /// Two logs claiming one coordinate with different block hashes are
+    /// contradictory evidence inside one chunk: the merge refuses instead of
+    /// de-duplicating a same-height foreign log away.
+    #[test]
+    fn a_conflicting_coordinate_is_not_a_duplicate() {
+        use alloy::primitives::B256;
+
+        let tx = [0xaa; 32];
+        let held = make_tx_log(tx, 100, 7);
+        let mut stranger = held.clone();
+        stranger.block_hash = Some(B256::repeat_byte(0xbb));
+        let mut logs = vec![held];
+
+        assert_eq!(
+            crate::updater::aave_fetch::merge_chunk_log_extension(&mut logs, vec![stranger])
+                .unwrap_err(),
+            crate::updater::aave_fetch::LogIdentityRefusal::ConflictingCoordinates {
+                block_number: 100,
+                log_index: 7,
+            }
+        );
+        assert_eq!(logs.len(), 1, "the held log is untouched");
+    }
+
+    /// One coordinate holds ONE log: a repeat whose content differs is a second log
+    /// claiming the same position, so the merge refuses and leaves the held set
+    /// untouched rather than silently taking the first.
+    #[test]
+    fn mutated_content_at_one_coordinate_is_not_a_duplicate() {
+        let tx = [0xaa; 32];
+        let held = make_tx_log(tx, 100, 7);
+        let mut mutated = held.clone();
+        mutated.inner = alloy::primitives::Log::new_unchecked(
+            Address::repeat_byte(0x42),
+            vec![alloy::primitives::B256::repeat_byte(0x11)],
+            alloy::primitives::Bytes::from(vec![0x01]),
+        );
+        let mut logs = vec![held.clone()];
+
+        assert_eq!(
+            crate::updater::aave_fetch::merge_chunk_log_extension(&mut logs, vec![mutated])
+                .unwrap_err(),
+            crate::updater::aave_fetch::LogIdentityRefusal::ConflictingCoordinates {
+                block_number: 100,
+                log_index: 7,
+            }
+        );
+        assert_eq!(logs.len(), 1, "the held log is untouched");
+        assert_eq!(logs[0].address(), held.address());
+    }
+
+    /// A removed log is not canonical evidence: it describes a log the chain no longer
+    /// states, so it has no position and is refused at the coordinate seam — before
+    /// grouping, merging, or any write.
+    #[test]
+    fn a_removed_log_has_no_coordinate() {
+        use crate::updater::aave_fetch::{ChunkLogPosition, LogIdentityRefusal};
+
+        let tx = [0xaa; 32];
+        let mut log = make_tx_log(tx, 100, 7);
+        log.removed = true;
+
+        assert_eq!(
+            ChunkLogPosition::of(&log).unwrap_err(),
+            LogIdentityRefusal::RemovedLog {
+                block_number: 100,
+                log_index: 7,
+            }
+        );
+        assert_eq!(
+            group_logs_by_tx(&[log]).unwrap_err(),
+            LogIdentityRefusal::RemovedLog {
+                block_number: 100,
+                log_index: 7,
+            }
+        );
+    }
+
+    /// The same log answered twice is one log: the exact coordinate collapses it.
+    #[test]
+    fn an_answered_twice_log_is_one_log() {
+        let tx = [0xaa; 32];
+        let mut logs = vec![make_tx_log(tx, 100, 7)];
+
+        crate::updater::aave_fetch::merge_chunk_log_extension(
+            &mut logs,
+            vec![make_tx_log(tx, 100, 7)],
+        )
+        .expect("an identical coordinate is the same log");
+
+        assert_eq!(logs.len(), 1);
+    }
+
+    /// One block-wide index names ONE log in the whole chunk: two transactions
+    /// claiming the same (block, index) is contradictory evidence, and a number-only or
+    /// per-transaction check cannot see it.
+    #[test]
+    fn two_transactions_cannot_claim_one_block_wide_index() {
+        use crate::updater::aave_fetch::LogIdentityRefusal;
+
+        let first = make_tx_log([0xaa; 32], 100, 7);
+        let mut other_transaction = make_tx_log([0xbb; 32], 100, 7);
+        let mut other_block_hash = other_transaction.clone();
+        other_block_hash.block_hash = Some(alloy::primitives::B256::repeat_byte(0xbb));
+
+        for second in [&mut other_transaction, &mut other_block_hash] {
+            let logs = vec![first.clone(), second.clone()];
+            assert_eq!(
+                group_logs_by_tx(&logs).unwrap_err(),
+                LogIdentityRefusal::ConflictingCoordinates {
+                    block_number: 100,
+                    log_index: 7,
+                },
+                "one block-wide index, two claims: {second:?}"
+            );
+        }
+    }
+
+    /// The same log repeated at its own coordinate is still the order refusal: it is
+    /// one transaction claiming one position twice, not two different logs.
+    #[test]
+    fn a_repeated_log_in_one_transaction_is_out_of_order() {
+        use crate::updater::aave_fetch::LogIdentityRefusal;
+
+        let log = make_tx_log([0xaa; 32], 100, 7);
+
+        assert_eq!(
+            group_logs_by_tx(&[log.clone(), log]).unwrap_err(),
+            LogIdentityRefusal::LogsOutOfOrder {
+                previous: 7,
+                actual: 7,
+            }
+        );
+    }
+
+    /// The held set is validated even when no supplemental batch arrives: two logs of
+    /// one coordinate with different content are contradictory evidence, and the merge
+    /// refuses without touching the held logs.
+    #[test]
+    fn a_held_set_conflict_is_refused_without_an_extension() {
+        use crate::updater::aave_fetch::{merge_chunk_log_extension, LogIdentityRefusal};
+
+        let held = make_tx_log([0xaa; 32], 100, 7);
+        let mut stranger = held.clone();
+        stranger.inner = alloy::primitives::Log::new_unchecked(
+            Address::repeat_byte(0x42),
+            vec![alloy::primitives::B256::repeat_byte(0x11)],
+            alloy::primitives::Bytes::from(vec![0x01]),
+        );
+        let mut logs = vec![held.clone(), stranger];
+
+        assert_eq!(
+            merge_chunk_log_extension(&mut logs, Vec::new()).unwrap_err(),
+            LogIdentityRefusal::ConflictingCoordinates {
+                block_number: 100,
+                log_index: 7,
+            }
+        );
+        assert_eq!(logs.len(), 2, "the held set is untouched");
+        assert_eq!(logs[0].address(), held.address());
+    }
+
+    #[test]
+    fn group_logs_by_tx_refuses_logs_without_tx_hash() {
+        // A fetched log always carries a tx hash; one without a hash has no
+        // transaction identity to group by, so the chunk is refused rather than
+        // silently parsed without that log.
         let tx = [0xaa; 32];
         let log_with_tx = make_tx_log(tx, 100, 0);
         let mut log_no_tx = make_tx_log([0x00; 32], 100, 1);
         log_no_tx.transaction_hash = None;
-        let logs = vec![log_with_tx.clone(), log_no_tx, log_with_tx.clone()];
-        let groups = group_logs_by_tx(&logs);
-        assert_eq!(groups.len(), 1, "the no-tx-hash log is skipped");
-        assert_eq!(groups[0].logs.len(), 2);
+        let logs = vec![log_with_tx.clone(), log_no_tx, log_with_tx];
+        assert_eq!(
+            group_logs_by_tx(&logs).unwrap_err(),
+            crate::updater::aave_fetch::LogIdentityRefusal::MissingTransactionHash {
+                block_number: 100,
+            }
+        );
     }
 }

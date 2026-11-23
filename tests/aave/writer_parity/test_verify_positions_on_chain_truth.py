@@ -77,6 +77,9 @@ _A_WETH = "0x" + "77" * 20
 _V_WETH = "0x" + "88" * 20
 _SENDER = "0x" + "e4" * 20
 _TX_SUPPLY = "0x" + b"s1".rjust(32, b"\x00").hex()
+# Each transaction's OWN position in FIXTURE_BLOCK: one index per transaction,
+# however many logs it emitted (the chunk's log set must state exact identity).
+_TX_SUPPLY_INDEX = 1
 
 # Post-supply, SENDER's on-chain scaled balance = _AMOUNT; the liquidity
 # index at supply-block = _INDEX (matches the Mint event's index + the
@@ -146,6 +149,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -159,6 +163,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -171,6 +176,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     return logs
@@ -392,6 +398,7 @@ _A_DAI = "0x" + "33" * 20
 _V_DAI = "0x" + "44" * 20
 _LIQUIDATOR = "0x" + "f1" * 20
 _TX_LIQ = "0x" + b"s2".rjust(32, b"\x00").hex()
+_TX_LIQ_INDEX = 2
 
 
 def _liq_eth_call_responses() -> dict[str, str]:
@@ -450,6 +457,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             amount=_SUPPLY_UNDERLYING,
             log_index=li,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -462,6 +470,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             index=_INDEX,
             log_index=li,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -473,6 +482,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             value=_SUPPLY_UNDERLYING,
             log_index=li,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -496,6 +506,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             value=_LIQ_BURN_SCALED,
             log_index=li,
             tx_hash=_TX_LIQ,
+            tx_index=_TX_LIQ_INDEX,
         )
     )
     li += 1
@@ -509,6 +520,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             index=_LIQ_INDEX,
             log_index=li,
             tx_hash=_TX_LIQ,
+            tx_index=_TX_LIQ_INDEX,
         )
     )
     li += 1
@@ -523,6 +535,7 @@ def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
             receive_a_token=True,
             log_index=li,
             tx_hash=_TX_LIQ,
+            tx_index=_TX_LIQ_INDEX,
         )
     )
     return logs

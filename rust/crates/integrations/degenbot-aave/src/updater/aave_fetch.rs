@@ -27,7 +27,7 @@
 //! synchronous; the orchestrator calls it after grouping, per tx, on the
 //! in-memory tx-bundle (no extra RPC).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
@@ -424,36 +424,274 @@ pub async fn fetch_aave_chunk_logs(
 /// `LogFetcher::fetch_logs_chunked` per-batch ordering contract. Exposed so
 /// the orchestrator can re-sort an appended batch (e.g. when a
 /// `ReserveInitialized`-derived synthetic event needs interleaving).
+///
+/// The sort states no block fact: a log missing its height or index orders by the
+/// absence itself (`None` first), never by a fabricated zero. Whether a log HAS an
+/// exact position is `ChunkLogPosition::of`'s answer, and a consumer that must place
+/// a log at an exact coordinate asks there (ADR-105 D1, D2).
 pub fn sort_logs_by_block_and_index(logs: &mut [Log]) {
-    logs.sort_by_key(|log| (log.block_number.unwrap_or(0), log.log_index.unwrap_or(0)));
+    logs.sort_by(|left, right| {
+        left.block_number
+            .cmp(&right.block_number)
+            .then(left.log_index.cmp(&right.log_index))
+    });
 }
 
-/// Merge a supplemental fetch batch into the chunk's log set: de-duplicate by
-/// `(block_number, log_index)` against `logs`, extend, and restore the
-/// chronological sort. The ONE merge seam for every same-chunk supplemental
-/// fetch (scaled tokens, stkAAVE, endpoint replacements).
-pub fn merge_chunk_log_extension(logs: &mut Vec<Log>, extra: Vec<Log>) {
-    if extra.is_empty() {
-        return;
-    }
-    let existing: HashSet<(u64, u64)> = logs
-        .iter()
-        .filter_map(|l| Some((l.block_number?, l.log_index?)))
-        .collect();
-    let fresh: Vec<Log> = extra
-        .into_iter()
-        .filter(|l| {
-            !existing.contains(&(
-                l.block_number.unwrap_or(u64::MAX),
-                l.log_index.unwrap_or(u64::MAX),
-            ))
+/// A chunk log's exact coordinates: the block and transaction it belongs to, plus
+/// its block-wide `logIndex`.
+///
+/// A `(block_number, log_index)` pair is not identity: two branches at one height
+/// share a height, two transactions in one block share a log range, and a log with
+/// neither fact has no coordinate at all. Every fact here is carried by the log
+/// itself, so a filtered fetch that omits one has no position — a refusal, never a
+/// default (ADR-105 D1, D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChunkLogPosition {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub transaction_hash: B256,
+    pub transaction_index: u64,
+    pub log_index: u64,
+}
+
+impl ChunkLogPosition {
+    /// The exact position `log` was emitted at.
+    ///
+    /// # Errors
+    ///
+    /// One [`LogIdentityRefusal`] per fact the log does not carry.
+    pub fn of(log: &Log) -> Result<Self, LogIdentityRefusal> {
+        let Some(block_number) = log.block_number else {
+            return Err(LogIdentityRefusal::MissingBlockNumber);
+        };
+        let Some(block_hash) = log.block_hash else {
+            return Err(LogIdentityRefusal::MissingBlockHash { block_number });
+        };
+        let Some(transaction_hash) = log.transaction_hash else {
+            return Err(LogIdentityRefusal::MissingTransactionHash { block_number });
+        };
+        let Some(transaction_index) = log.transaction_index else {
+            return Err(LogIdentityRefusal::MissingTransactionIndex {
+                block_number,
+                transaction_hash,
+            });
+        };
+        let Some(log_index) = log.log_index else {
+            return Err(LogIdentityRefusal::MissingLogIndex {
+                block_number,
+                transaction_hash,
+            });
+        };
+        if log.removed {
+            return Err(LogIdentityRefusal::RemovedLog {
+                block_number,
+                log_index,
+            });
+        }
+        Ok(Self {
+            block_number,
+            block_hash,
+            transaction_hash,
+            transaction_index,
+            log_index,
         })
-        .collect();
+    }
+}
+
+/// One coordinate's log, stated in full: the exact position PLUS the facts that make
+/// it that log rather than another.
+///
+/// The coordinate alone cannot decide whether a repeated answer is the same log: two
+/// logs of one block and one index with different emitters, topics, or data are two
+/// logs claiming one position, which is contradictory evidence rather than a duplicate
+/// to drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChunkLogFacts {
+    pub(crate) position: ChunkLogPosition,
+    address: Address,
+    topics: Vec<B256>,
+    data: Bytes,
+    removed: bool,
+}
+
+impl ChunkLogFacts {
+    pub(crate) fn of(log: &Log) -> Result<Self, LogIdentityRefusal> {
+        Ok(Self {
+            position: ChunkLogPosition::of(log)?,
+            address: log.address(),
+            topics: log.topics().to_vec(),
+            data: log.data().data.clone(),
+            removed: log.removed,
+        })
+    }
+}
+
+/// Name the refusal for two logs claiming one coordinate: an identical repeat is the
+/// duplicate/order refusal (one log stated twice), while differing facts are two logs
+/// fighting over one position, which is contradictory evidence.
+fn conflict_or_duplicate(existing: &ChunkLogFacts, claimed: &ChunkLogFacts) -> LogIdentityRefusal {
+    if *existing == *claimed {
+        LogIdentityRefusal::LogsOutOfOrder {
+            previous: claimed.position.log_index,
+            actual: claimed.position.log_index,
+        }
+    } else {
+        LogIdentityRefusal::ConflictingCoordinates {
+            block_number: claimed.position.block_number,
+            log_index: claimed.position.log_index,
+        }
+    }
+}
+
+/// Why a chunk log has no exact coordinate, or why a chunk's log set contradicts
+/// itself.
+///
+/// Every variant is a deterministic statement about the evidence: retrying the same
+/// fetch cannot change it, so a chunk that raises one must fail before its cursor
+/// advances rather than dropping the log or defaulting its position to zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LogIdentityRefusal {
+    /// The log names no block height, so it belongs to no block.
+    #[error("a chunk log names no block number")]
+    MissingBlockNumber,
+    /// The log names no block hash: a height alone cannot distinguish a same-height
+    /// branch.
+    #[error("the chunk log at block {block_number} names no block hash")]
+    MissingBlockHash {
+        /// The height the log claims.
+        block_number: u64,
+    },
+    /// The log names no transaction, so it has no transaction identity.
+    #[error("the chunk log at block {block_number} names no transaction hash")]
+    MissingTransactionHash {
+        /// The height the log claims.
+        block_number: u64,
+    },
+    /// The log names no transaction index, so its transaction has no position in the
+    /// block.
+    #[error("transaction {transaction_hash} of block {block_number} names no index")]
+    MissingTransactionIndex {
+        /// The height the transaction is in.
+        block_number: u64,
+        /// The transaction the log claims.
+        transaction_hash: B256,
+    },
+    /// The log names no block-wide index, so it has no position within its block.
+    #[error("transaction {transaction_hash} of block {block_number} has a log with no index")]
+    MissingLogIndex {
+        /// The height the transaction is in.
+        block_number: u64,
+        /// The transaction the log claims.
+        transaction_hash: B256,
+    },
+    /// Two different logs claim one coordinate: the chunk's own log set contains
+    /// contradictory evidence (a same-height branch, or two transactions reported at
+    /// one position).
+    #[error("log {log_index} of block {block_number} is claimed by two different logs")]
+    ConflictingCoordinates {
+        /// The height both logs claim.
+        block_number: u64,
+        /// The block-wide index both logs claim.
+        log_index: u64,
+    },
+    /// The log is reported as removed: it describes a log the chain no longer states,
+    /// so it has no coordinate to place and cannot enter a chunk's evidence.
+    #[error("the chunk log at block {block_number} index {log_index} is removed")]
+    RemovedLog {
+        /// The height the log claims.
+        block_number: u64,
+        /// The block-wide index the log claims.
+        log_index: u64,
+    },
+    /// The log's own block is not the block a group claims.
+    #[error("a group of block {block_number} holds a log of block {actual}")]
+    ForeignBlockInGroup {
+        /// The group's height.
+        block_number: u64,
+        /// The log's height.
+        actual: u64,
+    },
+    /// The log's transaction is not the transaction a group claims.
+    #[error("a group of transaction {transaction_hash} holds a log of another transaction")]
+    ForeignTransactionInGroup {
+        /// The group's transaction hash.
+        transaction_hash: B256,
+    },
+    /// The group's logs do not ascend by block-wide index.
+    #[error("a group's log index {actual} does not follow {previous}")]
+    LogsOutOfOrder {
+        /// The index of the log before it.
+        previous: u64,
+        /// The offending index.
+        actual: u64,
+    },
+    /// The group's block is not the anchor the caller is attributing it to: the
+    /// coordinates cannot become a transaction reference of that block.
+    #[error(
+        "block {block_number} hashes to {block_hash}, but the anchor is block {anchor_number} {anchor_hash}"
+    )]
+    AnchorMismatch {
+        /// The group's height.
+        block_number: u64,
+        /// The group's block hash.
+        block_hash: B256,
+        /// The anchor's height.
+        anchor_number: u64,
+        /// The anchor's own hash.
+        anchor_hash: B256,
+    },
+}
+
+/// Merge a supplemental fetch batch into the chunk's log set: de-duplicate by exact
+/// coordinates against `logs`, extend, and restore the chronological sort. The ONE
+/// merge seam for every same-chunk supplemental fetch (scaled tokens, stkAAVE,
+/// endpoint replacements).
+///
+/// Identity is the full coordinate — block hash, height, transaction, transaction
+/// index, and block-wide log index — so a supplemental pass that answers a log of a
+/// DIFFERENT block at the same height is contradictory evidence rather than a
+/// duplicate to drop (ADR-105 D1).
+///
+/// # Errors
+///
+/// One [`LogIdentityRefusal`] per log of either side that carries no exact position,
+/// and [`LogIdentityRefusal::ConflictingCoordinates`] when two different logs claim
+/// one coordinate.
+pub fn merge_chunk_log_extension(
+    logs: &mut Vec<Log>,
+    extra: Vec<Log>,
+) -> Result<(), LogIdentityRefusal> {
+    let mut held: HashMap<(u64, u64), ChunkLogFacts> = HashMap::with_capacity(logs.len());
+    for log in logs.iter() {
+        let facts = ChunkLogFacts::of(log)?;
+        let key = (facts.position.block_number, facts.position.log_index);
+        if let Some(existing) = held.get(&key) {
+            return Err(conflict_or_duplicate(existing, &facts));
+        }
+        held.insert(key, facts);
+    }
+    if extra.is_empty() {
+        return Ok(());
+    }
+    let mut fresh = Vec::with_capacity(extra.len());
+    for log in extra {
+        let facts = ChunkLogFacts::of(&log)?;
+        let key = (facts.position.block_number, facts.position.log_index);
+        if let Some(existing) = held.get(&key) {
+            if *existing == facts {
+                continue;
+            }
+            return Err(conflict_or_duplicate(existing, &facts));
+        }
+        held.insert(key, facts);
+        fresh.push(log);
+    }
     if fresh.is_empty() {
-        return;
+        return Ok(());
     }
     logs.extend(fresh);
     sort_logs_by_block_and_index(logs);
+    Ok(())
 }
 
 // ── warm-boot substrate resolution (the chain-current reserve set) ──────

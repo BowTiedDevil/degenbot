@@ -87,6 +87,10 @@ _SENDER = "0x" + "e4" * 20  # mirrors mainnet 0xe4217…
 
 _TX_SUPPLY = "0x" + b"s1".rjust(32, b"\x00").hex()
 _TX_XFER = "0x" + b"x2".rjust(32, b"\x00").hex()  # standalone Transfer + Withdraw
+# Each transaction's OWN position in FIXTURE_BLOCK (one index per transaction,
+# however many logs it emitted). The default-hash ReserveInitialized tx is 0.
+_TX_SUPPLY_INDEX = 1
+_TX_XFER_INDEX = 2
 
 _A_REV = 1
 _V_REV = 1
@@ -125,6 +129,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -138,6 +143,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -150,6 +156,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_SUPPLY,
+            tx_index=_TX_SUPPLY_INDEX,
         )
     )
     li += 1
@@ -168,6 +175,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
+            tx_index=_TX_XFER_INDEX,
         )
     )
     li += 1
@@ -181,6 +189,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
+            tx_index=_TX_XFER_INDEX,
         )
     )
     li += 1
@@ -198,6 +207,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
+            tx_index=_TX_XFER_INDEX,
         )
     )
     li += 1
@@ -212,6 +222,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
+            tx_index=_TX_XFER_INDEX,
         )
     )
     li += 1
@@ -224,6 +235,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=li,
             block=FIXTURE_BLOCK,
             tx_hash=_TX_XFER,
+            tx_index=_TX_XFER_INDEX,
         )
     )
     return logs

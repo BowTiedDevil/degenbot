@@ -84,6 +84,7 @@ _V_WETH = "0x" + "88" * 20  # the variable-debt token
 # Two distinct tx hashes — ReserveInitialized in tx 1, Supply+Mint+Transfer
 # in tx 2 (the ops parser groups logs by transactionHash).
 _TX1 = "0x" + b"r1".rjust(32, b"\x00").hex()  # ReserveInitialized
+_TX2_INDEX = 1  # _TX2's own position in FIXTURE_BLOCK (tx 1 is the default hash)
 _TX2 = "0x" + b"s2".rjust(32, b"\x00").hex()  # Supply + Mint + Transfer
 
 # The revisions the mock RPC reports for the new aToken/vToken (dispatch's
@@ -134,6 +135,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=1,
             block=FIXTURE_BLOCK,
             tx_hash=_TX2,
+            tx_index=_TX2_INDEX,
         ),
         make_scaled_token_mint_log(
             token_address=_A_WETH,
@@ -144,6 +146,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=2,
             block=FIXTURE_BLOCK,
             tx_hash=_TX2,
+            tx_index=_TX2_INDEX,
         ),
         make_erc20_transfer_log(
             token_address=_A_WETH,
@@ -153,6 +156,7 @@ def _build_chunk_logs() -> list[dict[str, object]]:
             log_index=3,
             block=FIXTURE_BLOCK,
             tx_hash=_TX2,
+            tx_index=_TX2_INDEX,
         ),
     ]
 

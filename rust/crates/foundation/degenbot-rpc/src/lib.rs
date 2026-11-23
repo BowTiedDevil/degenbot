@@ -43,6 +43,7 @@ mod rate_limit;
 mod retry_policy;
 pub mod subscription;
 pub mod tick_bootstrap;
+pub mod tx_evidence;
 pub mod txpool_feed;
 
 pub use fees::{fetch_priority_fee_percentiles, BlockPriorityFees};

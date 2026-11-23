@@ -72,12 +72,19 @@ def _make_log(
     block: int,
     log_index: int,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned alloy/web3-shaped `eth_getLogs` entry.
 
     `tx_hash` defaults to a fixed value (the single-tx-group fixture shape);
     pass a distinct hash per tx group for multi-tx-within-chunk fixtures
     (the fetch spec groups logs by `transactionHash`).
+
+    `tx_index` is the transaction's position in the block — ONE index for a
+    transaction however many logs it emitted, never the log's own index. It
+    defaults to 0 (the single-tx fixture shape); a fixture that places several
+    tx groups in one block passes each group its own index, so the log set states
+    an exact transaction identity rather than a log-derived guess.
     """
     tx_hash = tx_hash or "0x" + (b"tx" + b"\x00" * 30).hex()
     return {
@@ -86,7 +93,7 @@ def _make_log(
         "data": data,
         "blockNumber": _hex(block),
         "logIndex": _hex(log_index),
-        "transactionIndex": _hex(log_index),
+        "transactionIndex": _hex(tx_index),
         "transactionHash": tx_hash,
         "blockHash": DEFAULT_BLOCK_HASH,
         "removed": False,
@@ -102,13 +109,13 @@ def make_user_e_mode_set_log(
     tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a UserEModeSet event."""
-    _ = tx_index
     return _make_log(
         address=POOL_ADDRESS.lower(),
         topics=[USER_E_MODE_SET_TOPIC, _pad_address(user_address)],
         data=_u256(category_id),
         block=block,
         log_index=log_index,
+        tx_index=tx_index,
     )
 
 
@@ -532,6 +539,7 @@ def make_upgraded_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for an Upgraded event.
 
@@ -545,6 +553,7 @@ def make_upgraded_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -687,6 +696,7 @@ def make_withdraw_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `Withdraw` event.
 
@@ -709,6 +719,7 @@ def make_withdraw_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -722,6 +733,7 @@ def make_balance_transfer_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for an aToken `BalanceTransfer` event.
 
@@ -745,6 +757,7 @@ def make_balance_transfer_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -758,6 +771,7 @@ def make_supply_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `Supply` event.
 
@@ -786,6 +800,7 @@ def make_supply_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -801,6 +816,7 @@ def make_borrow_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `Borrow` event.
 
@@ -837,6 +853,7 @@ def make_borrow_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -850,6 +867,7 @@ def make_repay_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `Repay` event.
 
@@ -867,6 +885,7 @@ def make_repay_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -892,6 +911,7 @@ def make_liquidation_call_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a Pool `LiquidationCall` event.
 
@@ -924,6 +944,7 @@ def make_liquidation_call_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -938,6 +959,7 @@ def make_scaled_token_mint_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a variableDebtToken `Mint` event.
 
@@ -953,6 +975,7 @@ def make_scaled_token_mint_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -967,6 +990,7 @@ def make_scaled_token_burn_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a variableDebtToken `Burn` event.
 
@@ -982,6 +1006,7 @@ def make_scaled_token_burn_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -994,6 +1019,7 @@ def make_erc20_transfer_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a plain ERC20 `Transfer` event.
 
@@ -1009,6 +1035,7 @@ def make_erc20_transfer_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -1034,6 +1061,7 @@ def make_staked_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a stkAAVE `Staked` event."""
     return _make_log(
@@ -1047,6 +1075,7 @@ def make_staked_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
 
 
@@ -1058,6 +1087,7 @@ def make_redeem_log(
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
     tx_hash: str | None = None,
+    tx_index: int = 0,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for a stkAAVE `Redeem` event."""
     return _make_log(
@@ -1071,4 +1101,5 @@ def make_redeem_log(
         block=block,
         log_index=log_index,
         tx_hash=tx_hash,
+        tx_index=tx_index,
     )
