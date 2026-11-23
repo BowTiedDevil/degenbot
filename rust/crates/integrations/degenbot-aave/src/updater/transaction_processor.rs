@@ -147,6 +147,22 @@ impl<'a> DeltaSink<'a> {
         &self.deltas
     }
 
+    /// Open one operation's reduction unit at its anchor: the operation stream
+    /// is forward-only even though one operation's legs and the configuration
+    /// effects around it may sit at earlier logs than its anchor.
+    pub(crate) fn begin_operation(&mut self, anchor: LogRef) -> Result<(), ProcessTxError> {
+        self.view.begin_operation(anchor)?;
+        Ok(())
+    }
+
+    /// Advance the view by a delta this sink did not emit (a configuration
+    /// delta of the same transaction), so the operations that follow its
+    /// position read the state it established.
+    pub(crate) fn advance_view(&mut self, delta: &CanonicalDelta) -> Result<(), ProcessTxError> {
+        self.view.apply(delta)?;
+        Ok(())
+    }
+
     pub(crate) fn into_deltas(self) -> Vec<CanonicalDelta> {
         self.deltas
     }
@@ -219,6 +235,13 @@ impl<'a> DeltaSink<'a> {
             DeltaEffect::GhoRefreshDiscount { position_id } => {
                 reduce_gho_refresh(self.view, position_id, source, generation)?
             }
+            DeltaEffect::StkAaveBalanceObserved { .. }
+            | DeltaEffect::GhoDiscountRefreshed { .. }
+            | DeltaEffect::Configuration(_) => {
+                return Err(ProcessTxError::Deferred(
+                    "a non-operation effect reached the operation reducer".to_string(),
+                ))
+            }
         };
         self.view.apply(&delta)?;
         self.deltas.push(delta);
@@ -267,6 +290,7 @@ pub fn process_transaction(
     discounts: &HashMap<Address, U256>,
     substrate: &mut ChunkSubstrate,
     view: &mut ProjectionView,
+    configuration_deltas: &[CanonicalDelta],
 ) -> Result<Vec<CanonicalDelta>, ProcessTxError> {
     let mut parser = TransactionOperationsParser::new(
         market_id,
@@ -303,7 +327,24 @@ pub fn process_transaction(
     // advanced by each delta), so an event explicitly at a later position reads
     // what the earlier one established — never a pre-transaction snapshot.
     let mut out = DeltaSink::new(*evidence.tx(), view);
+    // The transaction's configuration deltas were reduced and persisted as
+    // their events were dispatched (that order is what a configuration
+    // resolver's own read-your-own-writes needs), but the VIEW advances in
+    // canonical event order: a configuration delta is applied only once the
+    // operations before its position have been reduced, so a same-transaction
+    // upgrade is observed by the operations that follow it and not by the ones
+    // that precede it (ADR-105 D4).
+    let mut next_configuration = 0;
     for op in &sorted_ops {
+        let position = operation_sort_key(op);
+        out.begin_operation(LogRef::new(*evidence.tx(), position))?;
+        while let Some(delta) = configuration_deltas.get(next_configuration) {
+            if delta.source().index() > position {
+                break;
+            }
+            out.advance_view(delta)?;
+            next_configuration += 1;
+        }
         dispatch_operation(
             op,
             market_id,
@@ -314,6 +355,9 @@ pub fn process_transaction(
             &mut out,
             substrate,
         )?;
+    }
+    for delta in &configuration_deltas[next_configuration..] {
+        out.advance_view(delta)?;
     }
     Ok(out.into_deltas())
 }
@@ -496,7 +540,7 @@ fn dispatch_operation(
         OperationType::StkAaveTransfer => {
             // Pre-processed by the orchestrator (the stkAAVE transfers run
             // BEFORE GHO operations for the discount computation); no apply
-            // here. The orchestrator constructs `AaveChunkEvent::StkAaveStaked`
+            // here. The orchestrator constructs `ConfigurationEffect::StkAaveStaked`
             // / `StkAaveRedeem` directly from the decoded ERC20 Transfer.
             Ok(())
         }

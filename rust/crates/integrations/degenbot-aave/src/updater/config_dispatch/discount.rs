@@ -22,11 +22,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::gho_processor::calculate_gho_discount_rate;
+use crate::projection::ConfigurationEffect;
+#[cfg(test)]
 use crate::ray_mul;
-use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::{DbError, DebtPositionRefreshContext, DegenbotDb};
+use degenbot_db::DbError;
+#[cfg(test)]
+use degenbot_db::{DebtPositionRefreshContext, DegenbotDb};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::{Connection, OptionalExtension as _};
 
@@ -37,26 +39,26 @@ use super::{
 };
 
 /// `DiscountPercentUpdated(user, old, new)` →
-/// [`AaveChunkEvent::GhoDiscountPercentUpdated`] (`newDiscountPercent` is
+/// [`ConfigurationEffect::GhoDiscountPercentUpdated`] (`newDiscountPercent` is
 /// topic[2] — the decoder already extracted it).
 pub(super) fn dispatch_discount_percent_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let user_str = checksum(&decoded.user);
     let user_id = ctx
         .substrate_mut()
         .user_id_or_create(conn, market_id, &user_str, 0)?;
-    Ok(AaveChunkEvent::GhoDiscountPercentUpdated {
+    Ok(ConfigurationEffect::GhoDiscountPercentUpdated {
         user_id,
         new_discount_percent: discount_to_i64(decoded.new_discount_percent),
     })
 }
 
 /// Discount-token (stkAAVE) ERC20 `Transfer(from, to, value)` →
-/// [`AaveChunkEvent::StkAaveTransfer`] — the canonical + only stkAAVE
+/// [`ConfigurationEffect::StkAaveTransfer`] — the canonical + only stkAAVE
 /// balance-mutation channel. Mirrors `stkaave.process_stk_aave_transfer_event`
 /// EXACTLY: processes EVERY Transfer event (including both zero-leg arms),
 /// treating `from == ZERO_ADDRESS` / `to == ZERO_ADDRESS` as a half-event
@@ -81,7 +83,7 @@ pub(super) fn dispatch_discount_percent_updated(
 pub(super) async fn dispatch_stk_aave_transfer(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let block_number = ctx.block_number();
     let conn = ctx.conn();
@@ -138,10 +140,13 @@ pub(super) async fn dispatch_stk_aave_transfer(
     // Python's `get_or_init_stk_aave_balance` at `block_number - 1` (without
     // it, an apply would treat `NULL` as zero and omit the pre-event on-chain
     // balance). No-op when the column is already populated.
+    let provider = ctx.provider().clone();
     if let Some(uid) = from_user_id {
         backfill_user_stk_aave_balance_if_none(
-            ctx.provider(),
+            ctx,
+            &provider,
             conn,
+            market_id,
             uid,
             block_number,
             discount_token,
@@ -150,8 +155,10 @@ pub(super) async fn dispatch_stk_aave_transfer(
     }
     if let Some(uid) = to_user_id {
         backfill_user_stk_aave_balance_if_none(
-            ctx.provider(),
+            ctx,
+            &provider,
             conn,
+            market_id,
             uid,
             block_number,
             discount_token,
@@ -160,7 +167,7 @@ pub(super) async fn dispatch_stk_aave_transfer(
     }
     // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
     // still emitted (counts as processed) but the apply is a no-op.
-    Ok(Some(AaveChunkEvent::StkAaveTransfer {
+    Ok(Some(ConfigurationEffect::StkAaveTransfer {
         from_user_id,
         to_user_id,
         amount: decoded.value,
@@ -175,27 +182,34 @@ pub(super) async fn dispatch_stk_aave_transfer(
 /// the authoritative balance before any current-block events. No-op when the
 /// column is already populated (the apply will mutate the cached value).
 async fn backfill_user_stk_aave_balance_if_none(
+    ctx: &mut ChunkContext<'_>,
     provider: &AlloyProvider,
     conn: &Connection,
+    market_id: i64,
     user_id: i64,
     block_number: u64,
     discount_token: Address,
 ) -> Result<(), ConfigDispatchError> {
-    let row: Option<(String, Option<String>)> = conn
+    let row: Option<String> = conn
         .query_row(
-            "SELECT address, stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+            "SELECT address FROM aave_v3_users WHERE id = ?1",
             [user_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            |r| r.get::<_, String>(0),
         )
         .optional()
         .map_err(DbError::Sqlite)?;
-    let Some((addr_str, balance_str)) = row else {
+    let Some(addr_str) = row else {
         return Err(ConfigDispatchError::DecodeShape(format!(
             "aave_v3_users id={user_id} (backfill target — row vanished)"
         )));
     };
-    // Non-NULL → caller (apply_stk_aave_transfer_*) will use the cached value.
-    if balance_str.is_some() {
+    // The projected balance (not a live probe): a discount-token replacement in
+    // this chunk invalidated it, and the reseed must come from the NEW ledger.
+    let conn = ctx.conn();
+    let projected = ctx
+        .substrate_mut()
+        .user_stk_aave_balance(conn, market_id, &addr_str)?;
+    if matches!(projected, Some(Some(_))) {
         return Ok(());
     }
     let user_addr: Address = addr_str.parse().map_err(|_| {
@@ -209,7 +223,7 @@ async fn backfill_user_stk_aave_balance_if_none(
         block_number.saturating_sub(1),
     )
     .await?;
-    DegenbotDb::set_user_stk_aave_balance_on_conn(conn, user_id, balance)?;
+    ctx.push_observation(user_id, balance);
     Ok(())
 }
 
@@ -238,7 +252,7 @@ async fn read_stk_aave_balance(
         })
 }
 
-/// `DiscountTokenUpdated(old, new)` → [`AaveChunkEvent::GhoDiscountTokenUpdated`].
+/// `DiscountTokenUpdated(old, new)` → [`ConfigurationEffect::GhoDiscountTokenUpdated`].
 ///
 /// # Emitter-validation guard
 ///
@@ -251,7 +265,7 @@ async fn read_stk_aave_balance(
 pub(super) fn dispatch_discount_token_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     // The GHO asset through the ctx-owned always-fresh accessor — the guard
     // below compares against the just-linked `v_token_address` (a same-tx
     // `ReserveInitialized` at an earlier logIndex is visible), never a per-tx
@@ -263,14 +277,14 @@ pub(super) fn dispatch_discount_token_updated(
     if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
     }
-    Ok(Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+    Ok(Some(ConfigurationEffect::GhoDiscountTokenUpdated {
         gho_token_id: g.id,
         new_discount_token: Some(checksum(&decoded.new_discount_token)),
     }))
 }
 
 /// `DiscountRateStrategyUpdated(old, new)` →
-/// [`AaveChunkEvent::GhoDiscountRateStrategyUpdated`].
+/// [`ConfigurationEffect::GhoDiscountRateStrategyUpdated`].
 ///
 /// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
 /// its docs; the chain-wide fetch + the emitter-address guard apply
@@ -278,14 +292,14 @@ pub(super) fn dispatch_discount_token_updated(
 pub(super) fn dispatch_discount_rate_strategy_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let Some(g) = ctx.gho_asset()? else {
         return Ok(None);
     };
     if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
         return Ok(None);
     }
-    Ok(Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+    Ok(Some(ConfigurationEffect::GhoDiscountRateStrategyUpdated {
         gho_token_id: g.id,
         new_strategy: Some(checksum(&decoded.new_strategy)),
     }))
@@ -315,6 +329,7 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 ///
 /// Returns an empty map when there's no GHO vToken (`gho_vtoken_address` is
 /// `None`) or the revision couldn't be resolved.
+#[expect(clippy::too_many_arguments)]
 pub(super) async fn build_discount_snapshot(
     provider: &AlloyProvider,
     tx_logs: &[&alloy::rpc::types::Log],
@@ -323,6 +338,7 @@ pub(super) async fn build_discount_snapshot(
     vtoken_revision: Option<u32>,
     market_id: i64,
     conn: &Connection,
+    substrate: &mut crate::updater::run::substrate::ChunkSubstrate,
 ) -> Result<HashMap<Address, U256>, ConfigDispatchError> {
     use degenbot_decoders::aave_event_decoder::{AAVE_BURN_TOPIC, AAVE_MINT_TOPIC};
 
@@ -363,9 +379,7 @@ pub(super) async fn build_discount_snapshot(
         }
         // path #1: DB-cache.
         let user_str = checksum(&user);
-        if let Some(db_discount) =
-            DegenbotDb::fetch_user_gho_discount_by_address_on_conn(conn, market_id, &user_str)?
-        {
+        if let Some(db_discount) = substrate.user_gho_discount(conn, market_id, &user_str)? {
             snapshot.insert(user, U256::from(u64::try_from(db_discount).unwrap_or(0)));
             continue;
         }
@@ -437,6 +451,7 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 ///
 /// `discount_token` is the chain's (freshly-per-tx-resolved)
 /// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
+#[cfg(test)]
 pub(crate) async fn refresh_gho_discount(
     provider: &AlloyProvider,
     conn: &Connection,
@@ -477,9 +492,11 @@ pub(crate) async fn refresh_gho_discount(
         ConfigDispatchError::DecodeShape(format!("ray_mul overflow in refresh: {e}"))
     })?;
     // 4. + 5. compute + write gho_discount.
-    let rate = calculate_gho_discount_rate(debt_balance, stk_aave_balance).map_err(|e| {
-        ConfigDispatchError::DecodeShape(format!("calculate_gho_discount_rate: {e}"))
-    })?;
+    #[cfg(test)]
+    let rate = crate::gho_processor::calculate_gho_discount_rate(debt_balance, stk_aave_balance)
+        .map_err(|e| {
+            ConfigDispatchError::DecodeShape(format!("calculate_gho_discount_rate: {e}"))
+        })?;
     DegenbotDb::apply_gho_discount_percent_updated_on_conn(
         conn,
         ctx.user_id,

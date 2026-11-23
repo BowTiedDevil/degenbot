@@ -44,7 +44,7 @@
     {
       "arg_count": 1,
       "rows_changed": 0,
-      "sql": "SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?"
+      "sql": "SELECT name, revision, address FROM aave_v3_contracts WHERE market_id = ?"
     },
     {
       "arg_count": 0,
@@ -54,7 +54,7 @@
     {
       "arg_count": 15,
       "rows_changed": 0,
-      "sql": "SELECT id, address FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "sql": "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     },
     {
       "arg_count": 15,
@@ -72,9 +72,19 @@
       "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     },
     {
-      "arg_count": 0,
+      "arg_count": 3,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
       "rows_changed": 0,
-      "sql": "BEGIN DEFERRED"
+      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
     },
     {
       "arg_count": 3,
@@ -90,6 +100,31 @@
       "arg_count": 2,
       "rows_changed": 1,
       "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
     },
     {
       "arg_count": 3,
@@ -717,36 +752,6 @@
       "sql": "UPDATE aave_v3_assets SET a_token_revision = ? WHERE id = ?"
     },
     {
-      "arg_count": 0,
-      "rows_changed": 0,
-      "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
-    },
-    {
-      "arg_count": 3,
-      "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
-    },
-    {
       "arg_count": 3,
       "rows_changed": 1,
       "sql": "UPDATE aave_v3_debt_positions SET balance = ?, last_index = ? WHERE id = ?"
@@ -755,16 +760,6 @@
       "arg_count": 3,
       "rows_changed": 1,
       "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id FROM aave_v3_debt_positions WHERE user_id = ? AND asset_id = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
     },
     {
       "arg_count": 3,
@@ -814,7 +809,7 @@
     {
       "arg_count": 1,
       "rows_changed": 0,
-      "sql": "SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?"
+      "sql": "SELECT name, revision, address FROM aave_v3_contracts WHERE market_id = ?"
     },
     {
       "arg_count": 0,
@@ -824,7 +819,7 @@
     {
       "arg_count": 6,
       "rows_changed": 0,
-      "sql": "SELECT id, address FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?)"
+      "sql": "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?)"
     },
     {
       "arg_count": 6,
@@ -842,11 +837,6 @@
       "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?)"
     },
     {
-      "arg_count": 0,
-      "rows_changed": 0,
-      "sql": "BEGIN DEFERRED"
-    },
-    {
       "arg_count": 3,
       "rows_changed": 1,
       "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
@@ -864,12 +854,27 @@
     {
       "arg_count": 3,
       "rows_changed": 1,
-      "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
+      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
     },
     {
       "arg_count": 3,
       "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+      "sql": "UPDATE aave_v3_collateral_positions SET balance = ?, last_index = ? WHERE id = ?"
     },
     {
       "arg_count": 2,
@@ -880,16 +885,6 @@
       "arg_count": 3,
       "rows_changed": 1,
       "sql": "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) VALUES (?, ?, ?)"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 0,
-      "sql": "SELECT id FROM aave_v3_collateral_positions WHERE user_id = ? AND asset_id = ?"
-    },
-    {
-      "arg_count": 2,
-      "rows_changed": 1,
-      "sql": "INSERT INTO aave_v3_collateral_positions (user_id, asset_id, balance, last_index) VALUES (?, ?, ?, NULL)"
     },
     {
       "arg_count": 3,

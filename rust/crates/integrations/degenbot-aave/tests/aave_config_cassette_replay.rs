@@ -86,7 +86,7 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 const SPAN_FROM: u64 = 19_091_050;
 const SPAN_TO: u64 = 19_091_059;
 
-/// Independent literal: the exact number of `AaveChunkEvent`s the recorded
+/// Independent literal: the exact number of `ConfigurationEffect`s the recorded
 /// span's chunk apply wrote (the recorder run's report; measured, not
 /// assumed). A fetch/decode/apply regression that adds or drops applied
 /// events fails here before the byte-diff.
@@ -101,7 +101,7 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// statements, so the delta against the seed corpus's 52 is purely the
 /// span's event mix (GHO debt burns + position/user creation + the
 /// USDT/WETH operation events).
-const EXPECTED_LEDGER_STATEMENTS: usize = 60;
+const EXPECTED_LEDGER_STATEMENTS: usize = 57;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -610,4 +610,71 @@ fn aave_config_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump the touched tables");
     drop(conn);
     check_or_regen("db dump", &dump_json, DUMP_GOLDEN_PATH);
+}
+
+/// The lock contract on the configuration-heavy span (ADR-105 D3): the
+/// discount-refresh and revision resolution - the RPC that used to run with the
+/// write lock held - now completes before the transaction opens, so the chunk
+/// samples the process-global round-trip counter unchanged. The chunk must be a
+/// real one carrying both families, not an empty apply.
+#[test]
+fn aave_config_chunk_holds_no_rpc_round_trip_inside_the_write_lock() {
+    let cassette = committed_cassette();
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    assert_eq!(
+        committed_discount_calls(&cassette).len(),
+        1,
+        "the gate's span must carry the recorded discount resolution RPC"
+    );
+    let transport = CassetteReplayTransport::new(cassette);
+    let provider = transport.as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "config-no-rpc-in-lock.db");
+    let sink = Arc::new(ProgressCollector::default());
+    run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed run must commit cleanly");
+
+    let chunks = sink.chunks.lock().unwrap().clone();
+    assert!(!chunks.is_empty(), "the run reports its chunks");
+    let deltas: Vec<&degenbot_aave::projection::CanonicalDelta> =
+        chunks.iter().flat_map(|c| c.deltas.iter()).collect();
+    assert!(
+        deltas.iter().any(|d| matches!(
+            d.effect(),
+            degenbot_aave::projection::DeltaEffect::Configuration(_)
+        )),
+        "the gate must cover the configuration family (the revision/endpoint resolution)"
+    );
+    let served = transport.served_snapshot();
+    assert_eq!(
+        served
+            .per_method
+            .get("eth_call")
+            .map_or(0, |entry| entry.served),
+        1,
+        "the run's discount resolution RPC must have been issued - the resolution \
+         (not an empty chunk) is what the zero below certifies"
+    );
+    for chunk in &chunks {
+        assert_eq!(
+            chunk.rpc_round_trips_in_lock, 0,
+            "chunk {}..{} took {} provider round trip(s) inside the write lock",
+            chunk.chunk_start, chunk.chunk_end, chunk.rpc_round_trips_in_lock
+        );
+    }
 }

@@ -63,7 +63,8 @@
 //!   the pure apply loop, callable on any `&Connection`, fixture-tested with
 //!   atomicity round-trip tests.
 //! - **`run_aave_update` orchestrator** ([`updater::run_aave_update`]): RPC
-//!   fetch + decode into `AaveChunkEvent` + the outer chunk-advance loop over
+//!   fetch + decode into canonical deltas (configuration and operation effects
+//!   alike) + the outer chunk-advance loop over
 //!   the `aave_v3_markets.last_update_block` cursor.
 //!
 //! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam lives

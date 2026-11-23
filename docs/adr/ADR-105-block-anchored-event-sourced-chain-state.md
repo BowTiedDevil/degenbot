@@ -34,6 +34,8 @@ An anchored block snapshot serves external chain reads at one exact block. It ex
 
 A post-block snapshot means post-block state. Its parent snapshot means pre-block state. A `ProjectionView` represents protocol state at an exact transaction/event position by reading preceding state plus ordered deltas. It advances forward without cloning the whole projection.
 
+The pre-commit verification gates follow the same rule: the chain truth they compare against is acquired during resolution, in the same batch shapes the gates already used, and the transaction only compares that truth against the rows it is about to commit. A verification-enabled chunk therefore holds the write lock across no read either, and a divergence still rolls the chunk back.
+
 Every resolver read is classified:
 
 - **Position-insensitive block fact:** later transactions in the block cannot change its interpretation, so the anchored post-block snapshot may serve it.
@@ -53,6 +55,8 @@ Resolution may use anchored chain evidence and read-side projection access outsi
 
 This preserves distinct positions within one transaction: a discount pre-pass may intentionally read transaction-start state while a later operation reads the relationship established by an earlier configuration event.
 
+Identity creation follows the same split. The row identities a delta names — users, positions, ERC-20/asset rows, contract and market rows — are resolved during that out-of-transaction resolution phase, idempotently, so every delta reaching persistence carries settled ids and the write transaction performs no identity lookup of its own. A chunk that rolls back therefore leaves its resolution-created identity rows behind while the cursor does not move; the rows are inert (nothing references them until the retried chunk commits), the retry's lookups return the same ids, and no duplicate row can appear. Retiring such rows is not a recovery obligation.
+
 ### D5 — Receipt ownership is total over the complete receipt
 
 Every receipt log receives exactly one terminal classification: an Aave operation owner, a recognized non-operation role, or `OutOfScope`. Duplicate ownership and an unrecognized log where the protocol model expects coverage are refusals.
@@ -69,7 +73,7 @@ Caches that depend on chain state or entity versions key on the full `ChainAncho
 
 ### D7 — Canonical deltas are the only projection write product
 
-Reduction produces typed, validated `CanonicalDelta`s. `AaveChunkEvent` is the starting vocabulary, migrated to carry exact position and generation references rather than adding a parallel write model.
+Reduction produces typed, validated `CanonicalDelta`s. `AaveChunkEvent` was the starting vocabulary; it migrated into the delta vocabulary's configuration family (`ConfigurationEffect`), whose deltas carry exact position and generation references, and its separate apply entrypoint retired into the one delta writer. One vocabulary, one write product.
 
 Recovery applies retained validated deltas forward. Replay acceptance independently resolves and reduces canonical facts and requires byte-identical deltas. Neither path implements inverse protocol arithmetic or inverse SQL semantics.
 
@@ -184,7 +188,7 @@ The detailed implementation graph lives in ergo epic `YMSQIZ`. Each production c
 | `ScaledTokenEvent` / `Operation` | Transaction-local `log_index` and borrowed raw logs | Public operation shapes do not carry exact chain or call identity |
 | `EventOwnership` | One classification per decoded scaled-token log | Not a total receipt ledger; keyed by `u64`, not `LogRef` |
 | `LiquidationWindow` | Log range after the previous `LiquidationCall` | Proves a window heuristic, not the actual call path |
-| `AaveChunkEvent` | Resolved IDs and precomputed writes; no RPC in its apply core | No chain position, activation provenance, or branch-local generation identity |
+| `AaveChunkEvent` (now `ConfigurationEffect`) | Resolved IDs and precomputed writes; no RPC in its apply core | No chain position, activation provenance, or branch-local generation identity — removed: it is now a delta effect at an exact `LogRef` with an activation-keyed `GenerationRef`, persisted with the operation family |
 | `ChunkSubstrate` | Chunk prefetch plus dirty/write overlay | Strong Projection-view seed, but currently coupled to the chunk DB transaction |
 | `AaveMarketRow.last_update_block` | Optional numeric cursor | Cannot assert which branch is complete or reject an unexpected-parent commit |
 | Pool `ReorgJournal` | Existing forward/restore journal by block | Remains the pool mechanism; needs exact anchor context rather than replacement |
@@ -212,7 +216,7 @@ The detailed implementation graph lives in ergo epic `YMSQIZ`. Each production c
 | `config_dispatch/context.rs::dispatch_transaction` | Transaction-start GHO read, discount pre-pass, config apply, post-config GHO read | Event-interleaved resolve/reduce against Projection views preserves both intentional positions |
 | `verify.rs::verify_*` | `scaledBalanceOf` and `getPreviousIndex` at numeric `chunk_end` | Exact terminal anchor; verification remains a chain-truth check, not a second state implementation |
 
-`run/apply.rs` currently performs no RPC and no ABI decode. `AaveChunkEvent` already carries resolved IDs and precomputed balance deltas to that apply core. This is the primary extraction point for Canonical deltas rather than a reason to invent another write pipeline.
+`run/apply.rs` performs no RPC and no ABI decode, and it is now the chunk's only writer: `apply_canonical_deltas_on_conn` persists the configuration family (`ConfigurationEffect` deltas) and the operation family (scaled-balance, reset, discount-refresh deltas) through one loop.
 
 ## Current DB transaction shape
 
@@ -247,7 +251,7 @@ Alloy Log with optional identities
   → EventOwnership over decoded scaled logs
   → operation builders plus assigned HashSet<u64>
   → Operation with borrowed logs
-  → AaveChunkEvent without source position
+  → AaveChunkEvent without source position (now a positioned delta effect)
   → numeric-cursor relational apply
 ```
 

@@ -2,18 +2,15 @@
 //!
 //! See the crate-level docs for the chunk-atomicity invariant this file enforces.
 //!
-//! # Two write vocabularies, one transaction
+//! # One write vocabulary, one transaction
 //!
-//! - [`apply_canonical_deltas_on_conn`] persists the operation family:
-//!   [`CanonicalDelta`]s, each stating its exact chain position and the
-//!   generation its reduction consumed. It performs no acquisition and no
-//!   identity resolution.
-//! - [`apply_chunk_events_on_conn`] persists the configuration family. This is
-//!   the **ONE legacy configuration seam** (ADR-105 D4): the configuration
-//!   resolver still reads chain state while it runs, and its events still carry
-//!   pre-resolved ids rather than positions. The configuration/generation
-//!   interleaving task retires this seam by moving the resolver onto the
-//!   projection; until then it is the only place `AaveChunkEvent` is written.
+//! [`apply_canonical_deltas_on_conn`] is the chunk's only writer. It persists
+//! [`CanonicalDelta`]s, each stating its exact chain position and the
+//! generation its reduction consumed, for the configuration and operation
+//! families alike. It performs no acquisition and no identity resolution:
+//! resolution is upstream, and the configuration resolver reaches the writer
+//! through the same delta vocabulary the operation family uses (ADR-105 D4,
+//! D7).
 
 use alloy::primitives::{I256, U256};
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
@@ -24,284 +21,10 @@ use rusqlite::Connection;
 use super::substrate::ChunkSubstrate;
 #[cfg(test)]
 use crate::projection::PositionSubject;
-use crate::projection::{CanonicalDelta, DeltaEffect};
+use crate::projection::{CanonicalDelta, ConfigurationEffect, DeltaEffect};
 
-/// One pre-decoded Aave V3 **configuration** event: the legacy configuration
-/// vocabulary (ADR-105 D4's temporary seam; the operation family states
-/// [`CanonicalDelta`]s instead).
-///
-/// Each variant carries the resolved ids/fields the matching
-/// `DegenbotDb::apply_*_on_conn` fn consumes — the RPC fetch + decode + the
-/// `get_or_create_user` / `get_asset_by_token_type` resolution happen in the
-/// chunk's configuration dispatch, which constructs this enum. This core does
-/// NO RPC, NO ABI decode, NO address→id resolution.
-///
-/// # The event→fn dispatch map
-///
-/// | Variant                              | `_on_conn` fn                                    |
-/// |--------------------------------------|---------------------------------------------------|
-/// | `CollateralConfigurationChanged`   | [`apply_collateral_configuration_changed_on_conn`] |
-/// | `EModeCategoryAdded`               | [`apply_e_mode_category_added_on_conn`]            |
-/// | `EModeAssetCategoryChanged`        | [`apply_emode_asset_category_changed_on_conn`]     |
-/// | `AssetCollateralInEModeChanged`    | [`apply_asset_collateral_in_emode_changed_on_conn`] |
-/// | `ReserveUsedAsCollateral`          | [`apply_reserve_used_as_collateral_on_conn`]       |
-/// | `UserEModeSet`                     | [`apply_user_e_mode_set_on_conn`]                  |
-/// | `PriceOracleUpdated`               | [`apply_price_oracle_updated_on_conn`]             |
-/// | `AssetSourceUpdated`               | [`apply_asset_source_updated_on_conn`]             |
-/// | `ReserveDataUpdated`               | [`apply_reserve_data_updated_on_conn`]             |
-/// | `ReserveInitialized`               | [`apply_reserve_initialized_on_conn`]              |
-///
-/// [`apply_collateral_configuration_changed_on_conn`]: DegenbotDb::apply_collateral_configuration_changed_on_conn
-/// [`apply_e_mode_category_added_on_conn`]: DegenbotDb::apply_e_mode_category_added_on_conn
-/// [`apply_emode_asset_category_changed_on_conn`]: DegenbotDb::apply_emode_asset_category_changed_on_conn
-/// [`apply_asset_collateral_in_emode_changed_on_conn`]: DegenbotDb::apply_asset_collateral_in_emode_changed_on_conn
-/// [`apply_reserve_used_as_collateral_on_conn`]: DegenbotDb::apply_reserve_used_as_collateral_on_conn
-/// [`apply_user_e_mode_set_on_conn`]: DegenbotDb::apply_user_e_mode_set_on_conn
-/// [`apply_price_oracle_updated_on_conn`]: DegenbotDb::apply_price_oracle_updated_on_conn
-/// [`apply_asset_source_updated_on_conn`]: DegenbotDb::apply_asset_source_updated_on_conn
-/// [`apply_reserve_data_updated_on_conn`]: DegenbotDb::apply_reserve_data_updated_on_conn
-/// [`apply_reserve_initialized_on_conn`]: DegenbotDb::apply_reserve_initialized_on_conn
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AaveChunkEvent {
-    /// `CollateralConfigurationChanged(asset, config_bitmap)` — decode the
-    /// bitmap + upsert the `aave_v3_asset_configs` row.
-    CollateralConfigurationChanged { asset_id: i64, config_bitmap: U256 },
-    /// `EModeCategoryAdded(id, label, ltv, lt, bonus, price_source)` — upsert
-    /// the `aave_v3_emode_categories` row.
-    EModeCategoryAdded {
-        market_id: i64,
-        category_id: i64,
-        ltv: u64,
-        liquidation_threshold: u64,
-        liquidation_bonus: u64,
-        /// The checksummed oracle address (`None` when the event's address is zero).
-        price_source: Option<String>,
-        label: String,
-    },
-    /// `EModeAssetCategoryChanged(asset, category)` — the older variant:
-    /// unconditionally set `e_mode_category_id` (`None` when `category_id` is 0).
-    EModeAssetCategoryChanged { asset_id: i64, new_category_id: i64 },
-    /// `AssetCollateralInEModeChanged(asset, category, is_collateral)` — the
-    /// newer Aave v3.4+ variant.
-    AssetCollateralInEModeChanged {
-        asset_id: i64,
-        category_id: i64,
-        is_collateral: bool,
-    },
-    /// `ReserveUsedAsCollateral{Enabled,Disabled}(user, asset)` — collapses to
-    /// setting the `enabled` flag on the `aave_v3_user_collateral_configs` row.
-    ReserveUsedAsCollateral {
-        user_id: i64,
-        asset_id: i64,
-        enabled: bool,
-    },
-    /// `UserEModeSet(user, e_mode)` — set the user's `aave_v3_users.e_mode`.
-    UserEModeSet { user_id: i64, e_mode: i64 },
-    /// `PriceOracleUpdated(market, new_oracle)` — register/replace the
-    /// `PRICE_ORACLE` `aave_v3_contracts` row.
-    PriceOracleUpdated {
-        market_id: i64,
-        new_oracle_address: String,
-    },
-    /// `AssetSourceUpdated(asset, source)` — set the
-    /// `aave_v3_assets.price_source` column.
-    AssetSourceUpdated {
-        asset_id: i64,
-        source_address: String,
-    },
-    /// `ReserveDataUpdated(reserve, liquidityRate, stableBorrowRate,
-    /// variableBorrowRate, liquidityIndex, variableBorrowIndex)` — update the
-    /// `aave_v3_assets` row's indices/rates (one of the only two Pool
-    /// events that write DB rows directly). `stableBorrowRate` is deprecated on
-    /// Aave V3 + dropped. Stored raw (27-decimal
-    /// ray as decimal `VARCHAR(78)`); no ray-math in the apply path.
-    ReserveDataUpdated {
-        asset_id: i64,
-        liquidity_rate: U256,
-        variable_borrow_rate: U256,
-        liquidity_index: U256,
-        variable_borrow_index: U256,
-        block_number: u64,
-    },
-    /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken,
-    /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (the
-    /// other direct Pool-event DB writer). The orchestrator
-    /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
-    /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
-    /// `getSourceOfAsset` `price_source`; this enum carries the resolved
-    /// fields (the apply core is pure substrate, no RPC, no address→id
-    /// resolution).
-    ReserveInitialized {
-        market_id: i64,
-        underlying_asset_id: i64,
-        a_token_id: i64,
-        a_token_revision: i64,
-        v_token_id: i64,
-        v_token_revision: i64,
-        /// The checksummed oracle address (`None` when the event's address is zero).
-        price_source: Option<String>,
-        /// When the new asset's underlying IS the GHO token, the GHO token
-        /// row links to the new vToken: `aave_gho_tokens.v_token_id =
-        /// v_token.id` (the FK the discount-event emitter guard resolves via
-        /// `gho_asset.v_token_address`). `Some(gho_token_row_id)` when the link
-        /// should fire; `None` for a regular reserve.
-        gho_link_token_id: Option<i64>,
-    },
-    // ── GHO + stkAAVE + Rewards events ─────────────
-    /// GHO `DiscountPercentUpdated(user, oldPercent, newPercent)` — sets the
-    /// user's `gho_discount` (an `i64` percentage; the Aave protocol caps at
-    /// 100%).
-    GhoDiscountPercentUpdated {
-        /// Pre-resolved `aave_v3_users.id` (the orchestrator called
-        /// `get_or_create_user_on_conn`).
-        user_id: i64,
-        /// The new discount percent.
-        new_discount_percent: i64,
-    },
-    /// GHO `DiscountRateStrategyUpdated(oldStrategy, newStrategy)` — sets the
-    /// chain-unique GHO token row's `v_gho_discount_rate_strategy`.
-    GhoDiscountRateStrategyUpdated {
-        /// Pre-resolved `aave_gho_tokens.id` (chain-unique).
-        gho_token_id: i64,
-        /// The checksummed address of the new discount rate strategy contract,
-        /// or `None` to clear it.
-        new_strategy: Option<String>,
-    },
-    /// GHO `DiscountTokenUpdated(oldToken, newToken)` — sets the GHO token
-    /// row's `v_gho_discount_token`.
-    GhoDiscountTokenUpdated {
-        gho_token_id: i64,
-        new_discount_token: Option<String>,
-    },
-    /// stkAAVE ERC20 `Transfer(from, to, value)`. The canonical + only
-    /// stkAAVE balance-mutation channel: EVERY `Transfer` event on
-    /// `v_gho_discount_token` applies, including both zero-leg arms (the
-    /// `Transfer(0→X)` mint + `Transfer(X→0)` burn). Each side is `None` iff
-    /// the corresponding address is `ZERO_ADDRESS`, and the apply fn skips
-    /// `None` + mutates the other.
-    ///
-    /// A zero-leg `Transfer` is a half-event: the `ZERO_ADDRESS` side is
-    /// skipped and the real user mutated. It must NOT be dedupe-skipped in
-    /// favour of a `Staked`/`Redeem` semantic event — that pairing is not an
-    /// invariant. Some actions emit ONLY the `Transfer(X→0)` event with no
-    /// paired `Redeem`, leaving the sender's `stk_aave_balance` stuck at its
-    /// pre-burn cache value → wrong `calculate_gho_discount_rate` → `(C)`
-    /// refresh over-applies discount → GHO-burn delta overshoots
-    /// `prev_scaled_balance` → the balance goes negative (the overshoot equals
-    /// `discount_scaled`).
-    StkAaveTransfer {
-        /// `aave_v3_users.id` of the sender (decremented by `amount`). `None`
-        /// iff `from == ZERO_ADDRESS` (the mint-from-zero leg) — apply skips
-        /// the from-leg entirely.
-        from_user_id: Option<i64>,
-        /// `aave_v3_users.id` of the recipient (incremented by `amount`).
-        /// `None` iff `to == ZERO_ADDRESS` (the burn-to-zero leg) — apply
-        /// skips the to-leg entirely.
-        to_user_id: Option<i64>,
-        /// The transferred amount.
-        amount: alloy::primitives::U256,
-    },
-    /// `RewardsController` `RewardsClaimed(user, reward, to, claimer,
-    /// claimedAmount)` — **no-op apply**. Rewards claims surface only via
-    /// the stkAAVE token's `Transfer` events; the DB has no rewards table.
-    /// The variant exists for parser routing/event-accounting only.
-    RewardsClaimed {
-        user_id: i64,
-        reward_token_id: i64,
-        claimer_id: i64,
-        claimed_amount: alloy::primitives::U256,
-    },
-    // ── config events ─────────────────────────────────────────
-    /// `Upgraded(implementation)` — emitted by an aToken or vToken proxy. The
-    /// dispatch resolves which asset (by `a_token`/`v_token` address match) +
-    /// RPCs `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` on the new
-    /// implementation. When the upgraded token is the GHO vToken
-    /// and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4), the
-    /// `deprecated_gho_token_id` is `Some(gho_token.id)`: the apply fn then
-    /// clears `v_gho_discount_token` and `v_gho_discount_rate_strategy`, and
-    /// bulk-resets all users' `gho_discount` to 0 (the GHO-discount-deprecation
-    /// side effect — the riskiest piece).
-    Upgraded {
-        /// `aave_v3_assets.id` (the asset whose aToken/vToken was upgraded).
-        asset_id: i64,
-        /// The market the asset belongs to (for the bulk user reset scope).
-        market_id: i64,
-        /// `true` → update `a_token_revision`; `false` → `v_token_revision`.
-        is_a_token: bool,
-        /// The RPC-resolved new revision.
-        new_revision: i64,
-        /// `Some(gho_token_id)` when the GHO discount deprecation fires
-        /// (vToken upgraded to rev ≥ 4 + it's the GHO vToken); `None` otherwise.
-        deprecated_gho_token_id: Option<i64>,
-    },
-    /// `PoolUpdated`/`PoolConfiguratorUpdated(old, new)` — RPC
-    /// `POOL_REVISION()`/`CONFIGURATOR_REVISION()` on the new address → update
-    /// the `aave_v3_contracts` row's `revision` (LOOKED UP BY NAME: "POOL"/
-    /// `POOL_CONFIGURATOR`). **Parity gate:** the apply updates ONLY
-    /// `revision` — NOT `address` (the proxy address is stable; the
-    /// `new_address` is used only for the RPC call).
-    ContractRevisionUpdated {
-        /// The market owning the contract row.
-        market_id: i64,
-        /// `"POOL"` or `"POOL_CONFIGURATOR"` (the contract-row name).
-        contract_name: String,
-        /// The RPC-resolved new revision.
-        new_revision: i64,
-    },
-    /// `PoolDataProviderUpdated(old, new)` — INSERT the `POOL_DATA_PROVIDER`
-    /// contract row when `old == ZERO_ADDRESS`, else UPDATE the existing row's
-    /// `address` (looked up by the old address). Pure decode — no RPC. `old_address` is `None` when the event's old is
-    /// the zero address (the INSERT path).
-    PoolDataProviderUpdated {
-        /// The market owning the contract row.
-        market_id: i64,
-        /// `None` when `old` is the zero address (INSERT path); else the
-        /// checksummed old address (UPDATE-by-old-address path).
-        old_address: Option<String>,
-        /// The checksummed new address.
-        new_address: String,
-    },
-    /// `AddressSet(id, old, new)` + `ProxyCreated(id, proxy, impl)` (the
-    /// id-filtered ones) — INSERT a contract row.
-    /// `AddressSet`: the `id` is ASCII-decoded
-    /// from the bytes32 topic + null-stripped → the `name`; this is the
-    /// `old == ZERO_ADDRESS` registration arm only (the `old != ZERO_ADDRESS`
-    /// rotation routes to [`AaveChunkEvent::ContractAddressChanged`]).
-    /// `revision` is `None`.
-    /// `ProxyCreated`: the `id` is matched
-    /// against the right-padded ASCII bytes32 `b"POOL"`/`b"POOL_CONFIGURATOR"`
-    /// (NOT `keccak256`); the match resolves the `name` + the
-    /// revision-function (`POOL_REVISION`/`CONFIGURATOR_REVISION`). The
-    /// dispatch RPCs the revision on the implementation address; `revision`
-    /// is `Some`.
-    ContractInserted {
-        market_id: i64,
-        name: String,
-        address: String,
-        /// `Some(rev)` for `ProxyCreated` (RPC-fetched); `None` for `AddressSet`
-        /// (no revision RPC).
-        revision: Option<i64>,
-    },
-    /// `AddressSet(id, old, new)` with `old != ZERO_ADDRESS` — the address-
-    /// CHANGE arm. The existing `aave_v3_contracts` row (matched by
-    /// `(market_id, name, old_address)`) has its `address` replaced IN PLACE;
-    /// the row's `revision` is untouched (an address rotation does not change
-    /// it). Same disposition as [`AaveChunkEvent::PoolDataProviderUpdated`]'s
-    /// rotation path + the revision updates — a contract row is mutated in
-    /// place, never superseded by a duplicate.
-    ContractAddressChanged {
-        /// The market owning the contract row.
-        market_id: i64,
-        /// The ASCII-decoded, null-stripped contract name (the event's `id`).
-        name: String,
-        /// The checksummed address the row currently carries.
-        old_address: String,
-        /// The checksummed address the row moves to.
-        new_address: String,
-    },
-}
-
-/// Per-effect apply counts for a chunk's canonical deltas.
+/// Per-effect apply counts for a chunk's canonical deltas — the operation and
+/// configuration families alike.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CanonicalDeltaWriteReport {
     /// Signed scaled-balance movements (aToken/vToken Mint and Burn).
@@ -312,24 +35,11 @@ pub struct CanonicalDeltaWriteReport {
     pub debt_position_reset: usize,
     /// GHO discount-refresh signals (no synchronous write of their own).
     pub gho_refresh_discount: usize,
-}
-
-impl CanonicalDeltaWriteReport {
-    /// Every delta this report counted.
-    #[must_use]
-    pub const fn deltas(&self) -> usize {
-        self.scaled_balance
-            + self.scaled_transfer
-            + self.debt_position_reset
-            + self.gho_refresh_discount
-    }
-}
-
-/// Per-event-type apply counts for a chunk's configuration events (mirrors
-/// `ChunkWriteReport`). The operation family's counts travel in
-/// [`CanonicalDeltaWriteReport`].
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct AaveChunkWriteReport {
+    /// Resolved stkAAVE balance observations persisted for a user.
+    pub stk_aave_balance_observed: usize,
+    /// Post-apply GHO discount recomputations.
+    pub gho_discount_refreshed: usize,
+    /// Configuration changes, by effect variant.
     pub collateral_configuration_changed: usize,
     pub e_mode_category_added: usize,
     pub e_mode_asset_category_changed: usize,
@@ -359,29 +69,60 @@ pub struct AaveChunkWriteReport {
     pub contract_inserted: usize,
     /// The `AddressSet` address-change arm (replace-in-place).
     pub contract_address_changed: usize,
-    /// The operation family's per-effect counts for this chunk.
-    pub canonical: CanonicalDeltaWriteReport,
+}
+
+impl CanonicalDeltaWriteReport {
+    /// Every delta this report counted.
+    #[must_use]
+    pub const fn deltas(&self) -> usize {
+        self.scaled_balance
+            + self.scaled_transfer
+            + self.debt_position_reset
+            + self.gho_refresh_discount
+            + self.stk_aave_balance_observed
+            + self.gho_discount_refreshed
+            + self.collateral_configuration_changed
+            + self.e_mode_category_added
+            + self.e_mode_asset_category_changed
+            + self.asset_collateral_in_emode_changed
+            + self.reserve_used_as_collateral
+            + self.user_e_mode_set
+            + self.price_oracle_updated
+            + self.asset_source_updated
+            + self.reserve_data_updated
+            + self.reserve_initialized
+            + self.gho_discount_percent_updated
+            + self.gho_discount_rate_strategy_updated
+            + self.gho_discount_token_updated
+            + self.stk_aave_transfer
+            + self.rewards_claimed
+            + self.upgraded
+            + self.contract_revision_updated
+            + self.pool_data_provider_updated
+            + self.contract_inserted
+            + self.contract_address_changed
+    }
+}
+
+/// One chunk's write outcome: the per-effect delta counts plus the
+/// end-of-chunk cleanup and stamp facts.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ChunkWriteReport {
+    /// Every effect this chunk applied, by variant.
+    pub deltas: CanonicalDeltaWriteReport,
     /// Zero-balance collateral + debt rows deleted by the end-of-chunk
     /// cleanup (`delete_zero_balance_positions_on_conn`).
     pub zero_balances_cleared: usize,
-    /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
-    /// as the LAST write in the transaction. Always `Some` when this core is
-    /// invoked with a chunk range (no `events.is_empty()` guard here). Set on
-    /// commit.
+    /// The `chunk_end_block` stamped onto
+    /// `aave_v3_markets.last_update_block` as the LAST write in the
+    /// transaction. Set on commit.
     pub stamped_block: Option<u64>,
 }
 
-/// **THE LEGACY CONFIGURATION SEAM** (ADR-105 D4): dispatch each pre-decoded
-/// configuration event to its `DegenbotDb::apply_*_on_conn` writer under the
-/// caller's `Transaction` (borrowed as a `&Connection`), accumulating a
-/// per-type count.
+/// Apply one configuration effect to its `DegenbotDb::apply_*_on_conn` writer
+/// under the caller's `Transaction` (borrowed as a `&Connection`).
 ///
-/// The configuration resolver still reads chain state while it runs and hands
-/// its events over as pre-resolved ids; the configuration/generation
-/// interleaving task moves that resolver onto the projection view and retires
-/// this entrypoint. Nothing new may be added to this vocabulary.
-///
-/// `substrate` is the chunk-level cache: the per-event substrate
+/// `substrate` is the chunk-level cache: the per-effect substrate
 /// reads ride its prefetch + write-overlay, and EVERY cache-visible write
 /// lands an overlay update here — the asset re-binds (`ReserveInitialized`),
 /// the revision bumps (`Upgraded`), the contract revisions, the GHO-row
@@ -389,7 +130,7 @@ pub struct AaveChunkWriteReport {
 /// [`crate::updater::run::substrate`] for the read-your-own-writes
 /// contract the overlay enforces.
 ///
-/// Written per-tx: the chunk loop writes each tx's configuration events to
+/// Written per-tx: the chunk loop writes each tx's configuration deltas to
 /// `conn` BEFORE that tx's parse reads — the two staleness surfaces close
 /// (the prior tx's `Upgraded` revision is visible via read-your-own-writes
 /// within the `SQLite` txn).
@@ -402,17 +143,15 @@ pub struct AaveChunkWriteReport {
 /// Returns [`degenbot_db::DbError`] on any apply failure — the caller drops
 /// the `Transaction` (rollback) on `Err`.
 #[expect(clippy::too_many_lines)]
-pub fn apply_chunk_events_on_conn(
+fn apply_configuration_effect(
     conn: &Connection,
-    _market_id: i64,
-    events: &[AaveChunkEvent],
+    event: &ConfigurationEffect,
     substrate: &mut ChunkSubstrate,
-) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
-    let mut report = AaveChunkWriteReport::default();
-
-    for event in events {
+    report: &mut CanonicalDeltaWriteReport,
+) -> Result<(), degenbot_db::DbError> {
+    {
         match event {
-            AaveChunkEvent::CollateralConfigurationChanged {
+            ConfigurationEffect::CollateralConfigurationChanged {
                 asset_id,
                 config_bitmap,
             } => {
@@ -423,7 +162,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.collateral_configuration_changed += 1;
             }
-            AaveChunkEvent::EModeCategoryAdded {
+            ConfigurationEffect::EModeCategoryAdded {
                 market_id: ev_market_id,
                 category_id,
                 ltv,
@@ -444,7 +183,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.e_mode_category_added += 1;
             }
-            AaveChunkEvent::EModeAssetCategoryChanged {
+            ConfigurationEffect::EModeAssetCategoryChanged {
                 asset_id,
                 new_category_id,
             } => {
@@ -455,7 +194,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.e_mode_asset_category_changed += 1;
             }
-            AaveChunkEvent::AssetCollateralInEModeChanged {
+            ConfigurationEffect::AssetCollateralInEModeChanged {
                 asset_id,
                 category_id,
                 is_collateral,
@@ -468,7 +207,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.asset_collateral_in_emode_changed += 1;
             }
-            AaveChunkEvent::ReserveUsedAsCollateral {
+            ConfigurationEffect::ReserveUsedAsCollateral {
                 user_id,
                 asset_id,
                 enabled,
@@ -476,11 +215,11 @@ pub fn apply_chunk_events_on_conn(
                 substrate.apply_reserve_used_as_collateral(conn, *user_id, *asset_id, *enabled)?;
                 report.reserve_used_as_collateral += 1;
             }
-            AaveChunkEvent::UserEModeSet { user_id, e_mode } => {
+            ConfigurationEffect::UserEModeSet { user_id, e_mode } => {
                 DegenbotDb::apply_user_e_mode_set_on_conn(conn, *user_id, *e_mode)?;
                 report.user_e_mode_set += 1;
             }
-            AaveChunkEvent::PriceOracleUpdated {
+            ConfigurationEffect::PriceOracleUpdated {
                 market_id: ev_market_id,
                 new_oracle_address,
             } => {
@@ -495,14 +234,14 @@ pub fn apply_chunk_events_on_conn(
                 substrate.record_contract_insert(*ev_market_id, "PRICE_ORACLE", None);
                 report.price_oracle_updated += 1;
             }
-            AaveChunkEvent::AssetSourceUpdated {
+            ConfigurationEffect::AssetSourceUpdated {
                 asset_id,
                 source_address,
             } => {
                 DegenbotDb::apply_asset_source_updated_on_conn(conn, *asset_id, source_address)?;
                 report.asset_source_updated += 1;
             }
-            AaveChunkEvent::ReserveDataUpdated {
+            ConfigurationEffect::ReserveDataUpdated {
                 asset_id,
                 liquidity_rate,
                 variable_borrow_rate,
@@ -529,7 +268,7 @@ pub fn apply_chunk_events_on_conn(
                 );
                 report.reserve_data_updated += 1;
             }
-            AaveChunkEvent::ReserveInitialized {
+            ConfigurationEffect::ReserveInitialized {
                 market_id: ev_market_id,
                 underlying_asset_id,
                 a_token_id,
@@ -562,7 +301,7 @@ pub fn apply_chunk_events_on_conn(
                 }
                 report.reserve_initialized += 1;
             }
-            AaveChunkEvent::GhoDiscountPercentUpdated {
+            ConfigurationEffect::GhoDiscountPercentUpdated {
                 user_id,
                 new_discount_percent,
             } => {
@@ -573,7 +312,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.gho_discount_percent_updated += 1;
             }
-            AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+            ConfigurationEffect::GhoDiscountRateStrategyUpdated {
                 gho_token_id,
                 new_strategy,
             } => {
@@ -587,7 +326,7 @@ pub fn apply_chunk_events_on_conn(
                 substrate.mark_gho_dirty();
                 report.gho_discount_rate_strategy_updated += 1;
             }
-            AaveChunkEvent::GhoDiscountTokenUpdated {
+            ConfigurationEffect::GhoDiscountTokenUpdated {
                 gho_token_id,
                 new_discount_token,
             } => {
@@ -602,7 +341,7 @@ pub fn apply_chunk_events_on_conn(
                 substrate.mark_gho_dirty();
                 report.gho_discount_token_updated += 1;
             }
-            AaveChunkEvent::StkAaveTransfer {
+            ConfigurationEffect::StkAaveTransfer {
                 from_user_id,
                 to_user_id,
                 amount,
@@ -615,7 +354,7 @@ pub fn apply_chunk_events_on_conn(
                 )?;
                 report.stk_aave_transfer += 1;
             }
-            AaveChunkEvent::RewardsClaimed {
+            ConfigurationEffect::RewardsClaimed {
                 user_id,
                 reward_token_id,
                 claimer_id,
@@ -631,7 +370,7 @@ pub fn apply_chunk_events_on_conn(
                 report.rewards_claimed += 1;
             }
             // ── config events ─────────────────────────────────
-            AaveChunkEvent::Upgraded {
+            ConfigurationEffect::Upgraded {
                 asset_id,
                 market_id: _,
                 is_a_token,
@@ -655,7 +394,7 @@ pub fn apply_chunk_events_on_conn(
                 }
                 report.upgraded += 1;
             }
-            AaveChunkEvent::ContractRevisionUpdated {
+            ConfigurationEffect::ContractRevisionUpdated {
                 market_id: ev_market_id,
                 contract_name,
                 new_revision,
@@ -669,7 +408,7 @@ pub fn apply_chunk_events_on_conn(
                 substrate.record_contract_revision(*ev_market_id, contract_name, *new_revision);
                 report.contract_revision_updated += 1;
             }
-            AaveChunkEvent::PoolDataProviderUpdated {
+            ConfigurationEffect::PoolDataProviderUpdated {
                 market_id: ev_market_id,
                 old_address,
                 new_address,
@@ -683,7 +422,7 @@ pub fn apply_chunk_events_on_conn(
                 substrate.record_contract_insert(*ev_market_id, "POOL_DATA_PROVIDER", None);
                 report.pool_data_provider_updated += 1;
             }
-            AaveChunkEvent::ContractInserted {
+            ConfigurationEffect::ContractInserted {
                 market_id: ev_market_id,
                 name,
                 address,
@@ -722,7 +461,7 @@ pub fn apply_chunk_events_on_conn(
                 }
                 report.contract_inserted += 1;
             }
-            AaveChunkEvent::ContractAddressChanged {
+            ConfigurationEffect::ContractAddressChanged {
                 market_id: ev_market_id,
                 name,
                 old_address,
@@ -741,8 +480,7 @@ pub fn apply_chunk_events_on_conn(
             }
         }
     }
-
-    Ok(report)
+    Ok(())
 }
 
 /// Persist a chunk's ordered canonical deltas (ADR-105 D4, D7).
@@ -754,8 +492,8 @@ pub fn apply_chunk_events_on_conn(
 /// identity resolution — the deltas already name their settled position rows.
 ///
 /// The written state lands back in the substrate overlay, so a read of a
-/// position this chunk just moved (the legacy configuration seam's, or the next
-/// transaction's) sees exactly what the SQL probe would return.
+/// position or a configuration fact this chunk just wrote (the next
+/// transaction's resolution) sees exactly what the SQL probe would return.
 ///
 /// # Errors
 ///
@@ -870,6 +608,24 @@ pub fn apply_canonical_deltas_on_conn(
             DeltaEffect::GhoRefreshDiscount { position_id: _ } => {
                 report.gho_refresh_discount += 1;
             }
+            DeltaEffect::StkAaveBalanceObserved { user_id, balance } => {
+                DegenbotDb::set_user_stk_aave_balance_on_conn(conn, *user_id, *balance)?;
+                report.stk_aave_balance_observed += 1;
+            }
+            DeltaEffect::GhoDiscountRefreshed {
+                user_id,
+                gho_discount,
+            } => {
+                DegenbotDb::apply_gho_discount_percent_updated_on_conn(
+                    conn,
+                    *user_id,
+                    *gho_discount,
+                )?;
+                report.gho_discount_refreshed += 1;
+            }
+            DeltaEffect::Configuration(effect) => {
+                apply_configuration_effect(conn, effect, substrate, &mut report)?;
+            }
         }
     }
     Ok(report)
@@ -879,11 +635,10 @@ pub fn apply_canonical_deltas_on_conn(
 /// `Transaction` (borrowed as a `&Connection`), then stamp
 /// `aave_v3_markets.last_update_block = chunk_end_block` as the LAST write.
 ///
-/// Thin wrapper over the two apply cores — [`apply_chunk_events_on_conn`] for
-/// the configuration family and [`apply_canonical_deltas_on_conn`] for the
-/// operation family — that then stamps the block. Kept as the batched-apply
-/// entrypoint so the chunk-atomicity tests drive the same order the chunk loop
-/// uses (configuration first, then the transaction's deltas).
+/// Thin wrapper over the ONE delta writer,
+/// [`apply_canonical_deltas_on_conn`] — both families persist through it —
+/// that then stamps the block. Kept as the batched-apply entrypoint so the
+/// chunk-atomicity tests drive the same order the chunk loop uses.
 ///
 /// # The chunk-atomicity invariant
 ///
@@ -900,18 +655,19 @@ pub fn apply_canonical_deltas_on_conn(
 pub fn apply_aave_chunk_writes_on_conn(
     conn: &Connection,
     market_id: i64,
-    events: &[AaveChunkEvent],
     deltas: &[CanonicalDelta],
     chunk_end_block: u64,
-) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
+) -> Result<ChunkWriteReport, degenbot_db::DbError> {
     // The batched entrypoint runs WITHOUT the per-tx substrate prefetch (the
     // chunk loop's `process_chunk_on_conn` owns that): a lazy cache — every
     // read probes SQL once and caches, every apply records its overlay — so
     // the observable DB outcome matches the chunk-loop path byte-for-byte.
     // `chain_id` is never read here (this entrypoint issues no GHO re-resolve).
     let mut substrate = ChunkSubstrate::lazy(0);
-    let mut report = apply_chunk_events_on_conn(conn, market_id, events, &mut substrate)?;
-    report.canonical = apply_canonical_deltas_on_conn(conn, deltas, &mut substrate)?;
+    let mut report = ChunkWriteReport {
+        deltas: apply_canonical_deltas_on_conn(conn, deltas, &mut substrate)?,
+        ..Default::default()
+    };
 
     // Flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE) BEFORE the cleanup + the stamp — the stamp stays the
@@ -963,6 +719,20 @@ mod tests {
             None,
             effect,
         )
+    }
+
+    /// Wrap configuration effects as canonical deltas at fixture positions —
+    /// the vocabulary the chunk loop produces (the configuration family rides
+    /// the same delta stream as the operation family).
+    fn configuration_deltas(effects: &[ConfigurationEffect]) -> Vec<CanonicalDelta> {
+        effects
+            .iter()
+            .enumerate()
+            .map(|(i, effect)| {
+                let index = u64::try_from(i).unwrap_or(u64::MAX) + 1;
+                delta_at(index, DeltaEffect::Configuration(effect.clone()))
+            })
+            .collect()
     }
 
     /// A fresh in-memory **write-capable** DB seeded with a single market
@@ -1022,7 +792,7 @@ mod tests {
             .unwrap();
         }
 
-        let events = vec![AaveChunkEvent::CollateralConfigurationChanged {
+        let events = vec![ConfigurationEffect::CollateralConfigurationChanged {
             asset_id: 1,
             config_bitmap: U256::ZERO, // all-zero bitmap → all-default decode + create the asset_config row
         }];
@@ -1031,8 +801,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.collateral_configuration_changed, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.collateral_configuration_changed, 1);
             assert_eq!(report.stamped_block, Some(1_000));
             tx.commit().unwrap();
         }
@@ -1122,7 +894,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &[], 2_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], 2_000).unwrap();
             assert_eq!(report.stamped_block, Some(2_000));
             tx.commit().unwrap();
         }
@@ -1203,11 +975,11 @@ mod tests {
         // `aave_v3_contracts.market_id → aave_v3_markets` FK + returns Err →
         // the caller drops the tx → rollback.
         let events = vec![
-            AaveChunkEvent::CollateralConfigurationChanged {
+            ConfigurationEffect::CollateralConfigurationChanged {
                 asset_id: 1,
                 config_bitmap: U256::ZERO, // succeeds: creates asset_config(1)
             },
-            AaveChunkEvent::PriceOracleUpdated {
+            ConfigurationEffect::PriceOracleUpdated {
                 market_id: 9999, // FAILS: FK violation on aave_v3_markets
                 new_oracle_address: "0xoracle".to_string(),
             },
@@ -1218,7 +990,8 @@ mod tests {
             // FK enforcement must be set OUTSIDE a transaction (SQLite quirk).
             guard.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 200);
+            let result =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 200);
             assert!(result.is_err(), "the FK violation must surface as Err");
             drop(tx); // ← rollback (the `?` already returned).
             result.err()
@@ -1256,11 +1029,13 @@ mod tests {
         // Python `aave_update` driver stamps `market.last_update_block` even
         // when `update_aave_market` produced no writes.
         let db = fresh_db();
-        let events: Vec<AaveChunkEvent> = vec![];
+        let events: Vec<ConfigurationEffect> = vec![];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 500).unwrap();
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 500)
+                    .unwrap();
             assert_eq!(report.stamped_block, Some(500));
             tx.commit().unwrap();
         }
@@ -1285,15 +1060,17 @@ mod tests {
             .unwrap();
         }
 
-        let events = vec![AaveChunkEvent::UserEModeSet {
+        let events = vec![ConfigurationEffect::UserEModeSet {
             user_id: 1,
             e_mode: 2,
         }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.user_e_mode_set, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.user_e_mode_set, 1);
             tx.commit().unwrap();
         }
 
@@ -1363,7 +1140,7 @@ mod tests {
 
         // A ReserveDataUpdated event with non-zero indices/rates (ray-scale
         // values, stored raw as decimal VARCHAR — no ray-math in the apply).
-        let events = vec![AaveChunkEvent::ReserveDataUpdated {
+        let events = vec![ConfigurationEffect::ReserveDataUpdated {
             asset_id: 1,
             liquidity_rate: U256::from(1_000_000_000u64), // 0.001 in ray
             variable_borrow_rate: U256::from(2_000_000_000u64), // 0.002 in ray
@@ -1374,8 +1151,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 2_000).unwrap();
-            assert_eq!(report.reserve_data_updated, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 2_000)
+                    .unwrap();
+            assert_eq!(report.deltas.reserve_data_updated, 1);
             tx.commit().unwrap();
         }
 
@@ -1408,7 +1187,7 @@ mod tests {
             }
         }
 
-        let events = vec![AaveChunkEvent::ReserveInitialized {
+        let events = vec![ConfigurationEffect::ReserveInitialized {
             market_id: 1,
             underlying_asset_id: 1,
             a_token_id: 2,
@@ -1421,8 +1200,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 5_000).unwrap();
-            assert_eq!(report.reserve_initialized, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 5_000)
+                    .unwrap();
+            assert_eq!(report.deltas.reserve_initialized, 1);
             tx.commit().unwrap();
         }
 
@@ -1449,7 +1230,7 @@ mod tests {
         let db = fresh_db();
         seed_asset_row(&db, 1); // existing asset with non-zero indices
 
-        let events = vec![AaveChunkEvent::ReserveInitialized {
+        let events = vec![ConfigurationEffect::ReserveInitialized {
             market_id: 1,
             underlying_asset_id: 1, // matches the seeded row's natural key
             a_token_id: 22,         // new aToken id (revision upgrade)
@@ -1477,8 +1258,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 6_000).unwrap();
-            assert_eq!(report.reserve_initialized, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 6_000)
+                    .unwrap();
+            assert_eq!(report.deltas.reserve_initialized, 1);
             tx.commit().unwrap();
         }
 
@@ -1541,7 +1324,7 @@ mod tests {
             // First event: a no-op-state-change but row-creating event that
             // would land if the chunk committed (proves the whole chunk rolled
             // back, not just the failing event).
-            AaveChunkEvent::ReserveInitialized {
+            ConfigurationEffect::ReserveInitialized {
                 market_id: 1,
                 underlying_asset_id: 1,
                 a_token_id: 2,
@@ -1552,7 +1335,7 @@ mod tests {
                 gho_link_token_id: None,
             },
             // Second event: FAILS — ReserveDataUpdated on the missing asset_id 999.
-            AaveChunkEvent::ReserveDataUpdated {
+            ConfigurationEffect::ReserveDataUpdated {
                 asset_id: 999,
                 liquidity_rate: U256::ZERO,
                 variable_borrow_rate: U256::ZERO,
@@ -1577,7 +1360,8 @@ mod tests {
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 200);
+            let result =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 200);
             assert!(result.is_err(), "the MissingRow must surface as Err");
             drop(tx); // ← rollback.
             result.err()
@@ -1687,8 +1471,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 9_000).unwrap();
-            assert_eq!(report.canonical.scaled_balance, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &deltas, 9_000).unwrap();
+            assert_eq!(report.deltas.scaled_balance, 1);
             tx.commit().unwrap();
         }
 
@@ -1731,8 +1515,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 10_000).unwrap();
-            assert_eq!(report.canonical.scaled_balance, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &deltas, 10_000).unwrap();
+            assert_eq!(report.deltas.scaled_balance, 1);
             tx.commit().unwrap();
         }
 
@@ -1794,8 +1578,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 11_000).unwrap();
-            assert_eq!(report.canonical.scaled_transfer, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &deltas, 11_000).unwrap();
+            assert_eq!(report.deltas.scaled_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -1861,8 +1645,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 11_000).unwrap();
-            assert_eq!(report.canonical.scaled_transfer, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &deltas, 11_000).unwrap();
+            assert_eq!(report.deltas.scaled_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -1921,7 +1705,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 12_000).unwrap();
+            apply_aave_chunk_writes_on_conn(&tx, 1, &deltas, 12_000).unwrap();
             tx.commit().unwrap();
         }
 
@@ -1943,7 +1727,7 @@ mod tests {
 
         // (a) valid ReserveInitialized (creates an asset row at underlying=999)
         //     + (b) invalid ScaledBalance on position_id=999.
-        let events = vec![AaveChunkEvent::ReserveInitialized {
+        let events = vec![ConfigurationEffect::ReserveInitialized {
             market_id: 1,
             underlying_asset_id: 999,
             a_token_id: 2,
@@ -1967,7 +1751,12 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &deltas, 13_000);
+            let result = apply_aave_chunk_writes_on_conn(
+                &tx,
+                1,
+                &[configuration_deltas(&events), deltas.clone()].concat(),
+                13_000,
+            );
             assert!(result.is_err(), "missing-position chunk must fail");
             // Don't commit — the dropped tx rolls back.
         }
@@ -2075,15 +1864,17 @@ mod tests {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
 
-        let events = vec![AaveChunkEvent::GhoDiscountPercentUpdated {
+        let events = vec![ConfigurationEffect::GhoDiscountPercentUpdated {
             user_id: 1,
             new_discount_percent: 42,
         }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.gho_discount_percent_updated, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.gho_discount_percent_updated, 1);
             tx.commit().unwrap();
         }
 
@@ -2097,15 +1888,17 @@ mod tests {
         let db = fresh_db();
         seed_gho_token_row(&db, 1, Some("0xold_strategy"), None);
 
-        let events = vec![AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+        let events = vec![ConfigurationEffect::GhoDiscountRateStrategyUpdated {
             gho_token_id: 1,
             new_strategy: Some("0xnew_strategy".to_string()),
         }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.gho_discount_rate_strategy_updated, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.gho_discount_rate_strategy_updated, 1);
             tx.commit().unwrap();
         }
 
@@ -2119,15 +1912,17 @@ mod tests {
         seed_gho_token_row(&db, 1, None, Some("0xold_token"));
 
         // Clear the discount token (None).
-        let events = vec![AaveChunkEvent::GhoDiscountTokenUpdated {
+        let events = vec![ConfigurationEffect::GhoDiscountTokenUpdated {
             gho_token_id: 1,
             new_discount_token: None,
         }];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.gho_discount_token_updated, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.gho_discount_token_updated, 1);
             tx.commit().unwrap();
         }
 
@@ -2161,7 +1956,7 @@ mod tests {
 
         // Transfer(user → 0x0) — the burn-to-zero leg. No paired Redeem fires
         // for this user (verified via cast logs across the drive range).
-        let events = vec![AaveChunkEvent::StkAaveTransfer {
+        let events = vec![ConfigurationEffect::StkAaveTransfer {
             from_user_id: Some(1),
             to_user_id: None, // ZERO_ADDRESS recipient — the burn leg.
             amount: alloy::primitives::U256::from_str_radix("9086624312799369058615", 10).unwrap(),
@@ -2169,8 +1964,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 17_859_255).unwrap();
-            assert_eq!(report.stk_aave_transfer, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 17_859_255)
+                    .unwrap();
+            assert_eq!(report.deltas.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -2191,7 +1988,7 @@ mod tests {
         // Pre-set stk_aave_balance = NULL (the Aave-writer default — a never-touched user).
 
         // Transfer(0x0 → user) — the mint-from-zero leg (Staked pattern).
-        let events = vec![AaveChunkEvent::StkAaveTransfer {
+        let events = vec![ConfigurationEffect::StkAaveTransfer {
             from_user_id: None, // ZERO_ADDRESS sender — the mint leg.
             to_user_id: Some(1),
             amount: alloy::primitives::U256::from(1_234u64),
@@ -2199,8 +1996,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.stk_aave_transfer, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -2217,7 +2016,7 @@ mod tests {
         let db = fresh_db();
         seed_aave_v3_user(&db, 1);
         // Degenerate Transfer(0x0 → 0x0) — neither side mutated, no error.
-        let events = vec![AaveChunkEvent::StkAaveTransfer {
+        let events = vec![ConfigurationEffect::StkAaveTransfer {
             from_user_id: None,
             to_user_id: None,
             amount: alloy::primitives::U256::from(7u64),
@@ -2225,9 +2024,11 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 5_000).unwrap();
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 5_000)
+                    .unwrap();
             assert_eq!(
-                report.stk_aave_transfer, 1,
+                report.deltas.stk_aave_transfer, 1,
                 "the event still counts — no mutation only"
             );
             tx.commit().unwrap();
@@ -2258,7 +2059,7 @@ mod tests {
         }
 
         let amount = alloy::primitives::U256::from(3_000u64);
-        let events = vec![AaveChunkEvent::StkAaveTransfer {
+        let events = vec![ConfigurationEffect::StkAaveTransfer {
             from_user_id: Some(1),
             to_user_id: Some(2),
             amount,
@@ -2266,8 +2067,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
-            assert_eq!(report.stk_aave_transfer, 1);
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000)
+                    .unwrap();
+            assert_eq!(report.deltas.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -2292,7 +2095,7 @@ mod tests {
             .unwrap();
         }
 
-        let events = vec![AaveChunkEvent::StkAaveTransfer {
+        let events = vec![ConfigurationEffect::StkAaveTransfer {
             from_user_id: Some(1),
             to_user_id: Some(2),
             amount: alloy::primitives::U256::from(200u64),
@@ -2300,7 +2103,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000);
+            let result =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 1_000);
             assert!(
                 result.is_err(),
                 "transfer from-leg underflow must error (mirrors Redeem)"
@@ -2330,7 +2134,7 @@ mod tests {
 
         // The no-op RewardsClaimed variant — the apply dispatch records the
         // count but writes nothing.
-        let events = vec![AaveChunkEvent::RewardsClaimed {
+        let events = vec![ConfigurationEffect::RewardsClaimed {
             user_id: 1,
             reward_token_id: 99,
             claimer_id: 1,
@@ -2339,8 +2143,10 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 7_777).unwrap();
-            assert_eq!(report.rewards_claimed, 1, "counter incremented");
+            let report =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 7_777)
+                    .unwrap();
+            assert_eq!(report.deltas.rewards_claimed, 1, "counter incremented");
             tx.commit().unwrap();
         }
 
@@ -2362,12 +2168,12 @@ mod tests {
         // was retired; the mint arm is now a zero-leg
         // StkAaveTransfer with to_user_id=Some.
         let events = vec![
-            AaveChunkEvent::StkAaveTransfer {
+            ConfigurationEffect::StkAaveTransfer {
                 from_user_id: None, // ZERO_ADDRESS sender (mint-from-zero).
                 to_user_id: Some(1),
                 amount: alloy::primitives::U256::from(500u64),
             },
-            AaveChunkEvent::GhoDiscountPercentUpdated {
+            ConfigurationEffect::GhoDiscountPercentUpdated {
                 user_id: 999, // no such row → MissingRow
                 new_discount_percent: 50,
             },
@@ -2375,7 +2181,8 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 9_000);
+            let result =
+                apply_aave_chunk_writes_on_conn(&tx, 1, &configuration_deltas(&events), 9_000);
             assert!(result.is_err(), "missing-user chunk must fail");
         }
 
@@ -2795,5 +2602,80 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rev, 1, "Phase-1 revision wins");
+    }
+
+    /// `ReserveInitialized` projects the reserve's identity during RESOLUTION:
+    /// the parser that follows the configuration event in the same chunk must
+    /// resolve the new asset, its aToken/vToken bindings and its source, and a
+    /// retried resolution must converge on the single row.
+    #[test]
+    fn reserve_initialized_projects_the_reserve_immediately_and_idempotently() {
+        let db = fresh_db();
+        {
+            let conn = db.lock();
+            for id in 1..=3 {
+                conn.execute(
+                    "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                    params![id, format!("0xtok{id}")],
+                )
+                .unwrap();
+            }
+        }
+
+        let effect = ConfigurationEffect::ReserveInitialized {
+            market_id: 1,
+            underlying_asset_id: 1,
+            a_token_id: 2,
+            a_token_revision: 8,
+            v_token_id: 3,
+            v_token_revision: 4,
+            price_source: Some("0xoracle".to_string()),
+            gho_link_token_id: None,
+        };
+        let mut substrate = ChunkSubstrate::lazy(1);
+
+        {
+            let conn = db.lock();
+            effect.project(&mut substrate, &conn).unwrap();
+
+            let assets: i64 = conn
+                .query_row("SELECT COUNT(*) FROM aave_v3_assets", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                assets, 1,
+                "the reserve exists the moment its event resolves"
+            );
+
+            substrate.require_asset(&conn, 1).unwrap();
+
+            // A later event of the SAME chunk operates on the new reserve.
+            ConfigurationEffect::ReserveDataUpdated {
+                asset_id: 1,
+                liquidity_rate: U256::from(1u64),
+                variable_borrow_rate: U256::from(2u64),
+                liquidity_index: U256::from(3u64),
+                variable_borrow_index: U256::from(4u64),
+                block_number: 99,
+            }
+            .project(&mut substrate, &conn)
+            .unwrap();
+
+            // A retried resolution re-applies the same effect: one row, not two.
+            effect.project(&mut substrate, &conn).unwrap();
+            let assets: i64 = conn
+                .query_row("SELECT COUNT(*) FROM aave_v3_assets", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(assets, 1, "the create is idempotent - no duplicate asset");
+
+            let (a_rev, v_rev, source): (i64, i64, Option<String>) = conn
+                .query_row(
+                    "SELECT a_token_revision, v_token_revision, price_source FROM aave_v3_assets WHERE id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!((a_rev, v_rev), (8, 4), "the event's revisions landed");
+            assert_eq!(source.as_deref(), Some("0xoracle"));
+        }
     }
 }

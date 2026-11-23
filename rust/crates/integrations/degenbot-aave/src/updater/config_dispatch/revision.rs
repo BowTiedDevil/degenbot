@@ -19,7 +19,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use crate::run::AaveChunkEvent;
+use crate::projection::ConfigurationEffect;
 use alloy::primitives::Address;
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -77,7 +77,7 @@ pub(crate) struct ProxyCreationResolution {
 pub(super) async fn resolve_upgraded(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let block_number = ctx.block_number();
     let conn = ctx.conn();
@@ -136,7 +136,7 @@ pub(super) async fn resolve_upgraded(
             None
         }
     };
-    Ok(AaveChunkEvent::Upgraded {
+    Ok(ConfigurationEffect::Upgraded {
         asset_id,
         market_id: ctx.market_id(),
         is_a_token,
@@ -154,12 +154,12 @@ pub(super) async fn resolve_contract_revision_updated(
     new_address: Address,
     contract_name: &str,
     revision_fn: &str,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let block_number = ctx.block_number();
     let revision = ctx
         .read_revision(&new_address, revision_fn, block_number)
         .await?;
-    Ok(AaveChunkEvent::ContractRevisionUpdated {
+    Ok(ConfigurationEffect::ContractRevisionUpdated {
         market_id: ctx.market_id(),
         contract_name: contract_name.to_string(),
         new_revision: discount_to_i64(revision),

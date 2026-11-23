@@ -130,6 +130,22 @@ pub(crate) const ASSET_KIND_V_TOKEN: &str = "v_token";
 /// overwritten columns (the flush collapses same-asset events to the last).
 type ReserveDataUpdateEntry = (i64, (U256, U256, U256, U256, i64));
 
+/// Which side of a stkAAVE `Transfer` a projected balance mutation belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StkAaveLeg {
+    From,
+    To,
+}
+
+/// The read-side projection of one `aave_v3_users` row: the identity plus the
+/// two discount columns a later resolution reads.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UserProjection {
+    pub(crate) id: i64,
+    pub(crate) gho_discount: i64,
+    pub(crate) stk_aave_balance: Option<U256>,
+}
+
 /// The chunk-level substrate cache. Built once per chunk inside the chunk's
 /// `Transaction`; threaded `&mut` through the per-tx parse + the apply
 /// dispatch (single-threaded under `block_on`'s single-thread poll).
@@ -143,11 +159,11 @@ pub struct ChunkSubstrate {
     /// `(lookup kind, address)` → asset id; `None` = probed-absent (the
     /// negative cache that stands in for the SQL probe's `Ok(None)`).
     assets_by_address: HashMap<(&'static str, String), Option<i64>>,
-    /// `(market_id, address)` → `aave_v3_users.id` (positive-only: a miss
-    /// for a candidate address — the get-or-create INSERT runs without the
-    /// SQL probe; a key ABSENT from the map means probe-then-insert,
+    /// `(market_id, address)` → the user's projected row (positive-only: a
+    /// miss for a candidate address — the get-or-create INSERT runs without
+    /// the SQL probe; a key ABSENT from the map means probe-then-insert,
     /// exactly today's get-or-create).
-    users: HashMap<(i64, String), Option<i64>>,
+    users: HashMap<(i64, String), Option<UserProjection>>,
     /// `(table, user_id, asset_id)` → position row id.
     positions_by_key: HashMap<(PositionTable, i64, i64), i64>,
     /// `(table, position id)` → `(balance, last_index)`.
@@ -158,6 +174,8 @@ pub struct ChunkSubstrate {
     /// `lookup_pool_revision` shape: `None` for a missing row OR a NULL
     /// column — the substrate read flattens both).
     contract_revisions: HashMap<(i64, String), Option<u32>>,
+    /// `(market_id, contract name)` → the role's current endpoint address.
+    contract_addresses: HashMap<(i64, String), String>,
     /// The chain's GHO row (the per-tx re-resolve). `gho_queried == false`
     /// means the cached value is absent/stale — the next read re-queries.
     gho: Option<AaveGhoAsset>,
@@ -183,6 +201,7 @@ impl ChunkSubstrate {
             position_state: HashMap::new(),
             collateral_configs: HashMap::new(),
             contract_revisions: HashMap::new(),
+            contract_addresses: HashMap::new(),
             gho: None,
             gho_queried: false,
             reserve_data_updates: HashMap::new(),
@@ -254,12 +273,17 @@ impl ChunkSubstrate {
             }
         }
 
-        // (2) the market's contract revisions.
-        let mut stmt =
-            conn.prepare("SELECT name, revision FROM aave_v3_contracts WHERE market_id = ?1")?;
+        // (2) the market's contract roles: revision + endpoint address.
+        let mut stmt = conn.prepare(
+            "SELECT name, revision, address FROM aave_v3_contracts WHERE market_id = ?1",
+        )?;
         let mut rows = stmt.query(rusqlite::params![market_id])?;
         while let Some(row) = rows.next()? {
             let name: String = row.get(0)?;
+            let address: String = row.get(2)?;
+            cache
+                .contract_addresses
+                .insert((market_id, name.clone()), address);
             let revision: Option<i64> = row.get(1)?;
             cache.contract_revisions.insert(
                 (market_id, name),
@@ -299,7 +323,7 @@ impl ChunkSubstrate {
             let slice = &candidates[chunk_start..chunk_end];
             let placeholders = vec!["?"; slice.len()].join(", ");
             let sql = format!(
-                "SELECT id, address FROM aave_v3_users \
+                "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users \
                  WHERE market_id = ?1 AND address IN ({placeholders})"
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -312,7 +336,20 @@ impl ChunkSubstrate {
             while let Some(row) = rows.next()? {
                 let id: i64 = row.get(0)?;
                 let address: String = row.get(1)?;
-                cache.users.insert((market_id, address), Some(id));
+                let gho_discount: i64 = row.get(2)?;
+                let stk_aave_balance: Option<String> = row.get(3)?;
+                let stk_aave_balance = stk_aave_balance
+                    .as_deref()
+                    .map(parse_decimal_u256)
+                    .transpose()?;
+                cache.users.insert(
+                    (market_id, address),
+                    Some(UserProjection {
+                        id,
+                        gho_discount,
+                        stk_aave_balance,
+                    }),
+                );
             }
             chunk_start = chunk_end;
         }
@@ -722,7 +759,7 @@ impl ChunkSubstrate {
         gho_discount: i64,
     ) -> Result<i64, DbError> {
         match self.users.get(&(market_id, address.to_string())) {
-            Some(Some(id)) => return Ok(*id),
+            Some(Some(user)) => return Ok(user.id),
             Some(None) => {
                 // Proven absent (the prefetch's candidate scan) — the
                 // INSERT-only path: byte-identical SQL to the substrate
@@ -733,16 +770,170 @@ impl ChunkSubstrate {
                     rusqlite::params![market_id, address, gho_discount],
                 )?;
                 let id = conn.last_insert_rowid();
-                self.users
-                    .insert((market_id, address.to_string()), Some(id));
+                self.users.insert(
+                    (market_id, address.to_string()),
+                    Some(UserProjection {
+                        id,
+                        gho_discount,
+                        stk_aave_balance: None,
+                    }),
+                );
                 return Ok(id);
             }
             None => {} // not yet probed — the lazy path below.
         }
         let id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, address, gho_discount)?;
-        self.users
-            .insert((market_id, address.to_string()), Some(id));
+        let disc: i64 = conn.query_row(
+            "SELECT gho_discount FROM aave_v3_users WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        let balance: Option<String> = conn.query_row(
+            "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        let stk_aave_balance = balance.as_deref().map(parse_decimal_u256).transpose()?;
+        self.users.insert(
+            (market_id, address.to_string()),
+            Some(UserProjection {
+                id,
+                gho_discount: disc,
+                stk_aave_balance,
+            }),
+        );
         Ok(id)
+    }
+
+    /// The projected `gho_discount` for a user address: the resolution read
+    /// position, not a live SQL probe (a same-chunk discount event or refresh
+    /// is already projected).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a probe failure.
+    pub(crate) fn user_gho_discount(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<i64>, DbError> {
+        self.user_projection(conn, market_id, address)
+            .map(|user| user.map(|user| user.gho_discount))
+    }
+
+    /// The projected `stk_aave_balance` for a user address: `Some(None)` for a
+    /// user whose column was never seeded, `None` for an address this market
+    /// has no row for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a probe failure.
+    #[expect(clippy::option_option)]
+    pub(crate) fn user_stk_aave_balance(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<Option<U256>>, DbError> {
+        self.user_projection(conn, market_id, address)
+            .map(|user| user.map(|user| user.stk_aave_balance))
+    }
+
+    /// Project the discount-token replacement's balance invalidation: every
+    /// cached balance was denominated in the replaced token's ledger, so the
+    /// next resolution reseeds it from the new contract.
+    pub(crate) fn invalidate_stk_aave_balances(&mut self) {
+        for user in self.users.values_mut().flatten() {
+            user.stk_aave_balance = None;
+        }
+    }
+
+    /// Project one `stk_aave_balance` write addressed by row id.
+    pub(crate) fn record_user_stk_aave_balance_by_id(
+        &mut self,
+        user_id: i64,
+        balance: Option<U256>,
+    ) {
+        for user in self.users.values_mut().flatten() {
+            if user.id == user_id {
+                user.stk_aave_balance = balance;
+            }
+        }
+    }
+
+    /// Project one user write addressed by row id (the configuration effects
+    /// carry settled ids rather than addresses).
+    pub(crate) fn record_user_gho_discount_by_id(&mut self, user_id: i64, gho_discount: i64) {
+        for user in self.users.values_mut().flatten() {
+            if user.id == user_id {
+                user.gho_discount = gho_discount;
+            }
+        }
+    }
+
+    /// Project one `stk_aave_balance` write addressed by row id, with the
+    /// apply's own arithmetic: the from-leg subtracts (underflow is a refusal),
+    /// the to-leg adds, and a never-seeded column reads as zero.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Decode`] when a leg leaves the `U256` domain.
+    pub(crate) fn project_stk_aave_leg(
+        &mut self,
+        user_id: i64,
+        amount: U256,
+        side: StkAaveLeg,
+    ) -> Result<(), DbError> {
+        for user in self.users.values_mut().flatten() {
+            if user.id != user_id {
+                continue;
+            }
+            let balance = user.stk_aave_balance.unwrap_or(U256::ZERO);
+            user.stk_aave_balance = Some(match side {
+                StkAaveLeg::From => balance.checked_sub(amount).ok_or_else(|| {
+                    DbError::Decode(format!(
+                        "stk_aave_balance underflow on Transfer from-leg: {balance} - {amount} (user_id={user_id})"
+                    ))
+                })?,
+                StkAaveLeg::To => balance.checked_add(amount).ok_or_else(|| {
+                    DbError::Decode(format!(
+                        "stk_aave_balance overflow on Transfer to-leg: {balance} + {amount} (user_id={user_id})"
+                    ))
+                })?,
+            });
+        }
+        Ok(())
+    }
+
+    fn user_projection(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<UserProjection>, DbError> {
+        if let Some(user) = self.users.get(&(market_id, address.to_string())) {
+            return Ok(*user);
+        }
+        let row: Option<(i64, i64, Option<String>)> = conn
+            .query_row(
+                "SELECT id, gho_discount, stk_aave_balance FROM aave_v3_users \
+                 WHERE market_id = ?1 AND address = ?2",
+                rusqlite::params![market_id, address],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let user = row
+            .map(|(id, gho_discount, balance)| {
+                Ok::<_, DbError>(UserProjection {
+                    id,
+                    gho_discount,
+                    stk_aave_balance: balance.as_deref().map(parse_decimal_u256).transpose()?,
+                })
+            })
+            .transpose()?;
+        self.users.insert((market_id, address.to_string()), user);
+        Ok(user)
     }
 
     /// The `get_or_create_*_position_on_conn` cache shell. A fresh INSERT's
@@ -911,6 +1102,64 @@ impl ChunkSubstrate {
         census
     }
 
+    /// Observe the sealed generations a chunk starts from (ADR-105 D6): every
+    /// generation the prefetched rows already carry is a `Seed`-activated
+    /// generation of its logical entity, so a replacement later in the chunk
+    /// activates a NEW generation instead of mutating the one the chunk began
+    /// under.
+    ///
+    /// The rows are the resolution's own read position — no probe is issued
+    /// for a fact the prefetch already carries.
+    pub(crate) fn observe_seed_generations(
+        &self,
+        view: &mut crate::projection::ProjectionView,
+        market_id: i64,
+        chain_id: i64,
+    ) {
+        use crate::projection::{
+            ContractRole, GenerationEntity, GenerationRef, ScaledTokenPosition,
+        };
+        for ((row_market_id, name), revision) in &self.contract_revisions {
+            if *row_market_id != market_id {
+                continue;
+            }
+            let Some(role) = ContractRole::from_contract_name(name) else {
+                continue;
+            };
+            let entity = GenerationEntity::Contract { market_id, role };
+            view.observe_generation(match revision {
+                Some(revision) => GenerationRef::new(entity, *revision),
+                None => GenerationRef::seed(entity),
+            });
+        }
+        for asset in self.assets_by_id.values() {
+            for (position, revision) in [
+                (ScaledTokenPosition::Collateral, asset.a_token_revision),
+                (ScaledTokenPosition::Debt, asset.v_token_revision),
+            ] {
+                view.observe_generation(GenerationRef::new(
+                    GenerationEntity::ScaledToken {
+                        asset_id: asset.id,
+                        position,
+                    },
+                    revision,
+                ));
+            }
+        }
+        if let Some(gho) = &self.gho {
+            if gho.v_gho_discount_token.is_some() {
+                view.observe_generation(GenerationRef::seed(GenerationEntity::DiscountToken {
+                    chain_id,
+                }));
+            }
+            if gho.v_token_address.is_some() {
+                view.observe_generation(GenerationRef::seed(GenerationEntity::GhoDiscountLink {
+                    chain_id,
+                }));
+            }
+        }
+    }
+
     /// Whether the cache holds prefetched asset rows: when it does, the market's
     /// token census is answerable in memory and needs no probe.
     pub(crate) fn has_prefetched_assets(&self) -> bool {
@@ -939,6 +1188,43 @@ impl ChunkSubstrate {
         self.contract_revisions
             .insert((market_id, contract_name.to_string()), rev);
         Ok(rev)
+    }
+
+    /// The role's projected endpoint address (the resolution read position for
+    /// the market's price oracle and the other fetch endpoints).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a probe failure, or
+    /// [`DbError::MissingRow`] when the market has no such role.
+    pub(crate) fn contract_address(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        name: &str,
+    ) -> Result<Option<String>, DbError> {
+        if let Some(address) = self.contract_addresses.get(&(market_id, name.to_string())) {
+            return Ok(Some(address.clone()));
+        }
+        let address: Option<String> = conn
+            .query_row(
+                "SELECT address FROM aave_v3_contracts WHERE market_id = ?1 AND name = ?2",
+                rusqlite::params![market_id, name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(address) = &address {
+            self.contract_addresses
+                .insert((market_id, name.to_string()), address.clone());
+        }
+        Ok(address)
+    }
+
+    /// Project a contract role's endpoint address onto the resolution read
+    /// position.
+    pub(crate) fn record_contract_address(&mut self, market_id: i64, name: &str, address: &str) {
+        self.contract_addresses
+            .insert((market_id, name.to_string()), address.to_string());
     }
 
     /// The `ContractRevisionUpdated` apply's overlay write.
@@ -980,6 +1266,18 @@ impl ChunkSubstrate {
             self.gho_queried = true;
         }
         Ok(self.gho.clone())
+    }
+
+    /// Project one GHO-row mutation onto the resolution read position without
+    /// leaving the read side: a same-chunk link, discount-token replacement,
+    /// strategy change or deprecation is read by every later resolution of the
+    /// same chunk.
+    pub(crate) fn project_gho(&mut self, mutate: impl FnOnce(&mut AaveGhoAsset)) {
+        if self.gho_queried {
+            if let Some(gho) = self.gho.as_mut() {
+                mutate(gho);
+            }
+        }
     }
 
     /// Mark the cached GHO row dirty (every write touching

@@ -4,7 +4,7 @@
 //! `ReserveUsedAsCollateral`, `PriceOracleUpdated`, `AssetSourceUpdated`,
 //! `EModeCategoryAdded`, `EModeAssetCategoryChanged`,
 //! `AssetCollateralInEModeChanged` — resolve ids against the chunk substrate
-//! and emit their [`AaveChunkEvent`]s. The 2 async RPC resolutions:
+//! and emit their [`ConfigurationEffect`]s. The 2 async RPC resolutions:
 //! [`resolve_reserve_initialized`] (the 3-token ERC20 metadata burst, the
 //! EIP-1967 implementation-slot reads, the context-memoized
 //! `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` reads and `getSourceOfAsset` — folded into ONE
@@ -21,7 +21,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use crate::run::AaveChunkEvent;
+use crate::projection::ConfigurationEffect;
 use alloy::primitives::{Address, U256};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::erc20;
@@ -48,13 +48,13 @@ pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix
 
 // ── the 8 sync config handlers (no RPC — testable with in-memory DB) ───────
 
-/// `ReserveDataUpdated` → [`AaveChunkEvent::ReserveDataUpdated`]. A missing
+/// `ReserveDataUpdated` → [`ConfigurationEffect::ReserveDataUpdated`]. A missing
 /// asset lifts to a `DecodeShape` error — the orchestrator pre-seeds assets
 /// via `ReserveInitialized`.
 pub(super) fn dispatch_reserve_data_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let block_number = ctx.block_number();
     let conn = ctx.conn();
@@ -67,7 +67,7 @@ pub(super) fn dispatch_reserve_data_updated(
                 "ReserveDataUpdated: no asset for underlying {addr_str} in market {market_id}"
             ))
         })?;
-    Ok(AaveChunkEvent::ReserveDataUpdated {
+    Ok(ConfigurationEffect::ReserveDataUpdated {
         asset_id: asset.id,
         liquidity_rate: decoded.liquidity_rate,
         variable_borrow_rate: decoded.variable_borrow_rate,
@@ -77,25 +77,25 @@ pub(super) fn dispatch_reserve_data_updated(
     })
 }
 
-/// `UserEModeSet(user, categoryId)` → [`AaveChunkEvent::UserEModeSet`].
+/// `UserEModeSet(user, categoryId)` → [`ConfigurationEffect::UserEModeSet`].
 pub(super) fn dispatch_user_e_mode_set(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let addr_str = checksum(&decoded.user);
     let user_id = ctx
         .substrate_mut()
         .user_id_or_create(conn, market_id, &addr_str, 0)?;
-    Ok(AaveChunkEvent::UserEModeSet {
+    Ok(ConfigurationEffect::UserEModeSet {
         user_id,
         e_mode: i64::from(decoded.category_id),
     })
 }
 
 /// `ReserveUsedAsCollateral{Enabled,Disabled}` →
-/// [`AaveChunkEvent::ReserveUsedAsCollateral`]. Mirrors
+/// [`ConfigurationEffect::ReserveUsedAsCollateral`]. Mirrors
 /// `_process_reserve_used_as_collateral_enabled_event` /
 /// `_process_reserve_used_as_collateral_disabled_event`.
 pub(super) fn dispatch_reserve_used_as_collateral(
@@ -103,7 +103,7 @@ pub(super) fn dispatch_reserve_used_as_collateral(
     reserve: Address,
     user: Address,
     enabled: bool,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let user_str = checksum(&user);
@@ -119,14 +119,14 @@ pub(super) fn dispatch_reserve_used_as_collateral(
                 "ReserveUsedAsCollateral: no asset for underlying {asset_str} in market {market_id}"
             ))
         })?;
-    Ok(AaveChunkEvent::ReserveUsedAsCollateral {
+    Ok(ConfigurationEffect::ReserveUsedAsCollateral {
         user_id,
         asset_id: asset.id,
         enabled,
     })
 }
 
-/// `PriceOracleUpdated(old, new)` → [`AaveChunkEvent::PriceOracleUpdated`].
+/// `PriceOracleUpdated(old, new)` → [`ConfigurationEffect::PriceOracleUpdated`].
 /// An existing oracle lifts to an idempotent overwrite — the apply fn
 /// handles the INSERT-not-UPDATE guard.
 //
@@ -136,18 +136,18 @@ pub(super) fn dispatch_reserve_used_as_collateral(
 pub(super) fn dispatch_price_oracle_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ConfigAddressPairEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    Ok(AaveChunkEvent::PriceOracleUpdated {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
+    Ok(ConfigurationEffect::PriceOracleUpdated {
         market_id: ctx.market_id(),
         new_oracle_address: checksum(&decoded.new_address),
     })
 }
 
-/// `AssetSourceUpdated(asset, source)` → [`AaveChunkEvent::AssetSourceUpdated`].
+/// `AssetSourceUpdated(asset, source)` → [`ConfigurationEffect::AssetSourceUpdated`].
 pub(super) fn dispatch_asset_source_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
@@ -167,14 +167,14 @@ pub(super) fn dispatch_asset_source_updated(
         // then exists dispatches normally (the unchanged path below).
         return Ok(None);
     };
-    Ok(Some(AaveChunkEvent::AssetSourceUpdated {
+    Ok(Some(ConfigurationEffect::AssetSourceUpdated {
         asset_id: asset.id,
         source_address: checksum(&decoded.source),
     }))
 }
 
 /// `EModeCategoryAdded(id, label, ltv, lt, bonus, oracle)` →
-/// [`AaveChunkEvent::EModeCategoryAdded`]. Mirrors
+/// [`ConfigurationEffect::EModeCategoryAdded`]. Mirrors
 /// `_process_e_mode_category_added_event`.
 //
 // Same uniform-arm rationale as `dispatch_price_oracle_updated`.
@@ -182,8 +182,8 @@ pub(super) fn dispatch_asset_source_updated(
 pub(super) fn dispatch_e_mode_category_added(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeCategoryAddedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    Ok(AaveChunkEvent::EModeCategoryAdded {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
+    Ok(ConfigurationEffect::EModeCategoryAdded {
         market_id: ctx.market_id(),
         category_id: i64::from(decoded.category_id),
         ltv: decoded.ltv.to::<u64>(),
@@ -205,14 +205,14 @@ pub(super) fn dispatch_e_mode_category_added(
 }
 
 /// `EModeAssetCategoryChanged(asset, old, new)` →
-/// [`AaveChunkEvent::EModeAssetCategoryChanged`] (the older variant).
+/// [`ConfigurationEffect::EModeAssetCategoryChanged`] (the older variant).
 /// The `e_mode_category_id` is set unconditionally (`None` when
 /// `new_category_id == 0`). NB: the apply fn takes `new_category_id: i64` +
 /// zero means "clear".
 pub(super) fn dispatch_e_mode_asset_category_changed(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeAssetCategoryChangedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
@@ -224,19 +224,19 @@ pub(super) fn dispatch_e_mode_asset_category_changed(
             "EModeAssetCategoryChanged: no asset for underlying {asset_str} in market {market_id}"
         ))
         })?;
-    Ok(AaveChunkEvent::EModeAssetCategoryChanged {
+    Ok(ConfigurationEffect::EModeAssetCategoryChanged {
         asset_id: asset.id,
         new_category_id: i64::from(decoded.new_category_id),
     })
 }
 
 /// `AssetCollateralInEModeChanged(asset, category, is_collateral)` →
-/// [`AaveChunkEvent::AssetCollateralInEModeChanged`] (the newer Aave 3.4+
+/// [`ConfigurationEffect::AssetCollateralInEModeChanged`] (the newer Aave 3.4+
 /// variant).
 pub(super) fn dispatch_asset_collateral_in_emode_changed(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetCollateralInEModeChangedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
@@ -248,7 +248,7 @@ pub(super) fn dispatch_asset_collateral_in_emode_changed(
             "AssetCollateralInEModeChanged: no asset for underlying {asset_str} in market {market_id}"
         ))
     })?;
-    Ok(AaveChunkEvent::AssetCollateralInEModeChanged {
+    Ok(ConfigurationEffect::AssetCollateralInEModeChanged {
         asset_id: asset.id,
         category_id: i64::from(decoded.category_id),
         is_collateral: decoded.collateral,
@@ -258,7 +258,7 @@ pub(super) fn dispatch_asset_collateral_in_emode_changed(
 // ── the 2 async RPC handlers ───────────────────────────────────────────────
 
 /// `CollateralConfigurationChanged(asset)` →
-/// [`AaveChunkEvent::CollateralConfigurationChanged`] with the RPC-fetched
+/// [`ConfigurationEffect::CollateralConfigurationChanged`] with the RPC-fetched
 /// `getConfiguration(address)` bitmap. The event's `ltv`/`threshold`/`bonus`
 /// fields are NOT trusted — the full bitmap is RPC-fetched from the Pool
 /// contract at the event's block (a pool upgrade can emit stale values).
@@ -266,7 +266,7 @@ pub(super) fn dispatch_asset_collateral_in_emode_changed(
 pub(super) async fn resolve_collateral_configuration(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let block_number = ctx.block_number();
     let pool_address = ctx.pool_address();
@@ -291,14 +291,14 @@ pub(super) async fn resolve_collateral_configuration(
             "CollateralConfigurationChanged: getConfiguration returned < 32 bytes".to_string(),
         )
     })?;
-    Ok(AaveChunkEvent::CollateralConfigurationChanged {
+    Ok(ConfigurationEffect::CollateralConfigurationChanged {
         asset_id: asset.id,
         config_bitmap,
     })
 }
 
 /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken, …)`
-/// → [`AaveChunkEvent::ReserveInitialized`] with the RPC-resolved revisions +
+/// → [`ConfigurationEffect::ReserveInitialized`] with the RPC-resolved revisions +
 /// price source. The 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d
 /// with their
 /// RPC-fetched metadata, and per EIP-1967 the aToken/vToken implementation
@@ -317,7 +317,7 @@ pub(super) async fn resolve_reserve_initialized(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     oracle_address: Address,
-) -> Result<AaveChunkEvent, ConfigDispatchError> {
+) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let chain_id = ctx.chain_id();
     let block_number = ctx.block_number();
@@ -411,7 +411,7 @@ pub(super) async fn resolve_reserve_initialized(
     };
     let price_source = decode_address_return(source_return);
 
-    Ok(AaveChunkEvent::ReserveInitialized {
+    Ok(ConfigurationEffect::ReserveInitialized {
         market_id,
         underlying_asset_id,
         a_token_id,

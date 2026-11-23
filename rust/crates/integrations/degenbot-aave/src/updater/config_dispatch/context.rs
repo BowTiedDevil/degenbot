@@ -14,8 +14,9 @@
 //! apply→bump→dispatch seam, in the fixed order the read-your-own-writes
 //! contract requires: re-read the overlay's GHO vToken revision (a prior
 //! log-transaction's `Upgraded` apply bumped the cached row), build the
-//! discount snapshot off it, then dispatch the config events (each applied
-//! intra-dispatch via [`ChunkContext::apply_events`]).
+//! discount snapshot off it, then dispatch the configuration events (each
+//! reduced into a positioned delta and persisted intra-dispatch via
+//! [`ChunkContext::apply_configuration_delta`]).
 //!
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
 //! row 3 (the memo key MUST include the block lane), row 7 (stage 1 of
@@ -27,9 +28,14 @@
 
 use std::collections::HashMap;
 
-use crate::run::{apply_chunk_events_on_conn, AaveChunkEvent, AaveChunkWriteReport};
+#[cfg(test)]
+use crate::projection::DeltaEffect;
+use crate::projection::{CanonicalDelta, ConfigurationEffect, ProjectionView};
+#[cfg(test)]
+use crate::run::CanonicalDeltaWriteReport;
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
 use alloy::primitives::{Address, Bytes, U256};
+use degenbot_core::canonical_head::TxRef;
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::provider::AlloyProvider;
@@ -178,7 +184,12 @@ pub(crate) struct ChunkContext<'span> {
     memo: RevisionMemo,
     conn: &'span Connection,
     substrate: &'span mut ChunkSubstrate,
+    tx: Option<TxRef>,
     block_number: u64,
+    /// The stkAAVE balance observations resolution resolved out-of-band (a
+    /// `balanceOf` at the exact parent block); the dispatch loop emits them as
+    /// their own deltas before the transfer they seed.
+    pending_observations: Vec<(i64, alloy::primitives::U256)>,
 }
 
 impl<'span> ChunkContext<'span> {
@@ -206,14 +217,93 @@ impl<'span> ChunkContext<'span> {
             memo: RevisionMemo::new(),
             conn,
             substrate,
+            tx: None,
             block_number: span.chunk_start,
+            pending_observations: Vec::new(),
         }
     }
 
-    /// Enter one log-transaction's dispatch scope: the block every read and
-    /// every emitted event for that transaction rides.
-    pub(crate) fn begin_transaction(&mut self, block_number: u64) {
-        self.block_number = block_number;
+    /// Enter one log-transaction's dispatch scope: the exact transaction every
+    /// read and every emitted delta for that transaction rides.
+    pub(crate) fn begin_transaction(&mut self, tx: TxRef) {
+        self.tx = Some(tx);
+        self.block_number = tx.anchor().number();
+    }
+
+    /// The current transaction's exact reference.
+    ///
+    /// # Errors
+    ///
+    /// `ConfigDispatchError::DecodeShape` when a dispatch read arrives before
+    /// any transaction scope was entered.
+    pub(super) fn tx(&self) -> Result<TxRef, ConfigDispatchError> {
+        self.tx.ok_or_else(|| {
+            ConfigDispatchError::DecodeShape(
+                "configuration dispatch outside a transaction scope".to_string(),
+            )
+        })
+    }
+
+    /// One log's exact position under the current transaction.
+    ///
+    /// # Errors
+    ///
+    /// `ConfigDispatchError::DecodeShape` when the log carries no block-wide
+    /// index (canonical ingress already refuses one — this is the loud
+    /// backstop) or the dispatch has no transaction scope.
+    pub(super) fn log_ref(
+        &self,
+        log: &alloy::rpc::types::Log,
+    ) -> Result<degenbot_core::canonical_head::LogRef, ConfigDispatchError> {
+        let tx = self.tx()?;
+        let index = log.log_index.ok_or_else(|| {
+            ConfigDispatchError::DecodeShape(
+                "configuration log carries no block-wide log index".to_string(),
+            )
+        })?;
+        Ok(degenbot_core::canonical_head::LogRef::new(tx, index))
+    }
+
+    /// Enter a transaction scope by block number for the in-crate fixtures:
+    /// one deterministic transaction per block, so a fixture's emitted deltas
+    /// carry a stable exact position.
+    #[cfg(test)]
+    pub(super) fn begin_transaction_at(&mut self, block_number: u64) {
+        self.begin_transaction(crate::updater::config_dispatch::fixture_tx(block_number));
+    }
+
+    /// Persist a configuration effect through the canonical writer for the
+    /// in-crate fixtures (the production path reduces through the dispatch
+    /// loop instead).
+    #[cfg(test)]
+    pub(super) fn apply_effects_for_test(
+        &mut self,
+        effects: &[ConfigurationEffect],
+    ) -> Result<crate::run::CanonicalDeltaWriteReport, DbError> {
+        let tx = self
+            .tx()
+            .map_err(|error| DbError::Decode(format!("{error}")))?;
+        let mut report = crate::run::CanonicalDeltaWriteReport::default();
+        for effect in effects {
+            let delta = CanonicalDelta::new(
+                degenbot_core::canonical_head::LogRef::new(tx, 0),
+                None,
+                DeltaEffect::Configuration(effect.clone()),
+            );
+            report = self.apply_configuration_delta(&delta)?;
+        }
+        Ok(report)
+    }
+
+    /// Record one resolved stkAAVE balance observation for the dispatch loop to
+    /// emit (and for the projection to read).
+    pub(super) fn push_observation(&mut self, user_id: i64, balance: alloy::primitives::U256) {
+        self.pending_observations.push((user_id, balance));
+    }
+
+    /// Drain the observations the current event resolved.
+    pub(super) fn take_observations(&mut self) -> Vec<(i64, alloy::primitives::U256)> {
+        std::mem::take(&mut self.pending_observations)
     }
 
     /// The block the current log-transaction's dispatch reads + emits at.
@@ -294,31 +384,54 @@ impl<'span> ChunkContext<'span> {
     ///
     /// Propagates [`degenbot_db::DbError`] from any apply failure — the caller
     /// drops the chunk `Transaction` (rollback).
-    pub(crate) fn apply_events(
+    /// Repoint the in-chunk POOL endpoint after an `AddressSet` rotation: the
+    /// dispatch's own `getConfiguration` and the ops parser scope RPCs at the
+    /// POOL proxy through this field, and the durable row moves in the chunk's
+    /// write transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Decode`] when the rotation target is not an address.
+    pub(super) fn repoint_pool(&mut self, effect: &ConfigurationEffect) -> Result<(), DbError> {
+        if let ConfigurationEffect::ContractAddressChanged {
+            name, new_address, ..
+        } = effect
+        {
+            if name == "POOL" {
+                self.pool_address = new_address.parse().map_err(|_| {
+                    DbError::Decode(format!(
+                        "POOL rotation target {new_address} is not an address"
+                    ))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_configuration_delta(
         &mut self,
-        events: &[AaveChunkEvent],
-    ) -> Result<AaveChunkWriteReport, DbError> {
-        let conn = self.conn;
-        let market_id = self.market_id;
-        let report = apply_chunk_events_on_conn(conn, market_id, events, &mut *self.substrate)?;
+        delta: &CanonicalDelta,
+    ) -> Result<CanonicalDeltaWriteReport, DbError> {
+        let report = self.apply_deltas(std::slice::from_ref(delta))?;
         // Same-transition RPC targets: the dispatch's own `getConfiguration`
         // + ops-parser scope RPCs the POOL proxy by this field, so an
         // `AddressSet` POOL rotation applied mid-chunk must repoint it at the
         // transition boundary (the DB row is the durable half; this is the
         // in-chunk half). The oracle target is NOT cached here —
         // `resolve_reserve_oracle_address` reads `conn` fresh per event.
-        for event in events {
-            if let AaveChunkEvent::ContractAddressChanged {
-                name, new_address, ..
-            } = event
-            {
-                if name == "POOL" {
-                    self.pool_address = new_address.parse().map_err(|_| {
-                        DbError::Decode(format!(
-                            "POOL rotation target {new_address} is not an address"
-                        ))
-                    })?;
-                }
+        if let DeltaEffect::Configuration(ConfigurationEffect::ContractAddressChanged {
+            name,
+            new_address,
+            ..
+        }) = delta.effect()
+        {
+            if name == "POOL" {
+                self.pool_address = new_address.parse().map_err(|_| {
+                    DbError::Decode(format!(
+                        "POOL rotation target {new_address} is not an address"
+                    ))
+                })?;
             }
         }
         Ok(report)
@@ -334,6 +447,7 @@ impl<'span> ChunkContext<'span> {
     ///
     /// Propagates [`degenbot_db::DbError`] from any apply failure — the caller
     /// drops the chunk `Transaction` (rollback).
+    #[cfg(test)]
     pub(crate) fn apply_deltas(
         &mut self,
         deltas: &[crate::projection::CanonicalDelta],
@@ -455,9 +569,12 @@ impl<'span> ChunkContext<'span> {
     /// 2. **build the discount snapshot** — the GHO-discount pre-pass, gated
     ///    on the revision just read, against the TRANSACTION-START GHO row
     ///    (a same-tx link is invisible to it by design).
-    /// 3. **dispatch the config events** — each event applies intra-dispatch via
-    ///    [`ChunkContext::apply_events`], so a later event in the same
-    ///    transaction sees an earlier event's write.
+    /// 3. **dispatch the configuration events** — each is reduced into a
+    ///    positioned, generation-qualified delta and persisted intra-dispatch
+    ///    via [`ChunkContext::apply_configuration_delta`], so a later event in
+    ///    the same transaction sees an earlier event's write. The projection
+    ///    view advances separately, in canonical event order with the
+    ///    transaction's operations.
     /// 4. **re-resolve the GHO row for the operation parser** — the tx-start
     ///    read predates a same-tx `ReserveInitialized` linking the GHO
     ///    vToken; the parser's Mint/Burn classification must see the link
@@ -471,6 +588,7 @@ impl<'span> ChunkContext<'span> {
     /// Propagates a substrate lookup failure or the dispatch's own error.
     pub(crate) async fn dispatch_transaction(
         &mut self,
+        view: &mut ProjectionView,
         tx_logs: &[&alloy::rpc::types::Log],
     ) -> Result<TransactionDispatch, ConfigDispatchError> {
         let conn = self.conn;
@@ -501,21 +619,23 @@ impl<'span> ChunkContext<'span> {
 
         // (2) The discount pre-pass (RPC + the DB-cache path) reads `conn`
         //     (sees prior transactions' writes).
+        let provider = self.provider.clone();
         let discounts = build_discount_snapshot(
-            self.provider(),
+            &provider,
             tx_logs,
             block_number,
             gho_vtoken,
             vtoken_revision,
             market_id,
             conn,
+            self.substrate,
         )
         .await?;
 
         // (3) The config-event dispatch (RPC + substrate lookups). The
         //     revision reads ride the per-chunk memo; the same-block
         //     independent `eth_call`s ride the multicall batch.
-        let config_events = dispatch_config_events(self, tx_logs).await?;
+        let deltas = dispatch_config_events(self, view, tx_logs).await?;
 
         // (4) Post-config GHO re-resolve for the operation parser: a same-tx
         //     `ReserveInitialized` linking the GHO vToken marked the row
@@ -542,7 +662,7 @@ impl<'span> ChunkContext<'span> {
 
         Ok(TransactionDispatch {
             discounts,
-            config_events,
+            deltas,
             gho_underlying_address: underlying,
             gho_vtoken_address: gho_vtoken_post,
             stk_aave_address: stk_aave_post,
@@ -607,8 +727,9 @@ pub(super) enum BatchReadResult {
 pub(crate) struct TransactionDispatch {
     /// The per-user GHO discount snapshot for this transaction.
     pub(crate) discounts: HashMap<Address, U256>,
-    /// The config events dispatched (already applied intra-dispatch).
-    pub(crate) config_events: Vec<AaveChunkEvent>,
+    /// The configuration deltas this transaction reduced, already applied to
+    /// the projection view and persisted intra-dispatch.
+    pub(crate) deltas: Vec<CanonicalDelta>,
     /// The GHO underlying (`GHO`) address, resolved POST-config (a same-tx
     /// `ReserveInitialized` link is visible).
     pub(crate) gho_underlying_address: Option<Address>,

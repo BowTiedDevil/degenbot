@@ -55,7 +55,6 @@ use degenbot_decoders::aave_event_decoder::{
     AaveV3ScaledTokenBurnEvent, AaveV3ScaledTokenMintEvent, DecodedAaveEvent,
 };
 
-use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod liquidation;

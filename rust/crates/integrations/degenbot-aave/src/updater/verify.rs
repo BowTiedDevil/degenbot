@@ -69,14 +69,26 @@ pub struct PositionDivergence {
     pub actual: U256,
 }
 
-/// A row loaded from the DB for the verify pass.
-#[derive(Debug)]
-struct PositionRow {
-    position_id: i64,
-    user_address: Address,
-    token_address: Address,
-    balance: U256,
-    last_index: Option<U256>,
+/// A row loaded from the DB for the verify pass: one position, the identity the
+/// on-chain read is issued for, and the DB's expectation.
+#[derive(Debug, Clone, Copy)]
+pub struct VerificationPosition {
+    pub kind: PositionKind,
+    pub position_id: i64,
+    pub user_address: Address,
+    pub token_address: Address,
+    pub balance: U256,
+    pub last_index: Option<U256>,
+}
+
+/// What one position's token reported on chain at the verify block - the
+/// acquisition phase's whole product, joined to its position by identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PositionTruth {
+    pub kind: PositionKind,
+    pub position_id: i64,
+    pub balance: U256,
+    pub last_index: U256,
 }
 
 /// The token FK column on `aave_v3_assets` to resolve (collateral -> `a_token_id`,
@@ -112,7 +124,7 @@ fn load_position_rows(
     market_id: i64,
     kind: PositionKind,
     user_addresses: Option<&[Address]>,
-) -> Result<Vec<PositionRow>, DbError> {
+) -> Result<Vec<VerificationPosition>, DbError> {
     let token_col = token_column(kind);
     let table = positions_table(kind);
     // Build the SELECT + the optional user-address IN-clause.
@@ -177,7 +189,7 @@ fn load_position_rows(
             last_index_str,
         ))
     })?;
-    let mut rows: Vec<PositionRow> = Vec::new();
+    let mut rows: Vec<VerificationPosition> = Vec::new();
     for r in iter {
         let (pid, user_addr_str, token_addr_str, balance_str, last_index_str) = r?;
         let user_address = user_addr_str
@@ -194,7 +206,8 @@ fn load_position_rows(
                 parse_u256(s).map_err(|e| decode_position_row(table, pid, "last_index", s, e))?,
             ),
         };
-        rows.push(PositionRow {
+        rows.push(VerificationPosition {
+            kind,
             position_id: pid,
             user_address,
             token_address,
@@ -279,16 +292,55 @@ pub async fn verify_touched_positions_on_conn(
     block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<PositionDivergence>, RunError> {
-    let mut divergences: Vec<PositionDivergence> = Vec::new();
+    let positions = load_verification_positions(conn, market_id, user_addresses)?;
+    let truth = acquire_position_truth(provider, block_number, &positions).await?;
+    Ok(compare_position_truth(&positions, &truth, block_number))
+}
 
+/// The verify pass's read side: every position row the comparison will judge,
+/// collateral family first then debt, dead/zero-address users dropped (no call
+/// is ever issued for them). This is the SQL half and issues no RPC, so a
+/// caller can load it inside a write transaction while the chain reads happened
+/// earlier.
+///
+/// # Errors
+///
+/// A row whose address, balance or `last_index` column does not parse refuses
+/// the load (never a dropped row).
+pub fn load_verification_positions(
+    conn: &Connection,
+    market_id: i64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<VerificationPosition>, DbError> {
+    let mut positions: Vec<VerificationPosition> = Vec::new();
     for kind in [PositionKind::Collateral, PositionKind::Debt] {
-        let rows = load_position_rows(conn, market_id, kind, user_addresses)?;
-        // Skip dead/zero-address users before batching so no calls are wasted
-        // on them.
-        let rows: Vec<&PositionRow> = rows
-            .iter()
-            .filter(|r| r.user_address != DEAD_ADDRESS && r.user_address != ZERO_ADDRESS)
-            .collect();
+        positions.extend(
+            load_position_rows(conn, market_id, kind, user_addresses)?
+                .into_iter()
+                .filter(|row| row.user_address != DEAD_ADDRESS && row.user_address != ZERO_ADDRESS),
+        );
+    }
+    Ok(positions)
+}
+
+/// The verify pass's chain half: one Multicall3 batch reading
+/// `scaledBalanceOf` + `getPreviousIndex` for every position at
+/// `block_number`. Pure RPC - no SQL - so it runs in resolution, outside the
+/// chunk's write transaction, and its product is joined back by identity.
+///
+/// # Errors
+///
+/// A transport fault aborts the acquisition instead of reading every position
+/// as zero.
+pub async fn acquire_position_truth(
+    provider: &AlloyProvider,
+    block_number: u64,
+    positions: &[VerificationPosition],
+) -> Result<Vec<PositionTruth>, RunError> {
+    let mut truth: Vec<PositionTruth> = Vec::with_capacity(positions.len());
+    for kind in [PositionKind::Collateral, PositionKind::Debt] {
+        let rows: Vec<&VerificationPosition> =
+            positions.iter().filter(|row| row.kind == kind).collect();
         if rows.is_empty() {
             continue;
         }
@@ -310,37 +362,74 @@ pub async fn verify_touched_positions_on_conn(
         // stride is exact and the remainder is structurally empty.
         let (result_pairs, _remainder) = results.as_chunks::<2>();
         for (row, chunk) in rows.iter().zip(result_pairs) {
-            let actual_balance = result_to_u256(&chunk[0]);
-            if actual_balance != row.balance {
-                divergences.push(PositionDivergence {
-                    kind,
-                    position_id: row.position_id,
-                    user_address: row.user_address,
-                    token_address: row.token_address,
-                    block_number,
-                    field: DivergenceField::Balance,
-                    expected: row.balance,
-                    actual: actual_balance,
-                });
-            }
-            let actual_index = result_to_u256(&chunk[1]);
-            let expected_index = row.last_index.unwrap_or(U256::ZERO);
-            if actual_index != expected_index {
-                divergences.push(PositionDivergence {
-                    kind,
-                    position_id: row.position_id,
-                    user_address: row.user_address,
-                    token_address: row.token_address,
-                    block_number,
-                    field: DivergenceField::LastIndex,
-                    expected: expected_index,
-                    actual: actual_index,
-                });
-            }
+            truth.push(PositionTruth {
+                kind,
+                position_id: row.position_id,
+                balance: result_to_u256(&chunk[0]),
+                last_index: result_to_u256(&chunk[1]),
+            });
         }
     }
+    Ok(truth)
+}
 
-    Ok(divergences)
+/// The verify pass's comparison: the DB rows against the acquired truth. Pure -
+/// no RPC - so it runs on the chunk's uncommitted transaction while the chain
+/// reads finished in resolution.
+///
+/// A position the truth names but the rows no longer hold is a divergence: the
+/// chain reported state the DB has no row for.
+#[must_use]
+pub fn compare_position_truth(
+    positions: &[VerificationPosition],
+    truth: &[PositionTruth],
+    block_number: u64,
+) -> Vec<PositionDivergence> {
+    let mut divergences: Vec<PositionDivergence> = Vec::new();
+    for truth_row in truth {
+        let Some(row) = positions
+            .iter()
+            .find(|row| row.kind == truth_row.kind && row.position_id == truth_row.position_id)
+        else {
+            divergences.push(PositionDivergence {
+                kind: truth_row.kind,
+                position_id: truth_row.position_id,
+                user_address: ZERO_ADDRESS,
+                token_address: ZERO_ADDRESS,
+                block_number,
+                field: DivergenceField::Balance,
+                expected: U256::ZERO,
+                actual: truth_row.balance,
+            });
+            continue;
+        };
+        if truth_row.balance != row.balance {
+            divergences.push(PositionDivergence {
+                kind: row.kind,
+                position_id: row.position_id,
+                user_address: row.user_address,
+                token_address: row.token_address,
+                block_number,
+                field: DivergenceField::Balance,
+                expected: row.balance,
+                actual: truth_row.balance,
+            });
+        }
+        let expected_index = row.last_index.unwrap_or(U256::ZERO);
+        if truth_row.last_index != expected_index {
+            divergences.push(PositionDivergence {
+                kind: row.kind,
+                position_id: row.position_id,
+                user_address: row.user_address,
+                token_address: row.token_address,
+                block_number,
+                field: DivergenceField::LastIndex,
+                expected: expected_index,
+                actual: truth_row.last_index,
+            });
+        }
+    }
+    divergences
 }
 
 /// Map one sub-call outcome to a U256: a returned payload of at least 32 bytes
@@ -416,6 +505,320 @@ fn user_address_clause(user_addresses: Option<&[Address]>) -> (String, Vec<Strin
     }
 }
 
+/// The chain truth for one user's stkAAVE balance, joined by user id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StkAaveTruth {
+    pub user_id: i64,
+    pub balance: U256,
+}
+
+/// The chain truth for one user's GHO discount percent, joined by user id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GhoDiscountTruth {
+    pub user_id: i64,
+    pub discount: i64,
+}
+
+/// Every chain fact a market-wide verification compares: the acquisition
+/// phase's whole product, keyed so the comparison phase can join it to the
+/// rows it reads on the (possibly uncommitted) connection.
+#[derive(Debug, Default, Clone)]
+pub struct VerificationTruth {
+    pub positions: Vec<PositionTruth>,
+    pub stk_aave: Vec<StkAaveTruth>,
+    pub gho_discount: Vec<GhoDiscountTruth>,
+}
+
+/// One row of the stkAAVE check's read side.
+struct StkAaveRow {
+    user_id: i64,
+    user_address: Address,
+    expected: U256,
+}
+
+/// One row of the GHO discount check's read side.
+struct GhoDiscountRow {
+    user_id: i64,
+    user_address: Address,
+    expected: i64,
+}
+
+/// The stkAAVE token the balance check reads, when the market carries one.
+fn stk_aave_discount_token(conn: &Connection, chain_id: i64) -> Result<Option<Address>, DbError> {
+    let Some(gho_asset) = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)? else {
+        return Ok(None);
+    };
+    Ok(gho_asset
+        .v_gho_discount_token
+        .as_deref()
+        .and_then(|token| token.parse::<Address>().ok()))
+}
+
+/// The GHO vToken's discount-check target, when the mechanism is live at the
+/// market's recorded revision.
+fn gho_discount_target(
+    conn: &Connection,
+    market_id: i64,
+    chain_id: i64,
+) -> Result<Option<(i64, Address)>, DbError> {
+    let Some(gho_asset) = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)? else {
+        return Ok(None);
+    };
+    let Some(v_token_id) = gho_asset.v_token_id else {
+        return Ok(None);
+    };
+    let Some(v_token_address) = gho_asset
+        .v_token_address
+        .as_deref()
+        .and_then(|token| token.parse::<Address>().ok())
+    else {
+        return Ok(None);
+    };
+    let revision: Option<i64> = conn
+        .query_row(
+            "SELECT a.v_token_revision FROM aave_v3_assets a WHERE a.market_id = ?1 AND a.v_token_id = ?2",
+            rusqlite::params![market_id, v_token_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten();
+    if revision.is_none_or(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION) {
+        return Ok(None);
+    }
+    Ok(Some((v_token_id, v_token_address)))
+}
+
+fn load_stk_aave_rows(
+    conn: &Connection,
+    market_id: i64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<StkAaveRow>, DbError> {
+    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
+    let sql = format!(
+        "SELECT u.id, u.address, u.stk_aave_balance FROM aave_v3_users u WHERE u.market_id = ?1 AND u.stk_aave_balance IS NOT NULL{addr_clause}"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
+    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + addr_strs.len());
+    bind_params.push(&market_id);
+    for s in &addr_strs {
+        bind_params.push(s);
+    }
+    let iter = stmt
+        .query_map(bind_params.as_slice(), |r| {
+            let id: i64 = r.get(0)?;
+            let addr: String = r.get(1)?;
+            let bal: Option<String> = r.get(2)?;
+            Ok((id, addr, bal))
+        })
+        .map_err(DbError::from)?;
+    let mut rows = Vec::new();
+    for row in iter {
+        let (user_id, user_addr_str, bal_str) = row.map_err(DbError::from)?;
+        let Ok(user_address) = user_addr_str.parse() else {
+            continue;
+        };
+        let expected = bal_str
+            .as_deref()
+            .and_then(|s| parse_u256(s).ok())
+            .unwrap_or(U256::ZERO);
+        rows.push(StkAaveRow {
+            user_id,
+            user_address,
+            expected,
+        });
+    }
+    Ok(rows)
+}
+
+fn load_gho_discount_rows(
+    conn: &Connection,
+    market_id: i64,
+    v_token_id: i64,
+    user_addresses: Option<&[Address]>,
+) -> Result<Vec<GhoDiscountRow>, DbError> {
+    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
+    let sql = format!(
+        "SELECT DISTINCT u.id, u.address, u.gho_discount FROM aave_v3_users u JOIN aave_v3_debt_positions dp ON dp.user_id = u.id JOIN aave_v3_assets a ON a.id = dp.asset_id WHERE a.market_id = ?1 AND a.v_token_id = ?2{addr_clause}"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
+    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + addr_strs.len());
+    bind_params.push(&market_id);
+    bind_params.push(&v_token_id);
+    for s in &addr_strs {
+        bind_params.push(s);
+    }
+    let iter = stmt
+        .query_map(bind_params.as_slice(), |r| {
+            let id: i64 = r.get(0)?;
+            let addr: String = r.get(1)?;
+            let discount: i64 = r.get(2)?;
+            Ok((id, addr, discount))
+        })
+        .map_err(DbError::from)?;
+    let mut rows = Vec::new();
+    for row in iter {
+        let (user_id, user_addr_str, expected) = row.map_err(DbError::from)?;
+        let Ok(user_address) = user_addr_str.parse() else {
+            continue;
+        };
+        rows.push(GhoDiscountRow {
+            user_id,
+            user_address,
+            expected,
+        });
+    }
+    Ok(rows)
+}
+
+/// Acquire every chain fact the market-wide verification compares, in ONE
+/// resolution phase: no SQL write, no transaction. The reads are batched
+/// (Multicall3 for the scaled-token and discount checks, one `balanceOf` batch
+/// for stkAAVE) exactly as the single-shot verifier issued them.
+///
+/// # Errors
+///
+/// A transport fault aborts the acquisition rather than reading every fact as
+/// zero.
+pub async fn acquire_verification_truth(
+    conn: &Connection,
+    provider: &AlloyProvider,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    user_addresses: Option<&[Address]>,
+) -> Result<VerificationTruth, RunError> {
+    let positions = load_verification_positions(conn, market_id, user_addresses)?;
+    let positions = acquire_position_truth(provider, block_number, &positions).await?;
+
+    let stk_aave = match stk_aave_discount_token(conn, chain_id)? {
+        Some(token_address) => {
+            let rows = load_stk_aave_rows(conn, market_id, user_addresses)?;
+            if rows.is_empty() {
+                Vec::new()
+            } else {
+                let accounts: Vec<Address> = rows.iter().map(|row| row.user_address).collect();
+                let results = degenbot_rpc::erc20::balance_of_batch(
+                    provider,
+                    token_address,
+                    &accounts,
+                    Some(block_number),
+                )
+                .await?;
+                rows.iter()
+                    .zip(results.iter())
+                    .map(|(row, result)| StkAaveTruth {
+                        user_id: row.user_id,
+                        balance: result.as_ref().copied().unwrap_or(U256::ZERO),
+                    })
+                    .collect()
+            }
+        }
+        None => Vec::new(),
+    };
+
+    let gho_discount = match gho_discount_target(conn, market_id, chain_id)? {
+        Some((v_token_id, v_token_address)) => {
+            let rows = load_gho_discount_rows(conn, market_id, v_token_id, user_addresses)?;
+            if rows.is_empty() {
+                Vec::new()
+            } else {
+                let calls: Vec<(Address, Bytes)> = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            v_token_address,
+                            build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, row.user_address),
+                        )
+                    })
+                    .collect();
+                let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
+                rows.iter()
+                    .zip(results.iter())
+                    .map(|(row, result)| GhoDiscountTruth {
+                        user_id: row.user_id,
+                        discount: result_to_u256(result).try_into().unwrap_or(i64::MAX),
+                    })
+                    .collect()
+            }
+        }
+        None => Vec::new(),
+    };
+
+    Ok(VerificationTruth {
+        positions,
+        stk_aave,
+        gho_discount,
+    })
+}
+
+/// Compare the acquired truth against the rows the connection holds now. Pure:
+/// no RPC, so it runs on the chunk's uncommitted transaction.
+///
+/// # Errors
+///
+/// Returns [`RunError`] when a row the comparison needs does not parse.
+pub fn compare_verification_truth_on_conn(
+    conn: &Connection,
+    market_id: i64,
+    chain_id: i64,
+    block_number: u64,
+    user_addresses: Option<&[Address]>,
+    truth: &VerificationTruth,
+) -> Result<Vec<VerificationDivergence>, RunError> {
+    let mut divergences = Vec::new();
+
+    let positions = load_verification_positions(conn, market_id, user_addresses)?;
+    for divergence in compare_position_truth(&positions, &truth.positions, block_number) {
+        divergences.push(VerificationDivergence::ScaledToken(divergence));
+    }
+
+    if let Some(token_address) = stk_aave_discount_token(conn, chain_id)? {
+        for row in &load_stk_aave_rows(conn, market_id, user_addresses)? {
+            let Some(truth_row) = truth
+                .stk_aave
+                .iter()
+                .find(|entry| entry.user_id == row.user_id)
+            else {
+                continue;
+            };
+            if truth_row.balance != row.expected {
+                divergences.push(VerificationDivergence::StkAaveBalance {
+                    user_id: row.user_id,
+                    user_address: row.user_address,
+                    token_address,
+                    block_number,
+                    expected: row.expected,
+                    actual: truth_row.balance,
+                });
+            }
+        }
+    }
+
+    if let Some((v_token_id, v_token_address)) = gho_discount_target(conn, market_id, chain_id)? {
+        for row in &load_gho_discount_rows(conn, market_id, v_token_id, user_addresses)? {
+            let Some(truth_row) = truth
+                .gho_discount
+                .iter()
+                .find(|entry| entry.user_id == row.user_id)
+            else {
+                continue;
+            };
+            if truth_row.discount != row.expected {
+                divergences.push(VerificationDivergence::GhoDiscount {
+                    user_id: row.user_id,
+                    user_address: row.user_address,
+                    token_address: v_token_address,
+                    block_number,
+                    expected: row.expected,
+                    actual: truth_row.discount,
+                });
+            }
+        }
+    }
+
+    Ok(divergences)
+}
+
 /// Verify that `aave_v3_users.stk_aave_balance` matches on-chain `balanceOf`
 /// for each user with a tracked stkAAVE balance. No-op when the market
 /// has no `v_gho_discount_token` (the GHO asset row's discount token is
@@ -432,82 +835,26 @@ pub async fn verify_stk_aave_balances_on_conn(
     block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<VerificationDivergence>, RunError> {
-    let gho_asset = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
-    let Some(gho_asset) = gho_asset else {
-        return Ok(Vec::new());
-    };
-    let Some(discount_token_str) = &gho_asset.v_gho_discount_token else {
-        return Ok(Vec::new());
-    };
-    let Ok(token_address) = discount_token_str.parse::<Address>() else {
-        return Ok(Vec::new());
-    };
-
-    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
-    let sql = format!(
-        "SELECT u.id, u.address, u.stk_aave_balance \
-         FROM aave_v3_users u \
-         WHERE u.market_id = ?1 AND u.stk_aave_balance IS NOT NULL{addr_clause}"
-    );
-    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
-    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + addr_strs.len());
-    bind_params.push(&market_id);
-    for s in &addr_strs {
-        bind_params.push(s);
-    }
-    let iter = stmt
-        .query_map(bind_params.as_slice(), |r| {
-            let id: i64 = r.get(0)?;
-            let addr: String = r.get(1)?;
-            let bal: Option<String> = r.get(2)?;
-            Ok((id, addr, bal))
-        })
-        .map_err(DbError::from)?;
-
-    let mut divergences = Vec::new();
-    // Collect eligible rows first so the per-user `balanceOf` calls can be
-    // batched through one Multicall3 `aggregate3` instead of N serial eth_calls.
-    let mut eligible: Vec<(i64, Address, U256)> = Vec::new();
-    for row in iter {
-        let (user_id, user_addr_str, bal_str) = row.map_err(DbError::from)?;
-        let Ok(user_address) = user_addr_str.parse() else {
-            continue;
-        };
-        let expected = bal_str
-            .as_deref()
-            .and_then(|s| parse_u256(s).ok())
-            .unwrap_or(U256::ZERO);
-        eligible.push((user_id, user_address, expected));
-    }
-    if !eligible.is_empty() {
-        let accounts: Vec<Address> = eligible.iter().map(|(_, user, _)| *user).collect();
-        let results = degenbot_rpc::erc20::balance_of_batch(
-            provider,
-            token_address,
-            &accounts,
-            Some(block_number),
-        )
-        .await?;
-        for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
-            // The verification policy is preserved: an unreadable balance
-            // (a revert, a malformed return) reconciles as ZERO, so any tracked
-            // non-zero row diverges. A transport fault is not an unreadable
-            // balance — it aborted the batch above with the provider's own
-            // error.
-            let actual = result.as_ref().copied().unwrap_or(U256::ZERO);
-            if actual != *expected {
-                divergences.push(VerificationDivergence::StkAaveBalance {
-                    user_id: *user_id,
-                    user_address: *user_address,
-                    token_address,
-                    block_number,
-                    expected: *expected,
-                    actual,
-                });
-            }
-        }
-    }
-    Ok(divergences)
+    let truth = acquire_verification_truth(
+        conn,
+        provider,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+    )
+    .await?;
+    Ok(compare_verification_truth_on_conn(
+        conn,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+        &truth,
+    )?
+    .into_iter()
+    .filter(|divergence| matches!(divergence, VerificationDivergence::StkAaveBalance { .. }))
+    .collect())
 }
 
 /// Verify that `aave_v3_users.gho_discount` matches the GHO vToken's
@@ -525,97 +872,26 @@ pub async fn verify_gho_discount_amounts_on_conn(
     block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<VerificationDivergence>, RunError> {
-    let gho_asset = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
-    let Some(gho_asset) = &gho_asset else {
-        return Ok(Vec::new());
-    };
-    let Some(v_token_id) = gho_asset.v_token_id else {
-        return Ok(Vec::new());
-    };
-    let Some(v_token_address_str) = &gho_asset.v_token_address else {
-        return Ok(Vec::new());
-    };
-    let Ok(v_token_address) = v_token_address_str.parse::<Address>() else {
-        return Ok(Vec::new());
-    };
-
-    // Resolve the vToken's revision; skip if >= deprecation revision.
-    let revision: Option<i64> = conn
-        .query_row(
-            "SELECT a.v_token_revision FROM aave_v3_assets a \
-             WHERE a.market_id = ?1 AND a.v_token_id = ?2",
-            rusqlite::params![market_id, v_token_id],
-            |r| r.get::<_, Option<i64>>(0),
-        )
-        .ok()
-        .flatten();
-    if revision.is_none_or(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION) {
-        return Ok(Vec::new());
-    }
-
-    // Load users with GHO debt positions.
-    let (addr_clause, addr_strs) = user_address_clause(user_addresses);
-    let sql = format!(
-        "SELECT DISTINCT u.id, u.address, u.gho_discount \
-         FROM aave_v3_users u \
-         JOIN aave_v3_debt_positions dp ON dp.user_id = u.id \
-         JOIN aave_v3_assets a ON a.id = dp.asset_id \
-         WHERE a.market_id = ?1 AND a.v_token_id = ?2{addr_clause}"
-    );
-    let mut stmt = conn.prepare(&sql).map_err(DbError::from)?;
-    let mut bind_params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + addr_strs.len());
-    bind_params.push(&market_id);
-    bind_params.push(&v_token_id);
-    for s in &addr_strs {
-        bind_params.push(s);
-    }
-    let iter = stmt
-        .query_map(bind_params.as_slice(), |r| {
-            let id: i64 = r.get(0)?;
-            let addr: String = r.get(1)?;
-            let discount: i64 = r.get(2)?;
-            Ok((id, addr, discount))
-        })
-        .map_err(DbError::from)?;
-
-    let mut divergences = Vec::new();
-    // Collect eligible users first so the per-user `getDiscountPercent` calls
-    // can be batched through one Multicall3 `aggregate3`.
-    let mut eligible: Vec<(i64, Address, i64)> = Vec::new();
-    for row in iter {
-        let (user_id, user_addr_str, expected) = row.map_err(DbError::from)?;
-        let Ok(user_address) = user_addr_str.parse() else {
-            continue;
-        };
-        eligible.push((user_id, user_address, expected));
-    }
-    if !eligible.is_empty() {
-        let calls: Vec<(Address, Bytes)> = eligible
-            .iter()
-            .map(|(_, user_address, _)| {
-                (
-                    v_token_address,
-                    build_call_data(GET_DISCOUNT_PERCENT_SELECTOR, *user_address),
-                )
-            })
-            .collect();
-        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
-        for ((user_id, user_address, expected), result) in eligible.iter().zip(results.iter()) {
-            let actual_u256 = result_to_u256(result);
-            let actual: i64 = actual_u256.try_into().unwrap_or(i64::MAX);
-            if actual != *expected {
-                divergences.push(VerificationDivergence::GhoDiscount {
-                    user_id: *user_id,
-                    user_address: *user_address,
-                    token_address: v_token_address,
-                    block_number,
-                    expected: *expected,
-                    actual,
-                });
-            }
-        }
-    }
-    Ok(divergences)
+    let truth = acquire_verification_truth(
+        conn,
+        provider,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+    )
+    .await?;
+    Ok(compare_verification_truth_on_conn(
+        conn,
+        market_id,
+        chain_id,
+        block_number,
+        user_addresses,
+        &truth,
+    )?
+    .into_iter()
+    .filter(|divergence| matches!(divergence, VerificationDivergence::GhoDiscount { .. }))
+    .collect())
 }
 
 /// Run all 4 verification checks (scaled-token collateral + debt, stkAAVE
@@ -636,18 +912,7 @@ pub async fn verify_all_positions_on_conn(
     block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<VerificationDivergence>, RunError> {
-    let mut divergences = Vec::new();
-
-    // Checks 1 + 2: scaled-token balance + last_index (collateral + debt).
-    let scaled =
-        verify_touched_positions_on_conn(conn, provider, market_id, block_number, user_addresses)
-            .await?;
-    for d in scaled {
-        divergences.push(VerificationDivergence::ScaledToken(d));
-    }
-
-    // Check 3: stkAAVE balance.
-    let stk = verify_stk_aave_balances_on_conn(
+    let truth = acquire_verification_truth(
         conn,
         provider,
         market_id,
@@ -656,21 +921,14 @@ pub async fn verify_all_positions_on_conn(
         user_addresses,
     )
     .await?;
-    divergences.extend(stk);
-
-    // Check 4: GHO discount percent.
-    let gho = verify_gho_discount_amounts_on_conn(
+    compare_verification_truth_on_conn(
         conn,
-        provider,
         market_id,
         chain_id,
         block_number,
         user_addresses,
+        &truth,
     )
-    .await?;
-    divergences.extend(gho);
-
-    Ok(divergences)
 }
 
 /// Delete all zero-balance collateral + debt positions for `market_id`.
@@ -1062,5 +1320,101 @@ mod tests {
     fn is_final_chunk_false_mid_run() {
         assert!(!is_final_chunk(10_000, 1_000_000, false));
         assert!(!is_final_chunk(990_000, 1_000_000, false));
+    }
+
+    /// The seed plus the empty GHO row the stkAAVE/discount checks read (both
+    /// no-op without one; the comparison must still be pure).
+    fn seed_with_position_and_gho_row(
+        user_address: &str,
+        a_token_address: &str,
+        balance: &str,
+        last_index: Option<&str>,
+    ) -> Connection {
+        let conn = seed_with_position(user_address, a_token_address, balance, last_index);
+        conn.execute_batch(
+            "CREATE TABLE aave_gho_tokens (id INTEGER NOT NULL PRIMARY KEY, chain_id INTEGER NOT NULL, token_id INTEGER NOT NULL, v_token_id INTEGER, v_gho_discount_rate_strategy VARCHAR(42), v_gho_discount_token VARCHAR(42));",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// The comparison phase is the only part of a verification-enabled chunk
+    /// that runs inside the write transaction: it must be pure. A matching
+    /// truth produces no divergence and, critically, no provider round trip.
+    #[test]
+    fn compare_verification_truth_is_rpc_free_and_accepts_matching_truth() {
+        let conn = seed_with_position_and_gho_row(
+            "0x1111111111111111111111111111111111111111",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "123456789",
+            Some("1000000000000000000000000000"),
+        );
+        let truth = VerificationTruth {
+            positions: vec![PositionTruth {
+                kind: PositionKind::Collateral,
+                position_id: 1,
+                balance: U256::from(123_456_789_u64),
+                last_index: U256::from(10u64).pow(U256::from(27u64)),
+            }],
+            ..VerificationTruth::default()
+        };
+
+        let before = degenbot_rpc::provider::rpc_round_trips();
+        let divergences =
+            compare_verification_truth_on_conn(&conn, 1, 1, 100, None, &truth).unwrap();
+        let after = degenbot_rpc::provider::rpc_round_trips();
+
+        assert!(
+            divergences.is_empty(),
+            "the chain truth agrees with the row: {divergences:?}"
+        );
+        assert_eq!(
+            after, before,
+            "the comparison phase must issue no provider round trip - it runs inside the \
+             chunk's write transaction"
+        );
+    }
+
+    /// A disagreement between the acquired truth and the (uncommitted) row is
+    /// the divergence the gate rolls the chunk back on, and it is still
+    /// detected with no provider access at all.
+    #[test]
+    fn compare_verification_truth_names_a_mismatch_without_a_provider_round_trip() {
+        let conn = seed_with_position_and_gho_row(
+            "0x1111111111111111111111111111111111111111",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "123456789",
+            Some("1000000000000000000000000000"),
+        );
+        let truth = VerificationTruth {
+            positions: vec![PositionTruth {
+                kind: PositionKind::Collateral,
+                position_id: 1,
+                balance: U256::from(1u64),
+                last_index: U256::from(10u64).pow(U256::from(27u64)),
+            }],
+            ..VerificationTruth::default()
+        };
+
+        let before = degenbot_rpc::provider::rpc_round_trips();
+        let divergences =
+            compare_verification_truth_on_conn(&conn, 1, 1, 100, None, &truth).unwrap();
+        let after = degenbot_rpc::provider::rpc_round_trips();
+
+        assert_eq!(
+            after, before,
+            "no provider round trip in the comparison phase"
+        );
+        assert_eq!(
+            divergences.len(),
+            1,
+            "one balance divergence: {divergences:?}"
+        );
+        let VerificationDivergence::ScaledToken(divergence) = &divergences[0] else {
+            panic!("expected a scaled-token divergence");
+        };
+        assert_eq!(divergence.position_id, 1);
+        assert_eq!(divergence.expected, U256::from(123_456_789_u64));
+        assert_eq!(divergence.actual, U256::from(1u64));
     }
 }

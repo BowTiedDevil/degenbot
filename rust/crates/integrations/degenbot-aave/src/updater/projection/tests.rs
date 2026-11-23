@@ -9,11 +9,12 @@ use degenbot_core::canonical_head::{ChainAnchor, LogRef, TxRef};
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 
 use super::reduce::{
-    reduce_debt_reset, reduce_gho_refresh, reduce_scaled_balance, reduce_scaled_transfer,
+    reduce_configuration, reduce_debt_reset, reduce_gho_refresh, reduce_scaled_balance,
+    reduce_scaled_transfer,
 };
 use super::{
-    CanonicalDelta, GenerationEntity, GenerationRef, PositionSubject, ProjectionError,
-    ProjectionView,
+    CanonicalDelta, ContractRole, GenerationActivation, GenerationEntity, GenerationRef,
+    PositionSubject, ProjectionError, ProjectionView,
 };
 
 const RAY: u128 = 1_000_000_000_000_000_000_000_000_000;
@@ -52,8 +53,14 @@ fn debt(position_id: i64) -> PositionSubject {
     }
 }
 
-fn pool_generation(revision: u32) -> GenerationRef {
-    GenerationRef::new(GenerationEntity::Pool { market_id: 1 }, revision)
+fn contract_generation(revision: u32) -> GenerationRef {
+    GenerationRef::new(
+        GenerationEntity::Contract {
+            market_id: 1,
+            role: ContractRole::Pool,
+        },
+        revision,
+    )
 }
 
 fn token_generation(asset_id: i64, position: ScaledTokenPosition, revision: u32) -> GenerationRef {
@@ -131,7 +138,7 @@ fn an_unresolved_position_is_refused_rather_than_zero_defaulted() {
             I256::try_from(5u64).unwrap(),
             U256::from(RAY),
             log_ref(100, 0, 1),
-            pool_generation(9),
+            contract_generation(9),
         )
         .unwrap_err(),
         ProjectionError::UnresolvedPosition {
@@ -145,7 +152,7 @@ fn an_unresolved_position_is_refused_rather_than_zero_defaulted() {
             3,
             U256::from(RAY),
             log_ref(100, 0, 1),
-            pool_generation(9),
+            contract_generation(9),
         )
         .unwrap_err(),
         ProjectionError::UnresolvedPosition {
@@ -170,7 +177,7 @@ fn a_delta_states_its_exact_source_position() {
         I256::try_from(10u64).unwrap(),
         U256::from(RAY),
         source,
-        pool_generation(9),
+        contract_generation(9),
     )
     .expect("the position is resolved");
 
@@ -191,7 +198,7 @@ fn a_delta_states_its_exact_source_position() {
 fn a_delta_states_the_generation_it_reduced_under() {
     let mut view = ProjectionView::new();
     view.seed_position(collateral(4), (U256::ZERO, None));
-    view.observe_generation(pool_generation(9));
+    view.observe_generation(contract_generation(9));
 
     let delta = reduce_scaled_balance(
         &view,
@@ -199,15 +206,18 @@ fn a_delta_states_the_generation_it_reduced_under() {
         I256::try_from(10u64).unwrap(),
         U256::from(RAY),
         log_ref(100, 1, 5),
-        pool_generation(9),
+        contract_generation(9),
     )
     .expect("an observed generation matches");
 
-    assert_eq!(delta.generation(), Some(pool_generation(9)));
-    assert_eq!(delta.generation().unwrap().revision(), 9);
+    assert_eq!(delta.generation(), Some(contract_generation(9)));
+    assert_eq!(delta.generation().unwrap().revision(), Some(9));
     assert_eq!(
         delta.generation().unwrap().entity(),
-        GenerationEntity::Pool { market_id: 1 }
+        GenerationEntity::Contract {
+            market_id: 1,
+            role: ContractRole::Pool,
+        }
     );
 }
 
@@ -235,8 +245,8 @@ fn a_reduction_under_a_stale_generation_is_refused() {
                 asset_id: 3,
                 position: ScaledTokenPosition::Debt,
             },
-            reduced_under: 4,
-            observed: 2,
+            reduced_under: token_generation(3, ScaledTokenPosition::Debt, 4).encode(),
+            observed: token_generation(3, ScaledTokenPosition::Debt, 2).encode(),
         }
     );
 }
@@ -272,6 +282,341 @@ fn the_reducer_module_holds_no_transport_or_storage_reach() {
     );
 }
 
+// ── replacement generations (red-first acceptance: ADR-105 D6) ──────────
+
+/// A same-transaction discount-token replacement activates a NEW generation at
+/// its own event: the view reads the seeded generation before the event and the
+/// activated one after it, and two replacements in one transaction produce two
+/// distinct generations rather than a mutated single one.
+#[test]
+fn a_same_transaction_discount_token_replacement_exposes_each_generation() {
+    use super::ConfigurationEffect;
+
+    let chain_id = 1;
+    let entity = GenerationEntity::DiscountToken { chain_id };
+    let seeded = GenerationRef::seed(entity);
+    let mut view = ProjectionView::new();
+    view.observe_generation(seeded);
+    assert_eq!(view.generation(entity), Some(seeded));
+
+    let first_replacement = log_ref(100, 1, 410);
+    let first_effect = ConfigurationEffect::GhoDiscountTokenUpdated {
+        gho_token_id: 1,
+        new_discount_token: Some("0x1111111111111111111111111111111111111111".to_string()),
+    };
+    let first_generation = first_effect
+        .generation(chain_id, first_replacement)
+        .expect("the discount-token replacement is a construction-valid effect")
+        .expect("a replacement activates a discount-token generation");
+    let delta = reduce_configuration(
+        &view,
+        first_effect,
+        first_replacement,
+        Some(first_generation),
+    )
+    .expect("the replacement is the activation of the generation it names");
+    assert_eq!(
+        first_generation.activation(),
+        GenerationActivation::Event(first_replacement)
+    );
+    view.apply(&delta)
+        .expect("the activation advances the view");
+    assert_eq!(
+        view.generation(entity),
+        Some(first_generation),
+        "the view now reads the generation the event activated"
+    );
+
+    let second_replacement = log_ref(100, 1, 420);
+    let second_effect = ConfigurationEffect::GhoDiscountTokenUpdated {
+        gho_token_id: 1,
+        new_discount_token: Some("0x2222222222222222222222222222222222222222".to_string()),
+    };
+    let second_generation = second_effect
+        .generation(chain_id, second_replacement)
+        .expect("the second discount-token replacement is construction-valid")
+        .expect("the second replacement activates its own generation");
+    assert_ne!(
+        second_generation, first_generation,
+        "a second replacement is a new generation, never the first one mutated"
+    );
+    let delta = reduce_configuration(
+        &view,
+        second_effect,
+        second_replacement,
+        Some(second_generation),
+    )
+    .expect("the second activation reduces against the generation it replaces");
+    view.apply(&delta)
+        .expect("the second activation advances the view");
+    assert_eq!(view.generation(entity), Some(second_generation));
+}
+
+/// An endpoint rotation activates the role's contract generation at its own
+/// event, and the generation before the event is the seeded one — the fetch
+/// endpoint a chunk resolves for its next read is the generation the rotation
+/// installed, never a mutated address under an unchanged generation.
+#[test]
+fn an_endpoint_rotation_exposes_the_contract_generation_at_its_event() {
+    use super::{ConfigurationEffect, ContractRole};
+
+    let market_id = 1;
+    let entity = GenerationEntity::Contract {
+        market_id,
+        role: ContractRole::Pool,
+    };
+    let seeded = GenerationRef::new(entity, 2);
+    let mut view = ProjectionView::new();
+    view.observe_generation(seeded);
+
+    let rotation = log_ref(100, 2, 71);
+    let effect = ConfigurationEffect::ContractAddressChanged {
+        market_id,
+        name: "POOL".to_string(),
+        old_address: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2".to_string(),
+        new_address: "0x1111111111111111111111111111111111111111".to_string(),
+    };
+    let generation = effect
+        .generation(1, rotation)
+        .expect("the rotation is a construction-valid effect")
+        .expect("a tracked role rotation activates a contract generation");
+    assert_eq!(generation.entity(), entity);
+    let delta = reduce_configuration(&view, effect, rotation, Some(generation))
+        .expect("the rotation is the activation of the generation it names");
+    view.apply(&delta).expect("the rotation advances the view");
+    assert_eq!(view.generation(entity), Some(generation));
+
+    // A component outside the tracked roles activates nothing: an untracked
+    // `AddressSet` name is deliberately out of scope, not a role generation.
+    assert_eq!(
+        ConfigurationEffect::ContractAddressChanged {
+            market_id,
+            name: "SOME_OTHER_COMPONENT".to_string(),
+            old_address: "0x2222222222222222222222222222222222222222".to_string(),
+            new_address: "0x3333333333333333333333333333333333333333".to_string(),
+        }
+        .generation(1, log_ref(100, 2, 80))
+        .expect("an untracked role is not a revision refusal"),
+        None
+    );
+}
+
+/// An upgrade activates the scaled token's new revision generation. A delta
+/// reduced under the replaced generation is refused after the activation, and a
+/// delta reduced under the new generation is refused BEFORE it — the generation
+/// a delta names must be the one the view reads at that position.
+#[test]
+fn an_upgrade_activates_the_token_generation_and_refuses_the_replaced_one() {
+    use super::ConfigurationEffect;
+
+    let asset_id = 2;
+    let position = ScaledTokenPosition::Debt;
+    let entity = GenerationEntity::ScaledToken { asset_id, position };
+    let mut view = ProjectionView::new();
+    view.seed_position(debt(7), (U256::ZERO, None));
+    view.observe_generation(token_generation(asset_id, position, 3));
+
+    let upgrade = log_ref(100, 3, 55);
+    let effect = ConfigurationEffect::Upgraded {
+        asset_id,
+        market_id: 1,
+        is_a_token: false,
+        new_revision: 4,
+        deprecated_gho_token_id: None,
+    };
+    let activated = effect
+        .generation(1, upgrade)
+        .expect("the upgrade is a construction-valid effect")
+        .expect("an upgrade activates the token revision generation");
+    assert_eq!(activated.revision(), Some(4));
+    assert_eq!(activated.activation(), GenerationActivation::Event(upgrade));
+
+    // Before the upgrade lands, a delta reduced under the NEXT generation is
+    // refused: the view still reads revision 3.
+    let upgraded_generation = token_generation(asset_id, position, 4);
+    assert_eq!(
+        reduce_scaled_balance(
+            &view,
+            debt(7),
+            I256::try_from(1u64).unwrap(),
+            U256::from(RAY),
+            log_ref(100, 3, 40),
+            upgraded_generation,
+        )
+        .unwrap_err(),
+        ProjectionError::StaleGeneration {
+            entity,
+            reduced_under: upgraded_generation.encode(),
+            observed: token_generation(asset_id, position, 3).encode(),
+        }
+    );
+
+    let delta = reduce_configuration(&view, effect, upgrade, Some(activated))
+        .expect("the upgrade is the activation of the generation it names");
+    view.apply(&delta).expect("the upgrade advances the view");
+
+    // After the upgrade, the replaced generation is refused and the activated
+    // one is what the later operation reduces under.
+    assert_eq!(
+        reduce_scaled_balance(
+            &view,
+            debt(7),
+            I256::try_from(1u64).unwrap(),
+            U256::from(RAY),
+            log_ref(100, 3, 60),
+            token_generation(asset_id, position, 3),
+        )
+        .unwrap_err(),
+        ProjectionError::StaleGeneration {
+            entity,
+            reduced_under: token_generation(asset_id, position, 3).encode(),
+            observed: activated.encode(),
+        }
+    );
+    let later = reduce_scaled_balance(
+        &view,
+        debt(7),
+        I256::try_from(1u64).unwrap(),
+        U256::from(RAY),
+        log_ref(100, 3, 60),
+        activated,
+    )
+    .expect("the operation after the upgrade reduces under its generation");
+    view.apply(&later)
+        .expect("the later operation advances the view");
+}
+
+// ── operation-boundary ordering (red-first: the operation stream advances) ──
+
+/// The operation stream is forward-only even though one operation's legs may
+/// sit at earlier logs than its anchor: a later-started operation anchored
+/// behind the previous operation's anchor is refused, while the interior
+/// deltas of the operation being reduced are accepted.
+#[test]
+fn a_later_operation_anchored_behind_the_previous_one_is_refused() {
+    let mut view = ProjectionView::new();
+    view.seed_position(collateral(1), (U256::ZERO, None));
+
+    let first_anchor = log_ref(100, 1, 410);
+    view.begin_operation(first_anchor)
+        .expect("the first operation opens the stream");
+    assert_eq!(view.operation_anchor(), Some(first_anchor));
+
+    // The operation's own legs may precede its anchor: an interior delta is
+    // part of the reduction unit, not a position claim.
+    let leg = reduce_scaled_balance(
+        &view,
+        collateral(1),
+        I256::try_from(1u64).unwrap(),
+        U256::from(RAY),
+        log_ref(100, 1, 405),
+        contract_generation(9),
+    )
+    .unwrap();
+    view.apply(&leg)
+        .expect("an interior leg position belongs to the open operation");
+
+    // A later-started operation may not anchor behind the previous one.
+    assert_eq!(
+        view.begin_operation(log_ref(100, 1, 400)).unwrap_err(),
+        ProjectionError::OperationOutOfOrder {
+            held: Box::new(first_anchor),
+            arrived: Box::new(log_ref(100, 1, 400)),
+        }
+    );
+    assert_eq!(
+        view.operation_anchor(),
+        Some(first_anchor),
+        "a refused anchor leaves the operation stream where it was"
+    );
+
+    // A forward anchor continues the stream.
+    let second_anchor = log_ref(100, 1, 430);
+    view.begin_operation(second_anchor)
+        .expect("a forward anchor continues the operation stream");
+    assert_eq!(view.operation_anchor(), Some(second_anchor));
+}
+
+/// An operation in an earlier transaction than the view has advanced to is a
+/// replay: refused before its anchor can open a reduction unit.
+#[test]
+fn an_operation_in_an_earlier_transaction_is_not_forward() {
+    let mut view = ProjectionView::new();
+    view.seed_position(collateral(1), (U256::ZERO, None));
+    let first = reduce_scaled_balance(
+        &view,
+        collateral(1),
+        I256::try_from(1u64).unwrap(),
+        U256::from(RAY),
+        log_ref(100, 1, 410),
+        contract_generation(9),
+    )
+    .unwrap();
+    view.apply(&first).expect("the first delta sets the cursor");
+
+    assert!(matches!(
+        view.begin_operation(log_ref(100, 0, 9)).unwrap_err(),
+        ProjectionError::NotForward { .. }
+    ));
+}
+
+// ── generation revisions are refused, never synthesized (ADR-105 D6/D11) ───
+
+/// A revision the generation vocabulary cannot hold is a typed refusal: a
+/// negative revision and one wider than `u32` never become revision zero.
+#[test]
+fn an_unrepresentable_revision_is_refused_rather_than_synthesized() {
+    use super::ConfigurationEffect;
+
+    let source = log_ref(100, 1, 55);
+    assert_eq!(
+        ConfigurationEffect::Upgraded {
+            asset_id: 2,
+            market_id: 1,
+            is_a_token: false,
+            new_revision: -1,
+            deprecated_gho_token_id: None,
+        }
+        .generation(1, source)
+        .unwrap_err(),
+        ProjectionError::InvalidGenerationRevision { revision: -1 }
+    );
+    let overflow = i64::from(u32::MAX) + 1;
+    assert_eq!(
+        ConfigurationEffect::Upgraded {
+            asset_id: 2,
+            market_id: 1,
+            is_a_token: true,
+            new_revision: overflow,
+            deprecated_gho_token_id: None,
+        }
+        .generation(1, source)
+        .unwrap_err(),
+        ProjectionError::InvalidGenerationRevision { revision: overflow }
+    );
+    assert_eq!(
+        ConfigurationEffect::ContractRevisionUpdated {
+            market_id: 1,
+            contract_name: "POOL".to_string(),
+            new_revision: -7,
+        }
+        .generation(1, source)
+        .unwrap_err(),
+        ProjectionError::InvalidGenerationRevision { revision: -7 }
+    );
+    assert_eq!(
+        ConfigurationEffect::ContractInserted {
+            market_id: 1,
+            name: "POOL".to_string(),
+            address: "0x1111111111111111111111111111111111111111".to_string(),
+            revision: Some(-2),
+        }
+        .generation(1, source)
+        .unwrap_err(),
+        ProjectionError::InvalidGenerationRevision { revision: -2 }
+    );
+}
+
 // ── forward-only advancement (red-first acceptance: D3/D4) ─────────────────
 
 #[test]
@@ -283,32 +628,48 @@ fn the_view_advances_only_forward() {
         collateral(1),
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
-        log_ref(100, 0, 5),
-        pool_generation(9),
+        log_ref(100, 1, 5),
+        contract_generation(9),
     )
     .unwrap();
     view.apply(&first).expect("the first delta sets the cursor");
-    assert_eq!(view.cursor(), Some(log_ref(100, 0, 5)));
+    assert_eq!(view.cursor(), Some(log_ref(100, 1, 5)));
 
+    // One transaction is one reduction unit: an earlier log of the SAME
+    // transaction belongs to the operation stream being reduced, not to a
+    // replay.
+    let interior = reduce_scaled_balance(
+        &view,
+        collateral(1),
+        I256::try_from(1u64).unwrap(),
+        U256::from(RAY),
+        log_ref(100, 1, 4),
+        contract_generation(9),
+    )
+    .unwrap();
+    view.apply(&interior)
+        .expect("an interior position of the reduced transaction is accepted");
+
+    // An earlier TRANSACTION is a replay: refused, and the view untouched.
     let behind = reduce_scaled_balance(
         &view,
         collateral(1),
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
-        log_ref(100, 0, 4),
-        pool_generation(9),
+        log_ref(100, 0, 9),
+        contract_generation(9),
     )
     .unwrap();
     assert_eq!(
         view.apply(&behind).unwrap_err(),
         ProjectionError::NotForward {
-            held: Box::new(log_ref(100, 0, 5)),
-            arrived: Box::new(log_ref(100, 0, 4)),
+            held: Box::new(log_ref(100, 1, 4)),
+            arrived: Box::new(log_ref(100, 0, 9)),
         }
     );
     assert_eq!(
         view.require_position_state(collateral(1)).unwrap(),
-        (U256::from(1u64), Some(U256::from(RAY))),
+        (U256::from(2u64), Some(U256::from(RAY))),
         "a refused delta leaves the view untouched"
     );
 }
@@ -323,7 +684,7 @@ fn a_same_height_other_branch_is_not_forward() {
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
         log_ref(100, 0, 5),
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
     view.apply(&first).unwrap();
@@ -337,7 +698,7 @@ fn a_same_height_other_branch_is_not_forward() {
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
         LogRef::new(foreign_tx, 6),
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
 
@@ -395,7 +756,7 @@ fn a_cross_chain_delta_is_not_forward() {
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
         held,
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
     view.apply(&first).expect("the first delta sets the cursor");
@@ -411,7 +772,7 @@ fn a_cross_chain_delta_is_not_forward() {
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
         LogRef::new(foreign_tx, held.index() + 1),
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
 
@@ -441,7 +802,7 @@ fn a_transfer_above_the_signed_domain_is_refused_at_the_sender() {
         U256::MAX,
         U256::from(RAY),
         log_ref(100, 0, 7),
-        pool_generation(9),
+        contract_generation(9),
     )
     .expect("the reduction states the amount the evidence supplied");
 
@@ -474,7 +835,7 @@ fn a_movement_past_the_signed_domain_is_refused_not_saturated() {
         I256::try_from(1u64).unwrap(),
         U256::from(RAY),
         log_ref(100, 0, 8),
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
     assert_eq!(
@@ -497,7 +858,7 @@ fn an_oversized_current_balance_is_refused_not_clamped() {
         I256::ZERO,
         U256::from(RAY),
         log_ref(100, 0, 9),
-        pool_generation(9),
+        contract_generation(9),
     )
     .unwrap();
     assert_eq!(
@@ -542,7 +903,7 @@ fn supporting_deltas_encode_identically_across_chunk_boundaries() {
                         I256::try_from(10u64).unwrap(),
                         U256::from(RAY),
                         log_ref(*block, *tx_index, *log_index),
-                        pool_generation(9),
+                        contract_generation(9),
                     ),
                     _ => reduce_scaled_transfer(
                         &view,
@@ -551,7 +912,7 @@ fn supporting_deltas_encode_identically_across_chunk_boundaries() {
                         U256::from(3u64),
                         U256::from(RAY),
                         log_ref(*block, *tx_index, *log_index),
-                        pool_generation(9),
+                        contract_generation(9),
                     ),
                 }
                 .unwrap();
@@ -709,7 +1070,7 @@ fn the_view_advance_matches_the_persisted_state() {
             delta,
             index,
             log_ref(100, 0, 1),
-            pool_generation(9),
+            contract_generation(9),
         )
         .unwrap();
         view.apply(&reduced).unwrap();
@@ -753,20 +1114,26 @@ fn a_gho_refresh_signal_carries_the_debt_position_it_refreshes() {
 fn the_view_records_the_generations_resolution_observed() {
     let mut view = ProjectionView::new();
     assert_eq!(
-        view.generation(GenerationEntity::Pool { market_id: 1 }),
+        view.generation(GenerationEntity::Contract {
+            market_id: 1,
+            role: ContractRole::Pool,
+        }),
         None
     );
-    view.observe_generation(pool_generation(9));
-    view.observe_generation(pool_generation(10));
+    view.observe_generation(contract_generation(9));
+    view.observe_generation(contract_generation(10));
     assert_eq!(
-        view.generation(GenerationEntity::Pool { market_id: 1 }),
-        Some(10),
+        view.generation(GenerationEntity::Contract {
+            market_id: 1,
+            role: ContractRole::Pool,
+        }),
+        Some(contract_generation(10)),
         "a later observation replaces the generation the view is reading under"
     );
 
-    let mut census: HashMap<GenerationEntity, u32> = HashMap::new();
-    for (entity, revision) in view.generations() {
-        census.insert(entity, revision);
+    let mut census: HashMap<GenerationEntity, GenerationRef> = HashMap::new();
+    for (entity, generation) in view.generations() {
+        census.insert(entity, generation);
     }
     assert_eq!(census.len(), 1);
 }

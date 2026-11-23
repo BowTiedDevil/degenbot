@@ -75,7 +75,7 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 const SPAN_FROM: u64 = 26_130_440;
 const SPAN_TO: u64 = 26_130_445;
 
-/// Independent literal: the exact number of `AaveChunkEvent`s the recorded
+/// Independent literal: the exact number of `ConfigurationEffect`s the recorded
 /// span's chunk apply wrote (the recorder run's report). A fetch/decode/apply
 /// regression that adds or drops applied events fails here before the
 /// byte-diff.
@@ -342,6 +342,57 @@ impl ProgressSink for ProgressCollector {
     }
 }
 
+/// The committed canonical delta stream (ADR-105 D7, D13): every delta the
+/// recorded span reduces, encoded with its exact position, generation and
+/// effect. The stream is the vocabulary a journal persists, so it is pinned
+/// byte-for-byte: nothing chunk-scoped participates, and a semantic change to
+/// an effect's identity must show up here rather than only in row values.
+const DELTA_STREAM_GOLDEN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/sql_goldens/aave_update_chunk_26130440-26130445.delta-stream.json"
+);
+
+#[test]
+fn aave_chunk_delta_stream_matches_the_committed_golden() {
+    let cassette = committed_cassette();
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "delta-stream.db");
+    let sink = Arc::new(ProgressCollector::default());
+    run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed run must commit cleanly");
+
+    let chunks = sink.chunks.lock().unwrap().clone();
+    let mut encoded: Vec<String> = Vec::new();
+    for chunk in &chunks {
+        for delta in &chunk.deltas {
+            encoded.push(delta.encode());
+        }
+    }
+    assert!(
+        !encoded.is_empty(),
+        "the recorded span reduces at least one canonical delta"
+    );
+    let produced = format!("{}.\n", encoded.join("\n"));
+    check_or_regen("canonical delta stream", &produced, DELTA_STREAM_GOLDEN);
+}
+
 fn committed_cassette() -> Cassette {
     let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
@@ -419,6 +470,11 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
     assert!(
         !progress.touched_user_addresses.is_empty(),
         "the chunk's logs touched users"
+    );
+    assert_eq!(
+        progress.rpc_round_trips_in_lock, 0,
+        "resolution runs before the write transaction opens: no provider round trip may \
+         land inside the lock"
     );
 
     // Gate: the RPC round-trip drift tripwire. The chunk's fetch surface
@@ -1041,4 +1097,223 @@ fn a_same_height_substitution_after_resolution_refuses_the_chunk() {
         served.per_method.contains_key("eth_getLogs"),
         "the chunk was fetched and then refused before its transaction"
     );
+}
+
+/// The lock contract, asserted rather than inferred from a bench (ADR-105 D3):
+/// every provider round trip the chunk needs is resolved BEFORE the write
+/// transaction opens, so the transaction samples the process-global counter
+/// unchanged. The replayed span is a full chunk - receipts, headers, per-tx
+/// compute and the configuration family - not an empty one.
+#[test]
+fn aave_update_chunk_holds_no_rpc_round_trip_inside_the_write_lock() {
+    let cassette = committed_cassette();
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "no-rpc-in-lock.db");
+    let sink = Arc::new(ProgressCollector::default());
+    run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed run must commit cleanly");
+
+    let chunks = sink.chunks.lock().unwrap().clone();
+    assert!(!chunks.is_empty(), "the run reports its chunks");
+    assert!(
+        chunks.iter().all(|c| c.committed),
+        "every gate chunk must be a committed one - a rolled-back chunk resolves nothing"
+    );
+    assert!(
+        chunks.iter().map(|c| c.events_applied).sum::<usize>() > 0,
+        "the gate must cover a chunk that applies events, not an empty one"
+    );
+    for chunk in &chunks {
+        assert_eq!(
+            chunk.rpc_round_trips_in_lock, 0,
+            "chunk {}..{} took {} provider round trip(s) inside the write lock",
+            chunk.chunk_start, chunk.chunk_end, chunk.rpc_round_trips_in_lock
+        );
+    }
+}
+
+/// Identity creation runs during resolution, OUTSIDE the chunk transaction
+/// (ADR-105 D4): the users, positions and token/asset rows the deltas reference
+/// are committed before the transaction opens, so a chunk that rolls back
+/// leaves them behind while the cursor stays put (a later unit's apply may
+/// still create a row it needs, and that one rolls back with the chunk). A
+/// retry must converge rather than fork - the retry's identities and delta
+/// stream are a first-attempt run's, the final state is that run's, and no
+/// duplicate rows appear.
+///
+/// The rollback is driven through the real driver: the pre-commit verification
+/// asks for balances the receipt-only corpus never recorded, the provider
+/// refuses, and the chunk's transaction (its deltas, cleanup and stamp) reverts
+/// after resolution already settled every identity.
+#[test]
+fn a_rolled_back_chunk_retries_on_identical_identities_deltas_and_state() {
+    let chain_id = i64::try_from(committed_cassette().chain_id).unwrap();
+    let dir = TempDir::new().unwrap();
+
+    let (path, market_id) = seeded_db(dir.path(), "retry.db");
+    let (failed, failed_chunks) = run_span(
+        &path,
+        market_id,
+        chain_id,
+        VerifyPolicy {
+            verify_chunk: true,
+            ..VerifyPolicy::default()
+        },
+    );
+    assert!(
+        failed.is_err(),
+        "the pre-commit verify reads a balance the corpus never recorded: the chunk must roll back"
+    );
+    assert!(
+        failed_chunks.is_empty(),
+        "the chain-truth acquisition refuses before the chunk's transaction opens, so the \
+         chunk never writes: no rollback and no report - got {failed_chunks:?}"
+    );
+    assert_eq!(
+        market_last_update_block(&path, market_id),
+        Some(i64::try_from(SPAN_FROM - 1).unwrap()),
+        "a rolled-back chunk must not move the cursor off the seeded pre-span position"
+    );
+    let leftover = identity_ids(&path);
+    assert!(
+        !leftover.is_empty(),
+        "resolution created the identity rows before the transaction opened"
+    );
+
+    let (retried, retried_chunks) = run_span(&path, market_id, chain_id, VerifyPolicy::default());
+    retried.expect("the retry commits over the same span");
+
+    // The retried chunk is the canonical one: the same delta stream and the same
+    // final state the committed goldens pin. A forked identity space (duplicate
+    // users/positions/tokens, an advanced rowid) fails both byte-diffs.
+    let produced_deltas = format!("{}.\n", delta_encodings(&retried_chunks).join("\n"));
+    check_or_regen(
+        "canonical delta stream",
+        &produced_deltas,
+        DELTA_STREAM_GOLDEN,
+    );
+    check_or_regen("db dump", &db_snapshot(&path), DUMP_GOLDEN_PATH);
+
+    // The identities resolution fixed before the rollback are the retried run's
+    // own: no user, token, asset or contract row was re-created under a new id.
+    // (Positions may legitimately disappear: the retry's commit prunes the
+    // zero-balance rows the rollback had restored.)
+    let retried = identity_ids(&path);
+    for table in &[
+        "aave_v3_markets",
+        "aave_v3_contracts",
+        "erc20_tokens",
+        "aave_v3_assets",
+        "aave_v3_users",
+    ] {
+        let before = leftover
+            .iter()
+            .find(|(name, _)| name == table)
+            .map(|(_, ids)| ids.clone())
+            .unwrap_or_default();
+        let after = retried
+            .iter()
+            .find(|(name, _)| name == table)
+            .map(|(_, ids)| ids.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            before, after,
+            "{table}: the retry must reuse the ids resolution already fixed"
+        );
+    }
+}
+
+/// Run the committed span over a fresh replay transport and return the chunk
+/// reports (the deltas + the in-lock counters the gates read).
+fn run_span(
+    path: &Path,
+    market_id: i64,
+    chain_id: i64,
+    verify: VerifyPolicy,
+) -> (Result<AaveUpdateReport, RunError>, Vec<AaveChunkProgress>) {
+    let provider = CassetteReplayTransport::new(committed_cassette()).as_alloy_provider();
+    let sink = Arc::new(ProgressCollector::default());
+    let outcome = run_aave_update(
+        path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify,
+            max_chunks: None,
+        },
+    );
+    let chunks = sink.chunks.lock().unwrap().clone();
+    (outcome, chunks)
+}
+
+/// The identity tables' primary keys, in a stable order.
+fn identity_ids(path: &Path) -> Vec<(String, Vec<i64>)> {
+    const IDENTITY_TABLES: &[&str] = &[
+        "aave_v3_markets",
+        "aave_v3_contracts",
+        "erc20_tokens",
+        "aave_v3_assets",
+        "aave_v3_users",
+        "aave_v3_collateral_positions",
+        "aave_v3_debt_positions",
+    ];
+    let (db, _state) = DegenbotDb::open_for_writes(path).unwrap();
+    let conn = db.lock();
+    IDENTITY_TABLES
+        .iter()
+        .map(|table| {
+            let mut statement = conn
+                .prepare(&format!("SELECT id FROM {table} ORDER BY id"))
+                .unwrap();
+            let ids = statement
+                .query_map([], |row| row.get::<_, i64>(0))
+                .unwrap()
+                .collect::<Result<Vec<i64>, _>>()
+                .unwrap();
+            ((*table).to_string(), ids)
+        })
+        .collect()
+}
+
+/// The chunk reports' canonical delta stream, encoded the golden's way.
+fn delta_encodings(chunks: &[AaveChunkProgress]) -> Vec<String> {
+    chunks
+        .iter()
+        .flat_map(|chunk| {
+            chunk
+                .deltas
+                .iter()
+                .map(degenbot_aave::projection::CanonicalDelta::encode)
+        })
+        .collect()
+}
+
+/// The semantic database snapshot (the committed dump golden's encoder).
+fn db_snapshot(path: &Path) -> String {
+    let (db, _state) = DegenbotDb::open_for_writes(path).unwrap();
+    let conn = db.lock();
+    dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump the identity and state tables")
 }

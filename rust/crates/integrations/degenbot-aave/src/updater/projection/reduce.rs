@@ -7,7 +7,8 @@
 //! reads, entity identity) happens outside, and persistence happens later.
 
 use super::{
-    CanonicalDelta, DeltaEffect, GenerationRef, PositionSubject, ProjectionError, ProjectionView,
+    CanonicalDelta, ConfigurationEffect, DeltaEffect, GenerationRef, PositionSubject,
+    ProjectionError, ProjectionView,
 };
 use alloy::primitives::{I256, U256};
 use degenbot_core::canonical_head::LogRef;
@@ -15,21 +16,14 @@ use degenbot_db::ScaledTokenPosition;
 
 /// The generation gate every reduction passes: the delta may only be reduced
 /// under a generation the view is reading under (an unobserved entity is
-/// accepted and read as the caller's own observation).
+/// accepted and read as the caller's own observation, and a delta that is
+/// itself the activation installs the generation it names).
 fn checked_generation(
     view: &ProjectionView,
     generation: GenerationRef,
+    source: LogRef,
 ) -> Result<(), ProjectionError> {
-    match view.generation(generation.entity()) {
-        Some(observed) if observed != generation.revision() => {
-            Err(ProjectionError::StaleGeneration {
-                entity: generation.entity(),
-                reduced_under: generation.revision(),
-                observed,
-            })
-        }
-        _ => Ok(()),
-    }
+    view.require_generation(generation, source)
 }
 
 fn checked_subject(view: &ProjectionView, subject: PositionSubject) -> Result<(), ProjectionError> {
@@ -51,7 +45,7 @@ pub(crate) fn reduce_scaled_balance(
     source: LogRef,
     generation: GenerationRef,
 ) -> Result<CanonicalDelta, ProjectionError> {
-    checked_generation(view, generation)?;
+    checked_generation(view, generation, source)?;
     checked_subject(view, subject)?;
     Ok(CanonicalDelta::new(
         source,
@@ -79,7 +73,7 @@ pub(crate) fn reduce_scaled_transfer(
     source: LogRef,
     generation: GenerationRef,
 ) -> Result<CanonicalDelta, ProjectionError> {
-    checked_generation(view, generation)?;
+    checked_generation(view, generation, source)?;
     checked_subject(view, from)?;
     if let Some(to) = to {
         checked_subject(view, to)?;
@@ -110,7 +104,7 @@ pub(crate) fn reduce_debt_reset(
     source: LogRef,
     generation: GenerationRef,
 ) -> Result<CanonicalDelta, ProjectionError> {
-    checked_generation(view, generation)?;
+    checked_generation(view, generation, source)?;
     checked_subject(
         view,
         PositionSubject {
@@ -122,6 +116,33 @@ pub(crate) fn reduce_debt_reset(
         source,
         Some(generation),
         DeltaEffect::DebtPositionReset { position_id, index },
+    ))
+}
+
+/// Reduce one configuration change (ADR-105 D4, D7).
+///
+/// A configuration effect moves no position state, so its reduction has no
+/// preceding-state requirement; what it must prove is the generation it was
+/// resolved under — a replacement event is the activation of the generation it
+/// names, and every later event reduces under that generation.
+///
+/// # Errors
+///
+/// `ProjectionError::StaleGeneration` when the view reads another generation of
+/// the same entity and this delta is not its activation.
+pub(crate) fn reduce_configuration(
+    view: &ProjectionView,
+    effect: ConfigurationEffect,
+    source: LogRef,
+    generation: Option<GenerationRef>,
+) -> Result<CanonicalDelta, ProjectionError> {
+    if let Some(generation) = generation {
+        checked_generation(view, generation, source)?;
+    }
+    Ok(CanonicalDelta::new(
+        source,
+        generation,
+        DeltaEffect::Configuration(effect),
     ))
 }
 
@@ -138,7 +159,7 @@ pub(crate) fn reduce_gho_refresh(
     source: LogRef,
     generation: GenerationRef,
 ) -> Result<CanonicalDelta, ProjectionError> {
-    checked_generation(view, generation)?;
+    checked_generation(view, generation, source)?;
     checked_subject(
         view,
         PositionSubject {

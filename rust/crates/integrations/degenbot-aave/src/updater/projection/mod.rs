@@ -17,44 +17,93 @@
 
 use std::collections::HashMap;
 
+pub(crate) use super::run::substrate::PositionState;
 use alloy::primitives::{I256, U256};
 use degenbot_core::canonical_head::LogRef;
-use degenbot_db::ScaledTokenPosition;
 
-pub(crate) use super::run::substrate::PositionState;
-
+mod configuration;
 mod reduce;
+
+pub use configuration::ConfigurationEffect;
+pub use degenbot_db::ScaledTokenPosition;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use reduce::{
-    reduce_debt_reset, reduce_gho_refresh, reduce_scaled_balance, reduce_scaled_transfer,
+    reduce_configuration, reduce_debt_reset, reduce_gho_refresh, reduce_scaled_balance,
+    reduce_scaled_transfer,
 };
 
 /// Which logical entity a reduction's generation relationship names.
 ///
 /// A generation is branch-local and event-activated (ADR-105 D6): the pool's
 /// revision selects the movement rule, a scaled token's revision selects the
-/// rounding rule. The entity is the stable logical key; the revision is the
-/// generation.
+/// rounding rule, a contract role's address is the endpoint the fetcher
+/// targets. The entity is the stable logical key; the activation event and the
+/// fact it carries are the generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GenerationEntity {
-    /// The market's Pool contract — the generation that selected the movement
-    /// rule of a reduced operation.
-    Pool { market_id: i64 },
     /// One reserve leg of a market's scaled token (aToken collateral /
     /// vToken debt) — the generation that selected the rounding rule.
     ScaledToken {
         asset_id: i64,
         position: ScaledTokenPosition,
     },
+    /// One contract role of a market (proxy implementation or fetch endpoint).
+    Contract { market_id: i64, role: ContractRole },
+    /// The chain's discount-token series — the stkAAVE generation whose ledger
+    /// denominates the user discount balances.
+    DiscountToken { chain_id: i64 },
+    /// The chain's GHO vToken link — the generation that made a vToken the
+    /// GHO debt token (the precondition for GHO operation classification).
+    GhoDiscountLink { chain_id: i64 },
+}
+
+/// The stable set of contract roles a market resolves addresses for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ContractRole {
+    /// The market's Pool proxy (and its fetch endpoint).
+    Pool,
+    /// The market's Pool Configurator proxy (and its fetch endpoint).
+    PoolConfigurator,
+    /// The Pool Address Provider the bootstrap reads deployments from.
+    PoolAddressProvider,
+    /// The Pool Data Provider.
+    PoolDataProvider,
+    /// The market's price oracle.
+    PriceOracle,
+}
+
+impl ContractRole {
+    /// The role a `aave_v3_contracts` row name stands for; `None` for a name
+    /// outside the tracked role set.
+    #[must_use]
+    pub fn from_contract_name(name: &str) -> Option<Self> {
+        match name {
+            "POOL" => Some(Self::Pool),
+            "POOL_CONFIGURATOR" => Some(Self::PoolConfigurator),
+            "POOL_ADDRESS_PROVIDER" => Some(Self::PoolAddressProvider),
+            "POOL_DATA_PROVIDER" => Some(Self::PoolDataProvider),
+            "PRICE_ORACLE" => Some(Self::PriceOracle),
+            _ => None,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Pool => "pool",
+            Self::PoolConfigurator => "pool-configurator",
+            Self::PoolAddressProvider => "pool-address-provider",
+            Self::PoolDataProvider => "pool-data-provider",
+            Self::PriceOracle => "price-oracle",
+        }
+    }
 }
 
 impl GenerationEntity {
     fn encode(self) -> String {
         match self {
-            Self::Pool { market_id } => format!("pool{{market={market_id}}}"),
             Self::ScaledToken { asset_id, position } => format!(
                 "scaled-token{{asset={asset_id},leg={}}}",
                 match position {
@@ -62,21 +111,78 @@ impl GenerationEntity {
                     ScaledTokenPosition::Debt => "debt",
                 }
             ),
+            Self::Contract { market_id, role } => {
+                format!("contract{{market={market_id},role={}}}", role.name())
+            }
+            Self::DiscountToken { chain_id } => format!("discount-token{{chain={chain_id}}}"),
+            Self::GhoDiscountLink { chain_id } => {
+                format!("gho-discount-link{{chain={chain_id}}}")
+            }
         }
     }
 }
 
+/// Where a generation came into being (ADR-105 D6): the canonical event that
+/// activated it, or `Seed` for the generation already active when the retained
+/// window began (its activation predates the chunk being reduced).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenerationActivation {
+    /// The generation the resolution started from — committed state at the
+    /// chunk's first event.
+    Seed,
+    /// The generation was activated by this exact event.
+    Event(LogRef),
+}
+
 /// The generation-qualified relationship a delta was reduced under.
+///
+/// Identity is `(entity, activation)`: a same-block replacement activates a
+/// different generation, never a mutated one. `revision` carries the entity's
+/// revision fact where the entity has one (a proxy's `REVISION()`, a scaled
+/// token's rounding revision); a role or link generation has no revision
+/// contract, so it carries none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GenerationRef {
     entity: GenerationEntity,
-    revision: u32,
+    activation: GenerationActivation,
+    revision: Option<u32>,
 }
 
 impl GenerationRef {
+    /// The seeded generation of a revisioned entity: the generation resolved
+    /// from committed state, carrying the revision its arithmetic reads.
     #[must_use]
     pub const fn new(entity: GenerationEntity, revision: u32) -> Self {
-        Self { entity, revision }
+        Self {
+            entity,
+            activation: GenerationActivation::Seed,
+            revision: Some(revision),
+        }
+    }
+
+    /// The seeded generation of an entity with no revision fact (an endpoint,
+    /// a discount token, a link).
+    #[must_use]
+    pub const fn seed(entity: GenerationEntity) -> Self {
+        Self {
+            entity,
+            activation: GenerationActivation::Seed,
+            revision: None,
+        }
+    }
+
+    /// The generation this exact event activated.
+    #[must_use]
+    pub const fn activated_at(
+        entity: GenerationEntity,
+        revision: Option<u32>,
+        activation: LogRef,
+    ) -> Self {
+        Self {
+            entity,
+            activation: GenerationActivation::Event(activation),
+            revision,
+        }
     }
 
     #[must_use]
@@ -85,8 +191,45 @@ impl GenerationRef {
     }
 
     #[must_use]
-    pub const fn revision(&self) -> u32 {
+    pub const fn revision(&self) -> Option<u32> {
         self.revision
+    }
+
+    #[must_use]
+    pub const fn activation(&self) -> GenerationActivation {
+        self.activation
+    }
+
+    /// Whether this generation names `source` as its own activation — the one
+    /// case where a delta may disagree with the generation the view reads.
+    fn activates_at(&self, source: LogRef) -> bool {
+        matches!(self.activation, GenerationActivation::Event(activated) if activated == source)
+    }
+
+    fn encode(&self) -> String {
+        let activation = match self.activation {
+            GenerationActivation::Seed => "seed".to_string(),
+            GenerationActivation::Event(at) => {
+                let tx = at.tx();
+                let anchor = tx.anchor();
+                format!(
+                    "{chain}/{number}/{block_hash}/{tx_hash}/{tx_index}/{log_index}",
+                    chain = anchor.chain_id(),
+                    number = anchor.number(),
+                    block_hash = alloy::hex::encode(anchor.hash()),
+                    tx_hash = alloy::hex::encode(tx.hash()),
+                    tx_index = tx.index(),
+                    log_index = at.index(),
+                )
+            }
+        };
+        let revision = self
+            .revision
+            .map_or_else(|| "none".to_string(), |revision| revision.to_string());
+        format!(
+            "{} activated={activation} revision={revision}",
+            self.entity.encode()
+        )
     }
 }
 
@@ -101,7 +244,7 @@ pub struct PositionSubject {
 /// What one canonical delta does to the projection.
 ///
 /// The variants are the operation family's outputs: every one of them was a
-/// member of `AaveChunkEvent` before it carried a chain position, and now
+/// member of `ConfigurationEffect` before it carried a chain position, and now
 /// states its effect instead of its payload alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeltaEffect {
@@ -125,6 +268,20 @@ pub enum DeltaEffect {
     /// The GHO discount-refresh signal: a post-apply read of the debt position,
     /// no state movement of its own.
     GhoRefreshDiscount { position_id: i64 },
+    /// A resolved stkAAVE balance observation for a user: the seed the GHO
+    /// discount computation read (a `balanceOf` at the exact parent block),
+    /// persisted so a later chunk reads the projection instead of the chain.
+    StkAaveBalanceObserved { user_id: i64, balance: U256 },
+    /// The post-apply GHO discount recomputation: the user's discount percent
+    /// after the transaction's debt movements. The arithmetic ran in
+    /// resolution against the advanced projection view; the delta carries the
+    /// settled result so persistence writes it without recomputing.
+    GhoDiscountRefreshed { user_id: i64, gho_discount: i64 },
+    /// One configuration change — the migrated `ConfigurationEffect` family. Its
+    /// payload carries the resolved ids and the fields the effect writes; the
+    /// enclosing delta carries the exact position and the generation the event
+    /// activated.
+    Configuration(ConfigurationEffect),
 }
 
 /// One typed, validated projection write: its exact chain position, the
@@ -173,14 +330,11 @@ impl CanonicalDelta {
     pub fn encode(&self) -> String {
         let tx = self.source.tx();
         let anchor = tx.anchor();
-        let generation = match self.generation {
-            Some(generation) => {
-                format!("{}@{}", generation.entity().encode(), generation.revision())
-            }
-            None => "none".to_string(),
-        };
+        let generation = self
+            .generation
+            .map_or_else(|| "none".to_string(), |generation| generation.encode());
         format!(
-            "{chain}/{number}/{block_hash}/{tx_hash}/{tx_index}/{log_index} generation={generation} effect={}",
+            "{chain}/{number}/{block_hash}/{tx_hash}/{tx_index}/{log_index} generation {generation} effect={}",
             self.effect.encode(),
             chain = anchor.chain_id(),
             number = anchor.number(),
@@ -225,6 +379,14 @@ impl DeltaEffect {
             Self::GhoRefreshDiscount { position_id } => {
                 format!("gho-refresh-discount{{{position_id}}}")
             }
+            Self::StkAaveBalanceObserved { user_id, balance } => {
+                format!("stk-aave-balance-observed{{user={user_id},balance={balance}}}")
+            }
+            Self::GhoDiscountRefreshed {
+                user_id,
+                gho_discount,
+            } => format!("gho-discount-refreshed{{user={user_id},discount={gho_discount}}}"),
+            Self::Configuration(effect) => effect.encode(),
         }
     }
 
@@ -246,6 +408,9 @@ impl DeltaEffect {
                 position: ScaledTokenPosition::Debt,
                 position_id: *position_id,
             }],
+            Self::StkAaveBalanceObserved { .. }
+            | Self::GhoDiscountRefreshed { .. }
+            | Self::Configuration(_) => Vec::new(),
         }
     }
 
@@ -284,9 +449,11 @@ impl DeltaEffect {
                 }
                 Ok((movements, Some(*index)))
             }
-            Self::DebtPositionReset { .. } | Self::GhoRefreshDiscount { .. } => {
-                Ok((Vec::new(), None))
-            }
+            Self::DebtPositionReset { .. }
+            | Self::GhoRefreshDiscount { .. }
+            | Self::StkAaveBalanceObserved { .. }
+            | Self::GhoDiscountRefreshed { .. }
+            | Self::Configuration(_) => Ok((Vec::new(), None)),
         }
     }
 }
@@ -314,17 +481,30 @@ pub enum ProjectionError {
         arrived: Box<LogRef>,
     },
     /// The delta was reduced under a generation the view is not reading under.
-    #[error(
-        "delta reduced under revision {reduced_under} of {entity:?}, but the view reads revision {observed}"
-    )]
+    #[error("delta reduced under generation {reduced_under:?}, but the view reads {observed:?}")]
     StaleGeneration {
         entity: GenerationEntity,
-        reduced_under: u32,
-        observed: u32,
+        reduced_under: String,
+        observed: String,
     },
     /// The effect's arithmetic left the `U256` balance domain.
     #[error("position id={position_id} balance arithmetic overflowed U256")]
     BalanceOverflow { position_id: i64 },
+    /// A generation revision the vocabulary cannot hold — a negative or
+    /// wider-than-`u32` revision is a refusal, never a synthesized zero.
+    #[error("generation revision {revision} is outside the u32 domain")]
+    InvalidGenerationRevision { revision: i64 },
+    /// A later-started operation names an earlier chain position than the
+    /// operation reduced before it: the operation stream must advance, even
+    /// though one operation's own legs may sit at earlier logs than its
+    /// anchor.
+    #[error(
+        "operation anchored at {arrived:?} is not forward of the previous operation anchor {held:?}"
+    )]
+    OperationOutOfOrder {
+        held: Box<LogRef>,
+        arrived: Box<LogRef>,
+    },
 }
 
 /// The forward-only projection read position: the exact transaction/log event
@@ -333,8 +513,9 @@ pub enum ProjectionError {
 #[derive(Debug, Default)]
 pub struct ProjectionView {
     cursor: Option<LogRef>,
+    operation_anchor: Option<LogRef>,
     positions: HashMap<(ScaledTokenPosition, i64), PositionState>,
-    generations: HashMap<GenerationEntity, u32>,
+    generations: HashMap<GenerationEntity, GenerationRef>,
 }
 
 impl ProjectionView {
@@ -385,21 +566,43 @@ impl ProjectionView {
     /// Record the generation a resolution observed for an entity. The latest
     /// observation is the generation the view reads under.
     pub fn observe_generation(&mut self, generation: GenerationRef) {
-        self.generations
-            .insert(generation.entity(), generation.revision());
+        self.generations.insert(generation.entity(), generation);
     }
 
     /// The generation the view reads for an entity, if resolution observed one.
     #[must_use]
-    pub fn generation(&self, entity: GenerationEntity) -> Option<u32> {
+    pub fn generation(&self, entity: GenerationEntity) -> Option<GenerationRef> {
         self.generations.get(&entity).copied()
     }
 
     /// Every observed generation.
-    pub fn generations(&self) -> impl Iterator<Item = (GenerationEntity, u32)> + '_ {
+    pub fn generations(&self) -> impl Iterator<Item = (GenerationEntity, GenerationRef)> + '_ {
         self.generations
             .iter()
-            .map(|(entity, revision)| (*entity, *revision))
+            .map(|(entity, generation)| (*entity, *generation))
+    }
+
+    /// The generation a delta must be interpreted under, refusing a delta whose
+    /// reduction consumed a generation the view is not reading — unless the
+    /// delta is itself the activation that installs the generation it names.
+    /// This is the ONE generation rule: reduction and advance both apply it, so
+    /// a same-block replacement cannot be read under the generation it
+    /// replaced (ADR-105 D6).
+    fn require_generation(
+        &self,
+        generation: GenerationRef,
+        source: LogRef,
+    ) -> Result<(), ProjectionError> {
+        match self.generation(generation.entity()) {
+            Some(observed) if observed != generation && !generation.activates_at(source) => {
+                Err(ProjectionError::StaleGeneration {
+                    entity: generation.entity(),
+                    reduced_under: generation.encode(),
+                    observed: observed.encode(),
+                })
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Advance the view by one delta: validate its position and generation,
@@ -415,15 +618,7 @@ impl ProjectionView {
     pub fn apply(&mut self, delta: &CanonicalDelta) -> Result<(), ProjectionError> {
         self.require_forward(delta.source())?;
         if let Some(generation) = delta.generation() {
-            if let Some(observed) = self.generation(generation.entity()) {
-                if observed != generation.revision() {
-                    return Err(ProjectionError::StaleGeneration {
-                        entity: generation.entity(),
-                        reduced_under: generation.revision(),
-                        observed,
-                    });
-                }
-            }
+            self.require_generation(generation, delta.source())?;
         }
         let mut advanced: Vec<((ScaledTokenPosition, i64), PositionState)> = Vec::new();
         let (movements, index) = delta.effect().movements()?;
@@ -452,8 +647,49 @@ impl ProjectionView {
         for (key, state) in advanced {
             self.positions.insert(key, state);
         }
+        if let Some(generation) = delta.generation() {
+            if generation.activates_at(delta.source()) {
+                self.generations.insert(generation.entity(), generation);
+            }
+        }
         self.cursor = Some(delta.source());
         Ok(())
+    }
+
+    /// Open one operation's reduction unit at its anchor (the position the
+    /// operation's own event or minimum leg names). The operation stream is
+    /// forward-only: a later-started operation may not anchor at an earlier
+    /// chain position than the operation reduced before it.
+    ///
+    /// The delta cursor stays transaction-grained, because one operation's
+    /// legs and the configuration effects around it can sit at earlier logs
+    /// than a previously reduced operation's. This guard is what keeps the
+    /// OPERATIONS ordered without imposing log order on their interior.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectionError::OperationOutOfOrder`] for an anchor behind the
+    /// previous operation's anchor (including a same-height other-branch
+    /// anchor), and [`ProjectionError::NotForward`] for an operation in an
+    /// earlier transaction than the view has advanced to.
+    pub fn begin_operation(&mut self, anchor: LogRef) -> Result<(), ProjectionError> {
+        self.require_forward(anchor)?;
+        if let Some(held) = self.operation_anchor {
+            if !same_branch(held, anchor) || position(anchor) < position(held) {
+                return Err(ProjectionError::OperationOutOfOrder {
+                    held: Box::new(held),
+                    arrived: Box::new(anchor),
+                });
+            }
+        }
+        self.operation_anchor = Some(anchor);
+        Ok(())
+    }
+
+    /// The anchor of the operation the view is reducing, if any.
+    #[must_use]
+    pub const fn operation_anchor(&self) -> Option<LogRef> {
+        self.operation_anchor
     }
 
     fn require_forward(&self, arrived: LogRef) -> Result<(), ProjectionError> {
@@ -473,28 +709,35 @@ impl ProjectionView {
 /// Whether `arrived` is at or ahead of `held` in canonical event order, on the
 /// same chain, and on the same branch when the two share a height.
 ///
-/// One log position can carry more than one delta — a movement and the
-/// discount-refresh signal it raises are both stated by the same event — so the
-/// cursor is a position the view has advanced to, and equal positions are
-/// forward. Anything strictly behind the cursor is a replay, a same-height
-/// other-branch delta, or another chain's state under coincidentally identical
-/// local coordinates, and is refused.
+/// The transaction is the view's reduction unit: within one transaction the
+/// protocol's own operation order decides the delta sequence (an operation's
+/// legs can sit at earlier logs than a previously reduced operation's), so the
+/// interior order of one transaction is not a position claim, and one log can
+/// carry more than one delta. What must never go backwards is the transaction:
+/// a delta from an earlier transaction is a replay, a same-height other-branch
+/// delta, or another chain's state under coincidentally identical local
+/// coordinates, and is refused.
 fn is_forward(held: LogRef, arrived: LogRef) -> bool {
+    same_branch(held, arrived)
+        && (arrived.tx().anchor().number(), arrived.tx().index())
+            >= (held.tx().anchor().number(), held.tx().index())
+}
+
+/// Whether two positions name one chain and one branch: identical chains, and
+/// identical block hashes when they share a height (a same-height peer block is
+/// another branch, whatever its local coordinates).
+fn same_branch(held: LogRef, arrived: LogRef) -> bool {
     let held_anchor = held.tx().anchor();
     let arrived_anchor = arrived.tx().anchor();
-    if held_anchor.chain_id() != arrived_anchor.chain_id() {
-        return false;
-    }
-    if held_anchor.number() == arrived_anchor.number()
-        && held_anchor.hash() != arrived_anchor.hash()
-    {
-        return false;
-    }
-    (
-        arrived_anchor.number(),
-        arrived.tx().index(),
-        arrived.index(),
-    ) >= (held_anchor.number(), held.tx().index(), held.index())
+    held_anchor.chain_id() == arrived_anchor.chain_id()
+        && (held_anchor.number() != arrived_anchor.number()
+            || held_anchor.hash() == arrived_anchor.hash())
+}
+
+/// A position's canonical ordering key: block height, transaction index,
+/// block-wide log index.
+fn position(at: LogRef) -> (u64, u64, u64) {
+    (at.tx().anchor().number(), at.tx().index(), at.index())
 }
 
 /// The scaled-balance advance: the signed delta, the burn cap to the settled

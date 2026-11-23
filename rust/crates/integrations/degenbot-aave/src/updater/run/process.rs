@@ -16,10 +16,12 @@ use rusqlite::Connection;
 
 use super::evidence::CandidateTransaction;
 use super::substrate::ChunkSubstrate;
+use super::ConfigDispatchError;
 use super::RunError;
 use crate::config_dispatch::{ChunkContext, ChunkSpan};
 use crate::projection::{DeltaEffect, ProjectionView};
 use crate::transaction_processor::process_transaction;
+use crate::transaction_processor::ProcessTxError;
 use crate::updater::aave_fetch::{ChunkLogFacts, LogIdentityRefusal};
 
 /// One transaction's grouped logs, carrying the exact coordinates the group
@@ -176,10 +178,10 @@ pub(super) fn guard_terminal_transaction_identity(
 
 /// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
 /// body). Per candidate transaction: re-resolve the GHO vToken revision, run the
-/// discount pre-pass + the config-event dispatch + `process_transaction`, then
-/// apply THAT tx's events to `conn` via [`apply_chunk_events_on_conn`] BEFORE
-/// the next tx's reads (per-tx apply — the config-revision + ops-balance
-/// surfaces read fresh per-tx state).
+/// discount pre-pass + the configuration dispatch + `process_transaction`, and
+/// persist THAT tx's canonical deltas — configuration and operation effects
+/// through the one writer — BEFORE the next tx's reads (per-tx apply: the
+/// config-revision and ops-balance surfaces read fresh per-tx state).
 ///
 /// Each candidate arrives with its bound `TransactionEvidence` (ADR-105 D2): the
 /// caller acquired the transaction's complete receipt and, where a parse leg is
@@ -196,7 +198,7 @@ pub(super) fn guard_terminal_transaction_identity(
 /// localize the `await_holding_lock` allow (the `&Transaction` borrow across
 /// `.await` — safe under `block_on`'s single-thread poll).
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(super) async fn process_chunk_on_conn(
+pub(super) async fn resolve_chunk(
     conn: &Connection,
     provider: &AlloyProvider,
     market_id: i64,
@@ -206,7 +208,7 @@ pub(super) async fn process_chunk_on_conn(
     substrate: ChunkSubstrate,
     chunk_start: u64,
     chunk_end: u64,
-) -> Result<ChunkCoreReport, RunError> {
+) -> Result<ChunkResolution, RunError> {
     // Per-tx apply within `conn`. The two staleness surfaces:
     //   (1) config: `vtoken_revision` is re-resolved per-tx from `conn`
     //       (read-your-own-writes sees the prior tx's `Upgraded` write); a
@@ -239,7 +241,7 @@ pub(super) async fn process_chunk_on_conn(
     // reads, the discount pre-pass + config dispatch - BOTH hold the write
     // lock across their RPC reads) and the per-tx + end-of-chunk SQL apply.
     let mut decode_compute_time = Duration::ZERO;
-    let mut apply_time = Duration::ZERO;
+    let apply_time = Duration::ZERO;
     // The per-chunk dispatch context — ONE owner holding the
     // chunk-scoped dispatch constants, the chunk connection, the chunk
     // substrate, and the `RevisionMemo`, so the 4 revision
@@ -264,11 +266,15 @@ pub(super) async fn process_chunk_on_conn(
         &mut substrate,
     );
 
+    ctx.substrate_mut()
+        .observe_seed_generations(&mut view, market_id, chain_id);
+    let mut chunk_deltas: Vec<crate::projection::CanonicalDelta> = Vec::new();
+    let mut pending_refreshes: Vec<(crate::projection::CanonicalDelta, i64, u64)> = Vec::new();
     for candidate in candidates {
         let group = &candidate.group;
         let block_number = group.block_number;
         let tx_hashes_refs: Vec<&Log> = group.logs.clone();
-        ctx.begin_transaction(block_number);
+        ctx.begin_transaction(*candidate.evidence.tx());
 
         for log in &group.logs {
             let topics = log.topics();
@@ -306,14 +312,15 @@ pub(super) async fn process_chunk_on_conn(
         //     config events (each applied intra-dispatch). The seam owns the
         //     order; `ChunkContext::dispatch_transaction` carries the rationale
         //     for each stage.
-        let dispatch = ctx.dispatch_transaction(&tx_hashes_refs).await?;
+        let dispatch = ctx.dispatch_transaction(&mut view, &tx_hashes_refs).await?;
         let discounts = dispatch.discounts;
-        let config_events = dispatch.config_events;
+        let config_deltas = dispatch.deltas;
         let discount_token_tx = dispatch.stk_aave_address;
         // (d) The config events were applied INTRA-dispatch: by here the tx's
         //     config writes are already on `conn` (read-your-own-writes for
         //     the ops parser below).
-        events_applied_total += config_events.len();
+        events_applied_total += config_deltas.len();
+        chunk_deltas.extend(config_deltas.iter().cloned());
 
         // (e) The operations parser (sync, substrate lookups) — reads `conn`
         //     (sees this tx's config writes + prior txs' writes) + uses the
@@ -329,6 +336,7 @@ pub(super) async fn process_chunk_on_conn(
             &discounts,
             ctx.substrate_mut(),
             &mut view,
+            &config_deltas,
         )
         .map_err(|e| {
             #[expect(clippy::print_stderr)] // auditable stderr parse-fail line
@@ -347,25 +355,11 @@ pub(super) async fn process_chunk_on_conn(
             "rpc.round_trips",
             degenbot_rpc::provider::rpc_round_trips().saturating_sub(compute_rt_start),
         );
-        // (f) Persist THIS tx's canonical deltas to `conn` — so tx N+1 sees
-        //     them via read-your-own-writes (surface #2: the `Upgraded`
-        //     revision bump + the scaled-token balance movements land before
-        //     the next tx's reads).
-        // The per-tx apply stage span (the Jaeger twin of the
-        // `apply_started` anchor): this tx's delta applies to `conn` —
-        // read-your-own-writes for tx N+1's reads. SQL-only.
-        let apply_span = tracing::info_span!(
-            "degenbot.updater.aave.apply",
-            apply.kind = "tx",
-            events.n = tracing::field::Empty,
-        );
-        let apply_guard = apply_span.enter();
-        let apply_started = Instant::now();
-        ctx.apply_deltas(&deltas)?;
-        apply_time += apply_started.elapsed();
-        drop(apply_guard);
-        apply_span.record("events.n", u64::try_from(deltas.len()).unwrap_or(u64::MAX));
-        events_applied_total += deltas.len();
+        // (f) Buffer THIS tx's canonical deltas: resolution emits them and the
+        //     chunk's ONE write transaction persists them (ADR-105 D4). The
+        //     projection view already advanced, so tx N+1's resolution reads
+        //     what tx N established.
+        chunk_deltas.extend(deltas.iter().cloned());
 
         // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
         //     `the aave tx trace=1`, emit one JSONL line per touched
@@ -400,7 +394,10 @@ pub(super) async fn process_chunk_on_conn(
                             seen.insert((false, to.position_id));
                         }
                     }
-                    DeltaEffect::GhoRefreshDiscount { .. } => {}
+                    DeltaEffect::GhoRefreshDiscount { .. }
+                    | DeltaEffect::StkAaveBalanceObserved { .. }
+                    | DeltaEffect::GhoDiscountRefreshed { .. }
+                    | DeltaEffect::Configuration(_) => {}
                 }
             }
             let txhex = alloy::hex::encode(group.tx_hash);
@@ -444,58 +441,183 @@ pub(super) async fn process_chunk_on_conn(
             }
         }
 
-        // (f.5) The async POST-APPLY discount-refresh pass.
-        //     For each `GhoRefreshDiscount` signal this tx emitted (V1-V3 GHO
-        //     mints/burns), recompute the user's `gho_discount` from the
-        //     POST-APPLY debt balance + the user's stkAAVE balance
-        //     (`balanceOf` `eth_call` at block-1 if `stk_aave_balance` is
-        //     None). The refresh reads the POST-APPLY values (the apply above
-        //     just landed them) + has the provider (this loop is async).
+        // (f.5) The POST-APPLY discount refresh, computed against the
+        //     advanced projection view: for each `GhoRefreshDiscount` signal
+        //     this tx emitted (V1-V3 GHO mints/burns), the debt state the
+        //     refresh reads is the view's post-transaction state, and the
+        //     settled discount travels as its own delta.
+        let _ = discount_token_tx;
         for delta in &deltas {
             if let DeltaEffect::GhoRefreshDiscount { position_id } = delta.effect() {
-                crate::config_dispatch::refresh_gho_discount(
-                    provider,
-                    conn,
-                    *position_id,
-                    block_number,
-                    discount_token_tx,
-                )
-                .await?;
+                pending_refreshes.push((delta.clone(), *position_id, block_number));
             }
         }
     }
+    drop(ctx);
+    for (signal, position_id, block_number) in pending_refreshes {
+        resolve_discount_refresh(
+            provider,
+            conn,
+            market_id,
+            block_number,
+            &signal,
+            position_id,
+            &view,
+            &mut substrate,
+            &mut chunk_deltas,
+        )
+        .await?;
+    }
 
-    // (g) End-of-chunk zero-balance cleanup, then the `last_update_block`
-    //     stamp as the LAST write (end-of-chunk). The cleanup deletes the
-    //     burned-down collateral + debt rows the chunk zeroed; the per-tx
-    //     applies above +
-    //     the cleanup are durable only when the caller's `Transaction`
-    //     commits; on rollback the whole chunk (events + cleanup + stamp)
-    //     reverts (the restart invariant).
-    // The end-of-chunk cleanup + stamp span (the Jaeger twin of this
-    // `apply_started` anchor): the deferred `ReserveDataUpdated` flush, the
-    // zero-balance cleanup, + the stamp — the chunk's remaining
-    // in-transaction SQL. The stamp stays the LAST write (chunk atomicity).
-    let cleanup_span = tracing::info_span!("degenbot.updater.aave.apply", apply.kind = "cleanup");
-    let cleanup_guard = cleanup_span.enter();
+    let _ = (apply_time, chunk_end, events_applied_total);
+    Ok(ChunkResolution {
+        deltas: chunk_deltas,
+        substrate,
+        touched_user_addresses,
+        decode_compute_time,
+    })
+}
+
+/// Recompute the users' GHO discounts the transaction's debt movements require
+/// (the `(C)` refresh): the debt state is the view's post-transaction state and
+/// the stkAAVE balance is the projection's (a `balanceOf` at the exact parent
+/// block seeds it when the column was never observed). The settled values travel
+/// as their own deltas, so persistence writes them without recomputing.
+#[expect(clippy::too_many_arguments)]
+async fn resolve_discount_refresh(
+    provider: &AlloyProvider,
+    conn: &Connection,
+    market_id: i64,
+    block_number: u64,
+    signal: &crate::projection::CanonicalDelta,
+    position_id: i64,
+    view: &crate::projection::ProjectionView,
+    substrate: &mut ChunkSubstrate,
+    chunk_deltas: &mut Vec<crate::projection::CanonicalDelta>,
+) -> Result<(), RunError> {
+    use crate::projection::{DeltaEffect, PositionSubject};
+    let discount_token = substrate
+        .gho_asset(conn)?
+        .and_then(|gho| gho.v_gho_discount_token)
+        .and_then(|address| address.parse::<Address>().ok());
+    let Some(discount_token) = discount_token else {
+        return Ok(());
+    };
+    {
+        let user = DegenbotDb::lookup_debt_position_refresh_context_on_conn(conn, position_id)?;
+        let (scaled_balance, last_index) = view
+            .require_position_state(PositionSubject {
+                position: degenbot_db::ScaledTokenPosition::Debt,
+                position_id,
+            })
+            .map_err(|error| RunError::ProcessTx(ProcessTxError::Projection(error)))?;
+        let projected = substrate.user_stk_aave_balance(conn, market_id, &user.user_address)?;
+        let stk_aave_balance = if let Some(Some(balance)) = projected {
+            balance
+        } else {
+            let address: Address = user.user_address.parse().map_err(|_| {
+                RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
+                    "bad user_address in refresh: {}",
+                    user.user_address
+                )))
+            })?;
+            let balance = degenbot_rpc::erc20::balance_of(
+                provider,
+                discount_token,
+                address,
+                Some(block_number.saturating_sub(1)),
+            )
+            .await
+            .map_err(|error| match error {
+                degenbot_rpc::erc20::AccountReadError::Call(provider_error) => {
+                    RunError::Provider(provider_error)
+                }
+                degenbot_rpc::erc20::AccountReadError::NotUint256 { returned, .. } => {
+                    RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
+                        "balanceOf for user {}: short return ({returned} bytes)",
+                        user.user_address
+                    )))
+                }
+            })?;
+            substrate.record_user_stk_aave_balance_by_id(user.user_id, Some(balance));
+            chunk_deltas.push(crate::projection::CanonicalDelta::new(
+                signal.source(),
+                None,
+                DeltaEffect::StkAaveBalanceObserved {
+                    user_id: user.user_id,
+                    balance,
+                },
+            ));
+            balance
+        };
+        let debt_balance = crate::ray_mul(scaled_balance, last_index.unwrap_or_default(), None)
+            .map_err(|error| {
+                RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
+                    "ray_mul overflow in refresh: {error}"
+                )))
+            })?;
+        let rate =
+            crate::gho_processor::calculate_gho_discount_rate(debt_balance, stk_aave_balance)
+                .map_err(|error| {
+                    RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
+                        "calculate_gho_discount_rate: {error}"
+                    )))
+                })?;
+        let gho_discount = crate::config_dispatch::discount_to_i64(rate);
+        substrate.record_user_gho_discount_by_id(user.user_id, gho_discount);
+        chunk_deltas.push(crate::projection::CanonicalDelta::new(
+            signal.source(),
+            None,
+            DeltaEffect::GhoDiscountRefreshed {
+                user_id: user.user_id,
+                gho_discount,
+            },
+        ));
+    }
+    Ok(())
+}
+
+/// One chunk's resolved write product: the ordered canonical deltas, the
+/// projection the resolution left behind (persistence reads its overlay), the
+/// touched users, and the resolution's own stage time.
+pub(super) struct ChunkResolution {
+    pub(super) deltas: Vec<crate::projection::CanonicalDelta>,
+    pub(super) substrate: ChunkSubstrate,
+    pub(super) touched_user_addresses: HashSet<Address>,
+    pub(super) decode_compute_time: Duration,
+}
+
+/// Persist one chunk's resolved deltas under the caller's write transaction,
+/// then flush the deferred reserve-data writes, clean the zeroed positions and
+/// stamp the cursor last (the restart invariant).
+///
+/// This is the chunk's whole write surface: no acquisition, no decode, no
+/// identity resolution (ADR-105 D4).
+///
+/// # Errors
+///
+/// Returns [`RunError::Db`] on any write failure; the caller drops the
+/// transaction, rolling the whole chunk back.
+pub(super) fn persist_chunk(
+    conn: &Connection,
+    resolution: &mut ChunkResolution,
+    market_id: i64,
+    chunk_end: u64,
+) -> Result<ChunkCoreReport, RunError> {
     let apply_started = Instant::now();
-    // Flush the deferred `ReserveDataUpdated` writes (one sorted
-    // multi-row UPDATE — the liquidity_updater deterministic-order idiom)
-    // BEFORE the cleanup + stamp: the stamp stays the LAST write (chunk atomicity), and
-    // the flush sits inside the chunk's transaction (a rollback reverts it
-    // with the chunk; the in-memory buffer drops with the substrate). The
-    // post-commit verification gate reads the flushed values.
-    ctx.substrate_mut().flush_reserve_data_updates(conn)?;
+    let mut substrate = std::mem::replace(&mut resolution.substrate, ChunkSubstrate::lazy(0));
+    crate::run::apply_canonical_deltas_on_conn(conn, &resolution.deltas, &mut substrate)?;
+    substrate.flush_reserve_data_updates(conn)?;
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
-    apply_time += apply_started.elapsed();
-    drop(cleanup_guard);
-
+    let apply_time = apply_started.elapsed();
+    resolution.substrate = substrate;
     Ok(ChunkCoreReport {
-        events_applied: events_applied_total,
-        touched_user_addresses,
-        decode_compute_time,
+        events_applied: resolution.deltas.len(),
+        touched_user_addresses: resolution.touched_user_addresses.clone(),
+        deltas: resolution.deltas.clone(),
+        decode_compute_time: resolution.decode_compute_time,
         apply_time,
     })
 }
@@ -512,6 +634,13 @@ pub(super) struct ChunkCoreReport {
     /// Wall time of the per-tx event apply + the end-of-chunk cleanup/stamp
     /// (the chunk's remaining in-transaction SQL).
     pub(super) apply_time: Duration,
+    /// Every canonical delta this chunk reduced, in emission order (per
+    /// transaction: the configuration family as it was dispatched, then the
+    /// operation family) — the chunk's write product. Each delta states its
+    /// exact position, so a consumer can order the stream itself (the replay
+    /// bench and the cross-chunk equality gate read it; a journal consumes it
+    /// later).
+    pub(super) deltas: Vec<crate::projection::CanonicalDelta>,
     /// User addresses touched by ANY event in the chunk (topics[1]/[2] of every
     /// log extracted as addresses — cheap `O(num_logs * 2)` scan). Drives the
     /// drive harness's per-chunk value-correctness gate (the verify fn
@@ -620,7 +749,7 @@ mod tests {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
             degenbot_core::runtime::get_runtime()
-                .block_on(process_chunk_on_conn(
+                .block_on(resolve_chunk(
                     &tx,
                     &provider,
                     1,
@@ -631,6 +760,7 @@ mod tests {
                     3_000,
                     3_000,
                 ))
+                .and_then(|mut resolution| persist_chunk(&tx, &mut resolution, 1, 3_000))
                 .unwrap();
             tx.commit().unwrap();
         }

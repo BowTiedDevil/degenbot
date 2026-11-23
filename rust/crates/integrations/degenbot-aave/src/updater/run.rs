@@ -22,13 +22,13 @@ pub use activate::{
     ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use apply::{
-    apply_aave_chunk_writes_on_conn, apply_canonical_deltas_on_conn, apply_chunk_events_on_conn,
-    AaveChunkEvent, AaveChunkWriteReport, CanonicalDeltaWriteReport,
+    apply_aave_chunk_writes_on_conn, apply_canonical_deltas_on_conn, CanonicalDeltaWriteReport,
+    ChunkWriteReport,
 };
 pub use evidence::EvidenceAcquisitionError;
 use evidence::{bind_chunk_evidence, trace_backed_count};
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
-use process::{group_logs_by_tx, guard_terminal_transaction_identity, process_chunk_on_conn};
+use process::{group_logs_by_tx, guard_terminal_transaction_identity, resolve_chunk};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
 use substrate::{candidate_addresses, ChunkSubstrate};
 
@@ -77,8 +77,14 @@ pub struct AaveChunkProgress {
     pub market_id: i64,
     pub chunk_start: u64,
     pub chunk_end: u64,
-    /// The total deltas + configuration events the chunk wrote.
+    /// The total canonical deltas the chunk wrote — the configuration and
+    /// operation families alike.
     pub events_applied: usize,
+    /// Every canonical delta the chunk reduced, in emission order (per
+    /// transaction: the configuration family, then the operation family). Its
+    /// encoded form is the cross-chunk equivalence gate: the same chain facts
+    /// chunked differently must encode byte-identically (ADR-105 D7, D13).
+    pub deltas: Vec<crate::projection::CanonicalDelta>,
     /// `true` iff the chunk's transaction committed; `false` if it rolled
     /// back (an error mid-chunk → the whole chunk reverted → restart will
     /// re-process).
@@ -100,7 +106,7 @@ pub struct AaveChunkProgress {
     /// regions). Mirrors `degenbot-pool-updater::ChunkProgress`.
     pub fetch_time: Duration,
     /// Wall time of the in-transaction per-tx decode+compute block (the
-    /// GHO/revision conn reads, the discount pre-pass + the config-event
+    /// GHO/revision conn reads, the discount pre-pass + the configuration
     /// dispatch - both hold the write lock across their RPC reads).
     pub decode_compute_time: Duration,
     /// Wall time of the pre-commit on-chain-truth verification RPC (the
@@ -115,6 +121,16 @@ pub struct AaveChunkProgress {
     /// commit/drop. The headline number for keeping RPC reads out of the
     /// chunk transaction (the `await_holding_lock` shape).
     pub write_lock_hold_time: Duration,
+    /// The exact number of provider round trips taken while the chunk's write
+    /// transaction was open (sampled from the process-global counter at
+    /// `transaction()` and again at commit/rollback). Resolution acquires every
+    /// read the chunk needs - the per-transaction facts AND the verification
+    /// gates' chain truth - so the contract is ZERO for every policy: a
+    /// non-zero count means a read re-entered the lock, and the replay gates
+    /// (`aave_update_chunk_holds_no_rpc_round_trip_inside_the_write_lock`,
+    /// `aave_config_chunk_holds_no_rpc_round_trip_inside_the_write_lock`, and
+    /// the verify-enabled rollback gate) fail on it.
+    pub rpc_round_trips_in_lock: u64,
 }
 
 impl AaveChunkProgress {
@@ -142,6 +158,7 @@ impl AaveChunkProgress {
             chunk_start,
             chunk_end,
             events_applied: 0,
+            deltas: Vec::new(),
             committed: false,
             is_final: false,
             touched_user_addresses: Vec::new(),
@@ -150,6 +167,7 @@ impl AaveChunkProgress {
             verify_time: Duration::ZERO,
             apply_time: Duration::ZERO,
             write_lock_hold_time: Duration::ZERO,
+            rpc_round_trips_in_lock: 0,
         }
     }
 }
@@ -367,11 +385,13 @@ pub struct RunSpec {
 /// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
 /// 3. Open ONE `Transaction`. For each tx group, re-resolve the GHO vToken
 ///    revision (per-tx, sees prior txs' `Upgraded` writes), build the
-///    discount snapshot (RPC + the DB-cache path), dispatch the config events
-///    (RPC for revisions and metadata plus the substrate lookups), apply THAT
-///    tx's config events to `conn` (so the ops parser sees them), run
-///    `process_transaction` (the operations parser, sync, substrate lookups),
-///    and persist THAT tx's canonical deltas to `conn` (so tx N+1 sees them).
+///    discount snapshot (RPC + the DB-cache path), dispatch the configuration
+///    events (RPC for revisions and metadata plus the substrate lookups),
+///    persist each configuration delta to `conn` as it is dispatched (so the
+///    ops parser sees it), run `process_transaction` (the operations parser,
+///    sync, substrate lookups, then its canonical deltas persisted), and
+///    advance the projection view in canonical event order across both
+///    families (so tx N+1 reads what tx N wrote).
 /// 4. Stamp `last_update_block = chunk_end` as the LAST write (end-of-chunk).
 ///    The caller's `Transaction` commits (or drops, rolling back). The stamp
 ///    is the LAST write.
@@ -465,6 +485,10 @@ struct ChunkTx<'a> {
     /// Taken immediately before the `transaction()` open: the start of the
     /// reported write-lock-hold span.
     lock_hold_started: Instant,
+    /// The process-global provider round-trip counter as the guard takes the
+    /// open transaction - the base of
+    /// [`AaveChunkProgress::rpc_round_trips_in_lock`].
+    rpc_round_trips_at_open: u64,
     /// The chunk's report skeleton ([`AaveChunkProgress::from_chunk`]):
     /// identity, span, fetch time, and the verify split accrued mid-chunk.
     /// [`Self::commit`] fills in the applied counters and the remaining stage
@@ -488,6 +512,7 @@ impl<'a> ChunkTx<'a> {
         Self {
             tx: Some(tx),
             lock_hold_started,
+            rpc_round_trips_at_open: degenbot_rpc::provider::rpc_round_trips(),
             progress: base,
             sink,
         }
@@ -524,6 +549,7 @@ impl<'a> ChunkTx<'a> {
             return Err(RunError::Db(DbError::from(error)));
         }
         self.progress.events_applied = report.events_applied;
+        self.progress.deltas.clone_from(&report.deltas);
         self.progress.committed = true;
         self.progress.is_final = is_final;
         self.progress.touched_user_addresses =
@@ -531,6 +557,8 @@ impl<'a> ChunkTx<'a> {
         self.progress.decode_compute_time = report.decode_compute_time;
         self.progress.apply_time = report.apply_time;
         self.progress.write_lock_hold_time = self.lock_hold_started.elapsed();
+        self.progress.rpc_round_trips_in_lock =
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(self.rpc_round_trips_at_open);
         if let Some(t) = degenbot_core::updater_telemetry::updaters() {
             t.observe_lock_hold(
                 UpdaterKind::Aave,
@@ -567,6 +595,8 @@ impl<'a> ChunkTx<'a> {
     /// rollback).
     fn release_rollback(&mut self) {
         self.progress.write_lock_hold_time = self.lock_hold_started.elapsed();
+        self.progress.rpc_round_trips_in_lock =
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(self.rpc_round_trips_at_open);
         if let Some(t) = degenbot_core::updater_telemetry::updaters() {
             t.observe_lock_hold(
                 UpdaterKind::Aave,
@@ -1010,10 +1040,93 @@ async fn run_aave_update_driver(
         //    processing (discount pre-pass + config dispatch + parse) borrows
         //    the Transaction's `&Connection` for substrate lookups + writes —
         //    they MUST be atomic with the chunk's apply.
+        // 2. Resolution: every per-transaction RPC and every read-side
+        //    substrate access happens BEFORE the chunk's write transaction
+        //    opens (ADR-105 D4). The chunk's deltas are the only write product
+        //    that crosses into the transaction.
+        let mut resolution = {
+            let read = db.lock();
+            resolve_chunk(
+                &read,
+                &provider,
+                market_id,
+                chain_id,
+                pool_address,
+                &candidates,
+                substrate,
+                working_start,
+                chunk_end,
+            )
+            .await?
+        };
+
+        let max_chunks_hit = max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit);
+        let is_final = crate::verify::is_final_chunk(chunk_end, last_block, max_chunks_hit);
+        let run_full = crate::verify::should_run_full_verify_at_interval(
+            working_start,
+            chunk_end,
+            verify_all_interval,
+        ) || (verify_all_at_completion && is_final);
+
+        // 2b. The verification gates' chain truth (ADR-105 D3, D4): every RPC
+        //     the pre-commit gates need is acquired HERE, in resolution, so the
+        //     chunk's write transaction only compares rows it can already read.
+        //     A divergence still rolls the chunk back; the acquisition never
+        //     moves a cursor.
+        let touched_truth = if verify_chunk && !resolution.touched_user_addresses.is_empty() {
+            let verify_span = tracing::info_span!(
+                "degenbot.updater.aave.verify.acquire",
+                verify.kind = "touched",
+                rpc.round_trips = tracing::field::Empty,
+            );
+            let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+            let verify_guard = verify_span.enter();
+            let touched: Vec<Address> = resolution.touched_user_addresses.iter().copied().collect();
+            let positions = {
+                let read = db.lock();
+                crate::verify::load_verification_positions(&read, market_id, Some(&touched))?
+            };
+            let truth =
+                crate::verify::acquire_position_truth(&provider, chunk_end, &positions).await?;
+            drop(verify_guard);
+            verify_span.record(
+                "rpc.round_trips",
+                degenbot_rpc::provider::rpc_round_trips().saturating_sub(verify_rt_start),
+            );
+            Some(truth)
+        } else {
+            None
+        };
+        let full_truth = if run_full {
+            let verify_span = tracing::info_span!(
+                "degenbot.updater.aave.verify.acquire",
+                verify.kind = "full",
+                rpc.round_trips = tracing::field::Empty,
+            );
+            let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
+            let verify_guard = verify_span.enter();
+            let truth = {
+                let read = db.lock();
+                crate::verify::acquire_verification_truth(
+                    &read, &provider, market_id, chain_id, chunk_end, None,
+                )
+                .await?
+            };
+            drop(verify_guard);
+            verify_span.record(
+                "rpc.round_trips",
+                degenbot_rpc::provider::rpc_round_trips().saturating_sub(verify_rt_start),
+            );
+            Some(truth)
+        } else {
+            None
+        };
+
+        // 3. The single-transaction chunk write: persistence and the
+        //    chain-truth gates. The per-tx RPC and the gates' chain reads are
+        //    already resolved, so the write lock covers no acquisition.
         let chunk_report = {
             let mut guard = db.lock();
-            // The write-lock hold starts at the `transaction()` open and ends
-            // at the commit/drop — measured by the chunk's guard.
             let lock_hold_started = Instant::now();
             let tx = guard.transaction().map_err(DbError::from)?;
             // The guard owns the rest of the end-of-chunk contract: every
@@ -1032,102 +1145,46 @@ async fn run_aave_update_driver(
                 ),
                 progress.clone(),
             );
-            let r = process_chunk_on_conn(
-                chunk_tx.conn(),
-                &provider,
-                market_id,
-                chain_id,
-                pool_address,
-                &candidates,
-                substrate,
-                working_start,
-                chunk_end,
-            )
-            .await?;
-            // Pre-commit verification: if `verify_chunk` is set, run
-            // `verify_touched_positions_on_conn` on the (uncommitted)
-            // transaction. This catches divergences BEFORE the commit — a
-            // divergence rolls the chunk back so `last_update_block` does NOT
-            // advance + the next run re-processes the same chunk. Without
-            // this, the bad commit would land first + the post-commit verify
-            // in the progress callback would find it but too late (the data
-            // is already durable).
-            if verify_chunk {
+            let r = process::persist_chunk(chunk_tx.conn(), &mut resolution, market_id, chunk_end)?;
+            // Pre-commit verification: the chain truth was acquired above, in
+            // resolution. The comparison reads the (uncommitted) rows this
+            // transaction just wrote and issues no RPC, so it catches
+            // divergences BEFORE the commit with the lock held by nothing but
+            // SQL — a divergence rolls the chunk back so `last_update_block`
+            // does NOT advance + the next run re-processes the same chunk.
+            // Without this, the bad commit would land first + the post-commit
+            // verify in the progress callback would find it but too late (the
+            // data is already durable).
+            if let Some(truth) = &touched_truth {
                 let touched: Vec<Address> = r.touched_user_addresses.iter().copied().collect();
-                // Skip when no users were touched — an empty chunk has
-                // nothing to verify. Passing `None` would verify ALL positions rather
-                // than none.
-                if !touched.is_empty() {
-                    let verify_span = tracing::info_span!(
-                        "degenbot.updater.aave.verify",
-                        verify.kind = "touched",
-                        rpc.round_trips = tracing::field::Empty,
-                    );
-                    let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
-                    let verify_guard = verify_span.enter();
-                    let verify_started = Instant::now();
-                    let divergences = crate::verify::verify_touched_positions_on_conn(
-                        chunk_tx.conn(),
-                        &provider,
-                        market_id,
+                let verify_started = Instant::now();
+                let positions = crate::verify::load_verification_positions(
+                    chunk_tx.conn(),
+                    market_id,
+                    Some(&touched),
+                )?;
+                let divergences =
+                    crate::verify::compare_position_truth(&positions, truth, chunk_end);
+                chunk_tx.add_verify_time(verify_started.elapsed());
+                if !divergences.is_empty() {
+                    return Err(RunError::Verification {
+                        chunk_start: working_start,
                         chunk_end,
-                        Some(&touched),
-                    )
-                    .await?;
-                    chunk_tx.add_verify_time(verify_started.elapsed());
-                    drop(verify_guard);
-                    verify_span.record(
-                        "rpc.round_trips",
-                        degenbot_rpc::provider::rpc_round_trips().saturating_sub(verify_rt_start),
-                    );
-                    if !divergences.is_empty() {
-                        return Err(RunError::Verification {
-                            chunk_start: working_start,
-                            chunk_end,
-                            divergences,
-                        });
-                    }
+                        divergences,
+                    });
                 }
             }
-            // Full (market-wide) verification gate: interval boundary crossing
-            // + run completion. Runs on the uncommitted transaction BEFORE
-            // commit — catches corrupt state before it lands. A divergence
-            // rolls the chunk back so `last_update_block` does NOT advance.
-            //
-            // The final-chunk test is also the committed report's `is_final`.
-            let max_chunks_hit =
-                max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit);
-            let is_final = crate::verify::is_final_chunk(chunk_end, last_block, max_chunks_hit);
-            let run_full = crate::verify::should_run_full_verify_at_interval(
-                working_start,
-                chunk_end,
-                verify_all_interval,
-            ) || (verify_all_at_completion
-                && crate::verify::is_final_chunk(chunk_end, last_block, max_chunks_hit));
-            if run_full {
-                let verify_span = tracing::info_span!(
-                    "degenbot.updater.aave.verify",
-                    verify.kind = "full",
-                    rpc.round_trips = tracing::field::Empty,
-                );
-                let full_verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
-                let full_verify_guard = verify_span.enter();
+            if let Some(truth) = &full_truth {
                 let verify_started = Instant::now();
-                let divergences = crate::verify::verify_all_positions_on_conn(
+                let divergences = crate::verify::compare_verification_truth_on_conn(
                     chunk_tx.conn(),
-                    &provider,
                     market_id,
                     chain_id,
                     chunk_end,
                     None,
-                )
-                .await?;
+                    truth,
+                )?;
                 chunk_tx.add_verify_time(verify_started.elapsed());
-                drop(full_verify_guard);
-                verify_span.record(
-                    "rpc.round_trips",
-                    degenbot_rpc::provider::rpc_round_trips().saturating_sub(full_verify_rt_start),
-                );
                 if !divergences.is_empty() {
                     return Err(RunError::FullVerification {
                         chunk_start: working_start,
@@ -1182,7 +1239,7 @@ async fn run_aave_update_driver(
         // `--one-chunk` cap: stop after committing `max_chunks` chunks (NOT
         // mid-loop and NOT before the first chunk). `last_update_block` is
         // advanced to the last committed chunk's `chunk_end` (the stamp write
-        // happened inside `apply_chunk_events_on_conn`'s commit), so the next
+        // happened inside the chunk transaction's commit), so the next
         // run resumes from there. `--stop-after-n` is a first-class loop cap: a
         // bounded run stops cleanly instead of being killed mid-chunk.
         if let Some(limit) = max_chunks {

@@ -7,7 +7,7 @@
 //! amount +/- a pool-revision ray-flooring tolerance
 //! (`TransactionOperationsParser::amounts_match`), then
 //! emits typed [`Operation`] objects the apply dispatch glue consumes
-//! to construct `AaveChunkEvent` variants and dispatch via
+//! to construct canonical delta effects and dispatch via
 //! [`crate::run::apply_aave_chunk_writes_on_conn`].
 //!
 //! This module is the **pure-data contract** the parser fills and the apply

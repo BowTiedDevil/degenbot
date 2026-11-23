@@ -1,25 +1,27 @@
 //! The config-event direct-decode dispatch for the Rust-owned Aave V3 chunk
 //! loop (`run_aave_update`).
 //!
-//! This module owns the orchestrator's per-transaction config-event handling:
-//! loop over a tx's logs, decode each via
+//! This module owns the orchestrator's per-transaction configuration
+//! handling: loop over a tx's logs, decode each via
 //! [`degenbot_decoders::aave_event_decoder::decode_aave_log`], + for the 10
 //! enum-covered config event types, resolve ids via the `DegenbotDb`
 //! substrate (`get_or_create_*_on_conn` / `lookup_asset_by_*_on_conn`) +
-//! emit [`AaveChunkEvent`] variants — the tx's first dispatch phase, covering
-//! the config-event types. The apply step (`-3`'s `apply_aave_chunk_writes_on_conn`)
-//! consumes the emitted variants on the chunk `Transaction` (chunk
-//! atomicity).
+//! emit [`ConfigurationEffect`] variants — the tx's first dispatch phase.
+//! Each effect is reduced into a [`CanonicalDelta`] at its exact log
+//! position, carrying the generation the event activated (ADR-105 D6, D7),
+//! and persisted through the chunk's one writer.
 //!
 //! # Scope (this module)
 //!
 //! The dispatch loop + the shared decode/RPC helpers every resolver rides
 //! (the checksum/calldata encoders, the batch-or-direct multicall seam, the
 //! word/string decoders). `dispatch_config_events` routes each decoded
-//! event to its resolver + applies each emitted event to the chunk `conn`
-//! AS it is dispatched (logIndex order), so a later event's dispatch sees an
-//! earlier event's apply — surface-table row 6
-//! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)).
+//! event to its resolver + persists each emitted delta to the chunk `conn`
+//! AS it is dispatched (logIndex order), so a later event's resolution sees an
+//! earlier event's write — surface-table row 6
+//! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)). The VIEW advance is
+//! the caller's: configuration and operation deltas advance the projection in
+//! canonical event order (`process_transaction`).
 //!
 //! The resolvers live in the child modules, one seam each:
 //! - `context`: the per-chunk dispatch context (`ChunkContext` + the
@@ -55,7 +57,7 @@
 //! All `get_or_create_*` / `lookup_*` substrate calls run on it — the
 //! chunk-atomicity
 //! invariant (ONE `Transaction` per chunk) holds. The dispatch emits
-//! [`AaveChunkEvent`]s; the apply step consumes them on the same conn.
+//! [`CanonicalDelta`]s; the same writer persists them on that conn.
 //! No `Transaction` lifecycle here — this file owns neither `commit` nor
 //! `drop`.
 
@@ -64,13 +66,15 @@ mod context;
 mod discount;
 mod revision;
 
-use crate::run::AaveChunkEvent;
+use crate::projection::{
+    reduce_configuration, CanonicalDelta, ConfigurationEffect, DeltaEffect, ProjectionError,
+    ProjectionView,
+};
 use alloy::primitives::{keccak256, Address, Bytes, U256};
-use degenbot_db::{DbError, DegenbotDb};
+use degenbot_db::DbError;
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
 use degenbot_rpc::provider::AlloyProvider;
-use rusqlite::Connection;
 
 // ── the module's exported face ────────────────────────────────────────────
 //
@@ -82,7 +86,6 @@ use rusqlite::Connection;
 // (its definition drops to `pub(super)` at the child-module seam).
 
 pub(crate) use context::{ChunkContext, ChunkSpan, RevisionMemo};
-pub(crate) use discount::refresh_gho_discount;
 pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
 
 use asset_config::{
@@ -125,6 +128,10 @@ pub enum ConfigDispatchError {
     /// `is_discount_supported` gate).
     #[error("missing vtoken revision for market {0}")]
     MissingVtokenRevision(i64),
+    /// The projection refused the configuration delta (a stale generation, or
+    /// a revision the generation vocabulary cannot hold).
+    #[error("projection error: {0}")]
+    Projection(#[from] ProjectionError),
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
@@ -133,11 +140,31 @@ fn revision_selector(sig: &str) -> [u8; 4] {
     [hash[0], hash[1], hash[2], hash[3]]
 }
 
+/// The in-crate fixtures' deterministic transaction reference: one
+/// transaction per block.
+#[cfg(test)]
+#[expect(clippy::expect_used)] // the fixture identity is a construction fact
+fn fixture_tx(block_number: u64) -> degenbot_core::canonical_head::TxRef {
+    let anchor = degenbot_core::canonical_head::ChainAnchor::new(
+        1,
+        block_number,
+        alloy::primitives::B256::from(U256::from(block_number)),
+        alloy::primitives::B256::repeat_byte(0xaa),
+    )
+    .expect("the fixture header is a complete identity");
+    degenbot_core::canonical_head::TxRef::new(
+        anchor,
+        alloy::primitives::B256::from(U256::from(0x1000 + block_number)),
+        0,
+    )
+    .expect("the fixture transaction names its hash")
+}
+
 // ── the dispatch loop ──────────────────────────────────────────────────────
 
 /// The per-tx config-event dispatch loop: loop over `tx_logs`, decode each via
 /// [`decode_aave_log`], + for the 10 enum-covered config event types,
-/// resolve ids + emit [`AaveChunkEvent`] variants. Non-config events
+/// resolve ids + emit [`ConfigurationEffect`] variants. Non-config events
 /// (Supply/Borrow/Mint/Burn/Transfer — the Operation events
 /// `process_transaction` handles) are skipped. The six upgrade-transition
 /// events (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
@@ -149,26 +176,48 @@ fn revision_selector(sig: &str) -> [u8; 4] {
 /// address rotation (an in-place replace through [`ChunkContext`]).
 pub(crate) async fn dispatch_config_events(
     ctx: &mut ChunkContext<'_>,
+    view: &mut ProjectionView,
     tx_logs: &[&alloy::rpc::types::Log],
-) -> Result<Vec<AaveChunkEvent>, ConfigDispatchError> {
-    let mut events = Vec::new();
+) -> Result<Vec<CanonicalDelta>, ConfigDispatchError> {
+    let mut deltas = Vec::new();
     for log in tx_logs {
         let Some(decoded) = decode_aave_log(log) else {
             continue; // not an Aave event (may be an unrelated ERC20/etc.).
         };
-        if let Some(ev) = dispatch_single_config_event(&decoded, ctx).await? {
-            // Intra-dispatch apply: apply each config event
-            // to `conn` AS it's dispatched (in logIndex order), so a later
-            // config event's dispatch sees an earlier event's apply — e.g.
-            // `CollateralConfigurationChanged` (logIdx 419) sees the asset
-            // `ReserveInitialized` (logIdx 413) just created. Matches the
-            // Python's per-event apply (intra-tx read-your-own-writes). The
-            // chunk loop's batch apply (the former step (d)) is removed.
-            ctx.apply_events(std::slice::from_ref(&ev))?;
-            events.push(ev);
+        let source = ctx.log_ref(log)?;
+        if let Some(effect) = dispatch_single_config_event(&decoded, ctx).await? {
+            let generation = effect.generation(ctx.chain_id(), source)?;
+            // Project the effect onto the resolution read position (ADR-105
+            // D4): the SQL write is deferred to the chunk's one transaction,
+            // so every fact a later event's resolution reads is mutated in the
+            // chunk substrate here — `CollateralConfigurationChanged` sees the
+            // asset `ReserveInitialized` created. The VIEW advance is the
+            // caller's, in canonical event order with the operations.
+            {
+                let conn = ctx.conn();
+                effect.project(ctx.substrate_mut(), conn)?;
+            }
+            ctx.repoint_pool(&effect)?;
+            for (user_id, balance) in ctx.take_observations() {
+                ctx.substrate_mut()
+                    .record_user_stk_aave_balance_by_id(user_id, Some(balance));
+                deltas.push(CanonicalDelta::new(
+                    source,
+                    None,
+                    DeltaEffect::StkAaveBalanceObserved { user_id, balance },
+                ));
+            }
+            let delta = reduce_configuration(view, effect, source, generation)
+                .map_err(config_projection_error)?;
+            deltas.push(delta);
         }
     }
-    Ok(events)
+    Ok(deltas)
+}
+
+/// A projection refusal during configuration resolution.
+fn config_projection_error(error: ProjectionError) -> ConfigDispatchError {
+    ConfigDispatchError::Projection(error)
 }
 
 /// Resolve the `PRICE_ORACLE` contract address for `ReserveInitialized`
@@ -180,26 +229,28 @@ pub(crate) async fn dispatch_config_events(
 /// chunk + prior chunks' committed writes are both visible on `conn`;
 /// initial absence (no row yet) stays the loud error.
 fn resolve_reserve_oracle_address(
-    conn: &Connection,
-    market_id: i64,
+    ctx: &mut ChunkContext<'_>,
 ) -> Result<Address, ConfigDispatchError> {
-    DegenbotDb::fetch_aave_oracle_address_on_conn(conn, market_id)?
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| {
-            ConfigDispatchError::DecodeShape(
-                "ReserveInitialized: no PRICE_ORACLE contract resolved".to_string(),
-            )
-        })
+    let market_id = ctx.market_id();
+    let conn = ctx.conn();
+    let projected = ctx
+        .substrate_mut()
+        .contract_address(conn, market_id, "PRICE_ORACLE")?;
+    projected.and_then(|s| s.parse().ok()).ok_or_else(|| {
+        ConfigDispatchError::DecodeShape(
+            "ReserveInitialized: no PRICE_ORACLE contract resolved".to_string(),
+        )
+    })
 }
 
 /// Dispatch a single decoded config event to its handler + return the emitted
-/// [`AaveChunkEvent`] (`None` for skipped/non-config events). Extracted from
+/// [`ConfigurationEffect`] (`None` for skipped/non-config events). Extracted from
 /// [`dispatch_config_events`] to keep the loop fn under the 100-line
 /// `clippy::too_many_lines` limit (the 14-arm match is naturally one unit).
 async fn dispatch_single_config_event(
     decoded: &DecodedAaveEvent,
     ctx: &mut ChunkContext<'_>,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let ev = match decoded {
         // ── the 8 sync handlers (no RPC) ──
         DecodedAaveEvent::ReserveDataUpdated(ev) => Some(dispatch_reserve_data_updated(ctx, ev)?),
@@ -231,7 +282,7 @@ async fn dispatch_single_config_event(
             Some(resolve_collateral_configuration(ctx, ev).await?)
         }
         DecodedAaveEvent::ReserveInitialized(ev) => {
-            let oracle = resolve_reserve_oracle_address(ctx.conn(), ctx.market_id())?;
+            let oracle = resolve_reserve_oracle_address(ctx)?;
             Some(resolve_reserve_initialized(ctx, ev, oracle).await?)
         }
         // ── stkAAVE Staked/Redeem semantic events: NO balance-mutation
@@ -292,7 +343,7 @@ pub(super) fn tracks_proxy_id(id: &alloy::primitives::B256) -> bool {
 async fn resolve_missing_variant_event(
     decoded: &DecodedAaveEvent,
     ctx: &mut ChunkContext<'_>,
-) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let ev = match decoded {
         DecodedAaveEvent::Upgraded(ev) => Some(resolve_upgraded(ctx, ev).await?),
@@ -310,7 +361,7 @@ async fn resolve_missing_variant_event(
             .await?,
         ),
         DecodedAaveEvent::PoolDataProviderUpdated(ev) => {
-            Some(AaveChunkEvent::PoolDataProviderUpdated {
+            Some(ConfigurationEffect::PoolDataProviderUpdated {
                 market_id,
                 old_address: (ev.old_address != Address::ZERO).then(|| checksum(&ev.old_address)),
                 new_address: checksum(&ev.new_address),
@@ -321,7 +372,7 @@ async fn resolve_missing_variant_event(
             if ev.old_address == Address::ZERO {
                 // A fresh registration: INSERT the contract row under the
                 // decoded name (unchanged behavior).
-                Some(AaveChunkEvent::ContractInserted {
+                Some(ConfigurationEffect::ContractInserted {
                     market_id,
                     name,
                     address: checksum(&ev.new_address),
@@ -329,9 +380,9 @@ async fn resolve_missing_variant_event(
                 })
             } else {
                 // An address rotation: replace the old row's `address` in
-                // place — see [`AaveChunkEvent::ContractAddressChanged`] for
+                // place — see [`ConfigurationEffect::ContractAddressChanged`] for
                 // the disposition the schema convention dictates.
-                Some(AaveChunkEvent::ContractAddressChanged {
+                Some(ConfigurationEffect::ContractAddressChanged {
                     market_id,
                     name,
                     old_address: checksum(&ev.old_address),
@@ -342,7 +393,7 @@ async fn resolve_missing_variant_event(
         DecodedAaveEvent::ProxyCreated(ev) => ctx
             .resolve_proxy_created(&ev.id, &ev.proxy_address, &ev.implementation_address)
             .await?
-            .map(|resolved| AaveChunkEvent::ContractInserted {
+            .map(|resolved| ConfigurationEffect::ContractInserted {
                 market_id,
                 name: resolved.name,
                 address: resolved.address,
@@ -497,7 +548,7 @@ fn checksum(addr: &Address) -> String {
 /// Clamp a `U256` discount/revision percent to `i64` (the `aave_v3_users
 /// .gho_discount` / `*_revision` column type): the Aave protocol caps the
 /// discount at 100% and revisions at single digits, so `i64` holds either.
-fn discount_to_i64(v: U256) -> i64 {
+pub(crate) fn discount_to_i64(v: U256) -> i64 {
     v.to::<u64>().try_into().unwrap_or(i64::MAX)
 }
 
@@ -712,6 +763,7 @@ mod tests {
                 Some(2),
                 1,
                 &conn,
+                &mut ChunkSubstrate::lazy(1),
             ))
             .unwrap();
         assert_eq!(snapshot.get(&user_addr), Some(&U256::from(15)));
@@ -732,6 +784,7 @@ mod tests {
                 Some(2),
                 1,
                 &conn,
+                &mut ChunkSubstrate::lazy(1),
             ))
             .unwrap();
         assert!(snapshot.is_empty());
@@ -772,6 +825,7 @@ mod tests {
                 Some(4), // V4+ — discount deprecated.
                 1,
                 &conn,
+                &mut ChunkSubstrate::lazy(1),
             ))
             .unwrap();
         assert_eq!(snapshot.get(&fresh_user), Some(&U256::ZERO));
@@ -821,6 +875,7 @@ mod tests {
                 Some(2),
                 1,
                 &conn,
+                &mut ChunkSubstrate::lazy(1),
             ))
             .expect_err("a short getDiscountPercent return must abort, never record zero");
         match err {
@@ -878,7 +933,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let ev = AaveV3Erc20TransferEvent {
             token_address: discount_token,
             from: from_user,
@@ -932,7 +987,7 @@ mod tests {
             CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
         let provider = transport.as_alloy_provider();
         let err = degenbot_core::runtime::get_runtime()
-            .block_on(refresh_gho_discount(
+            .block_on(discount::refresh_gho_discount(
                 &provider,
                 &conn,
                 position_id,
@@ -983,10 +1038,10 @@ mod tests {
         };
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let chunk_ev = dispatch_reserve_data_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::ReserveDataUpdated {
+            ConfigurationEffect::ReserveDataUpdated {
                 asset_id,
                 liquidity_rate,
                 variable_borrow_rate,
@@ -1020,7 +1075,7 @@ mod tests {
         };
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         assert!(dispatch_reserve_data_updated(&mut ctx, &ev).is_err());
     }
 
@@ -1064,7 +1119,7 @@ mod tests {
         let mut ctx = ctx_for(&conn, &mut substrate);
         let out = dispatch_asset_source_updated(&mut ctx, &ev).unwrap();
         match out {
-            Some(AaveChunkEvent::AssetSourceUpdated {
+            Some(ConfigurationEffect::AssetSourceUpdated {
                 asset_id,
                 source_address,
             }) => {
@@ -1089,7 +1144,7 @@ mod tests {
         let mut ctx = ctx_for(&conn, &mut substrate);
         let chunk_ev = dispatch_user_e_mode_set(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::UserEModeSet { e_mode, .. } => assert_eq!(e_mode, 2),
+            ConfigurationEffect::UserEModeSet { e_mode, .. } => assert_eq!(e_mode, 2),
             other => panic!("expected UserEModeSet, got {other:?}"),
         }
     }
@@ -1108,7 +1163,7 @@ mod tests {
         let mut ctx = ctx_for(&conn, &mut substrate);
         let chunk_ev = dispatch_price_oracle_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::PriceOracleUpdated {
+            ConfigurationEffect::PriceOracleUpdated {
                 market_id,
                 new_oracle_address,
             } => {
@@ -1147,7 +1202,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::ReserveInitialized(reserve_initialized_event());
         let ev = degenbot_core::runtime::get_runtime()
             .block_on(super::dispatch_single_config_event(&decoded, &mut ctx))
@@ -1156,7 +1211,7 @@ mod tests {
                  would call the OLD oracle and miss the ledger loudly",
             );
         match ev {
-            Some(AaveChunkEvent::ReserveInitialized { price_source, .. }) => {
+            Some(ConfigurationEffect::ReserveInitialized { price_source, .. }) => {
                 assert_eq!(
                     price_source.as_deref(),
                     Some(checksum(&Address::repeat_byte(0xc1)).as_str()),
@@ -1185,7 +1240,7 @@ mod tests {
         let mut ctx = ctx_for(&conn, &mut substrate);
         let chunk_ev = dispatch_e_mode_category_added(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::EModeCategoryAdded {
+            ConfigurationEffect::EModeCategoryAdded {
                 market_id,
                 category_id,
                 ltv,
@@ -1233,7 +1288,7 @@ mod tests {
         let mut ctx = ctx_for(&conn, &mut substrate);
         let chunk_ev = dispatch_e_mode_category_added(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::EModeCategoryAdded { price_source, .. } => {
+            ConfigurationEffect::EModeCategoryAdded { price_source, .. } => {
                 assert_eq!(
                     price_source.as_deref(),
                     Some("0x0000000000000000000000000000000000000000"),
@@ -1257,10 +1312,10 @@ mod tests {
         };
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let chunk_ev = dispatch_discount_percent_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
-            AaveChunkEvent::GhoDiscountPercentUpdated {
+            ConfigurationEffect::GhoDiscountPercentUpdated {
                 new_discount_percent,
                 ..
             } => {
@@ -1344,7 +1399,7 @@ mod tests {
         let new_addr = Address::repeat_byte(0x71);
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
             id: ascii_id("POOL"),
@@ -1356,7 +1411,7 @@ mod tests {
             .unwrap()
             .expect("a registration emits a chunk event");
         match &ev {
-            AaveChunkEvent::ContractInserted {
+            ConfigurationEffect::ContractInserted {
                 name,
                 address,
                 revision,
@@ -1368,7 +1423,8 @@ mod tests {
             }
             other => panic!("expected ContractInserted, got {other:?}"),
         }
-        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+            .unwrap();
         let (addr, rev): (String, Option<i64>) = conn
             .query_row(
                 "SELECT address, revision FROM aave_v3_contracts \
@@ -1398,7 +1454,7 @@ mod tests {
         .unwrap();
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
             id: ascii_id("POOL"),
@@ -1410,7 +1466,7 @@ mod tests {
             .unwrap()
             .expect("a rotation emits a chunk event");
         match &ev {
-            AaveChunkEvent::ContractAddressChanged {
+            ConfigurationEffect::ContractAddressChanged {
                 name,
                 old_address,
                 new_address,
@@ -1422,7 +1478,8 @@ mod tests {
             }
             other => panic!("expected ContractAddressChanged, got {other:?}"),
         }
-        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+            .unwrap();
         // The old row moved to the new address; its revision is untouched;
         // replace-in-place leaves exactly one row.
         let (addr, rev): (String, Option<i64>) = conn
@@ -1461,7 +1518,7 @@ mod tests {
         let second = Address::repeat_byte(0x62);
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let registration = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
             id: ascii_id("POOL"),
@@ -1479,7 +1536,8 @@ mod tests {
                 .block_on(resolve_missing_variant_event(decoded, &mut ctx))
                 .unwrap()
                 .expect("each log emits a chunk event");
-            ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+            ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+                .unwrap();
         }
         let address: String = conn
             .query_row(
@@ -1527,7 +1585,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::ProxyCreated(AaveV3ProxyCreatedEvent {
             address_provider: Address::ZERO,
             id: B256::from(POOL_PROXY_ID),
@@ -1539,7 +1597,7 @@ mod tests {
             .unwrap()
             .expect("a resolvable proxy id emits a chunk event");
         match &ev {
-            AaveChunkEvent::ContractInserted {
+            ConfigurationEffect::ContractInserted {
                 name,
                 address,
                 revision,
@@ -1551,7 +1609,8 @@ mod tests {
             }
             other => panic!("expected ContractInserted, got {other:?}"),
         }
-        ctx.apply_events(std::slice::from_ref(&ev)).unwrap();
+        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+            .unwrap();
         let (addr, rev): (String, Option<i64>) = conn
             .query_row(
                 "SELECT address, revision FROM aave_v3_contracts \
@@ -1575,7 +1634,7 @@ mod tests {
         let unknown_id = B256::from([0x11u8; 32]);
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::ProxyCreated(AaveV3ProxyCreatedEvent {
             address_provider: Address::ZERO,
             id: unknown_id,
@@ -1677,7 +1736,7 @@ mod tests {
         // The accessor re-resolves FRESH → sees the link → guard passes.
         let r = dispatch_discount_token_updated(&mut ctx, &ev).unwrap();
         match r {
-            Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+            Some(ConfigurationEffect::GhoDiscountTokenUpdated {
                 gho_token_id,
                 new_discount_token: ndt,
             }) => {
@@ -1742,7 +1801,7 @@ mod tests {
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
         match dispatch_discount_token_updated(&mut ctx, &ev).unwrap() {
-            Some(AaveChunkEvent::GhoDiscountTokenUpdated {
+            Some(ConfigurationEffect::GhoDiscountTokenUpdated {
                 gho_token_id,
                 new_discount_token,
             }) => {
@@ -1790,7 +1849,7 @@ mod tests {
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ctx_for(&conn, &mut substrate);
         match dispatch_discount_rate_strategy_updated(&mut ctx, &ev).unwrap() {
-            Some(AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+            Some(ConfigurationEffect::GhoDiscountRateStrategyUpdated {
                 gho_token_id,
                 new_strategy,
             }) => {
@@ -2100,7 +2159,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(ctx.read_revision(&target, "ATOKEN_REVISION()", 100))
             .expect_err("a short revision return must abort, never decode as zero");
@@ -2137,7 +2196,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(ctx.read_revision_batch(&[BatchRead::Revision {
                 target,
@@ -2324,9 +2383,9 @@ mod tests {
     }
 
     /// The `(underlying, a_token, v_token)` ids one emitted event carries.
-    fn reserve_init_ids(ev: &AaveChunkEvent) -> (i64, i64, i64) {
+    fn reserve_init_ids(ev: &ConfigurationEffect) -> (i64, i64, i64) {
         match ev {
-            AaveChunkEvent::ReserveInitialized {
+            ConfigurationEffect::ReserveInitialized {
                 underlying_asset_id,
                 a_token_id,
                 v_token_id,
@@ -2352,7 +2411,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let ev = degenbot_core::runtime::get_runtime()
             .block_on(resolve_reserve_initialized(
                 &mut ctx,
@@ -2361,7 +2420,7 @@ mod tests {
             ))
             .unwrap();
         match &ev {
-            AaveChunkEvent::ReserveInitialized {
+            ConfigurationEffect::ReserveInitialized {
                 underlying_asset_id,
                 a_token_id,
                 a_token_revision,
@@ -2424,7 +2483,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let runtime = degenbot_core::runtime::get_runtime();
         let first = runtime
             .block_on(resolve_reserve_initialized(
@@ -2492,7 +2551,7 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let result = degenbot_core::runtime::get_runtime().block_on(resolve_reserve_initialized(
             &mut ctx,
             &reserve_initialized_event(),
@@ -2647,12 +2706,12 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let ri_log = reserve_initialized_log(85);
         let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&ri_log, &mint_log];
         let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&logs))
+            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
             .unwrap();
         assert_eq!(
             dispatch.gho_vtoken_address,
@@ -2746,11 +2805,11 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let mint_log = gho_vtoken_mint_log(5, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&mint_log];
         let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&logs))
+            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
             .unwrap();
         assert_eq!(
             dispatch.gho_vtoken_address,
@@ -2793,12 +2852,12 @@ mod tests {
             &conn,
             &mut substrate,
         );
-        ctx.begin_transaction(100);
+        ctx.begin_transaction_at(100);
         let ri_log = reserve_initialized_log(85);
         let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&ri_log, &mint_log];
         let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&logs))
+            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
             .unwrap();
         assert!(
             dispatch.discounts.is_empty(),
