@@ -157,6 +157,9 @@ rust/crates/shells/degenbot-python/src/db/read_seams.rs:sqlite_wait_releases_gil
 rust/crates/engine/degenbot-bot/tests/otel_plumbing.rs:metrics_http_server_serves_registry_text
 rust/crates/engine/degenbot-bot/tests/otel_tls_repro.rs:child_leaks_guard
 rust/crates/engine/degenbot-bot/tests/support/otlp_http_receiver.rs:start
+rust/crates/foundation/degenbot-db/src/backup.rs:backup_under_an_active_writer_is_one_snapshot_and_never_restarts
+rust/crates/foundation/degenbot-db/src/backup.rs:concurrent_backups_of_one_destination_serialize
+rust/crates/foundation/degenbot-db/src/ops.rs:advisory_lock_excludes_a_second_holder_until_drop
 rust/crates/foundation/degenbot-db/tests/fresh_open_race.rs:concurrent_fresh_open_of_one_path_all_succeed
 rust/crates/foundation/degenbot-pool-updater/tests/provider_lifecycle_contract.rs:spawn
 rust/crates/foundation/degenbot-rpc/tests/chain_binding.rs:serving

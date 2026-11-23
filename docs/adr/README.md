@@ -135,6 +135,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [103](ADR-103-fork-spawn-failure-vocabulary.md) | The fork spawn-failure vocabulary — cause-named at the seam, typed across the FFI, retried only by typed cause | accepted (implemented) |
 | [104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) | Typed event-hub intake — a permanent head claim, an engine-owned session stream, and no named-channel seam | accepted (implemented) |
 | [105](ADR-105-block-anchored-event-sourced-chain-state.md) | Block-anchored event-sourced chain state — exact lineage, position-aware projections, total receipt ownership | proposed |
+| [106](ADR-106-pinned-snapshot-atomic-backup.md) | Pinned-snapshot atomic backup — one read-pinned image copy, verified, atomically published; zero knobs | implemented |
 
 ## Historical — provenance only
 

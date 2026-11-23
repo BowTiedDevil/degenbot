@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use alloy::primitives::U256;
 use degenbot_db::ops::HealReport;
 use degenbot_db::{
-    render_completed_market_manifest, AaveMarketPurgeCount, CompletedMarketManifest, SchemaState,
+    render_completed_market_manifest, AaveMarketPurgeCount, BackupReport, CompletedMarketManifest,
+    SchemaState,
 };
 
 use crate::error::{CliError, ExitCode};
@@ -232,6 +233,8 @@ pub enum DatabaseReport {
     BackedUp {
         source: PathBuf,
         backup: PathBuf,
+        /// Pages, bytes, elapsed time, restart count, and WAL growth.
+        report: BackupReport,
     },
     Reset {
         path: PathBuf,
@@ -266,8 +269,27 @@ impl DatabaseReport {
     #[must_use]
     pub fn render_lines(&self) -> Vec<String> {
         match self {
-            Self::BackedUp { backup, .. } => {
-                vec![format!("Backed up SQLite database to {}", backup.display())]
+            Self::BackedUp { backup, report, .. } => {
+                let mut lines = vec![format!(
+                    "Backed up SQLite database to {} ({} pages, {}, {:.2} s)",
+                    backup.display(),
+                    report.pages,
+                    human_bytes(report.bytes),
+                    report.elapsed.as_secs_f64(),
+                )];
+                if report.wal_growth_bytes > 0 {
+                    lines.push(format!(
+                        "The source WAL grew {} while the snapshot was pinned.",
+                        human_bytes(report.wal_growth_bytes)
+                    ));
+                }
+                if report.restarts > 0 {
+                    lines.push(format!(
+                        "Warning: the copy restarted {} time(s) — the snapshot pin did not hold.",
+                        report.restarts
+                    ));
+                }
+                lines
             }
             Self::Reset { path } => {
                 vec![format!(
@@ -1102,6 +1124,26 @@ pub fn heal_dry_run_line(state: &SchemaState) -> String {
             )
         }
     }
+}
+
+/// Render a byte count with one decimal in the largest fitting unit.
+#[must_use]
+pub fn human_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    let (unit, divisor) = if bytes >= GIB {
+        ("GiB", GIB)
+    } else if bytes >= MIB {
+        ("MiB", MIB)
+    } else if bytes >= KIB {
+        ("KiB", KIB)
+    } else {
+        return format!("{bytes} B");
+    };
+    let whole = bytes / divisor;
+    let tenths = (bytes % divisor) * 10 / divisor;
+    format!("{whole}.{tenths} {unit}")
 }
 
 /// The Python-compatible label for a [`SchemaState`] (mirrors the

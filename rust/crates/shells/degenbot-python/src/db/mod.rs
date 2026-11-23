@@ -32,13 +32,15 @@ pub use snapshot::PyDatabaseSnapshot;
 
 /// `degenbot._ffi.db.db_backup_database(src: str, dst: str) -> None`
 ///
-/// Online backup with `PRAGMA integrity_check` assertions on both source and
-/// destination. Raises `ValueError` on failure.
+/// Pinned-snapshot online backup (ADR-106): the copy is one point-in-time
+/// snapshot, verified with `PRAGMA integrity_check`, and published atomically.
+/// Raises `ValueError` on failure.
 #[pyfunction]
 fn db_backup_database(py: Python<'_>, src: &str, dst: &str) -> PyResult<()> {
     let src = PathBuf::from(src);
     let dst = PathBuf::from(dst);
-    py.detach(|| ops::backup_database(&src, &dst))
+    py.detach(|| ops::backup_database(&src, &dst, &mut |_| true))
+        .map(|_report| ())
         .map_err(|e| db_err_to_py(&e))
 }
 

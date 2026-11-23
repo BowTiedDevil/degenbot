@@ -111,13 +111,20 @@ fn backup_writes_bak_without_prompting_when_absent() {
     assert_eq!(outcome.exit_code, ExitCode::Success);
     assert!(prompter.calls().is_empty(), "no prompt when target absent");
     let report = outcome.report().unwrap();
-    let CommandReport::Database(DatabaseReport::BackedUp { source, backup }) = report else {
+    let CommandReport::Database(DatabaseReport::BackedUp {
+        source,
+        backup,
+        report: backup_report,
+    }) = report
+    else {
         panic!("expected BackedUp, got {report:?}");
     };
     assert_eq!(source, &db);
     assert_eq!(backup, &database_backup_path(&db));
     assert!(backup.exists());
     assert!(matches!(inspect(backup), SchemaState::RustOwned { .. }));
+    assert!(backup_report.pages > 0);
+    assert_eq!(backup_report.restarts, 0);
 }
 
 #[test]

@@ -10,6 +10,7 @@
 //! version-lock that upgrades a Rust-owned DB at open.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use degenbot_db::ops;
 use degenbot_db::SchemaState;
@@ -48,28 +49,44 @@ pub(crate) fn execute(
 }
 
 /// `backup`: write the `.db.bak` sibling, confirming replacement when the target
-/// already exists (the `backup-target-exists` condition).
+/// already exists (the `backup-target-exists` condition). The existing backup is
+/// replaced only when the new one is complete and verified, so a declined or
+/// failed run leaves it in place.
 fn backup(
     path: &Path,
     plan: PromptPlan,
     prompter: &dyn Prompter,
 ) -> Result<DatabaseReport, CliError> {
     let backup_path = database_backup_path(path);
-    if plan.asks(false) {
-        if !prompter.confirm(&backup_prompt(&backup_path), false) {
-            return Err(CliError::Aborted);
-        }
-        remove_file_if_exists(&backup_path)?;
+    if plan.asks(false) && !prompter.confirm(&backup_prompt(&backup_path), false) {
+        return Err(CliError::Aborted);
     }
-    ops::backup_database(path, &backup_path)?;
+
+    let mut last_progress = Instant::now();
+    let report = ops::backup_database(path, &backup_path, &mut |progress| {
+        if last_progress.elapsed() >= PROGRESS_INTERVAL {
+            tracing::info!(
+                remaining_pages = progress.remaining,
+                total_pages = progress.pagecount,
+                "copying SQLite database pages"
+            );
+            last_progress = Instant::now();
+        }
+        true
+    })?;
     tracing::info!(
         source = %path.display(),
         backup = %backup_path.display(),
+        pages = report.pages,
+        bytes = report.bytes,
+        restarts = report.restarts,
+        wal_growth_bytes = report.wal_growth_bytes,
         "backed up SQLite database"
     );
     Ok(DatabaseReport::BackedUp {
         source: path.to_path_buf(),
         backup: backup_path,
+        report,
     })
 }
 
@@ -185,6 +202,9 @@ fn inspect(path: &Path) -> Result<DatabaseReport, CliError> {
         state,
     })
 }
+
+/// How often a long copy reports progress to the operator.
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The `.db.bak` sibling of `path`, mirroring Python's
 /// `Path.with_suffix(".db.bak")`.

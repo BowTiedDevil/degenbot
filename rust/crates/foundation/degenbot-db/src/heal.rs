@@ -65,7 +65,6 @@
 //! so every opener flocks the same inode.
 
 use hashbrown::{HashMap, HashSet};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
@@ -74,7 +73,10 @@ use crate::error::DbError;
 use crate::migrate::{
     classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn, SchemaState,
 };
-use crate::ops::create_new_database;
+use crate::ops::{
+    create_new_database, file_ro_uri, remove_sidecar_if_present, rename_sidecar_if_present,
+    sibling_with_suffix, AdvisoryLock,
+};
 use crate::schema::RUST_SCHEMA_VERSION;
 
 /// The outcome of [`heal_database`] — what was healed, how many rows copied
@@ -142,7 +144,7 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
     // Serializes the dump-and-restore across processes: a second healer blocks
     // here until the first finishes, then re-inspects the live DB in step 1 and
     // — finding it already swapped to `RustOwned` — returns the no-op report.
-    let _guard = HealSwapGuard::acquire(old_path)?;
+    let _guard = AdvisoryLock::acquire(&sibling_with_suffix(old_path, ".heal.lock"))?;
 
     // ── Step 1: inspect old, read-only. ──────────────────────────────────
     // A read-only open never creates/extends the old DB's `-wal`/`-shm`, so the
@@ -291,56 +293,6 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
     })
 }
 
-/// The heal-swap serialization guard (ADR-070 D8): an exclusive advisory `flock`
-/// on a sibling `<db>.heal.lock` file, held for the whole [`heal_database`]
-/// operation so two processes cannot race the temp build or the atomic swap.
-///
-/// The second healer **waits** on the `flock` (a blocking [`std::fs::File::lock`],
-/// not a fail-fast `try_lock`) and, on acquiring it, re-inspects the live DB —
-/// already swapped to `RustOwned` by the first healer — and returns the no-op
-/// report. The kernel releases the `flock` when the holding process dies, so a
-/// crashed healer cannot wedge a later one: there is no stale-lock window and no
-/// pid bookkeeping to reconcile.
-///
-/// The lock file is **not** unlinked on drop (unlike the reset lock in
-/// `degenbot-cli-core`): unlinking a held `flock` reintroduces the classic race
-/// where a waiter blocked on the unlinked inode and a newcomer that re-creates the
-/// path hold locks on two different inodes and stop excluding each other. A stable
-/// name keeps every opener on the same inode for the DB's lifetime. The file
-/// carries the holder's pid for diagnostics only.
-struct HealSwapGuard {
-    /// Holding the descriptor is what holds the `flock`: dropping it releases the
-    /// lock. Never read; the lifetime IS the lock.
-    _file: std::fs::File,
-}
-
-impl HealSwapGuard {
-    /// Take the DB's heal `flock`, blocking until any in-flight healer finishes.
-    fn acquire(old_path: &Path) -> Result<Self, DbError> {
-        use std::io::Write as _;
-
-        let path = sibling_with_suffix(old_path, ".heal.lock");
-        // Open-or-create, never `create_new`: the file outlives its holder (we do
-        // not unlink it), and the `flock` — not the file's existence — is the
-        // exclusion. `create(true)` + `truncate(false)` so a stale file is reused
-        // rather than raced.
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)?;
-        // Blocking wait, then re-check: the caller re-inspects the live DB and
-        // no-ops if the prior holder already swapped it. The kernel drops the lock
-        // with the holder process, so this cannot block on a dead holder.
-        file.lock()?;
-        // Best-effort diagnostic pid; the lock, not the content, is the guard.
-        let _ = file.set_len(0);
-        let _ = writeln!(file, "{}", std::process::id());
-        Ok(Self { _file: file })
-    }
-}
-
 /// Step 7: atomically swap the freshly-built temp DB into `old_path`, preserving
 /// the old DB as `bak_path`. Sibling files → same filesystem → `rename` is
 /// atomic. On any failure the live DB is restored and the partial temp file
@@ -375,29 +327,6 @@ fn perform_swap(old_path: &Path, bak_path: &Path, tmp_path: &Path) -> Result<(),
     Ok(())
 }
 
-/// Build a `file:` read-only URI for [`Path`] `path`, percent-encoding the
-/// characters that are special in a URI or in a SQL string literal. Used as
-/// the `ATTACH DATABASE '<uri>' AS old` argument: `mode=ro` makes the attached
-/// old DB read-only at the VFS level (no `-wal`/`-shm` sidecars, no accidental
-/// writes), so [`heal_database`] need not hold a second read-only handle.
-fn file_ro_uri(path: &Path) -> String {
-    let mut s = String::from("file:");
-    for b in path.to_string_lossy().bytes() {
-        match b {
-            // Reserved/special in a `file:` URI or a SQL single-quoted string.
-            b' ' | b'%' | b'#' | b'?' | b'\'' => {
-                s.push('%');
-                // Percent-encode as two hex digits.
-                let hex = format!("{b:02X}");
-                s.push_str(&hex);
-            }
-            _ => s.push(b as char),
-        }
-    }
-    s.push_str("?mode=ro");
-    s
-}
-
 /// Open `path` read-only. Never creates or extends sidecar `-wal`/`-shm`
 /// files — the old DB is left byte-identical (the rugpull-protection guarantee).
 ///
@@ -406,32 +335,6 @@ fn file_ro_uri(path: &Path) -> String {
 /// No caller heals an in-memory DB (it would vanish on close anyway).
 fn open_readonly(path: &Path) -> Result<Connection, DbError> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
-}
-
-/// `old_path` with `suffix` appended to its file name (sibling, same dir).
-fn sibling_with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(OsString::new, ToOwned::to_owned);
-    name.push(suffix);
-    path.with_file_name(name)
-}
-
-fn remove_sidecar_if_present(path: &Path, sidecar_suffix: &str) {
-    let mut s = path.as_os_str().to_owned();
-    s.push(sidecar_suffix);
-    let _ = std::fs::remove_file(Path::new(&s));
-}
-
-fn rename_sidecar_if_present(src: &Path, dst: &Path, sidecar_suffix: &str) {
-    let mut src_name = src.as_os_str().to_owned();
-    src_name.push(sidecar_suffix);
-    if !Path::new(&src_name).exists() {
-        return;
-    }
-    let mut dst_name = dst.as_os_str().to_owned();
-    dst_name.push(sidecar_suffix);
-    let _ = std::fs::rename(Path::new(&src_name), Path::new(&dst_name));
 }
 
 /// Remove the temp DB and any sidecar files (failure-cleanup path).

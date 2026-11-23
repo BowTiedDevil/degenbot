@@ -42,6 +42,7 @@
 //! keeps this crate's own unit tests exercising the writer.
 
 pub mod aave;
+pub mod backup;
 pub mod connection;
 pub mod digest;
 pub mod discovery;
@@ -72,6 +73,7 @@ pub mod write;
 pub use aave::{
     AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveGhoAsset, AaveUserRecord,
 };
+pub use backup::{BackupProgress, BackupReport};
 pub use connection::DegenbotDb;
 /// Re-export the concentrated-liquidity-math in-memory tick type
 /// (`liquidity_gross: U128`, `liquidity_net: I256`) the liquidity updater

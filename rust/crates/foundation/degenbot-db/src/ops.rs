@@ -15,11 +15,12 @@
 //! [`SchemaState::RustOwned`] and never masquerades as a legacy
 //! `alembic_version`-marked file it did not create.
 
-use std::path::Path;
-use std::time::Duration;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
-use rusqlite::{backup, Connection};
+use rusqlite::Connection;
 
+pub use crate::backup::{backup_database, BackupProgress, BackupReport};
 pub use crate::error::DbError;
 use crate::migrate::{
     apply_fresh_standalone, classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn,
@@ -73,35 +74,6 @@ pub fn create_new_database(path: &Path) -> Result<(), DbError> {
     conn.execute_batch(SCHEMA_HEAD)?;
     conn.execute_batch("VACUUM;")?;
     stamp_rust_schema_version(&conn)?;
-    Ok(())
-}
-
-/// Back up `src` into `dst` via `SQLite`'s online backup, asserting
-/// `PRAGMA integrity_check == "ok"` on **both** the source (before) and the
-/// destination (after) — preserving the Python `backup_sqlite_database`
-/// assertions verbatim.
-///
-/// `dst` is created if absent and overwritten if present.
-///
-/// # Errors
-///
-/// [`DbError::Sqlite`] on an open/backup failure;
-/// [`DbError::IntegrityCheckFailed`] if either integrity check is not `"ok"`.
-pub fn backup_database(src: &Path, dst: &Path) -> Result<(), DbError> {
-    let src_conn = Connection::open(src)?;
-    assert_integrity_ok(&src_conn)?;
-
-    let mut dst_conn = Connection::open(dst)?;
-    {
-        let backup = backup::Backup::new(&src_conn, &mut dst_conn)?;
-        backup.run_to_completion(100, Duration::from_millis(250), None)?;
-    } // dst_handle dropped here — flushes + closes the backup handle.
-
-    // Re-open the destination for the post-backup integrity check so it is
-    // fully settled on disk (a fresh connection sees a consistent file).
-    drop(dst_conn);
-    let dst_check = Connection::open(dst)?;
-    assert_integrity_ok(&dst_check)?;
     Ok(())
 }
 
@@ -226,17 +198,6 @@ fn open_raw(path: &Path) -> Result<Connection, DbError> {
     .map_err(Into::into)
 }
 
-/// Assert `PRAGMA integrity_check` is `"ok"`, mirroring the Python
-/// `backup_sqlite_database` assertions.
-fn assert_integrity_ok(conn: &Connection) -> Result<(), DbError> {
-    let result: String = conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0))?;
-    if result == "ok" {
-        Ok(())
-    } else {
-        Err(DbError::IntegrityCheckFailed(result))
-    }
-}
-
 /// `true` if a table named `name` exists in `conn`'s `sqlite_master`
 /// (mirrors the private helper in [`crate::migrate`]). Test-only: the
 /// production `upgrade_database` path classifies via [`classify_schema`].
@@ -249,6 +210,97 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
     )?;
     Ok(exists > 0)
 }
+
+/// An exclusive advisory `flock` on `path`, held for as long as the value
+/// lives (ADR-070 D8's serialization idiom).
+///
+/// Callers are the file-level admin operations that must not interleave on one
+/// DB (heal's build-and-swap, the backup's publish). The lock file is created
+/// if absent and never unlinked: unlinking a held `flock` reopens the classic
+/// race where a waiter blocked on the unlinked inode and a newcomer
+/// re-creating the path hold locks on two different inodes. The kernel releases
+/// the lock with the holding process, so a crashed holder cannot wedge the next
+/// one.
+pub(crate) struct AdvisoryLock {
+    /// Holding the descriptor is what holds the lock; the lifetime IS the lock.
+    _file: std::fs::File,
+}
+
+impl AdvisoryLock {
+    pub(crate) fn acquire(path: &Path) -> Result<Self, DbError> {
+        use std::io::Write as _;
+
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                tracing::info!(lock = %path.display(), "waiting for another database operation");
+                file.lock()?;
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(DbError::Io(error)),
+        }
+        let _ = file.set_len(0);
+        let _ = writeln!(file, "{}", std::process::id());
+        Ok(Self { _file: file })
+    }
+}
+
+/// `path` with `suffix` appended to its file name — a sibling in the same
+/// directory, so a `rename` between the two stays atomic.
+pub(crate) fn sibling_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map_or_else(OsString::new, ToOwned::to_owned);
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+/// Remove `path`'s `sidecar_suffix` file (`-wal`, `-shm`) when present.
+pub(crate) fn remove_sidecar_if_present(path: &Path, sidecar_suffix: &str) {
+    let mut sidecar = path.as_os_str().to_owned();
+    sidecar.push(sidecar_suffix);
+    let _ = std::fs::remove_file(Path::new(&sidecar));
+}
+
+/// Rename `src`'s `sidecar_suffix` file to `dst`'s when present, so the two
+/// travel together.
+pub(crate) fn rename_sidecar_if_present(src: &Path, dst: &Path, sidecar_suffix: &str) {
+    let mut src_name = src.as_os_str().to_owned();
+    src_name.push(sidecar_suffix);
+    if !Path::new(&src_name).exists() {
+        return;
+    }
+    let mut dst_name = dst.as_os_str().to_owned();
+    dst_name.push(sidecar_suffix);
+    let _ = std::fs::rename(Path::new(&src_name), Path::new(&dst_name));
+}
+
+/// Build a `file:` read-only URI for `path`, percent-encoding the characters
+/// that are special in a URI or in an SQL string literal. Opening through the
+/// URI keeps a read-only handle read-only at the VFS level, so it cannot create
+/// or extend `-wal`/`-shm` sidecars.
+pub(crate) fn file_ro_uri(path: &Path) -> String {
+    let mut uri = String::from("file:");
+    for byte in path.to_string_lossy().bytes() {
+        match byte {
+            // Reserved/special in a `file:` URI or an SQL single-quoted string.
+            b' ' | b'%' | b'#' | b'?' | b'\'' => {
+                uri.push('%');
+                let hex = format!("{byte:02X}");
+                uri.push_str(&hex);
+            }
+            _ => uri.push(byte as char),
+        }
+    }
+    uri.push_str("?mode=ro");
+    uri
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -269,6 +321,26 @@ mod tests {
              INSERT INTO alembic_version (version_num) VALUES ('e0aaad8ad486');"
         ))
         .unwrap();
+    }
+
+    #[test]
+    fn advisory_lock_excludes_a_second_holder_until_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.lock");
+        let held = AdvisoryLock::acquire(&path).unwrap();
+        // A second acquisition in this process blocks on a separate open file
+        // description, so it only completes once the first guard drops.
+        let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&released);
+        let waiter = std::thread::spawn(move || {
+            let _guard = AdvisoryLock::acquire(&path).unwrap();
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!released.load(std::sync::atomic::Ordering::SeqCst));
+        drop(held);
+        waiter.join().unwrap();
+        assert!(released.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
@@ -302,34 +374,6 @@ mod tests {
 
         assert_eq!(
             inspect_schema_state(&db_path).unwrap(),
-            SchemaState::RustOwned {
-                schema_version: RUST_SCHEMA_VERSION,
-            }
-        );
-    }
-
-    #[test]
-    fn backup_database_is_byte_identical_and_passes_integrity() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src.db");
-        create_new_database(&src).unwrap();
-
-        let dst = dir.path().join("src.db.bak");
-        backup_database(&src, &dst).unwrap();
-
-        assert!(dst.exists());
-        let bytes_src = std::fs::read(&src).unwrap();
-        let bytes_dst = std::fs::read(&dst).unwrap();
-        assert_eq!(bytes_src.len(), bytes_dst.len());
-
-        // backing up again is byte-stable: a second backup reproduces identical bytes
-        let dst2 = dir.path().join("src2.db.bak");
-        backup_database(&src, &dst2).unwrap();
-        assert_eq!(std::fs::read(&dst2).unwrap(), bytes_dst);
-
-        // the backup is RustOwned too (classify, no heal)
-        assert_eq!(
-            inspect_schema_state(&dst).unwrap(),
             SchemaState::RustOwned {
                 schema_version: RUST_SCHEMA_VERSION,
             }
@@ -414,21 +458,6 @@ mod tests {
         }
         let err = upgrade_database(&db_path).unwrap_err();
         assert!(matches!(err, DbError::UnrecognizedSchema));
-    }
-
-    #[test]
-    fn backup_corrupt_source_fails_integrity() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("garbage.db");
-        // not a real `SQLite` file → integrity check fails
-        std::fs::write(&src, b"not a database").unwrap();
-        let dst = dir.path().join("garbage.db.bak");
-        let err = backup_database(&src, &dst).unwrap_err();
-        // Either the open or the integrity check rejects it.
-        assert!(matches!(
-            err,
-            DbError::IntegrityCheckFailed(_) | DbError::Sqlite(_)
-        ));
     }
 
     // ── inspect_schema_state + convert_alembic_to_rust_owned (ADR-010 §2) ──

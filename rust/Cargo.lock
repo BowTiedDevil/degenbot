@@ -2504,6 +2504,7 @@ dependencies = [
  "degenbot-math",
  "degenbot-pathfinding",
  "hashbrown 0.17.1",
+ "libc",
  "parking_lot 0.13.0",
  "rusqlite",
  "serde",

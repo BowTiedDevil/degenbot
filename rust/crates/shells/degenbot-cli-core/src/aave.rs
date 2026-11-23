@@ -708,7 +708,7 @@ fn backup_for_block(
         .unwrap_or_default();
     let mut backup = database_path.to_path_buf();
     backup.set_file_name(format!("{stem}-{to_block}.db.bak"));
-    ops::backup_database(database_path, &backup)?;
+    ops::backup_database(database_path, &backup, &mut |_| true)?;
     Ok(backup)
 }
 

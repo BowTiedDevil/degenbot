@@ -55,6 +55,12 @@ sha2 = { version = "^0.11" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 
+[target.'cfg(unix)'.dependencies]
+# `statvfs` for the backup's free-space preflight (ADR-106 D4) — the one check
+# that refuses a copy before it can fill the disk the writing bot depends on.
+# Already resolved in the workspace lock via `degenbot-bot`.
+libc = "^0.2"
+
 [features]
 # The write substrate (ADR-070): the `write/` module fns plus the
 # write-capable constructors (`open_for_writes` / `open_in_memory_for_writes`).

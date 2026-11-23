@@ -64,6 +64,38 @@ pub enum DbError {
     #[error("sqlite integrity check failed: {0}")]
     IntegrityCheckFailed(String),
 
+    /// The backup preflight refused: the destination filesystem cannot hold the
+    /// copy plus its WAL-growth headroom. Nothing was created.
+    #[error(
+        "insufficient free space for the backup: {available_bytes} bytes available, \
+         {required_bytes} required"
+    )]
+    InsufficientDisk {
+        /// Free bytes on the destination filesystem.
+        available_bytes: u64,
+        /// Bytes the backup preflight requires.
+        required_bytes: u64,
+    },
+
+    /// The caller's progress callback aborted the copy; the temp copy was
+    /// removed and any existing backup left untouched.
+    #[error("backup aborted by the caller")]
+    BackupAborted,
+
+    /// The source could not be opened read-only. The usual cause is a WAL
+    /// database in a directory the process cannot write: SQLite needs write
+    /// access to the `-shm` file even for a read-only open.
+    #[error(
+        "cannot open {path} read-only for the backup: {reason} (a WAL database needs \
+         write access to its directory even for a read-only open)"
+    )]
+    SourceUnopenable {
+        /// The source path as given.
+        path: String,
+        /// The underlying SQLite refusal.
+        reason: String,
+    },
+
     /// The post-copy row-count verification (ADR-011 step 6) found a mismatch —
     /// the heal refused the swap and left the live DB untouched. `old_count`
     /// is the source row count; `new_count` is the freshly-copied count.
