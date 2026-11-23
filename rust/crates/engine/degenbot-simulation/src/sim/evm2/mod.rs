@@ -35,6 +35,7 @@ pub mod async_fanout;
 pub mod bal_capability;
 pub mod bal_heads;
 pub mod bal_prefetch;
+pub mod block_hash_ancestry;
 pub mod blocking_async_db;
 pub mod bot_state_db;
 pub mod delta_snapshot;

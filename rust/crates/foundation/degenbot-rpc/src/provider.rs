@@ -2044,8 +2044,9 @@ impl AlloyProvider {
     /// body — and never a second read for the parent.
     ///
     /// `Ok(None)` means the node has no block at that number, or served a header
-    /// missing either hash: a caller that cannot state the whole lineage has no
-    /// exact head, and guessing one is what this helper exists to prevent.
+    /// missing either hash, or a header stating another height: a caller that
+    /// cannot state the whole lineage has no exact head, and guessing one is what
+    /// this helper exists to prevent.
     ///
     /// The chain id is a fact about the ENDPOINT, not about the block: a bound
     /// provider answers from its verified binding (no extra round trip), an
@@ -2061,12 +2062,27 @@ impl AlloyProvider {
         &self,
         block_number: u64,
     ) -> ProviderResult<Option<ChainAnchor>> {
-        /// The two header fields this read wants out of a block body.
+        /// The three header fields this read wants out of a block body.
         #[derive(Debug, serde::Deserialize)]
         struct HeaderLineage {
+            number: Option<serde_json::Value>,
             hash: Option<B256>,
             #[serde(rename = "parentHash")]
             parent_hash: Option<B256>,
+        }
+
+        /// A header's own height in every quantity form a node or a recorded
+        /// cassette states it: a `0x` hex quantity, a decimal string, or a JSON
+        /// integer.
+        fn stated_number(value: &serde_json::Value) -> Option<u64> {
+            match value {
+                serde_json::Value::String(text) => text.strip_prefix("0x").map_or_else(
+                    || text.parse().ok(),
+                    |hex| u64::from_str_radix(hex, 16).ok(),
+                ),
+                serde_json::Value::Number(number) => number.as_u64(),
+                _ => None,
+            }
         }
 
         let chain_id = self.get_chain_id().await?;
@@ -2081,16 +2097,20 @@ impl AlloyProvider {
                 .await
                 .map_err(|e| e.into_provider_error("Failed to get block lineage"))?;
 
-            Ok(
-                header.and_then(|header| match (header.hash, header.parent_hash) {
-                    (Some(hash), Some(parent_hash)) => {
+            Ok(header.and_then(|header| {
+                match (
+                    header.number.as_ref().and_then(stated_number),
+                    header.hash,
+                    header.parent_hash,
+                ) {
+                    (Some(number), Some(hash), Some(parent_hash)) if number == block_number => {
                         // A zero hash or parent hash states no identity, exactly
                         // like a missing field: no anchor is invented from it.
                         ChainAnchor::new(chain_id, block_number, hash, parent_hash).ok()
                     }
                     _ => None,
-                }),
-            )
+                }
+            }))
         })
         .await
     }
@@ -5153,6 +5173,11 @@ mod block_lineage_tests {
         Missing,
         /// A header carrying a hash but no parent hash.
         Parentless,
+        /// A complete header stating another height than the one requested.
+        OtherHeight,
+        /// A complete header whose height is a decimal string (the canonical
+        /// cassette form).
+        DecimalNumber,
         /// A transport-level refusal.
         Down,
     }
@@ -5231,6 +5256,22 @@ mod block_lineage_tests {
                         ),
                         Answer::Parentless => ResponsePayload::Success(
                             to_raw_value(&serde_json::json!({ "hash": hash(0xa1) })).unwrap(),
+                        ),
+                        Answer::OtherHeight => ResponsePayload::Success(
+                            to_raw_value(&serde_json::json!({
+                                "number": "0x63",
+                                "hash": hash(0xa1),
+                                "parentHash": hash(0xa0),
+                            }))
+                            .unwrap(),
+                        ),
+                        Answer::DecimalNumber => ResponsePayload::Success(
+                            to_raw_value(&serde_json::json!({
+                                "number": "100",
+                                "hash": hash(0xa1),
+                                "parentHash": hash(0xa0),
+                            }))
+                            .unwrap(),
                         ),
                         Answer::Header => ResponsePayload::Success(
                             to_raw_value(&serde_json::json!({
@@ -5321,6 +5362,38 @@ mod block_lineage_tests {
                 .await
                 .expect("an incomplete header is not an error"),
             None
+        );
+    }
+
+    /// A header stating another height is no lineage at this number: the
+    /// height it claims is the fact that identifies it, so a served block that
+    /// contradicts the request cannot stand in for it.
+    #[tokio::test]
+    async fn a_header_stating_another_height_has_no_lineage() {
+        let stub = LineageStub::serving(Answer::OtherHeight);
+        assert_eq!(
+            stub.provider()
+                .get_block_lineage_at(100)
+                .await
+                .expect("a contradictory header is not an error"),
+            None
+        );
+    }
+
+    /// The canonical cassette form states quantities as decimal strings, so the
+    /// height check reads that form exactly as it reads a node's hex quantity.
+    #[tokio::test]
+    async fn a_header_stating_its_height_in_the_cassette_form_keeps_its_lineage() {
+        let stub = LineageStub::serving(Answer::DecimalNumber);
+        assert_eq!(
+            stub.provider()
+                .get_block_lineage_at(100)
+                .await
+                .expect("the decimal quantity decodes"),
+            Some(
+                ChainAnchor::new(1, 100, hash(0xa1), hash(0xa0))
+                    .expect("the fixture lineage carries every identity field")
+            )
         );
     }
 

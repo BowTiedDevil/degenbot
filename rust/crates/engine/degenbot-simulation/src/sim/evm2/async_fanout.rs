@@ -232,6 +232,7 @@ use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, SpecI
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::alloy_async_db::account_info_from_read;
+use super::block_hash_ancestry::{BlockHashAncestry, BlockHashError};
 use super::read_hub::{ReadHubError, RoundReport};
 
 use super::handle::EVM2_PRODUCTION_SPEC;
@@ -1253,9 +1254,10 @@ pub enum ReadHubDbError {
     /// the hub never caches), so it went straight to the provider and failed.
     #[error("RPC read failed: {0}")]
     Rpc(#[from] degenbot_core::errors::ProviderError),
-    /// `eth_getBlockByNumber` returned null for a requested block.
-    #[error("block {0} not found")]
-    BlockNotFound(u64),
+    /// The requested historical hash could not be proven against the hub
+    /// anchor's ancestry.
+    #[error(transparent)]
+    Ancestry(#[from] BlockHashError),
     /// The account read eager-loads code with the account, so evm2 never asks
     /// for it by hash. Reported as a typed refusal rather than a panic inside a
     /// fiber.
@@ -1270,8 +1272,15 @@ pub enum ReadHubDbError {
 /// lane: the value shapes are the hub's (`read_storage`'s word,
 /// `read_account`'s balance/nonce/code triple), the account row goes through the
 /// shared all-empty rule ([`account_info_from_read`]), and nothing here memoizes,
-/// batches, or retries — the hub owns all three. The one read the hub never
-/// serves is the block hash, which goes to the provider directly.
+/// batches, or retries — the hub owns all three for the reads it serves. The one
+/// read the hub never serves is the block hash: it goes to the provider through
+/// this adapter's own [`BlockHashAncestry`], which proves the hash against the
+/// hub anchor's ancestry and memoizes that proof for the hub's exact identity.
+/// The fan-out's block env is the handle's anchor env (the hub and its candidates
+/// execute AT the anchor), so this adapter's execution height is the anchor's
+/// own; a next-block frame states its execution height through
+/// [`AlloyAsyncDb::executing`](super::alloy_async_db::AlloyAsyncDb::executing)
+/// instead.
 ///
 /// A read registered here parks until a [`ReadHub::drain_round`] settles it, so
 /// this adapter is only usable inside a stack whose driver drains rounds — the
@@ -1285,6 +1294,9 @@ pub struct ReadHubDb<'h> {
     /// for the same reason, and a lane built from a borrowed hub cannot
     /// accidentally outlive the provider handle it borrowed.
     provider: AlloyProvider,
+    /// The proven ancestry `get_block_hash` answers from, memoized for the hub
+    /// anchor.
+    ancestry: BlockHashAncestry,
 }
 
 impl<'h> ReadHubDb<'h> {
@@ -1294,6 +1306,7 @@ impl<'h> ReadHubDb<'h> {
     pub fn new(hub: &'h ReadHub, provider: &AlloyProvider) -> Self {
         Self {
             hub,
+            ancestry: BlockHashAncestry::new(hub.anchor()),
             provider: provider.clone(),
         }
     }
@@ -1341,12 +1354,13 @@ impl AsyncDatabase for ReadHubDb<'_> {
         &mut self,
         number: Word,
     ) -> impl Future<Output = Result<B256, Self::Error>> + Send + '_ {
+        let ancestry = &mut self.ancestry;
         let provider = &self.provider;
         async move {
-            let height = number.to::<u64>();
-            let block = provider.get_block(height).await?;
-            let block = block.ok_or(ReadHubDbError::BlockNotFound(height))?;
-            Ok(block.header.hash)
+            ancestry
+                .block_hash(provider, number)
+                .await
+                .map_err(Into::into)
         }
     }
 }

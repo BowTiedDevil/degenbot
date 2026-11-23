@@ -934,7 +934,7 @@ mod tests {
             (
                 header_key(99),
                 format!(
-                    "{{\"hash\":\"{parent}\",\"parentHash\":\"{}\"}}",
+                    "{{\"number\":\"99\",\"hash\":\"{parent}\",\"parentHash\":\"{}\"}}",
                     B256::repeat_byte(0x9f)
                 ),
             ),

@@ -270,32 +270,35 @@ impl<'a> Evm2BlockSimHandle<'a> {
     pub fn scratch_evm(&mut self) -> Option<&mut Evm2ScratchEvm<Evm2ScratchDb<'a>>> {
         if self.scratch.is_none() {
             let counter = Arc::new(FrameRpcCounter::default());
-            self.scratch = BlockingAsyncDb::new(AlloyAsyncDb::new(self.provider, self.anchor)).map(
-                |blocking| {
-                    let bot_state_db = BotStateDb::new(self.oracle, blocking)
-                        .with_storage_view_opt(self.storage_view.as_ref())
-                        .with_divergence_probe(self.verify_divergence)
-                        .with_divergence_tally_opt(self.divergence_tally.as_ref());
-                    let counted_cold_path =
-                        Evm2CountingFrameDb::new(bot_state_db, Arc::clone(&counter));
-                    let warm_code_cache = WarmCodeCache::with_owner(
-                        Arc::clone(&self.warm_cache),
-                        self.anchor,
-                        counted_cold_path,
-                    );
-                    let ext = CacheDB::new(Db::new(warm_code_cache));
-                    Evm2ScratchEvm::with_counter(
-                        ext,
-                        ScratchBlock {
-                            number: self.anchor.number().saturating_add(1),
-                            timestamp: self.block_timestamp,
-                            base_fee_next: self.base_fee_next,
-                        },
-                        counter,
-                    )
-                    .with_jit(self.jit.clone())
-                },
-            );
+            self.scratch = BlockingAsyncDb::new(AlloyAsyncDb::executing(
+                self.provider,
+                self.anchor,
+                self.anchor.number().saturating_add(1),
+            ))
+            .map(|blocking| {
+                let bot_state_db = BotStateDb::new(self.oracle, blocking)
+                    .with_storage_view_opt(self.storage_view.as_ref())
+                    .with_divergence_probe(self.verify_divergence)
+                    .with_divergence_tally_opt(self.divergence_tally.as_ref());
+                let counted_cold_path =
+                    Evm2CountingFrameDb::new(bot_state_db, Arc::clone(&counter));
+                let warm_code_cache = WarmCodeCache::with_owner(
+                    Arc::clone(&self.warm_cache),
+                    self.anchor,
+                    counted_cold_path,
+                );
+                let ext = CacheDB::new(Db::new(warm_code_cache));
+                Evm2ScratchEvm::with_counter(
+                    ext,
+                    ScratchBlock {
+                        number: self.anchor.number().saturating_add(1),
+                        timestamp: self.block_timestamp,
+                        base_fee_next: self.base_fee_next,
+                    },
+                    counter,
+                )
+                .with_jit(self.jit.clone())
+            });
         }
         self.scratch.as_mut()
     }

@@ -31,9 +31,22 @@
 //! `eth_getTransactionCount`, and `eth_getCode` at the identical pinned block
 //! tag, answered together. Three serial round trips per cold account miss was
 //! the measured cold-frame cost (the `cold_miss_fanout_probe` model).
+//!
+//! `get_block_hash` is the one read a hash pin cannot express: the EVM asks for
+//! a HISTORICAL HEIGHT, and the node's block at that height may belong to
+//! another branch. [`BlockHashAncestry`] proves the requested hash from the
+//! anchor's own header chain, refuses evidence that contradicts the anchor
+//! instead of serving the replacement branch, and answers the EVM's zero for
+//! out-of-window numbers without a read. The EVM window is measured from the
+//! frame's EXECUTION height, which the next-block scratch adapter states
+//! explicitly ([`AlloyAsyncDb::executing`]); the proof itself is always the
+//! read anchor's ancestry, and the per-anchor hash memo never outlives the
+//! identity its reads are pinned to.
 
 use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
+
+use super::block_hash_ancestry::{BlockHashAncestry, BlockHashError};
 
 use crate::sim::storage_memo::ReadAnchor;
 
@@ -42,17 +55,18 @@ use ::evm2::evm::r#async::AsyncDatabase;
 use ::evm2::evm::AccountInfo;
 use ::evm2::interpreter::Word;
 
-/// The adapter's error type — the provider's RPC failure, or a block the
-/// node cannot serve (evm2 treats a benign block-hash miss as a database
-/// failure, matching the trait contract).
+/// The adapter's error type — the provider's RPC failure, or a historical
+/// hash the pinned anchor's ancestry cannot prove (evm2 treats a benign
+/// block-hash miss as a database failure, matching the trait contract).
 #[derive(Debug, thiserror::Error)]
 pub enum AlloyAsyncDbError {
     /// The underlying RPC read failed.
     #[error("RPC read failed: {0}")]
     Rpc(#[from] degenbot_core::errors::ProviderError),
-    /// `eth_getBlockByNumber` returned null for a requested block.
-    #[error("block {0} not found")]
-    BlockNotFound(u64),
+    /// The requested historical hash could not be proven against the pinned
+    /// anchor's ancestry.
+    #[error(transparent)]
+    Ancestry(#[from] BlockHashError),
 }
 
 /// The account-row conversion every async adapter shares: an all-empty row is a
@@ -89,13 +103,42 @@ pub struct AlloyAsyncDb<'p> {
     /// The exact block every read pins — the fan-out's solve anchor, never the
     /// consumer's execution clock.
     anchor: ReadAnchor,
+    /// The proven ancestry `get_block_hash` answers from, memoized for this
+    /// adapter's anchor.
+    ancestry: BlockHashAncestry,
 }
 
 impl<'p> AlloyAsyncDb<'p> {
     /// Wrap the provider, pinning every read to `anchor`.
+    ///
+    /// The adapter executes at the anchor's own height — the per-block EVM's
+    /// `BlockEnv.number`. A frame that runs at ANOTHER height over this state
+    /// (the handle's next-block scratch) must say so through
+    /// [`Self::executing`], because the EVM's BLOCKHASH window is a fact about
+    /// the execution clock, not the read pin.
     #[must_use]
     pub const fn new(provider: &'p AlloyProvider, anchor: ReadAnchor) -> Self {
-        Self { provider, anchor }
+        Self {
+            provider,
+            anchor,
+            ancestry: BlockHashAncestry::new(anchor),
+        }
+    }
+
+    /// Wrap the provider for a frame EXECUTING at `execution` over state pinned
+    /// at `anchor` — the next-block scratch, where `BLOCKHASH(NUMBER - 1)` is
+    /// the anchor's own hash.
+    #[must_use]
+    pub const fn executing(
+        provider: &'p AlloyProvider,
+        anchor: ReadAnchor,
+        execution: u64,
+    ) -> Self {
+        Self {
+            provider,
+            anchor,
+            ancestry: BlockHashAncestry::executing(anchor, execution),
+        }
     }
 
     /// The exact block this adapter's reads pin.
@@ -137,13 +180,14 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
         Ok(Word::from_be_bytes(value.0))
     }
 
-    /// One block hash. A missing block is a database failure (the BLOCKHASH
-    /// window contract), never a benign zero.
+    /// One historical block hash, proven against the pinned anchor's own
+    /// ancestry. The EVM's window rule is restated here: a current, future, or
+    /// out-of-window number is zero and issues no read, and a number inside the
+    /// window is served only from a header chain that links it to the anchor. A
+    /// missing or contradictory link is this adapter's typed refusal, never a
+    /// benign zero and never another branch's hash.
     async fn get_block_hash(&mut self, number: Word) -> Result<B256, Self::Error> {
-        let number = number.to::<u64>();
-        let block = self.provider.get_block(number).await?;
-        let block = block.ok_or(AlloyAsyncDbError::BlockNotFound(number))?;
-        Ok(block.header.hash)
+        Ok(self.ancestry.block_hash(self.provider, number).await?)
     }
 }
 

@@ -350,7 +350,7 @@ pub enum ProjectionRefusal {
 }
 
 /// Why live chain evidence could not be acquired.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ChainEvidenceError {
     /// The transport or the node failed the read.
     #[error(transparent)]

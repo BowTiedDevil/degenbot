@@ -421,6 +421,7 @@ impl ChainStub {
         match self.lineage.lock().unwrap().get(&number) {
             Some((hash, parent_hash)) => ResponsePayload::Success(
                 to_raw_value(&serde_json::json!({
+                    "number": format!("0x{number:x}"),
                     "hash": hash,
                     "parentHash": parent_hash,
                 }))

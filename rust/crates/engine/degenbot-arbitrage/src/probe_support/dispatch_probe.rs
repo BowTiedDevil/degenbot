@@ -591,6 +591,7 @@ fn respond(recorder: &DeltaRecorder, req: &SerializedRequest) -> Response {
             let number = block_number(req).expect("the lineage read names its block");
             let (hash, parent) = recorder.head(number);
             let raw: Box<RawValue> = to_raw_value(&serde_json::json!({
+                "number": format!("0x{number:x}"),
                 "hash": hash,
                 "parentHash": parent,
             }))
