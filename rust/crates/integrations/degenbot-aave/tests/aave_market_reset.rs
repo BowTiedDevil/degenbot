@@ -48,7 +48,9 @@ const MARKET_TABLES: &[&str] = &[
     "aave_v3_contracts",
     "aave_v3_debt_positions",
     "aave_v3_emode_categories",
+    "aave_v3_generations",
     "aave_v3_markets",
+    "aave_v3_projection_cursors",
     "aave_v3_user_collateral_configs",
     "aave_v3_users",
 ];
@@ -397,7 +399,7 @@ fn proxy_created_log(
     let word = |addr: &str| format!("0x000000000000000000000000{}", &addr["0x".len()..]);
     serde_json::json!({
         "address": POOL_ADDRESS_PROVIDER.to_lowercase(),
-        "blockHash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+        "blockHash": synthetic_block_hash(block_number),
         "blockNumber": block_number.to_string(),
         "blockTimestamp": "0",
         "data": "0x",
@@ -414,14 +416,19 @@ fn proxy_created_log(
     })
 }
 
+/// The synthetic captures' block identity: one hash per height, each naming the
+/// previous height as its parent, so the exact-position evidence a projection
+/// journals is coherent (a block hash names one block, ADR-105 D1).
+fn synthetic_block_hash(number: u64) -> String {
+    format!("0x{number:064x}")
+}
+
 /// The run's terminal evidence — the header of the block a window closes on.
-/// The synthetic fixtures serve one block hash at every height, so the header
-/// names that hash; the parent link is the previous height's decimal form.
 fn terminal_header(terminal: u64) -> serde_json::Value {
     serde_json::json!({
         "number": terminal.to_string(),
-        "hash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
-        "parentHash": format!("0x{:064x}", terminal.saturating_sub(1)),
+        "hash": synthetic_block_hash(terminal),
+        "parentHash": synthetic_block_hash(terminal.saturating_sub(1)),
     })
 }
 

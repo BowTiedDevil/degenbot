@@ -84,44 +84,28 @@ fn populate_head_dataset(conn: &Connection) {
     .unwrap();
 }
 
-/// Walk every `FOREIGN KEY` declaration on every content table and confirm each
-/// referenced row exists in the parent table.
+/// Every `FOREIGN KEY` declaration in the healed DB must resolve: `SQLite`'s own
+/// `foreign_key_check` walks each constraint — composite keys and NULL child
+/// columns included — and reports one row per violation.
 fn assert_fk_intact(conn: &Connection) {
-    let tables: Vec<String> = conn
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type='table' \
-             AND name NOT LIKE 'sqlite_%' AND name NOT IN ('alembic_version','_degenbot_db_schema_version')",
-        )
+    let violations: Vec<(String, i64, String, i64)> = conn
+        .prepare("PRAGMA foreign_key_check")
         .unwrap()
-        .query_map([], |r| r.get::<_, String>(0))
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    for table in &tables {
-        let fks: Vec<(String, String)> = conn
-            .prepare(&format!("PRAGMA foreign_key_list(\"{table}\")"))
-            .unwrap()
-            .query_map([], |r| Ok((r.get::<_, String>(2)?, r.get::<_, String>(3)?)))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect();
-        for (parent, from_col) in fks {
-            if !has_table(conn, &parent) {
-                continue;
-            }
-            let missing: i64 = conn
-                .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM \"{table}\" WHERE \"{from_col}\" IS NOT NULL \
-                         AND \"{from_col}\" NOT IN (SELECT id FROM \"{parent}\")"
-                    ),
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(missing, 0, "FK break: {table}.{from_col} → {parent}");
-        }
-    }
+    assert!(
+        violations.is_empty(),
+        "foreign key violations after heal: {violations:?}"
+    );
 }
 
 /// Every content table's row count must equal `expected`.

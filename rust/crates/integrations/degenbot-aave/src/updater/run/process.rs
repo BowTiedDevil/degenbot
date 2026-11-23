@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use alloy::primitives::{Address, B256};
 use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{ChainAnchor, TxRef};
-use degenbot_db::DegenbotDb;
+use degenbot_db::{CursorAnchor, DegenbotDb, ProjectionCursor, ProjectionUnit};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -602,13 +602,23 @@ pub(super) fn persist_chunk(
     conn: &Connection,
     resolution: &mut ChunkResolution,
     market_id: i64,
+    chain_id: i64,
     chunk_end: u64,
+    anchor: CursorAnchor,
 ) -> Result<ChunkCoreReport, RunError> {
     let apply_started = Instant::now();
     let mut substrate = std::mem::replace(&mut resolution.substrate, ChunkSubstrate::lazy(0));
     crate::run::apply_canonical_deltas_on_conn(conn, &resolution.deltas, &mut substrate)?;
     substrate.flush_reserve_data_updates(conn)?;
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
+    let projection_cursor = commit_projection_unit_on_conn(
+        conn,
+        market_id,
+        chain_id,
+        chunk_end,
+        anchor,
+        &resolution.deltas,
+    )?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
     let apply_time = apply_started.elapsed();
@@ -619,7 +629,45 @@ pub(super) fn persist_chunk(
         deltas: resolution.deltas.clone(),
         decode_compute_time: resolution.decode_compute_time,
         apply_time,
+        projection_cursor,
     })
+}
+
+/// Journal the chunk's canonical deltas and advance the market's exact cursor
+/// under the caller's transaction (ADR-105 D8).
+///
+/// A chunk that journaled nothing claims no exact anchor: it has no position of
+/// its own to establish or continue, so it leaves the cursor untouched and only
+/// the numeric range claim (the `last_update_block` stamp) advances. A chunk
+/// with deltas commits its journal rows and its exact cursor together.
+///
+/// # Errors
+///
+/// [`degenbot_db::DbError::Projection`] for any refusal — the caller drops the
+/// transaction, so the chunk's state rows, its journal, and its cursor all roll
+/// back.
+pub(super) fn commit_projection_unit_on_conn(
+    conn: &Connection,
+    market_id: i64,
+    chain_id: i64,
+    chunk_end: u64,
+    anchor: CursorAnchor,
+    deltas: &[crate::projection::CanonicalDelta],
+) -> Result<Option<ProjectionCursor>, degenbot_db::DbError> {
+    let entries = crate::projection::journal_entries(deltas);
+    let anchor = match anchor {
+        CursorAnchor::First { .. } if entries.is_empty() => CursorAnchor::Unchanged,
+        other => other,
+    };
+    let unit = ProjectionUnit {
+        market_id,
+        chain_id,
+        encoding_version: crate::projection::DELTA_ENCODING_VERSION,
+        entries: &entries,
+        range_end_block: chunk_end,
+        anchor,
+    };
+    Ok(degenbot_db::write_projection_unit_on_conn(conn, &unit)?)
 }
 
 /// The per-chunk core's outcome: the applied event count, the two stage
@@ -648,6 +696,8 @@ pub(super) struct ChunkCoreReport {
     /// keeps the per-chunk RPC count bounded — multicall3 batching is the
     /// market-wide extension).
     pub(super) touched_user_addresses: HashSet<Address>,
+    /// The market's exact projection cursor after this chunk, when it has one.
+    pub(super) projection_cursor: Option<ProjectionCursor>,
 }
 
 #[cfg(test)]
@@ -760,7 +810,9 @@ mod tests {
                     3_000,
                     3_000,
                 ))
-                .and_then(|mut resolution| persist_chunk(&tx, &mut resolution, 1, 3_000))
+                .and_then(|mut resolution| {
+                    persist_chunk(&tx, &mut resolution, 1, 1, 3_000, CursorAnchor::Unchanged)
+                })
                 .unwrap();
             tx.commit().unwrap();
         }

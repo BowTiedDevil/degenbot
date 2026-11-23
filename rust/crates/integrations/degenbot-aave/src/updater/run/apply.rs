@@ -683,6 +683,23 @@ pub fn apply_aave_chunk_writes_on_conn(
     report.zero_balances_cleared =
         DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
 
+    // The projection unit: journal every delta and advance the market's exact
+    // cursor (ADR-105 D8), inside the same transaction as the rows and the
+    // stamp. This batched entrypoint derives its anchor token from the row the
+    // current transaction holds; the chunk loop passes the token it read before
+    // the chunk opened, which additionally refuses a competing advance between
+    // chunks.
+    let projection = crate::projection::market_projection(conn, market_id)
+        .map_err(degenbot_db::DbError::from)?;
+    super::process::commit_projection_unit_on_conn(
+        conn,
+        market_id,
+        projection.chain_id,
+        chunk_end_block,
+        projection.anchor,
+        deltas,
+    )?;
+
     // Stamp `last_update_block` as the LAST write (restart invariant:
     // on rollback the stamp does NOT advance, so a restart re-processes the
     // chunk clean).

@@ -23,7 +23,13 @@
 //! Children first, so the purge is correct on a connection that enforces
 //! foreign keys as well as on this crate's default (unenforced) connections:
 //!
-//! 1. `aave_v3_collateral_positions` — references `aave_v3_users` and
+//! 1. `aave_v3_projection_cursors` — references the market row, the journal,
+//!    and the chain identities.
+//! 2. `aave_v3_delta_journal` — references the market row, the chain
+//!    identities, and the generation rows.
+//! 3. `aave_v3_generations` — references the market row and the chain
+//!    identities.
+//! 4. `aave_v3_collateral_positions` — references `aave_v3_users` and
 //!    `aave_v3_assets`.
 //! 2. `aave_v3_debt_positions` — same two parents.
 //! 3. `aave_v3_user_collateral_configs` — same two parents.
@@ -57,6 +63,18 @@ const GHO_TABLE: &str = "aave_gho_tokens";
 /// The market-scoped relations the purge clears, in foreign-key-safe order,
 /// each with the predicate that selects its rows for `?1` = the market id.
 const PURGE_STEPS: &[PurgeStep] = &[
+    PurgeStep {
+        table: "aave_v3_projection_cursors",
+        predicate: "market_id = ?1",
+    },
+    PurgeStep {
+        table: "aave_v3_delta_journal",
+        predicate: "market_id = ?1",
+    },
+    PurgeStep {
+        table: "aave_v3_generations",
+        predicate: "market_id = ?1",
+    },
     PurgeStep {
         table: "aave_v3_collateral_positions",
         predicate: "asset_id IN (SELECT id FROM aave_v3_assets WHERE market_id = ?1) \

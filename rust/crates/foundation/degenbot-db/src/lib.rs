@@ -55,6 +55,7 @@ pub mod migrations;
 pub mod ops;
 pub mod pathfinding;
 pub(crate) mod pragma;
+pub mod projection;
 pub mod read;
 pub mod rows;
 pub mod schema;
@@ -108,6 +109,13 @@ pub use ops::{
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
 pub use pathfinding::{is_protocol_native_sentinel, PathEdge, PathGraphData};
+#[cfg(any(test, feature = "writer"))]
+pub use projection::write_projection_unit_on_conn;
+pub use projection::{
+    read_journal_on_conn, read_projection_cursor_on_conn, CursorAnchor, DeltaJournalEntry,
+    DeltaJournalRow, GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCursor,
+    ProjectionError, ProjectionUnit,
+};
 pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
     LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,

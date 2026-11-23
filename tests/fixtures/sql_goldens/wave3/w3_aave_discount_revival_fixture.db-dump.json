@@ -162,6 +162,39 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "scaled-token{asset=1,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -177,6 +210,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          1002,
+          "0x8d6c98e59b99b453ad086d229fff0a76b26bd736d913256971f1f7e5df0efd77",
+          "0xa71ca41918eda0f02f5b9d034207bc6da722ef3dbac84742f3e5c64d80fd55e5",
+          "0xec558332a2fcbf8c59081547c97256119b4dd75ceddede4586786e75efa0627c",
+          0,
+          0,
+          4,
+          1002
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [

@@ -92,12 +92,15 @@ const EXPECTED_APPLIED_EVENTS: usize = 20;
 /// write-overlay (the config dispatch
 /// and the parser both consult it; the GHO fresh-resolution paths ride
 /// the dirty-marked cache), and the `ReserveDataUpdated` writes flush as
-/// one sorted multi-row UPDATE. 52 = 7 pre-tx run-setup statements +
-/// BEGIN/COMMIT + 7 prefetches + the (unchanged-shape) immediate writes:
-/// user/position INSERTs, position UPDATEs, the collateral-config
-/// writes, the zero-balance DELETEs, the multi-row asset UPDATE, and the
-/// end-of-chunk stamp.
-const EXPECTED_LEDGER_STATEMENTS: usize = 52;
+/// one sorted multi-row UPDATE. 64 = 52 statements of the pre-journal shape
+/// (7 pre-tx run-setup + BEGIN/COMMIT + 7 prefetches + the immediate writes:
+/// user/position INSERTs, position UPDATEs, the collateral-config writes, the
+/// zero-balance DELETEs, the multi-row asset UPDATE, and the end-of-chunk
+/// stamp) plus the projection unit's 12: the market-claim and cursor reads, the
+/// batched block and transaction identity upserts, the batched generation
+/// upsert, the batched journal INSERT, and the cursor INSERT. The journal cost
+/// is per DISTINCT identity, never per delta.
+const EXPECTED_LEDGER_STATEMENTS: usize = 64;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -210,7 +213,9 @@ const DUMP_TABLES: &[&str] = &[
     "aave_v3_contracts",
     "aave_v3_debt_positions",
     "aave_v3_emode_categories",
+    "aave_v3_generations",
     "aave_v3_markets",
+    "aave_v3_projection_cursors",
     "aave_v3_user_collateral_configs",
     "aave_v3_users",
     "erc20_tokens",

@@ -103,7 +103,118 @@ pub const RUST_MIGRATIONS: &[MigrationStep] = &[
         name: "drop_word_bitmap_tables",
         sql: "DROP TABLE IF EXISTS initialization_maps;\nDROP TABLE IF EXISTS managed_pool_initialization_maps;",
     },
+    MigrationStep {
+        version: 4,
+        name: "projection_cursors_and_delta_journal",
+        sql: PROJECTION_PERSISTENCE_DDL,
+    },
 ];
+
+/// The v3 → v4 step: the per-market Projection cursor, the canonical delta
+/// journal, the generation relationships, and the block/transaction identities
+/// they reference (ADR-105 D7, D8).
+///
+/// The same DDL is carried by [`SCHEMA_HEAD`], so a fresh standalone file and a
+/// migrated v3 file converge on one schema; the mirror is asserted in this
+/// module's tests.
+const PROJECTION_PERSISTENCE_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS aave_v3_block_anchors (
+\tchain_id INTEGER NOT NULL,
+\tblock_number INTEGER NOT NULL,
+\tblock_hash VARCHAR(66) NOT NULL,
+\tparent_hash VARCHAR(66) NOT NULL,
+\tPRIMARY KEY (chain_id, block_hash),
+\tUNIQUE (chain_id, block_hash, block_number, parent_hash),
+\tCHECK (block_number >= 0),
+\tCHECK (substr(block_hash, 1, 2) = '0x' AND length(block_hash) = 66),
+\tCHECK (substr(parent_hash, 1, 2) = '0x' AND length(parent_hash) = 66),
+\tCHECK (block_hash <> parent_hash)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_delta_journal (
+\tid INTEGER NOT NULL,
+\tmarket_id INTEGER NOT NULL,
+\tsequence INTEGER NOT NULL,
+\tposition_ordinal INTEGER NOT NULL,
+\tchain_id INTEGER NOT NULL,
+\tblock_number INTEGER NOT NULL,
+\tblock_hash VARCHAR(66) NOT NULL,
+\tparent_hash VARCHAR(66) NOT NULL,
+\ttx_hash VARCHAR(66) NOT NULL,
+\ttx_index INTEGER NOT NULL,
+\tlog_index INTEGER NOT NULL,
+\tgeneration_id INTEGER,
+\tencoding_version TEXT NOT NULL,
+\tdelta_encoding TEXT NOT NULL,
+\tPRIMARY KEY (id),
+\tUNIQUE (market_id, sequence),
+\tUNIQUE (market_id, chain_id, tx_hash, log_index, position_ordinal),
+\tFOREIGN KEY (market_id) REFERENCES aave_v3_markets (id),
+\tFOREIGN KEY (chain_id, block_hash, block_number, parent_hash) REFERENCES aave_v3_block_anchors (chain_id, block_hash, block_number, parent_hash),
+\tFOREIGN KEY (chain_id, tx_hash, block_hash, tx_index) REFERENCES aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index),
+\tFOREIGN KEY (market_id, generation_id) REFERENCES aave_v3_generations (market_id, id),
+\tCHECK (sequence > 0 AND position_ordinal > 0),
+\tCHECK (block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+\tCHECK (length(encoding_version) > 0 AND length(delta_encoding) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_generations (
+\tid INTEGER NOT NULL,
+\tmarket_id INTEGER NOT NULL,
+\tentity TEXT NOT NULL,
+\tactivation_kind TEXT NOT NULL,
+\trevision INTEGER,
+\tchain_id INTEGER,
+\tblock_number INTEGER,
+\tblock_hash VARCHAR(66),
+\tparent_hash VARCHAR(66),
+\ttx_hash VARCHAR(66),
+\ttx_index INTEGER,
+\tlog_index INTEGER,
+\tPRIMARY KEY (id),
+\tUNIQUE (market_id, id),
+\tUNIQUE (market_id, entity, activation_kind, revision, chain_id, block_hash, tx_hash, log_index),
+\tFOREIGN KEY (market_id) REFERENCES aave_v3_markets (id),
+\tCHECK (activation_kind IN ('seed', 'event')),
+\tCHECK (length(entity) > 0),
+\tCHECK (revision IS NULL OR revision >= 0),
+\tCHECK ((activation_kind = 'seed' AND chain_id IS NULL AND block_number IS NULL AND block_hash IS NULL AND parent_hash IS NULL AND tx_hash IS NULL AND tx_index IS NULL AND log_index IS NULL) OR (activation_kind = 'event' AND chain_id IS NOT NULL AND block_number IS NOT NULL AND block_hash IS NOT NULL AND parent_hash IS NOT NULL AND tx_hash IS NOT NULL AND tx_index IS NOT NULL AND log_index IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS aave_v3_projection_cursors (
+\tmarket_id INTEGER NOT NULL,
+\tchain_id INTEGER NOT NULL,
+\tblock_number INTEGER NOT NULL,
+\tblock_hash VARCHAR(66) NOT NULL,
+\tparent_hash VARCHAR(66) NOT NULL,
+\ttx_hash VARCHAR(66) NOT NULL,
+\ttx_index INTEGER NOT NULL,
+\tlog_index INTEGER NOT NULL,
+\tjournal_sequence INTEGER NOT NULL,
+\trange_end_block INTEGER NOT NULL,
+\tPRIMARY KEY (market_id),
+\tFOREIGN KEY (market_id) REFERENCES aave_v3_markets (id),
+\tFOREIGN KEY (chain_id, block_hash, block_number, parent_hash) REFERENCES aave_v3_block_anchors (chain_id, block_hash, block_number, parent_hash),
+\tFOREIGN KEY (chain_id, tx_hash, block_hash, tx_index) REFERENCES aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index),
+\tFOREIGN KEY (market_id, journal_sequence) REFERENCES aave_v3_delta_journal (market_id, sequence),
+\tCHECK (journal_sequence > 0),
+\tCHECK (block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+\tCHECK (range_end_block >= block_number)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_transaction_anchors (
+\tchain_id INTEGER NOT NULL,
+\ttx_hash VARCHAR(66) NOT NULL,
+\tblock_hash VARCHAR(66) NOT NULL,
+\ttx_index INTEGER NOT NULL,
+\tPRIMARY KEY (chain_id, tx_hash),
+\tUNIQUE (chain_id, tx_hash, block_hash, tx_index),
+\tUNIQUE (chain_id, block_hash, tx_index),
+\tFOREIGN KEY (chain_id, block_hash) REFERENCES aave_v3_block_anchors (chain_id, block_hash),
+\tCHECK (tx_index >= 0),
+\tCHECK (substr(tx_hash, 1, 2) = '0x' AND length(tx_hash) = 66)
+);
+CREATE INDEX IF NOT EXISTS ix_aave_delta_journal_block ON aave_v3_delta_journal (market_id, block_number);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_aave_generations_event ON aave_v3_generations (market_id, entity, chain_id, tx_hash, log_index) WHERE activation_kind = 'event';
+CREATE UNIQUE INDEX IF NOT EXISTS ix_aave_generations_seed ON aave_v3_generations (market_id, entity, COALESCE(revision, -1)) WHERE activation_kind = 'seed';
+CREATE INDEX IF NOT EXISTS ix_aave_transaction_anchors_block ON aave_v3_transaction_anchors (chain_id, block_hash);
+";
 
 /// What [`apply_forward_migrations`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -654,6 +765,82 @@ mod tests {
                 schema_version: RUST_SCHEMA_VERSION
             }
         );
+    }
+
+    /// A v3-stamped file has no projection tables: drop the ones the head DDL
+    /// creates, so the forward step is what puts them back.
+    fn v3_projectionless_file(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        crate::migrate::ensure_schema(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE aave_v3_delta_journal;\n             DROP TABLE aave_v3_projection_cursors;\n             DROP TABLE aave_v3_generations;\n             DROP TABLE aave_v3_transaction_anchors;\n             DROP TABLE aave_v3_block_anchors;",
+        )
+        .unwrap();
+        conn.execute_batch(&format!(
+            "DELETE FROM {SCHEMA_VERSION_TABLE}; INSERT INTO {SCHEMA_VERSION_TABLE} (schema_version) VALUES (3);"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn projection_step_creates_the_tables_on_a_v3_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projection.db");
+        v3_projectionless_file(&path);
+
+        let (conn, state) =
+            ensure_schema_at_open_with(&path, true, primed, RUST_MIGRATIONS, RUST_SCHEMA_VERSION)
+                .unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        for name in [
+            table::AAVE_V3_BLOCK_ANCHORS,
+            table::AAVE_V3_DELTA_JOURNAL,
+            table::AAVE_V3_GENERATIONS,
+            table::AAVE_V3_PROJECTION_CURSORS,
+            table::AAVE_V3_TRANSACTION_ANCHORS,
+        ] {
+            assert!(table_exists(&conn, name).unwrap(), "{name} after v4");
+        }
+        drop(conn);
+        assert_eq!(stamp_in(&path), RUST_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn a_migrated_v3_file_carries_the_fresh_head_ddl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mirror.db");
+        v3_projectionless_file(&path);
+        let (migrated, _state) =
+            ensure_schema_at_open_with(&path, true, primed, RUST_MIGRATIONS, RUST_SCHEMA_VERSION)
+                .unwrap();
+        let fresh = Connection::open_in_memory().unwrap();
+        crate::migrate::ensure_schema(&fresh).unwrap();
+        let sql_of = |conn: &Connection, name: &str| -> String {
+            conn.query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                rusqlite::params![name],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        for name in [
+            table::AAVE_V3_BLOCK_ANCHORS,
+            table::AAVE_V3_DELTA_JOURNAL,
+            table::AAVE_V3_GENERATIONS,
+            table::AAVE_V3_PROJECTION_CURSORS,
+            table::AAVE_V3_TRANSACTION_ANCHORS,
+        ] {
+            assert_eq!(
+                sql_of(&migrated, name),
+                sql_of(&fresh, name),
+                "the v4 step and the schema head must declare {name} identically"
+            );
+        }
     }
 
     #[test]

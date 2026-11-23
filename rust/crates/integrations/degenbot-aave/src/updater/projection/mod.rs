@@ -22,10 +22,14 @@ use alloy::primitives::{I256, U256};
 use degenbot_core::canonical_head::LogRef;
 
 mod configuration;
+mod journal;
 mod reduce;
 
 pub use configuration::ConfigurationEffect;
 pub use degenbot_db::ScaledTokenPosition;
+pub use journal::{
+    journal_entries, journal_entry, market_projection, MarketProjection, DELTA_ENCODING_VERSION,
+};
 
 #[cfg(test)]
 mod tests;
@@ -102,7 +106,9 @@ impl ContractRole {
 }
 
 impl GenerationEntity {
-    fn encode(self) -> String {
+    /// The stable logical key a journaled generation relationship states.
+    #[must_use]
+    pub fn encode(self) -> String {
         match self {
             Self::ScaledToken { asset_id, position } => format!(
                 "scaled-token{{asset={asset_id},leg={}}}",

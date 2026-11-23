@@ -47,7 +47,7 @@ use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
 use degenbot_core::runtime::get_runtime;
 use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
-use degenbot_db::{DbError, DegenbotDb};
+use degenbot_db::{CursorAnchor, DbError, DegenbotDb};
 use degenbot_rpc::chain_evidence::{
     place_logs_at, resolve_terminal_anchor, ChainEvidenceError, ProjectionRefusal,
 };
@@ -256,6 +256,12 @@ pub enum RunError {
     Provider(#[from] ProviderError),
     #[error("config dispatch error: {0}")]
     ConfigDispatch(#[from] ConfigDispatchError),
+    /// A projection-persistence refusal: an unexpected parent, a broken parent
+    /// link, a duplicate branch position, an invalid generation relationship, or
+    /// a range claim that does not advance. The chunk's transaction was dropped,
+    /// so its state rows, journal, and cursor all rolled back (ADR-105 D8).
+    #[error("projection persistence error: {0}")]
+    Projection(#[from] degenbot_db::ProjectionError),
     #[error("transaction parse error: {0}")]
     ProcessTx(#[from] ProcessTxError),
     /// A candidate transaction could not be evidence-bound: its block header, its
@@ -673,6 +679,11 @@ async fn run_aave_update_driver(
     let last_update_block = market
         .last_update_block
         .ok_or(RunError::NotBootstrapped(market_id))?;
+    // The market's exact projection state: its cursor when one is established,
+    // the numeric claim a first anchor must replace when one is not (ADR-105
+    // D8). The token travels into every chunk's write, so a competing advance
+    // or a reorg between chunks is a refusal rather than a silent append.
+    let mut projection_anchor = crate::projection::market_projection(&db.lock(), market_id)?.anchor;
 
     // The RPC fetches + the per-tx verification ride the ONE driver future
     // (`get_runtime().block_on` at the entry fn); the DB writes stay
@@ -1145,7 +1156,14 @@ async fn run_aave_update_driver(
                 ),
                 progress.clone(),
             );
-            let r = process::persist_chunk(chunk_tx.conn(), &mut resolution, market_id, chunk_end)?;
+            let r = process::persist_chunk(
+                chunk_tx.conn(),
+                &mut resolution,
+                market_id,
+                chain_id,
+                chunk_end,
+                projection_anchor,
+            )?;
             // Pre-commit verification: the chain truth was acquired above, in
             // resolution. The comparison reads the (uncommitted) rows this
             // transaction just wrote and issues no RPC, so it catches
@@ -1214,6 +1232,9 @@ async fn run_aave_update_driver(
         }
         report.chunks_committed += 1;
         report.total_events_applied += chunk_report.events_applied;
+        if let Some(cursor) = chunk_report.projection_cursor {
+            projection_anchor = CursorAnchor::At(cursor);
+        }
 
         // Operator-facing progress (the Rust core owns CLI progress —
         // no per-chunk FFI hop). Time-throttled so a long backfill's console

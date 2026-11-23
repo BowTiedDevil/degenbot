@@ -695,6 +695,109 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "contract{market=1,role=pool-configurator}",
+          "event",
+          3,
+          1,
+          20398674,
+          "0x48fef4fc63d4b344e0f8ee8c8a729d511c2e11882b4325a369fccf857003e863",
+          "0xfdb1e13b4a5c134387430c753cb16c98449f195b82be67110da7dba0250641cb",
+          "0x65b6eb75203176f6ee38823219f4e46c0d1c56230dfb82d98964c089fc3ef174",
+          1,
+          8
+        ],
+        [
+          2,
+          1,
+          "contract{market=1,role=pool-data-provider}",
+          "event",
+          null,
+          1,
+          20398674,
+          "0x48fef4fc63d4b344e0f8ee8c8a729d511c2e11882b4325a369fccf857003e863",
+          "0xfdb1e13b4a5c134387430c753cb16c98449f195b82be67110da7dba0250641cb",
+          "0x65b6eb75203176f6ee38823219f4e46c0d1c56230dfb82d98964c089fc3ef174",
+          1,
+          11
+        ],
+        [
+          3,
+          1,
+          "contract{market=1,role=pool}",
+          "event",
+          4,
+          1,
+          20398674,
+          "0x48fef4fc63d4b344e0f8ee8c8a729d511c2e11882b4325a369fccf857003e863",
+          "0xfdb1e13b4a5c134387430c753cb16c98449f195b82be67110da7dba0250641cb",
+          "0x65b6eb75203176f6ee38823219f4e46c0d1c56230dfb82d98964c089fc3ef174",
+          1,
+          10
+        ],
+        [
+          4,
+          1,
+          "scaled-token{asset=18,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          1,
+          "scaled-token{asset=25,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          1,
+          "scaled-token{asset=30,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -710,6 +813,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          20398680,
+          "0x809c2403646516f968e2bf960d0f9a7f3c187270dc1d04b9e501b4032178abae",
+          "0xf5dd05c619d689fef8c9054a627102b7b1ef69ec4bd14bd4ee83ef7255f741af",
+          "0x31e91b5d67e7db70d1b4b23299ddb53060057bc7dda3af787058d2ee89d291f2",
+          180,
+          406,
+          51,
+          20398680
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [

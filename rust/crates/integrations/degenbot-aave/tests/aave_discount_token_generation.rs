@@ -200,16 +200,18 @@ fn seed_user(db: &DegenbotDb, gho_discount: i64, stk_aave_balance: Option<&str>)
     .unwrap();
 }
 
-/// The one block hash the synthetic captures serve for every height (the
-/// fixtures are a chain of states, not a chain of blocks).
-const SYNTHETIC_BLOCK_HASH: &str =
-    "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314";
+/// The synthetic captures' block identity: one hash per height, each naming the
+/// previous height as its parent, so the exact-position evidence a projection
+/// journals is coherent (a block hash names one block, ADR-105 D1).
+fn synthetic_block_hash(number: u64) -> String {
+    format!("0x{number:064x}")
+}
 
 /// The `DiscountTokenUpdated(old, new)` log — emitted by the GHO vToken.
 fn discount_token_updated_log(tx: &str, block: u64, log_index: u64, old: &str, new: &str) -> Value {
     json!({
         "address": VTOKEN.to_lowercase(),
-        "blockHash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+        "blockHash": synthetic_block_hash(block),
         "blockNumber": block.to_string(),
         "blockTimestamp": "0",
         "data": "0x",
@@ -232,7 +234,7 @@ fn stk_aave_mint_transfer_log(
 ) -> Value {
     json!({
         "address": token.to_lowercase(),
-        "blockHash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+        "blockHash": synthetic_block_hash(block),
         "blockNumber": block.to_string(),
         "blockTimestamp": "0",
         "data": format!("0x{}", data_word(amount)),
@@ -254,7 +256,7 @@ fn stk_aave_mint_transfer_log(
 fn gho_vtoken_mint_log(tx: &str, block: u64, log_index: u64) -> Value {
     json!({
         "address": VTOKEN.to_lowercase(),
-        "blockHash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+        "blockHash": synthetic_block_hash(block),
         "blockNumber": block.to_string(),
         "blockTimestamp": "0",
         "data": format!("0x{}{}{}", data_word(1_000), data_word(1_000), data_word(1_000_000_000)),
@@ -451,8 +453,8 @@ impl Ledger {
         let header = CassetteResponse::Success {
             result: json!({
                 "number": self.to_block.to_string(),
-                "hash": SYNTHETIC_BLOCK_HASH,
-                "parentHash": format!("0x{:064x}", self.to_block.saturating_sub(1)),
+                "hash": synthetic_block_hash(self.to_block),
+                "parentHash": synthetic_block_hash(self.to_block.saturating_sub(1)),
             }),
         };
         let params = json!([format!("0x{:x}", self.to_block), false]);
@@ -470,8 +472,8 @@ impl Ledger {
         let evidence = common::candidate_evidence_entries(&self.entries, |block| {
             json!({
                 "number": block.to_string(),
-                "hash": SYNTHETIC_BLOCK_HASH,
-                "parentHash": format!("0x{:064x}", block.saturating_sub(1)),
+                "hash": synthetic_block_hash(block),
+                "parentHash": synthetic_block_hash(block.saturating_sub(1)),
             })
         });
         self.entries.extend(evidence);

@@ -32,7 +32,7 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 /// The open path applies pending steps automatically (ADR-052 D2), so no
 /// consumer calls a migration verb; a binary older than the DB refuses with
 /// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
-pub const RUST_SCHEMA_VERSION: u32 = 3;
+pub const RUST_SCHEMA_VERSION: u32 = 4;
 
 /// Name of the private Rust-owned schema stamp table.
 pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
@@ -56,6 +56,18 @@ pub mod table {
     pub const UNISWAP_V4_POOLS: &str = "uniswap_v4_pools";
     pub const MANAGED_POOL_LIQUIDITY_POSITIONS: &str = "managed_pool_liquidity_positions";
     pub const UNISWAP_V3_POOLS: &str = "uniswap_v3_pools";
+
+    /// The exact per-market Projection cursor (ADR-105 D8): the terminal chain
+    /// position a market's projection is complete through.
+    pub const AAVE_V3_PROJECTION_CURSORS: &str = "aave_v3_projection_cursors";
+    /// The per-market canonical delta journal (ADR-105 D7, D8).
+    pub const AAVE_V3_DELTA_JOURNAL: &str = "aave_v3_delta_journal";
+    /// The generation relationships a journaled delta was reduced under.
+    pub const AAVE_V3_GENERATIONS: &str = "aave_v3_generations";
+    /// The exact block identities the projection has recorded.
+    pub const AAVE_V3_BLOCK_ANCHORS: &str = "aave_v3_block_anchors";
+    /// The exact transaction identities the projection has recorded.
+    pub const AAVE_V3_TRANSACTION_ANCHORS: &str = "aave_v3_transaction_anchors";
 
     /// The LFJ (Trader Joe Liquidity Book) binned-pair subclass table. LFJ is
     /// the declared-but-unsupported `lfj_binned` family (ADR-059 D8): the table

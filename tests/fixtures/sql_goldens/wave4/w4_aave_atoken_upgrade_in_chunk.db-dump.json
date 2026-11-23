@@ -577,6 +577,39 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "scaled-token{asset=11,leg=collateral}",
+          "event",
+          2,
+          1,
+          18870593,
+          "0xb3a33079fb73ae8c946d8cb50153fb6c5dc8cda7caa15f6eaf907f26c9346d75",
+          "0x9b47ea60d0d34c036a0d66c31c4281c73f1660b9925c542132108f661e28facb",
+          "0x338149cde814df04daac6d7225c2c71bc09848868fb804691b510d211f2d3457",
+          76,
+          135
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -592,6 +625,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          18870593,
+          "0xb3a33079fb73ae8c946d8cb50153fb6c5dc8cda7caa15f6eaf907f26c9346d75",
+          "0x9b47ea60d0d34c036a0d66c31c4281c73f1660b9925c542132108f661e28facb",
+          "0x338149cde814df04daac6d7225c2c71bc09848868fb804691b510d211f2d3457",
+          76,
+          135,
+          1,
+          18870599
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [

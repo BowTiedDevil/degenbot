@@ -98,10 +98,11 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// re-read all change this count and fail the plain run before the
 /// byte-diff consults the committed golden). Measured on this corpus with
 /// the chunk substrate in place; the discount-path `eth_call` adds no
-/// statements, so the delta against the seed corpus's 52 is purely the
+/// statements, so the delta against the seed corpus's 64 is purely the
 /// span's event mix (GHO debt burns + position/user creation + the
-/// USDT/WETH operation events).
-const EXPECTED_LEDGER_STATEMENTS: usize = 57;
+/// USDT/WETH operation events) plus the projection unit's batched journal
+/// writes (per distinct identity, never per delta).
+const EXPECTED_LEDGER_STATEMENTS: usize = 69;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -210,7 +211,9 @@ const DUMP_TABLES: &[&str] = &[
     "aave_v3_contracts",
     "aave_v3_debt_positions",
     "aave_v3_emode_categories",
+    "aave_v3_generations",
     "aave_v3_markets",
+    "aave_v3_projection_cursors",
     "aave_v3_user_collateral_configs",
     "aave_v3_users",
     "erc20_tokens",

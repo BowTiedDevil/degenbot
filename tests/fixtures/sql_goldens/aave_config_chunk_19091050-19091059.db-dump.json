@@ -186,6 +186,67 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "scaled-token{asset=1,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          1,
+          "scaled-token{asset=2,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          1,
+          "scaled-token{asset=3,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -201,6 +262,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          19091057,
+          "0xa70d71c7eb10f056b3a79ba503f006c3cf82484b34d79bfaf80d977688c2457c",
+          "0x7ad56989b5ea326c1cc35ee01c728f8c552a3a58d36e8754f40cb95c83573327",
+          "0x4c9af2fd6070af90fad8517d624e94b649ed0887a9b35edcbe1edd3cc4ea4b06",
+          4,
+          77,
+          32,
+          19091059
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [

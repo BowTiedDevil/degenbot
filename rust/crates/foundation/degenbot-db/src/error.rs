@@ -121,6 +121,13 @@ pub enum DbError {
         binary: u32,
     },
 
+    /// A projection-persistence refusal (ADR-105 D8): an unexpected parent, a
+    /// broken parent link, a duplicate branch position, an invalid generation
+    /// relationship, or a range claim that does not advance. The affected unit
+    /// rolls back whole.
+    #[error(transparent)]
+    Projection(#[from] crate::projection::ProjectionError),
+
     /// The Rust-owned forward-migration registry has no step producing
     /// `version`, yet the DB's stamp is behind the binary — the registry has a
     /// gap (a build-time defect). The run refuses rather than skip the gap.

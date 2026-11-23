@@ -136,6 +136,81 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "contract{market=1,role=pool-configurator}",
+          "event",
+          1,
+          1,
+          16291130,
+          "0x51cd9da1a1b8930fd33a2cde75766f1c5edfc946d418815bbd04c9f88b7be4f7",
+          "0x2e8510ae9462128567a5c3369698e3721a9712405f495a251fba758d2427b53f",
+          "0xc590e86def129b46f0c85eaefaf3b7057da7becd975a67d2088eb83bf95f9c89",
+          82,
+          142
+        ],
+        [
+          2,
+          1,
+          "contract{market=1,role=pool-configurator}",
+          "event",
+          1,
+          1,
+          16291130,
+          "0x51cd9da1a1b8930fd33a2cde75766f1c5edfc946d418815bbd04c9f88b7be4f7",
+          "0x2e8510ae9462128567a5c3369698e3721a9712405f495a251fba758d2427b53f",
+          "0xc590e86def129b46f0c85eaefaf3b7057da7becd975a67d2088eb83bf95f9c89",
+          82,
+          143
+        ],
+        [
+          3,
+          1,
+          "contract{market=1,role=pool}",
+          "event",
+          1,
+          1,
+          16291127,
+          "0xb5cc06eb5df1e84f6c9a6a72efe9f083fc0dec6bfcfdb2f8f01085e46bf354f5",
+          "0xeb283be45509f673b91e7615cc2b4e407ac433aadefe2e2e9dae60fd0d88028e",
+          "0xf2089a3c2a24f512214691c5a51dd57d1a5545758486360f3a1e24547723525d",
+          157,
+          322
+        ],
+        [
+          4,
+          1,
+          "contract{market=1,role=pool}",
+          "event",
+          1,
+          1,
+          16291127,
+          "0xb5cc06eb5df1e84f6c9a6a72efe9f083fc0dec6bfcfdb2f8f01085e46bf354f5",
+          "0xeb283be45509f673b91e7615cc2b4e407ac433aadefe2e2e9dae60fd0d88028e",
+          "0xf2089a3c2a24f512214691c5a51dd57d1a5545758486360f3a1e24547723525d",
+          157,
+          323
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -151,6 +226,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          16291130,
+          "0x51cd9da1a1b8930fd33a2cde75766f1c5edfc946d418815bbd04c9f88b7be4f7",
+          "0x2e8510ae9462128567a5c3369698e3721a9712405f495a251fba758d2427b53f",
+          "0xc590e86def129b46f0c85eaefaf3b7057da7becd975a67d2088eb83bf95f9c89",
+          82,
+          143,
+          4,
+          16291135
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [

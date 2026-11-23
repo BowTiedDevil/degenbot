@@ -9,6 +9,16 @@
     {
       "arg_count": 1,
       "rows_changed": 0,
+      "sql": "SELECT chain_id, last_update_block FROM aave_v3_markets WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block, market_id FROM aave_v3_projection_cursors WHERE market_id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
       "sql": "SELECT id, market_id, name, address, revision FROM aave_v3_contracts WHERE market_id = ?"
     },
     {
@@ -250,6 +260,56 @@
       "arg_count": 1,
       "rows_changed": 2,
       "sql": "DELETE FROM aave_v3_debt_positions WHERE id IN ( SELECT p.id FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND (p.balance = ? OR p.balance = ?) )"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT chain_id, last_update_block FROM aave_v3_markets WHERE id = ?"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block, market_id FROM aave_v3_projection_cursors WHERE market_id = ?"
+    },
+    {
+      "arg_count": 16,
+      "rows_changed": 4,
+      "sql": "INSERT OR IGNORE INTO aave_v3_block_anchors (chain_id, block_number, block_hash, parent_hash) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 5,
+      "rows_changed": 0,
+      "sql": "SELECT block_hash, block_number, parent_hash FROM aave_v3_block_anchors WHERE chain_id = ? AND block_hash IN (?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 28,
+      "rows_changed": 7,
+      "sql": "INSERT OR IGNORE INTO aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 8,
+      "rows_changed": 0,
+      "sql": "SELECT tx_hash, block_hash, tx_index FROM aave_v3_transaction_anchors WHERE chain_id = ? AND tx_hash IN (?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 44,
+      "rows_changed": 4,
+      "sql": "INSERT OR IGNORE INTO aave_v3_generations (market_id, entity, activation_kind, revision, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, entity, activation_kind, revision, chain_id, tx_hash, log_index FROM aave_v3_generations WHERE market_id = ?"
+    },
+    {
+      "arg_count": 260,
+      "rows_changed": 20,
+      "sql": "INSERT INTO aave_v3_delta_journal (market_id, sequence, position_ordinal, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, generation_id, encoding_version, delta_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 11,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_projection_cursors (market_id, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT ? FROM aave_v3_projection_cursors WHERE market_id = ?)"
     },
     {
       "arg_count": 2,

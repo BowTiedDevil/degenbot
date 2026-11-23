@@ -216,6 +216,81 @@
     {
       "columns": [
         "id",
+        "market_id",
+        "entity",
+        "activation_kind",
+        "revision",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "scaled-token{asset=1,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          1,
+          "scaled-token{asset=2,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          1,
+          "scaled-token{asset=3,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          1,
+          "scaled-token{asset=3,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ],
+      "table": "aave_v3_generations"
+    },
+    {
+      "columns": [
+        "id",
         "chain_id",
         "name",
         "active",
@@ -231,6 +306,35 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "market_id",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "journal_sequence",
+        "range_end_block"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          26130445,
+          "0xb32cc8a11b75cc6645f1971eee0ee4eed9cfc7bd360657a80f87d0b7455cebde",
+          "0xc6f9d0f4c34914324086553cd237c930dbf2f944a265d75287578a0625a3a8e5",
+          "0x250ca7a2fbbbfa8456cdb3efe555c293816409642c92329ddefbd2e3eae4b25b",
+          103,
+          546,
+          20,
+          26130445
+        ]
+      ],
+      "table": "aave_v3_projection_cursors"
     },
     {
       "columns": [
