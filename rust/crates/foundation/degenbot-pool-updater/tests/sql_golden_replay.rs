@@ -89,7 +89,16 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 /// BW3 (21 → 19): the word-bitmap VALUE retirement removed the last two
 /// `initialization_maps` statements this corpus ran — its full-map SELECT and
 /// its upsert. The word-KEY read surface is unchanged.
-const EXPECTED_LEDGER_STATEMENTS: usize = 19;
+///
+/// Derive-once (19 → 16): the chunk-new pool now persists the plan delta the
+/// pre-commit gate verified instead of re-deriving it in-transaction, so the
+/// fused path's three re-derivation reads left the chunk apply — the state
+/// pair (`pools.id`/`kind` and the subclass `tick_spacing`/marker) and the
+/// dirty-key `tick IN (...)` map read. The `pools` row read stayed: it now
+/// resolves the id the plan's sentinel `pool_id` 0 keys to after the upsert.
+/// The positions upsert + marker stamp are unchanged, and the DB dump golden
+/// is byte-identical (the persisted map is the same map).
+const EXPECTED_LEDGER_STATEMENTS: usize = 16;
 
 /// The tables one pool-chunk apply touches, in the dump's fixed (alphabetical)
 /// order. `exchanges` is the chunk's commit stamp; `erc20_tokens` the token

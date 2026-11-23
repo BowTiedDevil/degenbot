@@ -47,12 +47,12 @@
 //! argument for that boundary:
 //!
 //! 1. The read pass computes each in-scope pool's map from the COMMITTED DB
-//!    state; the apply persists either that exact map (planned pools) or the
-//!    byte-equal in-transaction re-derivation (chunk-new pools: empty base +
-//!    the same events - the base is created by the chunk's own upsert inside
-//!    the tx, so read-pass and in-tx bases agree by construction). The only
-//!    way the two diverge is a concurrent writer mutating the base between
-//!    the read pass and the tx.
+//!    state and the apply persists that plan's delta — one derivation per
+//!    pool, so the gated artifact IS the persisted artifact. A chunk-new
+//!    pool's plan carries the sentinel `pool_id` 0 (no row existed at plan
+//!    time) and the apply keys it to the id its own upsert assigned inside the
+//!    tx. The only way the planned map diverges from committed state is a
+//!    concurrent writer mutating the base between the read pass and the tx.
 //! 2. A concurrent writer cannot exist in the bot's single-writer discipline
 //!    (one `run_pool_update` per DB; the write path is the chunk loop). The
 //!    invariant is nevertheless made STRUCTURAL: the end-of-chunk stamp is an
@@ -264,23 +264,25 @@ pub struct ChunkInputs {
 }
 
 /// A pre-transaction-computed liquidity map for one in-scope pool - the
-/// read pass's output. `is_new_pool` marks a pool whose row is
-/// created by THIS chunk's pool-creation upsert: it has no committed base
-/// state to read pre-transaction, so its planned map (empty base + events,
-/// sentinel `pool_id`) exists ONLY to feed the pre-transaction verify RPC;
-/// the in-transaction apply re-derives the map from the just-upserted row -
-/// byte-equal by construction (same empty base, same events, same spacing).
+/// read pass's output and the artifact the apply persists. `is_new_pool`
+/// marks a pool whose row is created by THIS chunk's pool-creation upsert: it
+/// has no committed base state to read pre-transaction, so its planned map
+/// (empty base + events) carries the sentinel `pool_id` 0 and the
+/// in-transaction apply keys the delta to the id its upsert assigned.
 #[derive(Debug, Clone)]
 pub struct PlannedLiquidityMap {
     /// The FULL post-apply map the on-chain-truth gate consumes — the
     /// verifier's input contract is a complete map, and every plan is
-    /// verified before its chunk commits.
+    /// verified before its chunk commits. A chunk-new pool's persisted rows
+    /// are exactly this map; an existing pool's are its event-touched
+    /// projection.
     pub computed: ComputedLiquidityUpdate,
     /// The event-touched write set the apply persists: dirty
     /// survivors + drained keys, O(events) — the full map is verification
     /// input, the delta is the write set.
     pub delta: LiquidityDelta,
-    /// `true` = chunk-new pool (the apply takes the fused in-transaction path).
+    /// `true` = chunk-new pool (the delta's sentinel `pool_id` 0 is keyed to
+    /// the upserted row id before persist).
     pub is_new_pool: bool,
 }
 
@@ -440,13 +442,15 @@ pub fn map_pool_creation(
 /// in the pre-transaction read pass ([`compute_preverified_liquidity`] plus
 /// the driver's gate), NOT here: zero RPC round trips (and none of the
 /// per-pool read SELECTs for planned pools) sit between the caller's
-/// `transaction()` open and its commit/drop. Pools with a planned non-new
-/// state persist the plan's DELTA (only the event-touched keys —
-/// dirty survivors upserted, drained keys deleted by key); chunk-new pools
-/// (whose row is created by this chunk's upsert) take the fused
-/// in-transaction dirty compute→delta-persist path — their plan (empty base
-/// and the same events) is byte-equal to the in-transaction re-derivation,
-/// so a gated run persists exactly what the gate verified. The stamp is
+/// `transaction()` open and its commit/drop. Every planned pool persists the
+/// plan's DELTA (only the event-touched keys — dirty survivors upserted,
+/// drained keys deleted by key, or the drained-pool complement delete-all when
+/// the verified map is empty): one derivation per pool, so a gated run
+/// persists exactly what the gate verified. A chunk-new plan carries the
+/// sentinel `pool_id` 0 and the apply keys it to the id its own upsert
+/// assigned. The fused dirty compute survives ONLY as the no-plan fallback
+/// seam (the atomicity contract's `run_chunk`), where the just-upserted empty
+/// row makes the dirty map the whole map. The stamp is
 /// OPTIMISTIC (the assumed marker rides the WHERE clause) so the restart
 /// invariant is structural: a moved marker changes zero rows →
 /// [`RunError::MarkerMoved`] → the caller drops the transaction and re-loops.
@@ -490,41 +494,44 @@ pub fn apply_chunk_writes_on_conn(
     //    The whole-chain scan grouped by emitter; the read pass already
     //    kept only in-scope pools (and computed their maps pre-transaction).
     //    Deterministic per-pool order: the map iteration is hashbrown-random,
-    //    but each pool issues its own statements (the scope-filter fetch on
-    //    the fused path, the persist on the planned path), so the chunk
-    //    apply's statement sequence - and the row ids its upserts assign -
-    //    must not depend on it (golden-capture replay, ADR-068 D3/D6).
+    //    but each pool issues its own statements (the row-id read + persist on
+    //    the planned path, the scope-filter fetch on the fallback path), so
+    //    the chunk apply's statement sequence - and the row ids its upserts
+    //    assign - must not depend on it (golden-capture replay, ADR-068
+    //    D3/D6).
     let mut v3_pools: Vec<(Address, &Vec<LiquidityUpdateEvent>)> =
         inputs.v3_liquidity.iter().map(|(a, e)| (*a, e)).collect();
     v3_pools.sort_by_key(|(a, _)| *a);
     for (pool_address, events) in &v3_pools {
-        // A planned, non-new pool persists its pre-computed map -
-        // the read pass's compute SELECTs ran before `BEGIN`, not under the
-        // write lock, and (gated) the map is the one the verify RPC checked.
+        // A planned pool persists its verified map's delta: the read pass's
+        // compute SELECTs ran before `BEGIN`, not under the write lock, and
+        // (gated) the map is the one the verify RPC checked.
         if let Some(plan) = preverified.v3.get(pool_address) {
-            if !plan.is_new_pool {
-                // Persist ONLY the event-touched keys (the plan's delta) —
-                // no full-map complement rewrite.
-                DegenbotDb::persist_v3_liquidity_delta_on_conn(conn, &plan.delta)?;
-                report.liquidity_apply_count += 1;
-                continue;
-            }
-        } else if in_scope_v3_creation_tick_spacing(
-            pool_address,
-            specs_to_update,
-            &inputs.pool_creations,
-        )
-        .is_none()
-        {
-            // Neither planned nor created by this chunk: the read pass
-            // already scope-filtered this pool (its fetch ran pre-transaction)
-            // and found it unknown or out-of-scope - skip with no
-            // in-transaction fetch (the fetch moved pre-`BEGIN`).
+            let keyed;
+            let delta = if plan.is_new_pool {
+                keyed =
+                    plan.delta
+                        .with_pool_id(chunk_new_v3_pool_id(conn, chain_id, *pool_address)?);
+                &keyed
+            } else {
+                &plan.delta
+            };
+            DegenbotDb::persist_v3_liquidity_delta_on_conn(conn, delta)?;
+            report.liquidity_apply_count += 1;
             continue;
         }
-        // The fused in-transaction path (chunk-new pools): the row exists -
-        // the upsert above created it - so re-derive the map from the
-        // committed base and persist.
+        if in_scope_v3_creation_tick_spacing(pool_address, specs_to_update, &inputs.pool_creations)
+            .is_none()
+        {
+            // Not planned and not created by this chunk: the read pass already
+            // scope-filtered this pool (its fetch ran pre-transaction) and
+            // found it unknown or out-of-scope - skip with no in-transaction
+            // fetch (the fetch moved pre-`BEGIN`).
+            continue;
+        }
+        // The no-plan fallback seam (the atomicity contract's `run_chunk`):
+        // the row exists - the upsert above created it - so the dirty compute
+        // over the just-upserted empty row is the whole map.
         let pool = DegenbotDb::fetch_pool_by_address_on_conn(conn, *pool_address, chain_id)?;
         let in_scope = pool
             .as_ref()
@@ -534,11 +541,10 @@ pub fn apply_chunk_writes_on_conn(
             continue; // pool belongs to an exchange not being updated this chunk
         }
         let compute_started = Instant::now();
-        // The fused path is the chunk-new pools' dirty compute — the base is
-        // the just-upserted EMPTY row, so the dirty read (the touched keys'
-        // rows + words) is the whole read, and the delta is the whole write
-        // set. Byte-equal to a full re-derive (same empty base, same events,
-        // same spacing).
+        // The fallback seam's dirty compute — the base is the just-upserted
+        // EMPTY row, so the dirty read (the touched keys' rows) is the whole
+        // read and the delta is the whole write set. Byte-equal to the plan's
+        // derivation (same empty base, same events, same spacing).
         let Some(delta) = DegenbotDb::compute_v3_liquidity_delta_on_conn(
             conn,
             chain_id,
@@ -562,27 +568,31 @@ pub fn apply_chunk_writes_on_conn(
     v4_pools.sort_by_key(|(h, _)| *h);
     for (pool_hash, events) in v4_pools {
         if let Some(plan) = preverified.v4.get(pool_hash) {
-            if !plan.is_new_pool {
-                // Persist ONLY the event-touched keys (the plan's delta) —
-                // no full-map complement rewrite.
-                DegenbotDb::persist_v4_liquidity_delta_on_conn(conn, &plan.delta)?;
-                report.liquidity_apply_count += 1;
-                continue;
-            }
-        } else if in_scope_v4_creation_tick_spacing(
-            pool_hash,
-            specs_to_update,
-            &inputs.pool_creations,
-        )
-        .is_none()
+            let keyed;
+            let delta = if plan.is_new_pool {
+                keyed = plan.delta.with_pool_id(chunk_new_v4_pool_id(
+                    conn,
+                    pool_hash,
+                    inputs.pool_manager_chain,
+                )?);
+                &keyed
+            } else {
+                &plan.delta
+            };
+            DegenbotDb::persist_v4_liquidity_delta_on_conn(conn, delta)?;
+            report.liquidity_apply_count += 1;
+            continue;
+        }
+        if in_scope_v4_creation_tick_spacing(pool_hash, specs_to_update, &inputs.pool_creations)
+            .is_none()
         {
             // Not planned and not created by this chunk - the read pass
             // filtered it (its state fetch ran pre-transaction).
             continue;
         }
         let compute_started = Instant::now();
-        // The fused path is the chunk-new pools' dirty compute (the V4 mirror
-        // of the V3 arm above).
+        // The fallback seam's dirty compute (the V4 mirror of the V3 arm
+        // above).
         let Some(delta) = DegenbotDb::compute_v4_liquidity_delta_on_conn(
             conn,
             pool_hash,
@@ -813,6 +823,39 @@ fn in_scope_v4_creation_tick_spacing(
     })
 }
 
+/// The `pools.id` this chunk's V3 pool upsert assigned — the key a chunk-new
+/// plan's delta persists under (the plan itself carries the sentinel 0: no row
+/// existed when it was computed).
+fn chunk_new_v3_pool_id(
+    conn: &Connection,
+    chain_id: i64,
+    pool_address: Address,
+) -> Result<i64, RunError> {
+    DegenbotDb::fetch_pool_by_address_on_conn(conn, pool_address, chain_id)?
+        .map(|row| row.id)
+        .ok_or_else(|| {
+            RunError::Db(degenbot_db::DbError::Decode(format!(
+                "chunk-new pool {pool_address} has no row after this chunk's upsert"
+            )))
+        })
+}
+
+/// The V4 twin of [`chunk_new_v3_pool_id`]: the `managed_pools.id` this
+/// chunk's V4 upsert assigned.
+fn chunk_new_v4_pool_id(
+    conn: &Connection,
+    pool_hash: &str,
+    pool_manager_chain: i64,
+) -> Result<i64, RunError> {
+    DegenbotDb::fetch_v4_pool_update_state_on_conn(conn, pool_hash, pool_manager_chain)?
+        .map(|state| state.pool_id)
+        .ok_or_else(|| {
+            RunError::Db(degenbot_db::DbError::Decode(format!(
+                "chunk-new pool {pool_hash} has no managed-pool row after this chunk's upsert"
+            )))
+        })
+}
+
 /// The pre-transaction read pass: compute every in-scope
 /// pool's post-chunk liquidity state BEFORE the chunk `Transaction` opens.
 /// The per-pool map SELECTs (the baseline's in-lock compute) and the per-pool
@@ -828,8 +871,8 @@ fn in_scope_v4_creation_tick_spacing(
 ///
 /// Per V3 pool (address-sorted): a chunk-new pool (this chunk's creations
 /// upsert it) has no committed base, so its planned map (empty base + events)
-/// is what feeds the pre-transaction verify - the apply's fused path
-/// re-derives the byte-equal map in-transaction from the just-upserted row.
+/// is what feeds the pre-transaction verify and what the apply persists (keyed
+/// to the id its own upsert assigns).
 /// An existing in-scope pool is scope-fetched + computed exactly as the
 /// in-transaction path did - same SELECTs, moved out of the lock.
 /// Unknown/out-of-scope pools are dropped here (the apply skips them without
@@ -853,8 +896,8 @@ fn compute_preverified_liquidity(
         {
             // Chunk-new pool: no committed base to read. The planned map
             // (empty base + events, sentinel `pool_id`) is what the
-            // pre-transaction verify RPC checks; the apply's fused path
-            // re-derives the byte-equal map in-transaction.
+            // pre-transaction verify RPC checks and what the apply persists,
+            // keyed to the id its upsert assigns.
             // The creation row carries the event's tick spacing (i64); the
             // map math is i32-keyed. A spacing outside i32 is a decode-
             // level impossibility - fail loud, never clamp.
@@ -864,9 +907,6 @@ fn compute_preverified_liquidity(
                 ))
             })?;
             let computed = DegenbotDb::compute_v3_liquidity_update_for_new_pool(spacing, events);
-            // The new-pool plan is never persisted (the apply's fused path
-            // re-derives it in-transaction); the delta rides along for
-            // shape parity with the existing-pool plans.
             let delta = derive_liquidity_delta_from_computed(&computed, events);
             preverified.v3.insert(
                 *pool_address,
@@ -1795,8 +1835,10 @@ async fn fetch_pool_creations(
 mod tests {
     use super::*;
     use crate::verify::LiquidityDivergence;
-    use alloy::primitives::U256 as U256P;
+    use alloy::primitives::{I256, U256 as U256P};
+    use degenbot_db::sql_ledger::LedgerDb;
     use degenbot_db::DegenbotDb;
+    use tempfile::TempDir;
 
     /// An in-memory writeable DB with the head schema (the chunk-writer's
     /// substrate). Mirrors the discovery tests' `write_db` helper.
@@ -2081,5 +2123,241 @@ mod tests {
             }
             other => panic!("expected Verification, got {other:?}"),
         }
+    }
+
+    /// The ledger's capture session is ONE process-global slot: the two
+    /// SQL-branch tests below take turns.
+    static LEDGER_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// One liquidity event; `liquidity_delta` is signed (Burn negative).
+    fn liq_event(
+        block_number: u64,
+        log_index: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i64,
+    ) -> LiquidityUpdateEvent {
+        LiquidityUpdateEvent {
+            block_number,
+            log_index,
+            tick_lower,
+            tick_upper,
+            liquidity_delta: I256::try_from(liquidity_delta).unwrap(),
+        }
+    }
+
+    /// A traced DB with one `uniswap_v3` exchange, the chunk-new pool row, and
+    /// the chunk inputs that create that pool + apply `events` to it.
+    fn chunk_new_v3_fixture(
+        path: &Path,
+        events: &[LiquidityUpdateEvent],
+    ) -> (LedgerDb, ExchangeSpec, ChunkInputs, V3PoolRowInput) {
+        let (ledger, _state) = LedgerDb::open_for_writes(path).unwrap();
+        let factory = Address::from([0x1f; 20]);
+        let exchange = ledger
+            .db()
+            .upsert_exchange(1, "uniswap_v3", factory, None)
+            .unwrap();
+        let spec = ExchangeSpec {
+            id: exchange.id,
+            chain_id: 1,
+            name: "uniswap_v3".to_string(),
+            factory,
+            family: crate::fetch::PoolFamily::V3,
+            event_topic: B256::ZERO,
+            fee_denominator: 1_000_000,
+            v2_fee_token: None,
+            rpc_fee_call: None,
+            last_update_block: None,
+        };
+        let row = V3PoolRowInput {
+            address: Address::from([0x11; 20]),
+            token0_address: Address::from([0x22; 20]),
+            token1_address: Address::from([0x33; 20]),
+            fee: 500,
+            tick_spacing: 10,
+        };
+        let inputs = ChunkInputs {
+            pool_creations: vec![PoolCreationToWrite::V3 {
+                exchange_id: exchange.id,
+                row: row.clone(),
+            }],
+            v3_liquidity: HashMap::from([(row.address, events.to_vec())]),
+            ..Default::default()
+        };
+        (ledger, spec, inputs, row)
+    }
+
+    /// The plan the read pass hands the apply for a chunk-new pool: empty base +
+    /// the chunk's events (the row does not exist yet, so the delta keeps the
+    /// sentinel `pool_id`).
+    fn chunk_new_v3_plan(
+        events: &[LiquidityUpdateEvent],
+    ) -> (ComputedLiquidityUpdate, LiquidityDelta) {
+        let computed = DegenbotDb::compute_v3_liquidity_update_for_new_pool(10, events);
+        let delta = derive_liquidity_delta_from_computed(&computed, events);
+        (computed, delta)
+    }
+
+    /// A chunk-new pool persists the map the gate verified: the plan's delta
+    /// under the id the chunk's own upsert assigned, with no in-transaction
+    /// re-derivation read.
+    #[test]
+    fn chunk_new_pool_persists_the_verified_plan_delta() {
+        let _slot = LEDGER_SESSION.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let events = vec![
+            liq_event(100, 0, -10, 10, 1_000_000),
+            liq_event(100, 1, 100, 110, 250_000),
+            liq_event(101, 0, 100, 110, -250_000),
+        ];
+        let (ledger, spec, inputs, row) =
+            chunk_new_v3_fixture(&dir.path().join("plan.db"), &events);
+        let (computed, delta) = chunk_new_v3_plan(&events);
+        assert_eq!(
+            delta.pool_id, 0,
+            "the plan keys nothing yet: sentinel pool_id"
+        );
+        let preverified = PreVerifiedLiquidity {
+            v3: HashMap::from([(
+                row.address,
+                PlannedLiquidityMap {
+                    computed: computed.clone(),
+                    delta,
+                    is_new_pool: true,
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let report = {
+            let mut guard = ledger.db().lock();
+            let tx = guard.transaction().unwrap();
+            let report =
+                apply_chunk_writes_on_conn(&tx, 1, &[spec], 200, &inputs, &preverified).unwrap();
+            tx.commit().unwrap();
+            report
+        };
+        assert_eq!(report.liquidity_apply_count, 1, "one liquidity apply");
+
+        let records = ledger.records().unwrap();
+        assert!(
+            !records
+                .iter()
+                .any(|r| r.normalized_sql.starts_with("SELECT")
+                    && r.normalized_sql.contains("FROM liquidity_positions")),
+            "the apply must persist the verified plan, never re-read the map: {:?}",
+            records
+                .iter()
+                .map(|r| r.normalized_sql.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let conn = ledger.db().lock();
+        let pool_id: i64 = conn
+            .query_row(
+                "SELECT id FROM pools WHERE address = ?1",
+                rusqlite::params![row.address.to_checksum(None)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut expected: Vec<(i32, String, String)> = computed
+            .tick_data
+            .iter()
+            .map(|(tick, at)| {
+                (
+                    *tick,
+                    at.liquidity_net.to_string(),
+                    at.liquidity_gross.to_string(),
+                )
+            })
+            .collect();
+        expected.sort_by_key(|(tick, _, _)| *tick);
+        let mut stmt = conn
+            .prepare(
+                "SELECT tick, liquidity_net, liquidity_gross FROM liquidity_positions                  WHERE pool_id = ?1 ORDER BY tick",
+            )
+            .unwrap();
+        let persisted: Vec<(i32, String, String)> = stmt
+            .query_map(rusqlite::params![pool_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            persisted, expected,
+            "the persisted map IS the verified plan's map"
+        );
+        let last = computed.last_event.unwrap();
+        let marker: (i64, i64) = conn
+            .query_row(
+                "SELECT liquidity_update_block, liquidity_update_log_index                  FROM uniswap_v3_pools WHERE pool_id = ?1",
+                rusqlite::params![pool_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            marker,
+            (
+                i64::try_from(last.block).unwrap(),
+                i64::try_from(last.log_index).unwrap()
+            ),
+            "the marker is the verified stamp"
+        );
+    }
+
+    /// A chunk-new pool drained inside its creating chunk takes the drained-pool
+    /// complement delete-all — the derive truth — instead of per-key deletes.
+    #[test]
+    fn chunk_new_full_drain_takes_the_complement_delete() {
+        let _slot = LEDGER_SESSION.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let events = vec![
+            liq_event(100, 0, -10, 10, 500_000),
+            liq_event(100, 1, 100, 110, 250_000),
+            liq_event(101, 0, -10, 10, -500_000),
+            liq_event(101, 1, 100, 110, -250_000),
+        ];
+        let (ledger, spec, inputs, row) =
+            chunk_new_v3_fixture(&dir.path().join("drain.db"), &events);
+        let (computed, delta) = chunk_new_v3_plan(&events);
+        assert!(delta.drained_pool, "the verified map is empty");
+        let preverified = PreVerifiedLiquidity {
+            v3: HashMap::from([(
+                row.address,
+                PlannedLiquidityMap {
+                    computed,
+                    delta,
+                    is_new_pool: true,
+                },
+            )]),
+            ..Default::default()
+        };
+        {
+            let mut guard = ledger.db().lock();
+            let tx = guard.transaction().unwrap();
+            apply_chunk_writes_on_conn(&tx, 1, &[spec], 200, &inputs, &preverified).unwrap();
+            tx.commit().unwrap();
+        }
+
+        let deletes: Vec<String> = ledger
+            .records()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.normalized_sql)
+            .filter(|sql| sql.starts_with("DELETE FROM liquidity_positions"))
+            .collect();
+        assert_eq!(deletes.len(), 1, "one delete statement: {deletes:?}");
+        assert!(
+            !deletes[0].contains(" IN ("),
+            "the complement delete-all carries no per-key list: {}",
+            deletes[0]
+        );
+        let conn = ledger.db().lock();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM liquidity_positions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "the fully-drained chunk-new pool holds no rows");
     }
 }
