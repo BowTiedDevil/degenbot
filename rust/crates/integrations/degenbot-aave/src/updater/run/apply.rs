@@ -130,10 +130,9 @@ pub struct ChunkWriteReport {
 /// [`crate::updater::run::substrate`] for the read-your-own-writes
 /// contract the overlay enforces.
 ///
-/// Written per-tx: the chunk loop writes each tx's configuration deltas to
-/// `conn` BEFORE that tx's parse reads — the two staleness surfaces close
-/// (the prior tx's `Upgraded` revision is visible via read-your-own-writes
-/// within the `SQLite` txn).
+/// Written once, at the chunk's one write stage: resolution already projected
+/// every configuration effect onto the substrate overlay in dispatch order, so
+/// the delta stream persists in canonical order and no read re-enters SQL.
 ///
 /// Pure, synchronous, transactional. NONE of: RPC, ABI decode, `pyo3`,
 /// `database_path`, `open_for_writes`.
@@ -318,8 +317,9 @@ fn apply_configuration_effect(
                     *gho_token_id,
                     new_strategy.as_deref(),
                 )?;
-                // The write touched `aave_gho_tokens` — the cached GHO row is
-                // stale (the next per-tx re-resolve re-queries).
+                // The write touched `aave_gho_tokens`; the rotation's own
+                // delta was already projected onto resolution's GHO row, and
+                // the next chunk's seed re-reads the committed row.
                 report.gho_discount_rate_strategy_updated += 1;
             }
             ConfigurationEffect::GhoDiscountTokenUpdated {
@@ -331,9 +331,9 @@ fn apply_configuration_effect(
                     *gho_token_id,
                     new_discount_token.as_deref(),
                 )?;
-                // The write touched `aave_gho_tokens` — the cached GHO row is
-                // stale (the next per-tx re-resolve re-queries; the discount
-                // refresh must hit the NEW contract).
+                // The write touched `aave_gho_tokens`; a same-tx rotation was
+                // already projected onto resolution's GHO row, so the discount
+                // refresh hit the NEW contract before this write landed.
                 report.gho_discount_token_updated += 1;
             }
             ConfigurationEffect::StkAaveTransfer {
@@ -483,9 +483,9 @@ fn apply_configuration_effect(
 /// SELECT the primitive would otherwise issue. No transport, no decode, no
 /// identity resolution — the deltas already name their settled position rows.
 ///
-/// The written state lands back in the substrate overlay, so a read of a
-/// position or a configuration fact this chunk just wrote (the next
-/// transaction's resolution) sees exactly what the SQL probe would return.
+/// The written state lands back in the substrate overlay, so a later apply-side
+/// read of a position or a configuration fact this chunk just wrote sees
+/// exactly what the SQL probe would return.
 ///
 /// # Errors
 ///
@@ -650,10 +650,10 @@ pub fn apply_aave_chunk_writes_on_conn(
     deltas: &[CanonicalDelta],
     chunk_end_block: u64,
 ) -> Result<ChunkWriteReport, degenbot_db::DbError> {
-    // The batched entrypoint runs WITHOUT the per-tx substrate prefetch (the
-    // chunk loop's `process_chunk_on_conn` owns that): a lazy cache — every
-    // read probes SQL once and caches, every apply records its overlay — so
-    // the observable DB outcome matches the chunk-loop path byte-for-byte.
+    // The batched entrypoint runs WITHOUT the chunk seed (the chunk loop loads
+    // its starting point through `ChunkSeed`): a lazy cache — every read
+    // probes SQL once and caches, every apply records its overlay — so the
+    // observable DB outcome matches the chunk-loop path byte-for-byte.
     // `chain_id` is never read here (this entrypoint issues no GHO re-resolve).
     let mut substrate = ChunkSubstrate::lazy(0);
     let mut report = ChunkWriteReport {

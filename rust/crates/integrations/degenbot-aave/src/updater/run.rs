@@ -1,13 +1,13 @@
 //! The Aave V3 updater driver: the shared-runtime sync entry
 //! ([`run_aave_update`]) plus the ONE async driver future orchestrating the
-//! chunk loop over its stage modules (`apply`, `process`, `fetch`,
-//! `activate`).
+//! chunk loop over its stage modules (`fetch`, `seed`, `resolver`,
+//! `process`, `apply`).
 //!
 //! The runtime-facing invariants — the shared-runtime `block_on` constraint,
-//! the `!Send` `Transaction`-across-`.await` soundness argument, and the
-//! atomicity-ownership duties of the loop — are documented on
-//! `run_aave_update` / `run_aave_update_driver`. The chunk-atomicity
-//! contract itself is owned by the `apply` stage.
+//! the single-thread-poll soundness argument, and the atomicity-ownership
+//! duties of the loop — are documented on `run_aave_update` /
+//! `run_aave_update_driver`. The chunk-atomicity contract itself is owned by
+//! the `apply` stage.
 
 mod activate;
 mod apply;
@@ -110,17 +110,17 @@ pub struct AaveChunkProgress {
     /// replay-bench baseline measurement; the telemetry spans carry the same
     /// regions). Mirrors `degenbot-pool-updater::ChunkProgress`.
     pub fetch_time: Duration,
-    /// Wall time of the in-transaction per-tx decode+compute block (the
-    /// GHO/revision conn reads, the discount pre-pass + the configuration
-    /// dispatch - both hold the write lock across their RPC reads).
+    /// Wall time of the chunk's resolution (the configuration dispatch, the
+    /// operation parse, and the reduction): every per-transaction RPC and every
+    /// substrate read, taken BEFORE the chunk's write transaction opens.
     pub decode_compute_time: Duration,
     /// Wall time of the pre-commit on-chain-truth verification RPC (the
     /// touched-positions gate + the market-wide gate). Zero when the gates
     /// are off.
     pub verify_time: Duration,
-    /// Wall time of the remaining in-transaction SQL apply (per-tx event
-    /// applies, the zero-balance cleanup, the stamp): the chunk's write-lock
-    /// span minus [`Self::decode_compute_time`] and [`Self::verify_time`].
+    /// Wall time of the chunk's write stage inside the transaction (the delta
+    /// apply, the reserve-data flush, the zero-balance cleanup, the projection
+    /// unit, and the stamp), measured on the write path itself.
     pub apply_time: Duration,
     /// The write-lock hold: the span from `transaction()` open to
     /// commit/drop. The headline number for keeping RPC reads out of the
@@ -469,12 +469,12 @@ pub struct RunSpec {
 /// ONE `Transaction` per chunk, opened after resolution. Failure anywhere in
 /// the chunk body → drop the tx → the chunk's writes revert →
 /// `last_update_block` unchanged → a restart re-processes the chunk clean (no
-/// skipped blocks, no partial commit). Resolution holds the connection guard,
-/// never a write transaction (ADR-105 D3/D4), and the identity rows its
-/// `get_or_create_*` calls commit are inert until the chunk's deltas reference
-/// them. The ONE `get_runtime().block_on` polls the whole driver future on the
-/// calling thread, so the `db.lock()` guard across `.await` is safe
-/// (single-thread poll — no other runtime worker can touch this future).
+/// skipped blocks, no partial commit). Resolution holds no connection at all,
+/// never a write transaction (ADR-105 D3/D4); the rows its seed interned were
+/// committed before the chunk's transaction opened, so they are inert until the
+/// chunk's deltas reference them. The ONE `get_runtime().block_on` polls the
+/// whole driver future on the calling thread, so a synchronous `db.lock()`
+/// window blocks only this thread (no other runtime worker can poll it).
 ///
 /// # Shared runtime
 ///
@@ -527,10 +527,9 @@ pub fn run_aave_update_on_db(db: &DegenbotDb, spec: RunSpec) -> Result<AaveUpdat
     }
 
     // ONE block_on of the process-wide SHARED runtime at the fleet/CLI entry
-    // seam — see "# Shared runtime" above. The driver future is polled
-    // on the calling thread only, so the `!Send` `&Transaction` borrow and
-    // the DB ` MutexGuard` held across `.await` stay sound (no `Send` hop,
-    // no concurrent poll).
+    // seam — see "# Shared runtime" above. The driver future is polled on the
+    // calling thread only, so its synchronous `db.lock()` windows are never
+    // contended by another poll and no `!Send` guard needs a `Send` hop.
     get_runtime().block_on(run_aave_update_driver(db, spec))
 }
 
@@ -974,13 +973,13 @@ async fn run_aave_update_driver(
         //     `ReserveInitialized` in tx N + the first `Supply`/`Borrow` on
         //     it in tx N+M, same chunk) has its aToken/vToken NOT in the
         //     (just-refreshed) spec set — the asset doesn't exist until the
-        //     `ReserveInitialized` dispatches inside `process_chunk_on_conn`.
+        //     `ReserveInitialized` dispatches inside the chunk's resolution.
         //     Pre-scan the frozen logs for `ReserveInitialized` events whose
         //     aToken/vToken isn't in the known set, re-fetch those tokens'
         //     scaled-token logs for the chunk range, + merge (de-dup by
         //     (block_number, log_index)). The per-tx config-dispatch → ops
-        //     interleave is preserved, so the `v_token_revision` conn reads
-        //     stay per-tx-correct per the intra-dispatch apply (no
+        //     interleave is preserved, so the `v_token_revision` reads stay
+        //     per-tx-correct per the dispatch's substrate projection (no
         //     rev-boundary regression — a two-pass split would let tx N's ops
         //     see a later tx's `Upgraded`).
         let known: HashSet<Address> = spec.scaled_token_addresses.iter().copied().collect();

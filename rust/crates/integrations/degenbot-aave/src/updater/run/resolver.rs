@@ -19,6 +19,8 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
+use degenbot_core::canonical_head::TxRef;
+use degenbot_db::ScaledTokenPosition;
 use degenbot_rpc::chain_evidence::BlockReads;
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -27,7 +29,7 @@ use super::seed::ChunkSeed;
 use super::substrate::ChunkSubstrate;
 use super::{ConfigDispatchError, RunError};
 use crate::config_dispatch::{ChunkContext, ChunkSpan, ParentAnchors, RevisionMemo};
-use crate::projection::{CanonicalDelta, DeltaEffect, ProjectionView};
+use crate::projection::{CanonicalDelta, DeltaEffect, PositionSubject, ProjectionView};
 use crate::transaction_processor::{MarketIdentity, OperationReducer, ProcessTxError};
 
 /// The per-chunk resolution owner: the read memos the chunk's exact reads
@@ -134,16 +136,11 @@ impl ChunkResolver {
             )
             .reduce_transaction(&candidate.evidence, &config_deltas)
             .map_err(|error| {
-                #[expect(clippy::print_stderr)]
-                {
-                    eprintln!(
-                        "AAVE-PARSE-FAIL block={block_number} tx=0x{} err={error}",
-                        alloy::hex::encode(group.tx_hash)
-                    );
-                }
+                report_parse_failure(*candidate.evidence.tx(), &error);
                 map_process_error(error)
             })?;
             decode_compute_time += compute_started.elapsed();
+            emit_transaction_trace(&view, &deltas, block_number, *candidate.evidence.tx());
             drop(compute_guard);
             compute_span.record(
                 "rpc.round_trips",
@@ -190,7 +187,7 @@ impl ChunkResolver {
 }
 
 /// One chunk's resolved write product: the ordered canonical deltas, the
-/// projection the resolution left behind (persistence reads its overlay), the
+/// substrate overlay resolution advanced (persistence applies against it), the
 /// touched users, and the resolution's own stage time.
 pub(super) struct ChunkResolution {
     pub(super) deltas: Vec<CanonicalDelta>,
@@ -200,6 +197,92 @@ pub(super) struct ChunkResolution {
     /// The view's resume state when the cadence scheduled a checkpoint for this
     /// chunk's projection unit (ADR-105 D8, D9).
     pub(super) checkpoint: Option<crate::projection::CheckpointState>,
+}
+
+/// The `AAVE-TXTRACE` target: the closed `aave` domain, so an operator enables
+/// this per-transaction trace without enabling any other debug stream.
+const TXTRACE_TARGET: &str = degenbot_core::telemetry::domain::AAVE;
+
+/// The positions a transaction's deltas moved, deduplicated in table order.
+fn traced_subjects(deltas: &[CanonicalDelta]) -> Vec<PositionSubject> {
+    let mut subjects: Vec<PositionSubject> = Vec::new();
+    let mut push = |subject: PositionSubject| {
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+    };
+    for delta in deltas {
+        match delta.effect() {
+            DeltaEffect::ScaledBalance { subject, .. } => push(*subject),
+            DeltaEffect::ScaledTransfer { from, to, .. } => {
+                push(*from);
+                if let Some(to) = to {
+                    push(*to);
+                }
+            }
+            DeltaEffect::DebtPositionReset { position_id, .. } => push(PositionSubject {
+                position: ScaledTokenPosition::Debt,
+                position_id: *position_id,
+            }),
+            DeltaEffect::GhoRefreshDiscount { .. }
+            | DeltaEffect::StkAaveBalanceObserved { .. }
+            | DeltaEffect::GhoDiscountRefreshed { .. }
+            | DeltaEffect::Configuration(_) => {}
+        }
+    }
+    subjects.sort_unstable_by_key(|subject| (subject.position.table(), subject.position_id));
+    subjects
+}
+
+/// Emit one `AAVE-TXTRACE` line per position the transaction moved, reading the
+/// projection's POST-delta state: reduction advanced the view through every
+/// delta the transaction emitted, so a position moved twice in one transaction
+/// reports its settled end-of-transaction `(balance, last_index)`.
+///
+/// The gate is the diagnostic's OWN target, so enabling unrelated debug (a SQL
+/// layer, another domain) never runs this scan.
+fn emit_transaction_trace(
+    view: &ProjectionView,
+    deltas: &[CanonicalDelta],
+    block_number: u64,
+    tx: TxRef,
+) {
+    if !tracing::enabled!(target: TXTRACE_TARGET, tracing::Level::DEBUG) {
+        return;
+    }
+    let tx_hash = alloy::hex::encode(tx.hash());
+    for subject in traced_subjects(deltas) {
+        let Some((balance, index)) = view.position_state(subject) else {
+            continue;
+        };
+        degenbot_core::diag!(
+            domain = aave,
+            block = block_number,
+            tx = %tx_hash,
+            kind = %subject.position.table(),
+            pos = subject.position_id,
+            bal = %balance,
+            idx = %index.map_or_else(String::new, |index| index.to_string()),
+            "AAVE-TXTRACE"
+        );
+    }
+}
+
+/// Report a reduction refusal as one bounded `AAVE-PARSE-FAIL` event carrying the
+/// exact block and transaction coordinates of the refused transaction: the
+/// differential-narrowing consumer needs the position even when the error text
+/// states only the operation's own refusal.
+fn report_parse_failure(tx: TxRef, error: &ProcessTxError) {
+    let anchor = tx.anchor();
+    degenbot_core::op_error!(
+        domain = aave,
+        block = anchor.number(),
+        block_hash = %alloy::hex::encode(anchor.hash()),
+        tx = %alloy::hex::encode(tx.hash()),
+        tx_index = tx.index(),
+        err = %error,
+        "AAVE-PARSE-FAIL"
+    );
 }
 
 /// Recompute the users' GHO discounts the transaction's debt movements require
@@ -214,7 +297,6 @@ async fn resolve_discount_refresh(
     substrate: &mut ChunkSubstrate,
     chunk_deltas: &mut Vec<CanonicalDelta>,
 ) -> Result<(), RunError> {
-    use crate::projection::PositionSubject;
     let discount_token = substrate
         .gho_asset()
         .and_then(|gho| gho.v_gho_discount_token)
@@ -315,20 +397,29 @@ fn map_process_error(error: ProcessTxError) -> RunError {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use alloy::primitives::{I256, U256};
+    use degenbot_core::canonical_head::LogRef;
     use degenbot_db::sql_ledger::LedgerDb;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata, Subscriber};
 
-    /// Resolution is a function of the seed and the exact read views: a chunk with
-    /// REAL candidate logs — a scaled-token mint on this market's aToken and a
-    /// collateral-configuration change on its underlying — resolves to a non-empty
-    /// delta stream while the connection stays in the test's own hand. Every
-    /// relational fact those paths read (the asset classification, the user and its
-    /// position, the pool revision) comes from the production seed, so the statement
-    /// ledger records nothing between the seed load and the resolution's return. A
-    /// deferred lookup would be a statement here, or a deadlock against the guard.
-    #[test]
+    /// The one-mint chunk's fixture: a REAL candidate set (a scaled-token mint on
+    /// this market's aToken and a collateral-configuration change on its
+    /// underlying) over the production seed, resolved while the connection guard
+    /// stays in the test's hand.
     #[expect(clippy::too_many_lines)]
-    fn a_real_chunk_resolves_without_sql() {
+    fn with_one_mint_chunk<R>(
+        run: impl for<'a> FnOnce(
+            &LedgerDb,
+            &mut ChunkResolver,
+            &AlloyProvider,
+            ChunkSeed,
+            &[CandidateTransaction<'a>],
+        ) -> R,
+    ) -> R {
         use degenbot_core::canonical_head::ChainAnchor;
         use degenbot_rpc::tx_evidence::ReceiptTransaction;
         use rusqlite::params;
@@ -459,20 +550,37 @@ mod tests {
             group: groups.into_iter().next().unwrap(),
             evidence,
         }];
-        let before = ledger.records().unwrap().len();
-        let resolution = degenbot_core::runtime::get_runtime()
-            .block_on(ChunkResolver::new().resolve(
-                &provider,
-                seed,
-                1,
-                1,
-                Address::repeat_byte(0x11),
-                &candidates,
-                100,
-                100,
-            ))
-            .expect("a seeded chunk resolves without a connection");
-        let after = ledger.records().unwrap().len();
+        let mut resolver = ChunkResolver::new();
+        run(&ledger, &mut resolver, &provider, seed, &candidates)
+    }
+
+    /// Resolution is a function of the seed and the exact read views: the real
+    /// chunk resolves to a non-empty delta stream while the connection stays in
+    /// the test's own hand. Every relational fact those paths read (the asset
+    /// classification, the user and its position, the pool revision) comes from
+    /// the production seed, so the statement ledger records nothing between the
+    /// seed load and the resolution's return. A deferred lookup would be a
+    /// statement here, or a deadlock against the guard.
+    #[test]
+    fn a_real_chunk_resolves_without_sql() {
+        let (resolution, before, after) =
+            with_one_mint_chunk(|ledger, resolver, provider, seed, candidates| {
+                let before = ledger.records().unwrap().len();
+                let resolution = degenbot_core::runtime::get_runtime()
+                    .block_on(resolver.resolve(
+                        provider,
+                        seed,
+                        1,
+                        1,
+                        Address::repeat_byte(0x11),
+                        candidates,
+                        100,
+                        100,
+                    ))
+                    .expect("a seeded chunk resolves without a connection");
+                let after = ledger.records().unwrap().len();
+                (resolution, before, after)
+            });
         assert_eq!(
             after, before,
             "resolution issued no SQL: the guard stayed in the test's hand"
@@ -490,6 +598,281 @@ mod tests {
                 crate::projection::DeltaEffect::Configuration(_)
             )),
             "the configuration change reduced to a configuration delta: the config path ran"
+        );
+    }
+
+    /// The transaction the diagnostic tests state their coordinates under.
+    fn trace_fixture_tx(index: u64) -> TxRef {
+        let anchor = degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::repeat_byte(0xaa),
+            alloy::primitives::B256::repeat_byte(0x99),
+        )
+        .expect("the fixture anchor is complete");
+        TxRef::new(anchor, alloy::primitives::B256::repeat_byte(0xbb), index)
+            .expect("the fixture transaction names its position")
+    }
+
+    /// One captured diagnostic event: its level, target, and rendered fields.
+    #[derive(Debug)]
+    struct CapturedEvent {
+        level: Level,
+        target: String,
+        fields: Vec<(String, String)>,
+    }
+
+    impl CapturedEvent {
+        fn message(&self) -> &str {
+            self.field("message")
+        }
+
+        fn field(&self, name: &str) -> &str {
+            self.fields
+                .iter()
+                .find(|(field, _)| field == name)
+                .map_or("", |(_, value)| value.as_str())
+        }
+    }
+
+    struct FieldCapture<'a>(&'a mut Vec<(String, String)>);
+
+    impl Visit for FieldCapture<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0
+                .push((field.name().to_string(), format!("{value:?}")));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.push((field.name().to_string(), value.to_string()));
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.0.push((field.name().to_string(), value.to_string()));
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.0.push((field.name().to_string(), value.to_string()));
+        }
+    }
+
+    /// A subscriber that records ONLY `target`'s debug-or-worse events, so a test
+    /// can prove both the emitted payload and the stream's target scoping.
+    struct TargetCapture {
+        target: &'static str,
+        events: Arc<Mutex<Vec<CapturedEvent>>>,
+    }
+
+    impl Subscriber for TargetCapture {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.target() == self.target && *metadata.level() <= Level::DEBUG
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut fields = Vec::new();
+            event.record(&mut FieldCapture(&mut fields));
+            self.events.lock().unwrap().push(CapturedEvent {
+                level: *event.metadata().level(),
+                target: event.metadata().target().to_string(),
+                fields,
+            });
+        }
+    }
+
+    /// Run `emit` under a subscriber that enables `target` alone.
+    fn capturing(target: &'static str, emit: impl FnOnce()) -> Vec<CapturedEvent> {
+        let events: Arc<Mutex<Vec<CapturedEvent>>> = Arc::default();
+        let subscriber = TargetCapture {
+            target,
+            events: Arc::clone(&events),
+        };
+        tracing::subscriber::with_default(subscriber, emit);
+        Arc::try_unwrap(events)
+            .expect("the capture is the sole owner")
+            .into_inner()
+            .expect("the capture lock is unpoisoned")
+    }
+
+    /// One collateral position seeded at 1,000 and moved twice inside ONE
+    /// transaction: the trace must state the settled end-of-transaction state,
+    /// never the seed or the first delta's intermediate value.
+    #[test]
+    fn txtrace_reports_a_positions_same_transaction_updates() {
+        let tx = trace_fixture_tx(3);
+        let subject = PositionSubject {
+            position: ScaledTokenPosition::Collateral,
+            position_id: 7,
+        };
+        let mut view = ProjectionView::new();
+        view.seed_position(subject, (U256::from(1_000), Some(U256::from(1))));
+        let deltas = vec![
+            CanonicalDelta::new(
+                LogRef::new(tx, 0),
+                None,
+                DeltaEffect::ScaledBalance {
+                    subject,
+                    balance_delta: I256::try_from(500_i64).expect("500 fits a signed word"),
+                    index: U256::from(2),
+                },
+            ),
+            CanonicalDelta::new(
+                LogRef::new(tx, 1),
+                None,
+                DeltaEffect::ScaledBalance {
+                    subject,
+                    balance_delta: I256::try_from(-400_i64).expect("-400 fits a signed word"),
+                    index: U256::from(3),
+                },
+            ),
+        ];
+        for delta in &deltas {
+            view.apply(delta)
+                .expect("the fixture deltas advance the view");
+        }
+
+        let events = capturing(TXTRACE_TARGET, || {
+            emit_transaction_trace(&view, &deltas, 100, tx);
+        });
+
+        assert_eq!(events.len(), 1, "one line for one moved position");
+        let trace = &events[0];
+        assert_eq!(trace.message(), "AAVE-TXTRACE");
+        assert_eq!(trace.field("kind"), "aave_v3_collateral_positions");
+        assert_eq!(trace.field("pos"), "7");
+        assert_eq!(
+            trace.field("bal"),
+            "1100",
+            "the settled state (1000 + 500 - 400), not the seed's 1000 or the first delta's 1500"
+        );
+        assert_eq!(trace.field("idx"), "3");
+    }
+
+    /// The trace reads the projection's POST-delta state for a real chunk: the
+    /// mint's scaled balance is what the transaction established, not the zero
+    /// balance the seed read.
+    #[test]
+    fn txtrace_reports_the_state_the_transaction_settled() {
+        let (events, deltas) =
+            with_one_mint_chunk(|_ledger, resolver, provider, seed, candidates| {
+                let capture = Arc::new(Mutex::new(Vec::new()));
+                let subscriber = TargetCapture {
+                    target: TXTRACE_TARGET,
+                    events: Arc::clone(&capture),
+                };
+                let resolution = tracing::subscriber::with_default(subscriber, || {
+                    degenbot_core::runtime::get_runtime()
+                        .block_on(resolver.resolve(
+                            provider,
+                            seed,
+                            1,
+                            1,
+                            Address::repeat_byte(0x11),
+                            candidates,
+                            100,
+                            100,
+                        ))
+                        .expect("a seeded chunk resolves without a connection")
+                });
+                let events = Arc::try_unwrap(capture)
+                    .expect("the capture is the sole owner")
+                    .into_inner()
+                    .expect("the capture lock is unpoisoned");
+                (events, resolution.deltas)
+            });
+
+        let mint = deltas
+            .iter()
+            .find_map(|delta| match delta.effect() {
+                DeltaEffect::ScaledBalance { balance_delta, .. } => Some(*balance_delta),
+                _ => None,
+            })
+            .expect("the mint reduced to a scaled-balance delta");
+        assert_eq!(events.len(), 1, "one line for the one moved position");
+        let trace = &events[0];
+        assert_eq!(trace.message(), "AAVE-TXTRACE");
+        assert_eq!(trace.level, Level::DEBUG);
+        assert_eq!(trace.target, TXTRACE_TARGET);
+        assert_eq!(trace.field("block"), "100");
+        assert_eq!(
+            trace.field("bal"),
+            mint.to_string(),
+            "the trace states the delta's settled balance, not the seed's zero"
+        );
+    }
+
+    /// An operator who enabled debug for an unrelated target (a SQL layer) must
+    /// not cause the aave trace to run: the gate is the diagnostic's own target.
+    #[test]
+    fn txtrace_stays_dark_when_only_an_unrelated_target_is_enabled() {
+        let tx = trace_fixture_tx(0);
+        let subject = PositionSubject {
+            position: ScaledTokenPosition::Debt,
+            position_id: 9,
+        };
+        let mut view = ProjectionView::new();
+        view.seed_position(subject, (U256::from(1), Some(U256::from(1))));
+        let delta = CanonicalDelta::new(
+            LogRef::new(tx, 0),
+            None,
+            DeltaEffect::DebtPositionReset {
+                position_id: 9,
+                index: U256::from(2),
+            },
+        );
+        view.apply(&delta)
+            .expect("the fixture delta advances the view");
+        let deltas = vec![delta];
+
+        let events = capturing("degenbot::db", || {
+            emit_transaction_trace(&view, &deltas, 100, tx);
+        });
+        assert!(
+            events.is_empty(),
+            "another target's debug level never runs the aave trace"
+        );
+    }
+
+    /// A parse refusal states the exact block and transaction coordinates as
+    /// structured fields, without a stderr write.
+    #[test]
+    fn parse_failures_state_the_exact_block_and_transaction() {
+        let tx = trace_fixture_tx(3);
+        let error = ProcessTxError::InvalidOperation(
+            "Expected at least 1 collateral event (burn or transfer)".to_string(),
+        );
+
+        let events = capturing(TXTRACE_TARGET, || {
+            report_parse_failure(tx, &error);
+        });
+
+        assert_eq!(events.len(), 1, "one bounded event per refusal");
+        let failure = &events[0];
+        assert_eq!(failure.level, Level::ERROR);
+        assert_eq!(failure.target, TXTRACE_TARGET);
+        assert_eq!(failure.message(), "AAVE-PARSE-FAIL");
+        assert_eq!(failure.field("block"), "100");
+        assert_eq!(
+            failure.field("block_hash"),
+            alloy::hex::encode(tx.anchor().hash())
+        );
+        assert_eq!(failure.field("tx"), alloy::hex::encode(tx.hash()));
+        assert_eq!(failure.field("tx_index"), "3");
+        assert!(
+            failure.field("err").contains("collateral event"),
+            "the refusal payload rides the event: {}",
+            failure.field("err")
         );
     }
 }

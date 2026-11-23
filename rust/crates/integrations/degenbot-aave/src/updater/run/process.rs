@@ -1,8 +1,8 @@
-//! The driver's per-transaction processing stage: per-tx log grouping + the
-//! per-tx loop (discount pre-pass → configuration dispatch → the operation
-//! parse, which reduces against the chunk's projection view and advances it →
-//! delta persistence → the async GHO discount refresh), all on the caller's
-//! `Transaction` connection.
+//! The driver's per-transaction log grouping and the chunk's one write stage:
+//! `persist_chunk` applies the resolved deltas, flushes the deferred reserve
+//! data, cleans the zeroed positions, journals the projection unit, and stamps
+//! the chunk end — all on the caller's `Transaction`. The per-transaction loop
+//! that resolves those deltas lives in `run::resolver`, outside the transaction.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -265,12 +265,12 @@ pub(super) fn commit_projection_unit_on_conn(
 #[derive(Debug, Clone, Default)]
 pub(super) struct ChunkCoreReport {
     pub(super) events_applied: usize,
-    /// Wall time of the per-tx decode+compute block (the GHO/revision conn
-    /// reads, the discount pre-pass + the config-event dispatch - both hold
-    /// the write lock across their RPC reads).
+    /// Wall time of the chunk's resolution stages (the config dispatch, the
+    /// operation parse, and the reduction), measured before the chunk's write
+    /// transaction opens: resolution holds no connection and issues no SQL.
     pub(super) decode_compute_time: Duration,
-    /// Wall time of the per-tx event apply + the end-of-chunk cleanup/stamp
-    /// (the chunk's remaining in-transaction SQL).
+    /// Wall time of the chunk's write stage: the delta apply, the reserve-data
+    /// flush, the zero-balance cleanup, the projection unit, and the stamp.
     pub(super) apply_time: Duration,
     /// Every canonical delta this chunk reduced, in emission order (per
     /// transaction: the configuration family as it was dispatched, then the

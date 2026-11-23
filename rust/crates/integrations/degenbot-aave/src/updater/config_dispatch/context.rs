@@ -4,19 +4,19 @@
 //! market/chain ids, Pool + oracle addresses) plus the block-pinned
 //! [`RevisionMemo`], a `(implementation, selector, block) → revision` cache
 //! over the 4 revision reads, so repeated same-implementation probes inside
-//! one chunk issue one RPC. The context borrows its [`ChunkSpan`], the chunk
-//! `Connection`, and the [`ChunkSubstrate`], so it cannot outlive the chunk
-//! that built it — the block-pinned staleness rule is enforced by
+//! one chunk issue one RPC. The context borrows its [`ChunkSpan`] and the
+//! [`ChunkSubstrate`] and takes no `Connection` at all, so it cannot outlive
+//! the chunk that built it — the block-pinned staleness rule is enforced by
 //! construction, not by convention — and every dispatch arm takes the single
-//! context instead of the exploded id + connection + substrate list.
+//! context instead of the exploded id + substrate list.
 //!
 //! [`ChunkContext::dispatch_transaction`] is the chunk overlay's ONE
 //! apply→bump→dispatch seam, in the fixed order the read-your-own-writes
 //! contract requires: re-read the overlay's GHO vToken revision (a prior
-//! log-transaction's `Upgraded` apply bumped the cached row), build the
-//! discount snapshot off it, then dispatch the configuration events (each
-//! reduced into a positioned delta and persisted intra-dispatch via
-//! [`ChunkContext::apply_configuration_delta`]).
+//! log-transaction's `Upgraded` projection bumped the cached row), build the
+//! discount snapshot off it, then dispatch the configuration events, each
+//! reduced into a positioned delta and projected onto the substrate overlay
+//! (the chunk's one write transaction persists them).
 //!
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
 //! row 3 (the memo key MUST include the block lane), row 7 (stage 1 of
@@ -66,10 +66,10 @@ use super::{
 /// boundary. A same-height branch is a different anchor, so it is a different
 /// key: no hit can cross an abandoned hash (ADR-105 D1, D3).
 ///
-/// Lifetime: one instance per chunk apply (`process_chunk_on_conn`), which
-/// is the whole read span the dispatch can observe — chunks partition the
-/// block range, so no cross-chunk key collision exists, and the memo never
-/// outlives the run (a plain local, not global state).
+/// Lifetime: one instance per chunk resolution (`ChunkResolver`), which is the
+/// whole read span the dispatch can observe — chunks partition the block range,
+/// so no cross-chunk key collision exists, and the memo never outlives the run
+/// (a plain local, not global state).
 #[derive(Debug, Default)]
 pub(crate) struct RevisionMemo {
     entries: HashMap<(Address, [u8; 4], ChainAnchor), U256>,
@@ -206,11 +206,11 @@ pub(super) fn whole_range_span() -> &'static ChunkSpan {
     SPAN.get_or_init(|| ChunkSpan::new(0, u64::MAX))
 }
 
-/// The per-chunk config-dispatch context: the chunk-scoped dispatch constants,
-/// the chunk `Connection`, the [`ChunkSubstrate`], and the block-pinned
+/// The per-chunk config-dispatch context: the provider, the chunk-scoped
+/// dispatch constants, the [`ChunkSubstrate`], and the block-pinned
 /// [`RevisionMemo`], in ONE owner with a single lifetime.
 ///
-/// Built by [`ChunkContext::for_chunk`] at the top of a chunk apply and
+/// Built by [`ChunkContext::for_chunk`] at the top of a chunk resolution and
 /// threaded by `&mut` through the dispatch. The constructor borrows a
 /// [`ChunkSpan`] for the whole context lifetime, so the context cannot outlive
 /// or cross a chunk boundary — the memo's block-pinned staleness rule (an
@@ -234,8 +234,8 @@ pub(crate) struct ChunkContext<'span> {
 }
 
 impl<'span> ChunkContext<'span> {
-    /// Build the context for one chunk, borrowing the chunk `Connection` and
-    /// the [`ChunkSubstrate`] for the context's whole lifetime.
+    /// Build the context for one chunk, borrowing the [`ChunkSubstrate`] for the
+    /// context's whole lifetime.
     ///
     /// `block_number` starts at the span's first block; each log-transaction's
     /// dispatch enters its own block through [`ChunkContext::begin_transaction`]
@@ -467,17 +467,14 @@ impl<'span> ChunkContext<'span> {
         self.substrate.superseded_generation(effect)
     }
 
-    /// The GHO asset row for the current transaction, re-resolved FRESH
-    /// through the substrate's read-your-own-writes overlay on EVERY call.
+    /// The GHO asset row at the current transaction's read position.
     ///
-    /// This is the ONE freshness rule for the GHO asset: the substrate's
-    /// dirty-mark contract (every apply that touches `aave_gho_tokens` calls
-    /// [`ChunkSubstrate::mark_gho_dirty`]) makes a repeated read a cache hit
-    /// until a write invalidates it, so re-resolving per event is both
-    /// always-correct (a same-tx `ReserveInitialized` or
-    /// `DiscountTokenUpdated` at an earlier logIndex is visible) and cheap. A
-    /// `None` here is the genuine "no GHO market row" state, never a stale
-    /// snapshot.
+    /// This is the ONE freshness rule for the GHO asset: every GHO-row effect
+    /// projects onto the substrate's row as it dispatches
+    /// ([`ChunkSubstrate::project_gho`]), so a same-tx `ReserveInitialized` or
+    /// `DiscountTokenUpdated` at an earlier logIndex is visible to every later
+    /// read. A `None` here is the genuine "no GHO market row" state, never a
+    /// stale snapshot.
     ///
     /// # Errors
     ///
@@ -641,11 +638,11 @@ impl<'span> ChunkContext<'span> {
     ///    on the revision just read, against the TRANSACTION-START GHO row
     ///    (a same-tx link is invisible to it by design).
     /// 3. **dispatch the configuration events** — each is reduced into a
-    ///    positioned, generation-qualified delta and persisted intra-dispatch
-    ///    via [`ChunkContext::apply_configuration_delta`], so a later event in
-    ///    the same transaction sees an earlier event's write. The projection
-    ///    view advances separately, in canonical event order with the
-    ///    transaction's operations.
+    ///    positioned, generation-qualified delta and projected onto the
+    ///    substrate overlay, so a later event in the same transaction sees an
+    ///    earlier event's effect. The projection view advances separately, in
+    ///    canonical event order with the transaction's operations, and the
+    ///    chunk's one write transaction persists the deltas.
     /// 4. **re-resolve the GHO row for the operation parser** — the tx-start
     ///    read predates a same-tx `ReserveInitialized` linking the GHO
     ///    vToken; the parser's Mint/Burn classification must see the link
@@ -761,8 +758,9 @@ impl<'span> ChunkContext<'span> {
 pub(crate) struct TransactionDispatch {
     /// The per-user GHO discount snapshot for this transaction.
     pub(crate) discounts: HashMap<Address, U256>,
-    /// The configuration deltas this transaction reduced, already applied to
-    /// the projection view and persisted intra-dispatch.
+    /// The configuration deltas this transaction reduced: the caller advances
+    /// the projection view in canonical event order and the chunk's one write
+    /// transaction persists them.
     pub(crate) deltas: Vec<CanonicalDelta>,
     /// The GHO underlying (`GHO`) address, resolved POST-config (a same-tx
     /// `ReserveInitialized` link is visible).

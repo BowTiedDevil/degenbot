@@ -1,10 +1,18 @@
-//! The Aave V3 updater chunk-loop — transactional apply of decoded Aave events
-//! under one `rusqlite::Transaction`.
+//! The Aave V3 updater chunk loop, in two phases with one durability point.
 //!
-//! See the crate-root docs for the chunk-atomicity invariant + the two-writer
-//! hazard this structure fixes. This module is the **transactional core**:
-//! pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO `database_path`,
-//! NO `open_for_writes`.
+//! - **Resolution** (`run::resolver`, `config_dispatch`,
+//!   `transaction_processor`): exact provider reads and pure reduction against
+//!   the chunk's `ChunkSeed` and `ProjectionView`. It holds no DB transaction —
+//!   its relational starting point is the synchronously loaded seed — and it
+//!   owns the reduction's per-transaction provider reads; acquisition and
+//!   verification own their own documented reads.
+//! - **The chunk write** (`run::process`, `run::apply`, `projection`): the
+//!   chunk's ONE `rusqlite::Transaction` over the reduction's deltas, journal,
+//!   checkpoint, and cursor. Synchronous and RPC-free.
+//!
+//! The chunk-atomicity invariant and the two-writer hazard this structure fixes
+//! are the crate-root docs'. Nothing here owns `pyo3`, `database_path`, or
+//! `open_for_writes`.
 
 pub mod aave_fetch;
 pub mod config_dispatch;

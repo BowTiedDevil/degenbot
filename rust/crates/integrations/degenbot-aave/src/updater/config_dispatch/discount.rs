@@ -148,13 +148,13 @@ pub(super) async fn dispatch_stk_aave_transfer(
     }))
 }
 
-/// RPC-fetch `balanceOf(user)` at `block_number - 1` and store via
-/// [`DegenbotDb::set_user_stk_aave_balance_on_conn`] when the user's
-/// `stk_aave_balance` column is `NULL`. A `NULL` column means
-/// the user was created by an earlier event but never touched by a stkAAVE
-/// `Staked`/`Transfer` event YET; the on-chain value at the previous block is
-/// the authoritative balance before any current-block events. No-op when the
-/// column is already populated (the apply will mutate the cached value).
+/// RPC-fetch `balanceOf(user)` at `block_number - 1` and queue it as a
+/// `StkAaveBalanceObserved` observation when the user's `stk_aave_balance` is
+/// still unset. An unset balance means the user was created by an earlier event
+/// but never touched by a stkAAVE `Staked`/`Transfer` event YET; the on-chain
+/// value at the previous block is the authoritative balance before any
+/// current-block events. No-op when the balance is already projected (the
+/// current-block deltas mutate it from there).
 async fn backfill_user_stk_aave_balance_if_none(
     ctx: &mut ChunkContext<'_>,
     user_id: i64,

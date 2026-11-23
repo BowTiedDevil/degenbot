@@ -2019,8 +2019,10 @@ impl OperationReducer<'_> {
         Ok(())
     }
 
-    /// Resolve a `position_id` via `get_or_create_*_position_on_conn`. First
-    /// resolves the `user_id` via `get_or_create_user_on_conn`.
+    /// The position id for `(user, asset)` from the seed's interned identities:
+    /// the user and its position rows were created before the chunk's
+    /// transaction opened, so this performs no SQL and an unseeded identity is
+    /// an `IncompleteChunkSeed` refusal, never an id minted mid-resolution.
     fn resolve_position_id(
         &mut self,
         position: ScaledTokenPosition,

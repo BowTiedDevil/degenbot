@@ -10,6 +10,8 @@ Twelve fixes during 2026-11-15 through 2026-11-22 addressed recurring mechanisms
 
 The current tree already has useful pieces: `Epoch` and `BlockContext`, core `CanonicalHead`, RPC `BlockLineage`, simulation `ReadAnchor`, `EventOwnership`, `AaveChunkEvent`, `ChunkSubstrate`, pool `ReorgJournal`s, typed eventhub heads, and substantial cassette/receipt goldens. They do not yet form one contract. In particular, Aave persists a number-only cursor and performs resolution RPC inside its DB write transaction; live work carries several independent block-number fields; exact hashes exist only on some side paths.
 
+_Scoping-time state, recorded before the cutover: the current shape is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23) below._
+
 ## Decision
 
 ### D1 — `ChainAnchor` is the one exact block identity
@@ -189,14 +191,15 @@ decision, so the ADR can be read against code instead of intent.
 - **D3** — `BlockReads` is the hash-pinned read view (`{blockHash,
   requireCanonical}`, `ExactReadError` separating an unsupported capability from a
   failed read) and the one production read view. The chunk's SQLite write
-  transaction covers no acquisition:
-  `resolve_chunk` runs under the connection handle and `persist_chunk` opens the
-  transaction, so verification truth is acquired before the lock and only
-  compared inside it.
-- **D4** — `run/process.rs` interleaves resolve → reduce → advance against
-  `ProjectionView`, and the row identities a delta names are resolved
-  out-of-transaction and idempotently (`get_or_create_*`), so persistence
-  performs no identity lookup.
+  transaction covers no acquisition: `ChunkSeed::load` reads the chunk's complete
+  relational starting point under the caller's connection guard,
+  `ChunkResolver::resolve` runs with no connection at all, and `persist_chunk`
+  opens the transaction — so verification truth is acquired before the lock and
+  only compared inside it.
+- **D4** — `run/resolver.rs` interleaves resolve → reduce → advance against
+  `ProjectionView`, and the row identities a delta names are interned
+  synchronously by `ChunkSeed::load` before the chunk's transaction opens, so
+  resolution issues no SQL and persistence performs no identity lookup.
 - **D5** — `operations_parser::ownership::ReceiptOwnership` is the total ledger:
   one terminal slot per receipt log (`LogOwner::{Operation, Role, OutOfScope}`),
   with `DuplicateOwnership`, `NonOperationClaim`, `UncoveredOperationLog`,
@@ -413,9 +416,11 @@ anchor end to end, so the value caches and the wire carry ONE identity.
   file (the corpus drift gate `verify_cassette_bytes` still passes); semantic
   comparison: every replayed scenario's answers are unchanged, and the new
   replay cases prove a hash pin resolves to the recorded height's answer.
-- Deliberate non-claims: `BLOCKHASH` ancestry (a `get_block_hash` read still
-  resolves its number against the current canonical chain) and the replay-surface
-  expectation consolidation remain separate work.
+- One deliberate non-claim remains: the replay-surface expectation
+  consolidation (C2), which is separate work. `BLOCKHASH` ancestry is no longer
+  one — it landed after this section (`sim/evm2/block_hash_ancestry.rs`), so a
+  `get_block_hash` read answers from the solve anchor's proven ancestry and only
+  the EVM's own out-of-window rule returns zero.
 
 # Appendix A — Type inventory and admitted ambiguity at scoping
 
@@ -493,6 +498,8 @@ Aave has no equivalent of the pool branch journal: its durable recovery is numer
 
 # Appendix C — Receipt identity and ownership lineage
 
+_Scoping snapshot, recorded before the cutover. The first timeline below states what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._
+
 ```text
 Alloy Log with optional identities
   → numeric (block_number, log_index) sort and dedup
@@ -519,6 +526,8 @@ complete header chain + complete receipt (+ selective trace)
 ```
 
 # Appendix D — Live block and work lineage
+
+_Scoping snapshot, recorded before the cutover. The timeline and the "not yet propagated" verdict below state what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._
 
 ```text
 accepted header

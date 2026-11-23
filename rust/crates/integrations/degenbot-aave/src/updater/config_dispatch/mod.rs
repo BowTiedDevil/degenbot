@@ -4,24 +4,26 @@
 //! This module owns the orchestrator's per-transaction configuration
 //! handling: loop over a tx's logs, decode each via
 //! [`degenbot_decoders::aave_event_decoder::decode_aave_log`], + for the 10
-//! enum-covered config event types, resolve ids via the `DegenbotDb`
-//! substrate (`get_or_create_*_on_conn` / `lookup_asset_by_*_on_conn`) +
-//! emit [`ConfigurationEffect`] variants — the tx's first dispatch phase.
-//! Each effect is reduced into a [`CanonicalDelta`] at its exact log
-//! position, carrying the generation the event activated (ADR-105 D6, D7),
-//! and persisted through the chunk's one writer.
+//! enum-covered config event types, resolve ids from the chunk's
+//! `ChunkSeed`/`ChunkSubstrate` (the seed interned every row a resolution may
+//! name) + emit [`ConfigurationEffect`] variants — the tx's first dispatch
+//! phase. Each effect is reduced into a [`CanonicalDelta`] at its exact log
+//! position, carrying the generation the event activated (ADR-105 D6, D7), and
+//! the chunk's one writer persists it at the write stage.
 //!
 //! # Scope (this module)
 //!
 //! The dispatch loop + the shared decode/RPC helpers every resolver rides
 //! (the checksum/calldata encoders, the batch-or-direct multicall seam, the
-//! word/string decoders). `dispatch_config_events` routes each decoded
-//! event to its resolver + persists each emitted delta to the chunk `conn`
-//! AS it is dispatched (logIndex order), so a later event's resolution sees an
-//! earlier event's write — surface-table row 6
-//! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)). The VIEW advance is
-//! the caller's: configuration and operation deltas advance the projection in
-//! canonical event order (`OperationReducer::reduce_transaction`).
+//! word/string decoders). `dispatch_config_events` routes each decoded event to
+//! its resolver, projects the effect onto the chunk substrate's read position
+//! and emits the positioned delta (logIndex order), so a later event's
+//! resolution sees an earlier event's effect — surface-table row 6
+//! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)). The dispatch takes no
+//! `Connection`: the chunk's one writer persists the delta stream at the write
+//! stage, and the VIEW advance is the caller's — configuration and operation
+//! deltas advance the projection in canonical event order
+//! (`OperationReducer::reduce_transaction`).
 //!
 //! The resolvers live in the child modules, one seam each:
 //! - `context`: the per-chunk dispatch context (`ChunkContext` + the
@@ -51,15 +53,14 @@
 //!
 //! # Chunk atomicity
 //!
-//! The dispatch rides the chunk's single `Transaction` through the
-//! `ChunkContext`, which borrows it (and the chunk substrate) for the
-//! dispatch's duration.
-//! All `get_or_create_*` / `lookup_*` substrate calls run on it — the
-//! chunk-atomicity
-//! invariant (ONE `Transaction` per chunk) holds. The dispatch emits
-//! [`CanonicalDelta`]s; the same writer persists them on that conn.
-//! No `Transaction` lifecycle here — this file owns neither `commit` nor
-//! `drop`.
+//! The dispatch rides the chunk's RESOLUTION, not its transaction: the
+//! `ChunkContext` borrows the chunk substrate + span and no `Connection`, so
+//! every id it names is the seed's (interned before resolution opened) and an
+//! unseeded fact is an `IncompleteChunkSeed` refusal, never a lazy query. The
+//! chunk-atomicity invariant (ONE `Transaction` per chunk) is unaffected: the
+//! dispatch emits [`CanonicalDelta`]s, and the chunk's one writer persists them
+//! inside that transaction. No `Transaction` lifecycle here — this file owns
+//! neither `commit` nor `drop`.
 
 mod asset_config;
 mod context;

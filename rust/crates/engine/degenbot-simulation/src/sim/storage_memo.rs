@@ -17,9 +17,11 @@
 //!
 //! # The scope: one anchor, shared by the anchor's fan-outs
 //!
-//! A memo entry is an RPC answer tagged with ONE read anchor - the block the
-//! fallback pins its reads to ([`AlloyAsyncDb`](crate::sim::evm2::alloy_async_db)
-//! passes it as `eth_getStorageAt`'s block tag, never `latest`). Two fan-outs
+//! A memo entry is an RPC answer tagged with ONE read anchor - the identifier
+//! the fallback pins its reads to ([`AlloyAsyncDb`](crate::sim::evm2::alloy_async_db)
+//! passes it as [`ReadAnchor::block_id`]: the EIP-1898 hash pin
+//! `{ blockHash, requireCanonical: true }` for an identified anchor, the
+//! explicit height for an unresolved one, never `latest`). Two fan-outs
 //! that pin the same anchor read the same chain state, so they can share one
 //! memo; a fan-out at a different anchor cannot. [`StorageMemoCache`] is that
 //! owner: it hands every fan-out at an anchor the SAME memo and retires it -
@@ -33,9 +35,10 @@
 //! different block N, the number a number-keyed memo is pinned to does not move
 //! while the node's answers underneath it change, so the memo would keep
 //! serving the abandoned block's words to fan-outs whose own fresh reads come
-//! from the new canonical N. The key is therefore [`ReadAnchor`] - the number
-//! AND the block's canonical hash - and a replacement block mints a fresh memo
-//! exactly as a moved height does.
+//! from the new canonical N. The key is therefore the whole [`ReadAnchor`]
+//! observation - an identified anchor's number AND canonical hash, an
+//! unresolved anchor's height as its own identity - and a replacement block
+//! mints a fresh memo exactly as a moved height does.
 
 use alloy::eips::{BlockId, RpcBlockHash};
 use alloy::primitives::{Address, StorageValue, B256, U256};

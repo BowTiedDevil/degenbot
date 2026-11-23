@@ -1660,7 +1660,7 @@ fn collect_collateral_events_no_burn_only_transfers() {
 // A liquidation with no collateral event refuses with a payload naming the
 // `LiquidationCall` anchor, the call frame the scan was bounded to, and why
 // every in-call candidate was rejected. Its consumer is one `AAVE-PARSE-FAIL`
-// log line (`updater/run/process.rs`), so it stays single-line and bounded.
+// event (`updater/run/resolver.rs`), so it stays single-line and bounded.
 
 /// The pool the refusal fixtures' parser is constructed for.
 fn liquidation_fixture_pool() -> Address {
