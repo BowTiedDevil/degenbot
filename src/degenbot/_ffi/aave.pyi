@@ -128,11 +128,12 @@ def run_aave_update(
     - `cancel_handle` — a [`CancelHandle`] (shared with `run_pool_update`);
       a `signal.SIGINT` handler calls `.cancel()`.
     - `verify_chunk` — if `True`, run pre-commit verification on each chunk:
-      Rust calls `verify_touched_positions_on_conn` on the uncommitted
-      transaction BEFORE `tx.commit()`. A divergence drops the tx (rollback)
-      so `last_update_block` does NOT advance + the next run re-processes the
-      same chunk. If `False`, verification is skipped (chunks commit without
-      checking).
+      the chunk's chain truth is acquired during resolution, outside the
+      database write transaction, and the transaction only compares that truth
+      against the rows it is about to commit, BEFORE `tx.commit()`. A divergence
+      drops the tx (rollback) so `last_update_block` does NOT advance + the next
+      run re-processes the same chunk. If `False`, verification is skipped
+      (chunks commit without checking).
     - `max_chunks` — `None` to advance to `to_block`/tip; `Some(n)` to stop
       after committing `n` chunks (one-chunk mode). `last_update_block` is
       advanced to the last committed chunk's end, so the next run resumes

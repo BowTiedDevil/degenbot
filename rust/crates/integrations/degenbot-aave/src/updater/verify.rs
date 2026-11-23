@@ -287,6 +287,15 @@ const ZERO_ADDRESS: Address = Address::ZERO;
 /// zero). The market-wide `--verify-all` path is the win; the per-chunk
 /// touched-set path is a wash but harmless.
 ///
+/// # Read position
+///
+/// This is the standalone post-commit/public entry point: it loads the rows it
+/// will judge from the connection it is given, then resolves the anchor and
+/// acquires chain truth, so that connection stays borrowed across those reads.
+/// The chunk's pre-commit gate does not call it — that path loads rows,
+/// acquires with the guard released (`acquire_position_truth_at`), and compares
+/// inside the transaction (ADR-105 D3).
+///
 /// Returns the divergence list (empty = no divergence). Each row carries the
 /// human-readable fields needed by the drive harness to emit a NAMED,
 /// bisect-able divergence (`user_address`, `token_address`, `position_id`,
@@ -567,12 +576,11 @@ const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
 /// keccak256("getDiscountPercent(address)")[0..4] = `0x6c53272b`.
 const GET_DISCOUNT_PERCENT_SELECTOR: [u8; 4] = [0x6c, 0x53, 0x27, 0x2b];
 
-/// A unified divergence from any of the 4 verification checks. Returned by
-/// [`verify_all_positions_on_conn`].
+/// A unified divergence from any of the 4 verification checks.
 #[derive(Debug, Clone)]
 pub enum VerificationDivergence {
     /// Scaled-token position (collateral or debt) balance/index mismatch
-    /// (checks 1 + 2 — the existing `verify_touched_positions_on_conn` output).
+    /// (checks 1 + 2 — the `compare_position_truth` output).
     ScaledToken(PositionDivergence),
     /// stkAAVE balance mismatch on `aave_v3_users.stk_aave_balance`
     /// (check 3 — `balanceOf` on the discount token).

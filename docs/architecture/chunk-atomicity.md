@@ -47,9 +47,12 @@ single-transaction-bound forms of the write surface.
 
 ## Supporting rules
 
-- **Read your own writes.** Reads for event N inside a chunk see the writes of
-  events < N in the same chunk (the borrowed connection + write overlay), never
-  a second connection's stale view.
+- **Read your own writes.** A pool updater read for event N inside a chunk sees
+  the writes of events < N in the same chunk (the borrowed connection + write
+  overlay), never a second connection's stale view. The Aave updater reads the
+  preceding state during connection-free resolution, from the `ChunkSeed` and a
+  `ProjectionView` that advances through the chunk's ordered deltas, and its
+  single write stage consumes the settled deltas.
 - **The stamp is the LAST write.** `last_update_block` advances inside the
   chunk's transaction, after the data writes, so a commit that includes the
   stamp proves the data; a rollback loses both together. An empty chunk still

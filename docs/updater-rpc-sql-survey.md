@@ -7,6 +7,8 @@ The decision this survey feeds is {doc}`adr/ADR-068-updater-golden-capture-repla
 the work is filed as an ergo epic ("Updaters: golden-capture replay harness + RPC/SQL
 perf program").
 
+_Survey-time snapshot, recorded before ADR-105's implementation and its post-ADR-105 cleanup. The findings, the coherence gap, the assets table, and the approaches ranking below are preserved as the origin record; they are not current-shape claims. The tree's present read/verify/persist split is ADR-105's implemented shape._
+
 ## The problem in one paragraph
 
 Both updaters are chunk loops: fetch logs over a block range, decode, apply to SQLite

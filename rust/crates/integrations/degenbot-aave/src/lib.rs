@@ -2,8 +2,10 @@
 //! position-analysis math.
 //!
 //! Three sibling concerns live here, each in its own submodule:
-//! - [`updater`] — the transactional apply core: pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
-//!   `database_path`, NO `open_for_writes`.
+//! - [`updater`] — the chunk loop in two phases over one durability point:
+//!   connection-free resolution (exact reads and pure reduction against the
+//!   chunk's `ChunkSeed` and `ProjectionView`) and the synchronous, RPC-free
+//!   transactional apply. NO `pyo3`, NO `database_path`, NO `open_for_writes`.
 //! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
 //!   math.
 //! - [`wad_ray_math`] + [`percentage_math`] — the Aave V3 fixed-point math
@@ -13,8 +15,8 @@
 //!   crate's updater maintains, so a session can read one account's position
 //!   without the engine depending on this integration.
 //!
-//! The updater is the apply half of the standalone-Rust `aave_update` core
-//! (mirroring `degenbot-pool-updater`'s `apply_chunk_writes_on_conn`).
+//! The updater is the standalone-Rust `aave_update` core: exact-read resolution
+//! plus the transactional apply (mirroring `degenbot-pool-updater`'s chunk loop).
 //!
 //! # The chunk-boundary commit invariant (inviolable)
 //!
@@ -50,12 +52,14 @@
 //! silently-lost ORM writes, no `SQLITE_BUSY` serialization. The "one
 //! state owner" invariant was violated.
 //!
-//! The fix is structural: route the WHOLE chunk's writes through ONE
-//! `Transaction` via the `_on_conn` variants of the `write.rs` apply/get-or-
-//! create fns. This crate owns nothing about the
-//! connection lifecycle — the caller (`run_aave_update` orchestrator) opens
-//! ONE `DegenbotDb`, begins ONE `Transaction`, calls
-//! [`apply_aave_chunk_writes_on_conn`], and commits.
+//! The fix is structural: route the chunk's projection writes through ONE
+//! `Transaction` via the `_on_conn` variants of the `write.rs` apply fns. The
+//! identity rows resolution needs are interned synchronously by the chunk seed
+//! on the caller's connection before that transaction opens, so a rolled-back
+//! chunk leaves only inert rows behind (ADR-105 D4). This crate owns nothing
+//! about the connection lifecycle — the caller (`run_aave_update`
+//! orchestrator) opens ONE `DegenbotDb`, loads the seed, begins ONE
+//! `Transaction`, calls [`apply_aave_chunk_writes_on_conn`], and commits.
 //!
 //! # The TWO roles the [`updater`] module plays
 //!

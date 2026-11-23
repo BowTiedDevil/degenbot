@@ -1,6 +1,6 @@
 # ADR-105: Block-anchored event-sourced chain state
 
-**Status: accepted (implemented).** (2026-11-23; ergo epic `YMSQIZ`, scoping task `6GTIG7`, certification task `ONNSDV`.) The implemented shape, the seams retired by the cutover, and the deviations this ADR does not yet claim are stated in [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23).
+**Status: accepted (implemented).** (2026-11-23; ergo epic `YMSQIZ`, scoping task `6GTIG7`, certification task `ONNSDV`; post-cutover cleanup and hardening epic `FUXOFN`, certification task `4C2R5N`.) The implemented shape, the seams retired by the cutover, the deliberate number/tag lanes, and the deferred choices are stated in [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23).
 
 Builds on [ADR-041](ADR-041-block-epoch-pipeline.md) (one stage machine over cheap reads), [ADR-068](ADR-068-updater-golden-capture-replay.md) (recorded updater coherence), [ADR-070](ADR-070-updaters-are-the-sole-db-writers.md) (updater-owned writes), and [ADR-104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) (typed head intake). Those decisions remain foundations; this ADR supplies the chain identity, position, receipt ownership, and projection persistence they do not currently unify.
 
@@ -43,6 +43,8 @@ Every resolver read is classified:
 - **Position-insensitive block fact:** later transactions in the block cannot change its interpretation, so the anchored post-block snapshot may serve it.
 - **Position-sensitive state:** only the Projection view or explicit trace/EVM-replay evidence may serve it. An ordinary post-block `eth_call` is not evidence at an earlier transaction or log.
 
+Simulation reads state the same position on the wire. The solve anchor is the read position: an identified anchor's account, storage, code, balance, and nonce reads name its hash with canonical membership required (the one Exact read pin), and an unresolved anchor is an explicit ingress observation whose reads state its height — a resolved identity never converts back to a height. Blockhash lookup is position-sensitive in its own right: a requested number resolves against the solve anchor's proven header ancestry, only the EVM's own window rule (measured from the executing block) may answer zero, and missing or contradictory ancestry is a read failure rather than an unrelated canonical block.
+
 ### D4 — Resolution and reduction interleave in canonical event order
 
 For each protocol-defined event boundary, Aave performs:
@@ -53,7 +55,7 @@ resolved input at current ProjectionView
     → apply that delta to the ProjectionView
 ```
 
-Resolution may use anchored chain evidence and read-side projection access outside the DB write transaction. Reduction performs no RPC or SQL. The transaction or chunk's resulting deltas remain atomic at persistence even though the Projection view advances at event granularity.
+Resolution may use anchored chain evidence and read-side projection access outside the DB write transaction. Its relational starting point is one synchronously loaded chunk seed holding every fact resolution may ask for; resolution itself receives no connection, performs no SQL, and refuses an unanticipated dependency instead of issuing a lazy query. Reduction performs no RPC or SQL and is exposed as one reducer interface over the whole transaction. The transaction or chunk's resulting deltas remain atomic at persistence even though the Projection view advances at event granularity.
 
 This preserves distinct positions within one transaction: a discount pre-pass may intentionally read transaction-start state while a later operation reads the relationship established by an earlier configuration event.
 
@@ -124,6 +126,8 @@ Existing scenarios and expected semantic outputs remain the oracle. Cassettes ev
 Each supporting commit has a permanent red-first case. Additional cases cover chunk independence, same-transaction replacement, same-height reorg, mixed-anchor reads, duplicate ownership, incomplete evidence, future-state leakage, and checkpoint recovery.
 
 The replay bench measures RPC rounds/bytes, trace acquisition, DB write-lock hold, replay runtime, and journal/checkpoint storage. Budgets are derived from the baseline rather than invented during scoping.
+
+The deterministic counters those suites and the bench assert live in one committed, machine-readable replay-surface authority, and the run under measurement is never their source.
 
 ## Non-goals
 
@@ -223,12 +227,14 @@ decision, so the ADR can be read against code instead of intent.
   simulation, and the batch executor; telemetry records `chain_id`,
   `block_hash`, and `parent_block_hash` as span attributes only.
 - **D11** — `LogIdentityRefusal`, `OwnershipRefusal`, `RecoveryError`,
-  `ExactReadError`, `HeaderRefusal`, and `ProjectionRefusal` keep the failure classes
-  distinct.
+  `ExactReadError`, `HeaderRefusal`, `ProjectionRefusal`, `BlockHashRefusal`,
+  `IncompleteChunkSeed`, `ActivationMetadataError`, and `VerificationEvidenceError`
+  keep the failure classes distinct.
 - **D12** — the module homes are as listed; no Python projection implementation
   exists, and the primitive projections and generated stubs are the only Python
   surface.
 - **D13** — the replay bench and the scoped suites are the acceptance surfaces;
+  their deterministic counters have ONE committed home (`replay_surface` below), and
   Appendix E's cases exist as named tests.
 
 ### Seams retired by this cutover
@@ -271,13 +277,15 @@ retirement (ADR-087), not a compatibility shim.
 None open at 2026-11-23. The two that stood at the ONNSDV cutover — height-pinned
 configuration/verification reads (closed by the exact-read adoption below) and
 driver prose that still described RPC under the chunk transaction (closed by
-stating the resolve/persist split) — are retired.
+stating the resolve/persist split) — are retired. The cleanup epic's last
+recorded non-claim, the replay-surface expectation consolidation, is closed by
+[Replay-surface authority](#replay-surface-authority-2026-11-23).
 
-One read-shape distinction is deliberate, not a parallel path: `BlockReads` is
-the exact view every Aave read uses, while the generic `multicall3_batch` remains
-for the lanes that address a block by tag (the pool liquidity verifier, the
-connector index, the ERC-20 read family's own transports). They are two pin
-policies over one batch contract, not two implementations of one read.
+The read lanes that intentionally stay number- or tag-addressed, with the reason
+each is not a parallel path, are enumerated under
+[Deliberate number/tag lanes](#deliberate-numbertag-lanes-not-exact-reads). None
+of them is a production Aave read or an identified simulation read, and none is
+described as an Exact read.
 
 ### Exact reads landed (2026-11-23)
 
@@ -416,11 +424,235 @@ anchor end to end, so the value caches and the wire carry ONE identity.
   file (the corpus drift gate `verify_cassette_bytes` still passes); semantic
   comparison: every replayed scenario's answers are unchanged, and the new
   replay cases prove a hash pin resolves to the recorded height's answer.
-- One deliberate non-claim remains: the replay-surface expectation
-  consolidation (C2), which is separate work. `BLOCKHASH` ancestry is no longer
-  one — it landed after this section (`sim/evm2/block_hash_ancestry.rs`), so a
-  `get_block_hash` read answers from the solve anchor's proven ancestry and only
-  the EVM's own out-of-window rule returns zero.
+- `get_block_hash` issues no number-addressed read: BLOCKHASH answers from the
+  solve anchor's proven ancestry, and the ancestry section below states the
+  execution-height split, the refusals, and the measured RPC budget.
+
+### Execution-aware BLOCKHASH ancestry (2026-11-23)
+
+`sim/evm2/block_hash_ancestry.rs::BlockHashAncestry` replaces the retired
+number-only full-block lookup on both async adapters (`AlloyAsyncDb` and
+`ReadHubDb`). It carries two facts, not one:
+
+- **The execution height** (`BlockEnv::number`) is the EVM's clock. The EVM zero
+  rule is applied to it before any state or RPC: a number outside `u64`, the
+  executing block, a future block, and a number more than `BLOCK_HASH_HISTORY`
+  (256) below it all answer `B256::ZERO`. No request is issued and no earlier
+  refusal is consulted.
+- **The read anchor** is the read observation's own position, and evidence is
+  proved downward from it only: ONE identity-only
+  `chain_evidence::acquire_header_chain(target..=anchor.number())` (no block
+  bodies), whose consecutive heights, parent links, and chain must agree and
+  whose terminal header must BE the anchor. A deeper request extends the chain
+  downward and must link to the already-proven floor's `parent_hash`, so a
+  same-height replacement below the anchor is refused rather than served. A
+  number inside the window but above the read anchor is
+  `BlockHashRefusal::AboveAnchor`, never a fabricated answer.
+
+`BlockHashAncestry::new(anchor)` executes at the anchor (the main per-block EVM
+and the hub fan-out); `executing(anchor, execution)` is the explicit form, and
+`Evm2BlockSimHandle::scratch_evm` uses it at `anchor.number() + 1` to match its
+next-block `ScratchBlock` frame. An unresolved anchor inside the window fails
+closed with `BlockHashRefusal::UnresolvedAnchor`: there is no identity to prove
+against, so the node's current canonical block at that height is never served.
+Deterministic refusals (`UnresolvedAnchor`, `AnchorMoved`, `AboveAnchor`,
+`Evidence`) are sticky per adapter while provider failures stay retryable, and
+proven headers are memoized per adapter, so a proof never outlives or crosses
+its anchor. `AlloyAsyncDbError::BlockNotFound` and
+`ReadHubDbError::BlockNotFound` retire with the full-body read; the ancestry
+variant is the typed replacement.
+
+RPC budget (measured offline and against the live archive node): EVM-zero
+answers cost no dispatch; the main adapter's cumulative header reads at depths
+[1, 2, 10, 255, 256] are [2, 3, 11, 256, 257]; a repeat request costs zero; a
+next-block frame's depth-1 answer is the anchor itself, one read. Regressions:
+`tests/block_hash_ancestry.rs` (in-window, zero-rule, replacement, deep
+replacement, missing evidence, moved anchor, unresolved, wrong-height,
+next-block window, above-anchor, memo scoping, the hub adapter, the EVM opcode,
+and the production scratch-handle probe) plus the `live_*` fork-truth legs that
+`just test-fork` runs against the reth archive node.
+
+### Read evidence and fail-closed activation/verification (2026-11-23)
+
+`degenbot_rpc::read_evidence::ReadEvidence<T>` is the typed outcome of one
+exact read: `Value`, `Reverted`, `Malformed`, or `NoCode`. A transport fault
+stays the outer `ExactReadError`. `BlockReads::{read_evidence, call_evidence,
+code_present}` and `ReadEvidence::from_outcome` produce it, and
+`erc20::read_exact` is the exact-block metadata walk; the generic
+`ContractRead`/`erc20::read` family is untouched.
+
+Activation resolves ONE `ChainAnchor` (the tip) and pins every market-name,
+GHO-metadata, and code read to it. Market name and GHO `decimals()` are
+required: a reverted, malformed, or code-less answer refuses the activation as
+`RunError::ActivationMetadata`, and a partial failure persists no market row.
+`GETMARKETID()` is attempted exactly once, and only after `getMarketId()`
+reverted or was unsupported; a transport failure, `NoCode`, or malformed answer
+propagates without the uppercase fallback. `name()`/`symbol()` may be NULL only
+for a getter that reverted on a token holding code (an established
+nonconforming token).
+
+Verification refuses a reverted, short, or code-less read for a tracked
+position, stkAAVE balance, or GHO discount as
+`RunError::VerificationEvidence`; it never maps that evidence to zero. Code
+presence is read once per distinct token, so the batch budget is unchanged, and
+the DEAD/ZERO skips and the revision-deprecated GHO getter skip remain.
+Regressions: the `read_evidence` unit suite (`a_short_payload_is_malformed_evidence_not_zero`,
+`a_code_less_target_is_no_code_evidence`), `activate.rs`'s scripted suite (one
+pin per activation read, no fallback on transport failure, one uppercase
+attempt, no row on partial metadata), and `verify.rs`'s reverted/short
+expected-zero refusals.
+
+### Self-contained chunk seed and SQL-free resolution (2026-11-23)
+
+`run/seed.rs::ChunkSeed::load` synchronously loads and interns the chunk's
+whole relational starting point on the caller's connection: market families
+(assets, contracts, GHO, plus the chunk-start asset and contract revisions),
+the candidate asset-absence cache, reserve interning, the identity demand walk
+over the chunk's decoded logs, the set-shaped user/position/config prefetch,
+and the generation/checkpoint seed facts. `run/resolver.rs::ChunkResolver::resolve`
+receives the seed, the candidate evidence, and the exact read views, holds no
+`Connection`, issues no SQL, and returns ordered deltas, the advanced substrate,
+touched users, and an optional checkpoint. A dependency the seed does not hold
+is `RunError::IncompleteChunkSeed` naming the market and the entity, raised
+before the chunk transaction opens and never replaced by a lazy query.
+`run::process::persist_chunk` remains the only chunk writer.
+
+`run/substrate.rs` is split by capability: seed loading (connection),
+resolution reads (no connection), persistence (`*_for_apply`). Verification
+follows the same split — `load_verification_positions` /
+`load_verification_truth_rows` (SQL), `acquire_position_truth_at` /
+`acquire_verification_truth_at` (header and batch reads, no connection
+parameter), and `compare_position_truth` / `compare_verification_truth` (pure).
+The production driver and the Python pre-commit seam both hold no guard across
+RPC: they load, release the guard, acquire with no connection, then compare. One
+public helper is outside that shape — `verify_touched_positions_on_conn` still
+borrows the connection it is given across its own anchor and truth reads; it has
+no production caller and is named under [Deferred choices](#deferred-choices).
+The
+typed seed refusal propagates through every operation path (token
+classification, mint-to-treasury, liquidation patterns), so a hole cannot
+become a zero address or a skipped aggregation. The reserve's two revision
+reads share one Multicall3 pass again, with a single remaining miss keeping the
+direct `eth_call` shape (a one-call `aggregate3` wrapper would change the
+recorded request set).
+
+Proofs: `resolver::tests::a_real_chunk_resolves_without_sql` (a production seed
+over a real receipt resolves while the test holds the lock, producing both a
+scaled-balance and a configuration delta), the stalled-provider gates
+(`a_stalled_provider_does_not_block_an_unrelated_database_operation`,
+`a_stalled_verification_acquisition_does_not_block_the_database`), the typed
+propagation trio, and `the_two_reserve_revisions_share_one_multicall3_pass`.
+
+### OperationReducer (2026-11-23)
+
+`transaction_processor::OperationReducer::reduce_transaction` is the one
+behavioral entry point `ChunkResolver` delegates to. It owns the market/GHO
+context, liquidation-pattern state, substrate access, the
+`ProjectionView`/`DeltaSink` interleave, and operation-family dispatch. The
+refactor moved behavior, not parameters, and changed no storage format:
+`DELTA_ENCODING_VERSION` remains `aave.canonical-delta/v1`, and no projection,
+journal, checkpoint, or replay fixture moved. `ProcessTxError::Deferred` is
+retired in favour of `ProcessTxError::InvalidOperation`; duplicate ownership
+stays an `OwnershipRefusal`, and unresolved positions and stale generations
+keep typed refusals. Regressions: the same-transaction
+configuration-before/after and bad-debt-before-GHO ordering tests
+(`a_configuration_delta_ahead_of_the_operation_advances_the_view_before_it`,
+`a_bad_debt_write_off_advances_the_view_before_a_later_gho_operation`),
+`projection::tests::the_reducer_module_holds_no_transport_or_storage_reach`,
+and the replay, writer-parity, and recovery suites.
+
+### Diagnostics (2026-11-23)
+
+AAVE-TXTRACE reads the post-delta `ProjectionView` after the transaction's
+operation reduction, so a position moved twice in one transaction reports its
+settled end-of-transaction `(balance, last_index)`. It is emitted on the
+explicit `degenbot::aave` DEBUG target, and the emission gate names that same
+target, so enabling an unrelated target runs no scan. AAVE-PARSE-FAIL is one
+bounded ERROR event on that target carrying `block`, `block_hash`, `tx`,
+`tx_index`, and `err`; direct stderr is gone and the field names keep their
+pre-cleanup spellings for existing narrowing scripts. Regressions:
+`txtrace_reports_a_positions_same_transaction_updates`,
+`txtrace_reports_the_state_the_transaction_settled`,
+`txtrace_stays_dark_when_only_an_unrelated_target_is_enabled`, and
+`parse_failures_state_the_exact_block_and_transaction`.
+
+### Replay-surface authority (2026-11-23)
+
+`tests/fixtures/replay_surfaces/manifest.json` (`degenbot.replay-surface/v1`)
+is the one committed authority for the three primary captures: cassette and
+span, RPC round trips and response bytes, SQL statements, and applied
+pool/liquidity/event counts. `degenbot_rpc::replay_surface::ReplaySurface::load_committed`
+is a strict loader (an unknown field, a foreign schema tag, a duplicate id, a
+backwards span, and a kind/count mismatch all refuse), and every replay suite
+plus `updater_replay_bench` compares observed traffic against it. No assertion
+derives its expectation from the run it is checking. Current values: pool
+7/5,510/16 with 1 pool and 1 liquidity apply, Aave 19/203,117/80 with 20
+events, config 21/252,230/82 with 32 events.
+
+The negative probe is one manifest edit: changing the pool entry's round trips
+fails both the pool replay suite and the bench row with no second literal
+edited, and restoring it passes with the observed counters equal again.
+Historical measurement tables in `docs/updater-rpc-sql-survey.md` stay history;
+the authority's table is a transcript of the manifest, not a second source.
+Regressions: `replay_surface::tests`
+(`the_committed_authority_matches_the_committed_cassettes` plus the refusal
+cases) and every governed replay suite.
+
+### Deliberate number/tag lanes (not Exact reads)
+
+Each lane below is a documented read position, not a second implementation of
+one read.
+
+- **Generic `multicall3_batch` tag lanes** — the pool liquidity verifier, the
+  connector index, and the ERC-20 read family's own transports address by block
+  tag. `BlockReads` and this batch are two pin policies over one batch contract.
+- **`eth_call` on the recorded-wire boundary** — the provider's typed request
+  builder emits `input` on the number lanes while the recorded pinned corpus
+  carries `data` on the hash lane, so `eth_call` keeps its documented separate
+  boundary; `BlockReads::call` is the pinned view production uses.
+- **Unresolved simulation ingress** — the Python inline-sim request (its
+  `InlineSimRequest` is number-only), the dry-run frame-pipeline handles that
+  resolved no header, and the live-RPC lab/bench harnesses that pin a height
+  they never resolved. They are explicit `ReadAnchor::unresolved` observations,
+  keep their previous wire behavior, never fabricate a hash, and fail closed on
+  BLOCKHASH.
+- **Provider `None`/number parameters** — `None` states the alloy builder's
+  node-default `latest` tag and `BlockId::Number` states a height or tag word.
+  These are ingress and administrative lanes, not simulation reads.
+- **Telemetry `BlockLineage::unattached`** — a lineage with no captured exporter
+  context is number-only by construction: D1 admits the observation and refuses
+  it at the canonical boundary.
+- **`aave_v3_markets.last_update_block`** — retired as the completeness claim
+  (D8) and retained as the numeric range claim.
+
+None of these is described as an Exact read, and no production Aave read or
+identified simulation read uses one.
+
+### Deferred choices
+
+Recorded here as future choices, not open deviations:
+
+- Stable cross-database entity keys: surrogate ids are compared by natural
+  identity, and a cross-database key is a separate research project.
+- Checkpoint cadence, journal retention, and storage-cost tuning; cadence
+  cannot affect correctness (D9).
+- Public helper deletion and broad public-path renames beyond the
+  supersession-retired set above, explicitly including
+  `verify_touched_positions_on_conn`: the unused public verification helper
+  still borrows its connection across its own anchor and truth reads, so no
+  caller should treat it as the pre-commit gate.
+- A generic event-sourcing framework, event bus, or framework crate (non-goal).
+- Solver-eligibility, stale-batch, revalidation, and submission-targeting
+  policy changes (non-goal).
+- Standalone cosmetic module splits.
+- `eth_call` on the typed `BlockId` builder lane, which rewrites the recorded
+  pinned corpus and is its own change.
+- Migrating the wave-3/4/5 per-scenario expectations into the replay-surface
+  authority: no duplicated consumer exists yet, and a broader fixture-framework
+  rewrite is out of scope.
+- Exact-read evidence for the unresolved simulation ingress sources: the Python
+  inline-sim request and the live lab/bench harnesses would need a resolved
+  header in their input shape first.
 
 # Appendix A — Type inventory and admitted ambiguity at scoping
 

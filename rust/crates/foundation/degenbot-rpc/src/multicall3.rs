@@ -1,15 +1,15 @@
 //! Multicall3 batching for read-only `eth_call` fan-out.
 //!
-//! The Aave market-wide verify (`verify_all_positions_on_conn`) issues one or
-//! two `eth_call`s per stored position serially; for a full market that is the
-//! minutes-long tail of `aave update`. This module folds a batch of
-//! `(target, calldata)` calls into a single Multicall3 `aggregate3` `eth_call`
-//! (canonical deployed address `0xcA11bde05977b3631167028862bE2a173976CA11`),
-//! with `allowFailure = true` so a reverted sub-call is a per-call
-//! [`MulticallOutcome::Reverted`] instead of a batch-wide revert — preserving
-//! the existing "revert ⇒ actual == zero" verify semantics. A transport fault
-//! is not an outcome: it propagates as a [`ProviderError`], so a sustained
-//! outage can never be read as a fan of sub-call reverts.
+//! The Aave verification gates issue one or two `eth_call`s per stored
+//! position; for a full market that is the minutes-long tail of `aave update`.
+//! This module folds a batch of `(target, calldata)` calls into a single
+//! Multicall3 `aggregate3` `eth_call` (canonical deployed address
+//! `0xcA11bde05977b3631167028862bE2a173976CA11`), with `allowFailure = true` so
+//! a reverted sub-call is a per-call [`MulticallOutcome::Reverted`] outcome
+//! instead of a batch-wide revert: the caller classifies it as read evidence,
+//! never as a zero balance (ADR-105 D3). A transport fault is not an outcome: it
+//! propagates as a [`ProviderError`], so a sustained outage can never be read as
+//! a fan of sub-call reverts.
 //!
 //! Pure encode/decode (no RPC) so the ABI path is fixture-testable against an
 //! independent ABI encoder (`eth_abi`/`eth_utils` reference vectors). The RPC
