@@ -29,7 +29,7 @@ use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::DbError;
 #[cfg(test)]
 use degenbot_db::{DebtPositionRefreshContext, DegenbotDb};
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::chain_evidence::BlockReads;
 use rusqlite::{Connection, OptionalExtension as _};
 
 use super::context::ChunkContext;
@@ -85,7 +85,6 @@ pub(super) async fn dispatch_stk_aave_transfer(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
 ) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let block_number = ctx.block_number();
     let conn = ctx.conn();
     // Read the GHO asset through the ctx-owned always-fresh accessor: a same-tx
     // `DiscountTokenUpdated` at an earlier logIndex bumps
@@ -140,30 +139,11 @@ pub(super) async fn dispatch_stk_aave_transfer(
     // Python's `get_or_init_stk_aave_balance` at `block_number - 1` (without
     // it, an apply would treat `NULL` as zero and omit the pre-event on-chain
     // balance). No-op when the column is already populated.
-    let provider = ctx.provider().clone();
     if let Some(uid) = from_user_id {
-        backfill_user_stk_aave_balance_if_none(
-            ctx,
-            &provider,
-            conn,
-            market_id,
-            uid,
-            block_number,
-            discount_token,
-        )
-        .await?;
+        backfill_user_stk_aave_balance_if_none(ctx, conn, market_id, uid, discount_token).await?;
     }
     if let Some(uid) = to_user_id {
-        backfill_user_stk_aave_balance_if_none(
-            ctx,
-            &provider,
-            conn,
-            market_id,
-            uid,
-            block_number,
-            discount_token,
-        )
-        .await?;
+        backfill_user_stk_aave_balance_if_none(ctx, conn, market_id, uid, discount_token).await?;
     }
     // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
     // still emitted (counts as processed) but the apply is a no-op.
@@ -183,11 +163,9 @@ pub(super) async fn dispatch_stk_aave_transfer(
 /// column is already populated (the apply will mutate the cached value).
 async fn backfill_user_stk_aave_balance_if_none(
     ctx: &mut ChunkContext<'_>,
-    provider: &AlloyProvider,
     conn: &Connection,
     market_id: i64,
     user_id: i64,
-    block_number: u64,
     discount_token: Address,
 ) -> Result<(), ConfigDispatchError> {
     let row: Option<String> = conn
@@ -215,41 +193,11 @@ async fn backfill_user_stk_aave_balance_if_none(
     let user_addr: Address = addr_str.parse().map_err(|_| {
         ConfigDispatchError::DecodeShape(format!("bad user_address in backfill: {addr_str}"))
     })?;
-    let balance = read_stk_aave_balance(
-        provider,
-        discount_token,
-        user_addr,
-        &addr_str,
-        block_number.saturating_sub(1),
-    )
-    .await?;
+    let balance = ctx
+        .read_stk_aave_balance_at_parent(discount_token, user_addr)
+        .await?;
     ctx.push_observation(user_id, balance);
     Ok(())
-}
-
-/// One stkAAVE `balanceOf(user)` through the stateless ERC-20 account read
-/// (`degenbot_rpc::erc20`). This consumer's zero-intolerance is preserved: a
-/// read that cannot produce a value is a hard typed failure (the
-/// `require_word0_u256` contract), never a silent zero.
-async fn read_stk_aave_balance(
-    provider: &AlloyProvider,
-    discount_token: Address,
-    user_addr: Address,
-    user_str: &str,
-    block: u64,
-) -> Result<U256, ConfigDispatchError> {
-    degenbot_rpc::erc20::balance_of(provider, discount_token, user_addr, Some(block))
-        .await
-        .map_err(|error| match error {
-            degenbot_rpc::erc20::AccountReadError::Call(provider_error) => provider_error.into(),
-            degenbot_rpc::erc20::AccountReadError::NotUint256 { returned, .. } => {
-                ConfigDispatchError::DecodeShape(format!(
-                    "balanceOf(address) for user {user_str} on {}: \
-                     short return data ({returned} bytes, expected at least 32)",
-                    checksum(&discount_token)
-                ))
-            }
-        })
 }
 
 /// `DiscountTokenUpdated(old, new)` → [`ConfigurationEffect::GhoDiscountTokenUpdated`].
@@ -329,11 +277,9 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 ///
 /// Returns an empty map when there's no GHO vToken (`gho_vtoken_address` is
 /// `None`) or the revision couldn't be resolved.
-#[expect(clippy::too_many_arguments)]
 pub(super) async fn build_discount_snapshot(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     tx_logs: &[&alloy::rpc::types::Log],
-    block_number: u64,
     gho_vtoken_address: Option<Address>,
     vtoken_revision: Option<u32>,
     market_id: i64,
@@ -416,7 +362,7 @@ pub(super) async fn build_discount_snapshot(
             )
         })
         .collect();
-    let rets = eth_calls_batched_or_direct(provider, &calldatas, block_number).await?;
+    let rets = eth_calls_batched_or_direct(reads, &calldatas).await?;
     for (user, ret) in rpc_users.iter().zip(rets) {
         let discount = require_word0_u256(
             &ret,
@@ -462,10 +408,9 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 /// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
 #[cfg(test)]
 pub(crate) async fn refresh_gho_discount(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     conn: &Connection,
     position_id: i64,
-    block_number: u64,
     discount_token: Option<Address>,
 ) -> Result<(), ConfigDispatchError> {
     let Some(discount_token) = discount_token else {
@@ -484,14 +429,13 @@ pub(crate) async fn refresh_gho_discount(
                 ctx.user_address
             ))
         })?;
-        let balance = read_stk_aave_balance(
-            provider,
-            discount_token,
-            user_addr,
-            &ctx.user_address,
-            block_number.saturating_sub(1),
-        )
-        .await?;
+        let ret = reads
+            .call(
+                discount_token,
+                encode_single_address_call("balanceOf(address)", &user_addr),
+            )
+            .await?;
+        let balance = require_word0_u256(&ret, "balanceOf(address)", &discount_token)?;
         DegenbotDb::set_user_stk_aave_balance_on_conn(conn, ctx.user_id, balance)?;
         balance
     };

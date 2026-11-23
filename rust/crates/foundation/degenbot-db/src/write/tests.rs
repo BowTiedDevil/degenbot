@@ -955,14 +955,19 @@ fn apply_scaled_burn_clamps_to_zero_when_delta_exceeds_balance() {
     // Stored balance = 1000; burn delta = -1500 (magnitude exceeds).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("123"));
     let conn = db.lock();
-    DegenbotDb::apply_scaled_token_burn_on_conn(
-        &conn,
-        ScaledTokenPosition::Debt,
-        pid,
-        alloy::primitives::I256::try_from(-1_500_i64).unwrap(),
-        alloy::primitives::U256::from(200u64),
-    )
-    .expect("clamp must not error");
+    let (computed, computed_index) =
+        DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+            alloy::primitives::U256::from(1_000u64),
+            Some(alloy::primitives::U256::from(123u64)),
+            alloy::primitives::I256::try_from(-1_500_i64).unwrap(),
+            alloy::primitives::U256::from(200u64),
+        )
+        .expect("clamp must not error");
+    assert_eq!(computed, alloy::primitives::U256::ZERO);
+    assert_eq!(computed_index, Some(alloy::primitives::U256::from(200u64)));
     let (balance, last_index) =
         DegenbotDb::lookup_position_balance_index_on_conn(&conn, ScaledTokenPosition::Debt, pid)
             .unwrap();
@@ -986,10 +991,12 @@ fn apply_scaled_burn_partial_does_not_clamp() {
     // Stored balance = 1000; burn delta = -600 (partial).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
     let conn = db.lock();
-    DegenbotDb::apply_scaled_token_burn_on_conn(
+    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
         &conn,
         ScaledTokenPosition::Debt,
         pid,
+        alloy::primitives::U256::from(1_000u64),
+        Some(alloy::primitives::U256::from(100u64)),
         alloy::primitives::I256::try_from(-600_i64).unwrap(),
         alloy::primitives::U256::from(200u64),
     )
@@ -1019,10 +1026,12 @@ fn apply_scaled_burn_exact_match_lands_on_zero() {
     // Stored balance = 1000; burn delta = -1000 (exact full withdraw).
     let pid = seed_debt_position_with_balance(&db, "1000", Some("100"));
     let conn = db.lock();
-    DegenbotDb::apply_scaled_token_burn_on_conn(
+    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
         &conn,
         ScaledTokenPosition::Debt,
         pid,
+        alloy::primitives::U256::from(1_000u64),
+        Some(alloy::primitives::U256::from(100u64)),
         alloy::primitives::I256::try_from(-1_000_i64).unwrap(),
         alloy::primitives::U256::from(200u64),
     )

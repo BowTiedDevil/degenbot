@@ -16,7 +16,9 @@ use std::str::FromStr;
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_core::canonical_head::ChainAnchor;
-use degenbot_rpc::chain_evidence::{acquire_header_chain, BlockReads, ExactReadError};
+use degenbot_rpc::chain_evidence::{
+    acquire_header_chain, resolve_parent_anchor, BlockReads, ExactReadError,
+};
 use degenbot_rpc::provider::AlloyProvider;
 
 /// The block the captured liquidation executed in
@@ -91,6 +93,35 @@ async fn live_headers_and_hash_pinned_reads_hold_at_the_captured_liquidation_anc
         .balance_at(pool())
         .await
         .expect("the node serves a hash-pinned balance read");
+
+    // The pinned Multicall3 batch: the Aave verification fan-out's own shape.
+    let batch = reads
+        .batch(&[
+            (pool(), Bytes::from_static(&GET_RESERVES_LIST)),
+            (pool(), Bytes::from_static(&GET_RESERVES_LIST)),
+        ])
+        .await
+        .expect("the node serves a hash-pinned aggregate3 batch");
+    assert_eq!(batch.len(), 2, "one outcome per sub-call");
+    assert!(
+        batch.iter().all(|outcome| matches!(
+            outcome,
+            degenbot_rpc::multicall3::MulticallOutcome::Returned(_)
+        )),
+        "both `getReservesList` sub-calls return: {batch:?}"
+    );
+
+    // The parent read position an intentional pre-block stkAAVE seed uses.
+    let parent = resolve_parent_anchor(&provider, anchor)
+        .await
+        .expect("the node states the anchor's parent header");
+    assert_eq!(parent.number(), ANCHOR_BLOCK - 1);
+    assert_eq!(parent.hash(), anchor.parent_hash());
+    let parent_reads = BlockReads::at(&provider, parent);
+    let _ = parent_reads
+        .call(pool(), Bytes::from_static(&GET_RESERVES_LIST))
+        .await
+        .expect("the node serves a hash-pinned call at the parent anchor");
 
     let fabricated = ChainAnchor::new(
         1,

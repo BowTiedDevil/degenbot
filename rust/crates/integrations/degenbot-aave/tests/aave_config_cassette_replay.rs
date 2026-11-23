@@ -60,7 +60,7 @@ use degenbot_aave::updater::{
 };
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
-use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
+use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette, CassetteResponse};
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use tempfile::TempDir;
 
@@ -125,14 +125,17 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 85;
 /// The candidate acquisition (ADR-105 D2) rides on top: the chain binding (1),
 /// one header per candidate block (4 - the span's candidates sit at
 /// 19091050/53/56/57 and none is the terminal), and one complete receipt per
-/// candidate transaction (4).
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 18;
+/// candidate transaction (4). The exact-read migration adds the three parent
+/// headers the pre-block stkAAVE seeds resolve (one per distinct burn block,
+/// ADR-105 D3): the seed reads at the transaction's parent, so that height's
+/// own identity is a request.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 21;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 206_716;
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 252_230;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
@@ -370,6 +373,26 @@ fn committed_cassette() -> Cassette {
 /// `getDiscountPercent` selector for the repeat-burn user, pinned at the
 /// FIRST burn tx's block. The two later same-user burns recorded NO call —
 /// they took the DB-cache path against the row the ops parser created.
+/// The hash the capture records for `block`, from its own header evidence: the
+/// pin every exact read names instead of a height.
+fn recorded_header_hash(cassette: &Cassette, block: u64) -> String {
+    let key = format!("[\"eth_getBlockByNumber\",[\"{block}\",false]]");
+    let entry = cassette
+        .entries
+        .get(&key)
+        .unwrap_or_else(|| panic!("the capture records block {block}'s header"));
+    match &entry.response {
+        CassetteResponse::Success { result } => result
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .expect("a recorded header states its hash")
+            .to_string(),
+        other @ CassetteResponse::Failure { .. } => {
+            panic!("the recorded header for block {block} is not an answer: {other:?}")
+        }
+    }
+}
+
 fn committed_discount_calls(cassette: &Cassette) -> Vec<String> {
     cassette
         .entries
@@ -400,9 +423,16 @@ fn aave_config_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean
         "the committed corpus must carry exactly one getDiscountPercent call \
          (the first burn's path-#2 RPC); got {discount_calls:?}"
     );
+    let first_burn_hash = recorded_header_hash(&cassette, SPAN_FROM);
     assert!(
-        discount_calls[0].contains(&format!("\"{SPAN_FROM}\"")),
-        "the discount call must be pinned at the first burn tx's block: {}",
+        discount_calls[0].contains(&first_burn_hash),
+        "the discount call must be pinned at the first burn tx's block hash \
+         {first_burn_hash}: {}",
+        discount_calls[0]
+    );
+    assert!(
+        discount_calls[0].contains("\"requireCanonical\":true"),
+        "the pin requires the block to still be canonical: {}",
         discount_calls[0]
     );
 

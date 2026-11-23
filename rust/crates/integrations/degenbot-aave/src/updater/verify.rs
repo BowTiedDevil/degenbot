@@ -21,11 +21,12 @@
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
+use degenbot_rpc::chain_evidence::{resolve_anchor_at, BlockReads};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
 use crate::RunError;
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
+use degenbot_rpc::multicall3::MulticallOutcome;
 
 /// The aToken / vToken scaled-token position kind (collateral / debt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +250,9 @@ const SCALED_BALANCE_OF_SELECTOR: [u8; 4] = [0x1d, 0xa2, 0x4f, 0x3e];
 /// keccak256("getPreviousIndex(address)")[0..4] = `0xe0753986`.
 const GET_PREVIOUS_INDEX_SELECTOR: [u8; 4] = [0xe0, 0x75, 0x39, 0x86];
 
+/// keccak256("balanceOf(address)")[0..4] = `0x70a08231`.
+const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
 /// Build the 36-byte calldata `selector(4) + address(32, left-padded)`.
 fn build_call_data(selector: [u8; 4], user: Address) -> Bytes {
     let mut buf = [0u8; 36];
@@ -293,7 +297,8 @@ pub async fn verify_touched_positions_on_conn(
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<PositionDivergence>, RunError> {
     let positions = load_verification_positions(conn, market_id, user_addresses)?;
-    let truth = acquire_position_truth(provider, block_number, &positions).await?;
+    let anchor = resolve_anchor_at(provider, block_number).await?;
+    let truth = acquire_position_truth(&BlockReads::at(provider, anchor), &positions).await?;
     Ok(compare_position_truth(&positions, &truth, block_number))
 }
 
@@ -333,8 +338,7 @@ pub fn load_verification_positions(
 /// A transport fault aborts the acquisition instead of reading every position
 /// as zero.
 pub async fn acquire_position_truth(
-    provider: &AlloyProvider,
-    block_number: u64,
+    reads: &BlockReads<'_>,
     positions: &[VerificationPosition],
 ) -> Result<Vec<PositionTruth>, RunError> {
     let mut truth: Vec<PositionTruth> = Vec::with_capacity(positions.len());
@@ -357,7 +361,7 @@ pub async fn acquire_position_truth(
                 build_call_data(GET_PREVIOUS_INDEX_SELECTOR, row.user_address),
             ));
         }
-        let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
+        let results = reads.batch(&calls).await?;
         // The batch yields exactly one outcome per call, so pairing the
         // stride is exact and the remainder is structurally empty.
         let (result_pairs, _remainder) = results.as_chunks::<2>();
@@ -681,14 +685,13 @@ fn load_gho_discount_rows(
 /// zero.
 pub async fn acquire_verification_truth(
     conn: &Connection,
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     market_id: i64,
     chain_id: i64,
-    block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<VerificationTruth, RunError> {
     let positions = load_verification_positions(conn, market_id, user_addresses)?;
-    let positions = acquire_position_truth(provider, block_number, &positions).await?;
+    let positions = acquire_position_truth(reads, &positions).await?;
 
     let stk_aave = match stk_aave_discount_token(conn, chain_id)? {
         Some(token_address) => {
@@ -696,19 +699,21 @@ pub async fn acquire_verification_truth(
             if rows.is_empty() {
                 Vec::new()
             } else {
-                let accounts: Vec<Address> = rows.iter().map(|row| row.user_address).collect();
-                let results = degenbot_rpc::erc20::balance_of_batch(
-                    provider,
-                    token_address,
-                    &accounts,
-                    Some(block_number),
-                )
-                .await?;
+                let calls: Vec<(Address, Bytes)> = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            token_address,
+                            build_call_data(BALANCE_OF_SELECTOR, row.user_address),
+                        )
+                    })
+                    .collect();
+                let results = reads.batch(&calls).await?;
                 rows.iter()
                     .zip(results.iter())
                     .map(|(row, result)| StkAaveTruth {
                         user_id: row.user_id,
-                        balance: result.as_ref().copied().unwrap_or(U256::ZERO),
+                        balance: result_to_u256(result),
                     })
                     .collect()
             }
@@ -731,7 +736,7 @@ pub async fn acquire_verification_truth(
                         )
                     })
                     .collect();
-                let results = multicall3_batch(provider, &calls, Some(block_number)).await?;
+                let results = reads.batch(&calls).await?;
                 rows.iter()
                     .zip(results.iter())
                     .map(|(row, result)| GhoDiscountTruth {
@@ -819,81 +824,6 @@ pub fn compare_verification_truth_on_conn(
     Ok(divergences)
 }
 
-/// Verify that `aave_v3_users.stk_aave_balance` matches on-chain `balanceOf`
-/// for each user with a tracked stkAAVE balance. No-op when the market
-/// has no `v_gho_discount_token` (the GHO asset row's discount token is
-/// `None`).
-///
-/// # Errors
-///
-/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
-pub async fn verify_stk_aave_balances_on_conn(
-    conn: &Connection,
-    provider: &AlloyProvider,
-    market_id: i64,
-    chain_id: i64,
-    block_number: u64,
-    user_addresses: Option<&[Address]>,
-) -> Result<Vec<VerificationDivergence>, RunError> {
-    let truth = acquire_verification_truth(
-        conn,
-        provider,
-        market_id,
-        chain_id,
-        block_number,
-        user_addresses,
-    )
-    .await?;
-    Ok(compare_verification_truth_on_conn(
-        conn,
-        market_id,
-        chain_id,
-        block_number,
-        user_addresses,
-        &truth,
-    )?
-    .into_iter()
-    .filter(|divergence| matches!(divergence, VerificationDivergence::StkAaveBalance { .. }))
-    .collect())
-}
-
-/// Verify that `aave_v3_users.gho_discount` matches the GHO vToken's
-/// `getDiscountPercent` for each user with GHO debt. Skips when the
-/// GHO vToken's revision is `None` or `>= GHO_DISCOUNT_DEPRECATION_REVISION` (4).
-///
-/// # Errors
-///
-/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
-pub async fn verify_gho_discount_amounts_on_conn(
-    conn: &Connection,
-    provider: &AlloyProvider,
-    market_id: i64,
-    chain_id: i64,
-    block_number: u64,
-    user_addresses: Option<&[Address]>,
-) -> Result<Vec<VerificationDivergence>, RunError> {
-    let truth = acquire_verification_truth(
-        conn,
-        provider,
-        market_id,
-        chain_id,
-        block_number,
-        user_addresses,
-    )
-    .await?;
-    Ok(compare_verification_truth_on_conn(
-        conn,
-        market_id,
-        chain_id,
-        block_number,
-        user_addresses,
-        &truth,
-    )?
-    .into_iter()
-    .filter(|divergence| matches!(divergence, VerificationDivergence::GhoDiscount { .. }))
-    .collect())
-}
-
 /// Run all 4 verification checks (scaled-token collateral + debt, stkAAVE
 /// balance, GHO discount) and return a unified divergence list.
 ///
@@ -912,12 +842,12 @@ pub async fn verify_all_positions_on_conn(
     block_number: u64,
     user_addresses: Option<&[Address]>,
 ) -> Result<Vec<VerificationDivergence>, RunError> {
+    let anchor = resolve_anchor_at(provider, block_number).await?;
     let truth = acquire_verification_truth(
         conn,
-        provider,
+        &BlockReads::at(provider, anchor),
         market_id,
         chain_id,
-        block_number,
         user_addresses,
     )
     .await?;
@@ -1124,8 +1054,14 @@ mod tests {
             verify_touched_positions_on_conn(&conn, &provider, 1, 100, None),
         );
 
+        // The terminal anchor resolves BEFORE any gate read, so a dead
+        // transport aborts here — still an abort, never a fabricated fan of
+        // zero-divergence rows.
         assert!(
-            matches!(result, Err(RunError::Provider(_))),
+            matches!(
+                result,
+                Err(RunError::TerminalAnchor(_) | RunError::Provider(_))
+            ),
             "an outage must abort verification instead of fabricating divergences, got {result:?}"
         );
     }

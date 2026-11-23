@@ -346,8 +346,11 @@ impl Ledger {
             &user[2..]
         );
         let params = json!([
-            {"input": input, "to": token.to_lowercase()},
-            (block - 1).to_string(),
+            {"data": input, "to": token.to_lowercase()},
+            {
+                "blockHash": synthetic_block_hash(block - 1),
+                "requireCanonical": true,
+            },
         ]);
         let response = CassetteResponse::Success {
             result: json!(format!("0x{:064x}", balance)),
@@ -463,6 +466,27 @@ impl Ledger {
             CassetteEntry {
                 digest: entry_digest(&header),
                 response: header,
+            },
+        );
+        // The pre-block stkAAVE seed reads at the terminal block's PARENT, so the
+        // capture owes that height's header too (ADR-105 D3: a parent read
+        // position is an exact identity, not a height tag).
+        let parent_number = self.to_block.saturating_sub(1);
+        let parent = CassetteResponse::Success {
+            result: json!({
+                "number": parent_number.to_string(),
+                "hash": synthetic_block_hash(parent_number),
+                "parentHash": synthetic_block_hash(parent_number.saturating_sub(1)),
+            }),
+        };
+        self.entries.insert(
+            entry_key(
+                "eth_getBlockByNumber",
+                &json!([format!("0x{parent_number:x}"), false]),
+            ),
+            CassetteEntry {
+                digest: entry_digest(&parent),
+                response: parent,
             },
         );
     }
@@ -699,11 +723,11 @@ fn discount_token_replacement_reseeds_balances_from_the_new_ledger() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 15,
+        snapshot.requests, 16,
         "five main passes + committed T0 + the uncovered T1 pass + the T1 \
-         balanceOf backfill call + the terminal anchor's chain-id and header \
-         reads + the candidate acquisition (chain binding, block headers, \
-         complete receipts)"
+         balanceOf backfill call + the PARENT header read that anchors it + the \
+         terminal anchor's chain-id and header reads + the candidate acquisition \
+         (chain binding, block headers, complete receipts)"
     );
 }
 
@@ -743,7 +767,10 @@ fn same_tx_rotation_refresh_uses_new_contract() {
          recorded eth_call answers only a T1-targeted balanceOf"
     );
     let snapshot = transport.served_snapshot();
-    assert_eq!(snapshot.requests, 14);
+    assert_eq!(
+        snapshot.requests, 15,
+        "the pre-change 14 plus the refresh's PARENT header read"
+    );
     assert_eq!(
         snapshot.per_method.get("eth_call").map(|m| m.served),
         Some(1),

@@ -49,7 +49,8 @@ use degenbot_decoders::aave_event_decoder::{
     AAVE_RESERVE_USED_AS_COLLATERAL_ENABLED_TOPIC, AAVE_STAKED_TOPIC, AAVE_SUPPLY_TOPIC,
     AAVE_UPGRADED_TOPIC, AAVE_USER_E_MODE_SET_TOPIC, AAVE_WITHDRAW_TOPIC, ERC20_TRANSFER_TOPIC,
 };
-use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
+use degenbot_rpc::abi::ContractRead;
+use degenbot_rpc::provider::LogFetcher;
 
 use super::config_dispatch::strip_trailing_nulls_from_ascii;
 
@@ -754,41 +755,25 @@ pub struct AaveSubstrate {
 /// Returns the underlying [`degenbot_core::errors::ProviderError`] when an
 /// `eth_call` fails or a short/malformed return comes back.
 pub async fn resolve_aave_substrate(
-    provider: &AlloyProvider,
+    transport: &impl ContractRead,
     address_provider: Address,
-    at_block: Option<u64>,
 ) -> ProviderResult<AaveSubstrate> {
-    let pool = call_address(provider, address_provider, "getPool()", at_block).await?;
-    let configurator = call_address(
-        provider,
-        address_provider,
-        "getPoolConfigurator()",
-        at_block,
-    )
-    .await?;
-    let price_oracle =
-        call_address(provider, address_provider, "getPriceOracle()", at_block).await?;
-    let data_provider = call_address(
-        provider,
-        address_provider,
-        "getPoolDataProvider()",
-        at_block,
-    )
-    .await?;
-    let pool_revision = call_uint(provider, pool, "POOL_REVISION()", at_block).await?;
+    let pool = call_address(transport, address_provider, "getPool()").await?;
+    let configurator = call_address(transport, address_provider, "getPoolConfigurator()").await?;
+    let price_oracle = call_address(transport, address_provider, "getPriceOracle()").await?;
+    let data_provider = call_address(transport, address_provider, "getPoolDataProvider()").await?;
+    let pool_revision = call_uint(transport, pool, "POOL_REVISION()").await?;
     let configurator_revision =
-        call_uint(provider, configurator, "CONFIGURATOR_REVISION()", at_block).await?;
+        call_uint(transport, configurator, "CONFIGURATOR_REVISION()").await?;
 
-    let list_ret = provider
-        .eth_call(&pool, no_arg_calldata("getReservesList()"), at_block)
+    let list_ret = transport
+        .call(pool, no_arg_calldata("getReservesList()"), None)
         .await?;
     let underlyings = decode_address_array(&list_ret);
 
     let mut reserves = Vec::with_capacity(underlyings.len());
     for underlying in underlyings {
-        if let Some((a_token, v_token)) =
-            reserve_tokens(provider, pool, underlying, at_block).await?
-        {
+        if let Some((a_token, v_token)) = reserve_tokens(transport, pool, underlying).await? {
             reserves.push(AaveReserve {
                 underlying,
                 a_token,
@@ -829,13 +814,12 @@ fn decode_failure(signature: &str, error: &alloy::sol_types::Error) -> ProviderE
 /// failure rather than a panic on the slice or an address assembled from bits
 /// the contract never answered.
 async fn call_address(
-    provider: &AlloyProvider,
+    transport: &impl ContractRead,
     target: Address,
     signature: &str,
-    at_block: Option<u64>,
 ) -> ProviderResult<Address> {
-    let ret = provider
-        .eth_call(&target, no_arg_calldata(signature), at_block)
+    let ret = transport
+        .call(target, no_arg_calldata(signature), None)
         .await?;
     decode_address_answer(signature, &ret)
 }
@@ -851,13 +835,12 @@ fn decode_address_answer(signature: &str, ret: &[u8]) -> ProviderResult<Address>
 /// checked conversion: a short answer and a value past `u64` are both typed
 /// failures, never a zero or a truncated low eight bytes.
 async fn call_uint(
-    provider: &AlloyProvider,
+    transport: &impl ContractRead,
     target: Address,
     signature: &str,
-    at_block: Option<u64>,
 ) -> ProviderResult<u64> {
-    let ret = provider
-        .eth_call(&target, no_arg_calldata(signature), at_block)
+    let ret = transport
+        .call(target, no_arg_calldata(signature), None)
         .await?;
     decode_uint_answer(signature, &ret)
 }
@@ -884,19 +867,16 @@ fn decode_address_array(ret: &[u8]) -> Vec<Address> {
 /// words of the Aave 3.2+ return shape), or `None` for a non-reserve (the
 /// Pool returns a zeroed struct).
 async fn reserve_tokens(
-    provider: &AlloyProvider,
+    transport: &impl ContractRead,
     pool: Address,
     candidate: Address,
-    at_block: Option<u64>,
 ) -> ProviderResult<Option<(Address, Address)>> {
     let selector = &alloy::primitives::keccak256("getReserveData(address)".as_bytes())[..4];
     let mut calldata = Vec::with_capacity(36);
     calldata.extend_from_slice(selector);
     calldata.extend_from_slice(&[0u8; 12]);
     calldata.extend_from_slice(candidate.as_slice());
-    let ret = provider
-        .eth_call(&pool, Bytes::from(calldata), at_block)
-        .await?;
+    let ret = transport.call(pool, Bytes::from(calldata), None).await?;
     if ret.len() < 11 * 32 {
         return Ok(None);
     }
@@ -1179,6 +1159,8 @@ mod tests {
     /// A dummy `AlloyProvider` pointing at a dead URL: every fetch that
     /// reached the wire would fail, so an `Ok` is proof the guard answered
     /// before any round trip.
+    use degenbot_rpc::provider::AlloyProvider;
+
     fn dead_url_provider() -> AlloyProvider {
         degenbot_core::runtime::get_runtime()
             .block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
@@ -1367,7 +1349,7 @@ mod tests {
             .unwrap()
             .as_alloy_provider();
         let substrate = degenbot_core::runtime::get_runtime()
-            .block_on(resolve_aave_substrate(&provider, ap, None))
+            .block_on(resolve_aave_substrate(&provider, ap))
             .unwrap();
 
         assert_eq!(substrate.pool, pool);

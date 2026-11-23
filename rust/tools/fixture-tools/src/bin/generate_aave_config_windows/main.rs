@@ -317,9 +317,15 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
         let side = AlloyProvider::new(node_uri, 3)
             .await
             .expect("side-channel provider");
-        resolve_aave_substrate(&side, ap, Some(substrate_block))
+        let anchor = degenbot_rpc::chain_evidence::resolve_anchor_at(&side, substrate_block)
             .await
-            .expect("substrate resolution")
+            .expect("the substrate block resolves to an exact anchor");
+        resolve_aave_substrate(
+            &degenbot_rpc::chain_evidence::BlockReads::at(&side, anchor),
+            ap,
+        )
+        .await
+        .expect("substrate resolution")
     });
 
     let recorder = runtime

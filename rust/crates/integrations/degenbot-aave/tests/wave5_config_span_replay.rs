@@ -181,7 +181,7 @@ const SPANS: &[SpanExpectations] = &[
     SpanExpectations {
         name: "w5_aave_address_set_registration",
         chunks: 1,
-        served: 16,
+        served: 17,
         get_logs: 6,
         eth_calls: 2,
     },

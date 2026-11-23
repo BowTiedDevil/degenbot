@@ -23,9 +23,12 @@
 //! A served-method request missing from the ledger is a **fixture gap** — a
 //! non-revert JSON-RPC error (the [`crate::offline`] unrecorded-call
 //! contract): a missing fixture entry is a harness problem, not on-chain
-//! semantics. Methods outside the served surface keep the offline
-//! "method not found" contract; anything the ledger carries replays even
-//! outside the served set.
+//! semantics. The served surface includes the four read methods
+//! (`eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getBalance`), because
+//! an exact read is served from this ledger too: a pin the capture does not
+//! carry is a missing fixture, never a node without the capability. Methods
+//! outside the served surface keep the offline "method not found" contract;
+//! anything the ledger carries replays even outside the served set.
 //!
 //! Wrap as a real [`AlloyProvider`] via
 //! [`CassetteReplayTransport::as_alloy_provider`] and run `LogFetcher` (or
@@ -53,11 +56,21 @@ use crate::provider::AlloyProvider;
 /// The methods the replay surface serves from the ledger. A miss on one of
 /// these is a fixture gap; a miss anywhere else is "method not found" (the
 /// ledger is authoritative for anything it actually carries).
-const SERVED_METHODS: [&str; 4] = [
+///
+/// The four read methods are here because a hash-pinned exact read is served
+/// from this ledger: a capture that does not carry the pin is a MISSING
+/// FIXTURE, and reporting it as `-32601` would let the exact-read classifier
+/// read a harness gap as a node without the capability (ADR-105 D11 keeps
+/// "no evidence recorded" and "no capability" apart).
+const SERVED_METHODS: [&str; 8] = [
     "eth_getLogs",
     "eth_getBlockByNumber",
     "eth_chainId",
     "eth_blockNumber",
+    "eth_call",
+    "eth_getCode",
+    "eth_getStorageAt",
+    "eth_getBalance",
 ];
 
 /// The replay half of a golden capture: answers JSON-RPC requests from a
@@ -614,7 +627,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unrecorded_method_keeps_the_method_not_found_contract() {
+    async fn unrecorded_read_method_is_a_fixture_gap_not_a_capability_verdict() {
         let transport = CassetteReplayTransport::new(corpus_cassette(POOL_CASSETTE_FILE));
         let err = transport
             .as_alloy_provider()
@@ -626,10 +639,10 @@ mod tests {
             .unwrap_err();
         match &err {
             ProviderError::RpcError { code, message } => {
-                assert_eq!(*code, -32601);
-                assert!(message.contains("method not found"), "got {message}");
+                assert_eq!(*code, -32603, "a missing fixture is not a missing method");
+                assert!(message.contains("fixture gap"), "got {message}");
             }
-            other => panic!("expected method-not-found RPC error, got {other:?}"),
+            other => panic!("expected a fixture-gap RPC error, got {other:?}"),
         }
     }
 
@@ -998,6 +1011,110 @@ mod tests {
             1,
             "the capability verdict never degrades to a number-only read"
         );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_exact_batch_replays_offline_from_the_ledger() {
+        use crate::multicall3::{encode_aggregate3, MULTICALL3_ADDRESS};
+        use alloy::dyn_abi::DynSolValue;
+
+        let word = |value: u8| {
+            let mut out = [0u8; 32];
+            out[31] = value;
+            out
+        };
+        let rows = |entries: &[(bool, &[u8])]| {
+            let values: Vec<DynSolValue> = entries
+                .iter()
+                .map(|(success, data)| {
+                    DynSolValue::Tuple(vec![
+                        DynSolValue::Bool(*success),
+                        DynSolValue::Bytes(data.to_vec()),
+                    ])
+                })
+                .collect();
+            json!(format!(
+                "0x{}",
+                alloy::hex::encode(DynSolValue::Array(values).abi_encode())
+            ))
+        };
+
+        let pinned = ChainAnchor::new(1, 100, B256::new([0xa1; 32]), B256::new([0xa0; 32]))
+            .expect("a complete fixture anchor");
+        let target = Address::repeat_byte(0x11);
+        let calls = vec![
+            (target, Bytes::from(vec![0xaa])),
+            (target, Bytes::from(vec![0xbb])),
+        ];
+        let calldata = encode_aggregate3(&calls).expect("the aggregate3 envelope encodes");
+        let params = json!([
+            { "to": format!("0x{}", alloy::hex::encode(MULTICALL3_ADDRESS.as_slice())), "data": format!("{calldata}") },
+            { "blockHash": format!("{}", pinned.hash()), "requireCanonical": true }
+        ]);
+        let key = entry_key("eth_call", &params);
+        assert!(
+            key.contains("blockHash"),
+            "the recorded batch names its block by hash: {key}"
+        );
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (100, 100),
+            vec![(
+                key,
+                success_entry(rows(&[(true, &word(42)), (true, &word(7))])),
+            )],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let outcomes = crate::chain_evidence::BlockReads::at(&provider, pinned)
+            .batch(&calls)
+            .await
+            .expect("the ledger answers the pinned batch offline");
+
+        assert_eq!(
+            outcomes,
+            vec![
+                crate::multicall3::MulticallOutcome::Returned(Bytes::from(word(42).to_vec())),
+                crate::multicall3::MulticallOutcome::Returned(Bytes::from(word(7).to_vec())),
+            ]
+        );
+        let served = transport.served_snapshot();
+        assert_eq!(
+            served.requests, 1,
+            "one aggregate3 request serves the batch"
+        );
+        assert_eq!(served.served, 1);
+    }
+
+    #[tokio::test]
+    async fn a_mutated_pinned_hash_is_a_loud_replay_gap() {
+        let recorded = ChainAnchor::new(1, 100, B256::new([0xa1; 32]), B256::new([0xa0; 32]))
+            .expect("a complete fixture anchor");
+        let abandoned = ChainAnchor::new(1, 100, B256::new([0xb1; 32]), B256::new([0xa0; 32]))
+            .expect("a complete fixture anchor");
+        let to = Address::repeat_byte(0x11);
+        let params = json!([
+            { "to": format!("{to}"), "data": "0x" },
+            { "blockHash": format!("{}", recorded.hash()), "requireCanonical": true }
+        ]);
+        let key = entry_key("eth_call", &params);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (100, 100),
+            vec![(key, success_entry(json!("0x1234")))],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let error = crate::chain_evidence::BlockReads::at(&provider, abandoned)
+            .call(to, Bytes::new())
+            .await
+            .expect_err("the ledger cannot serve a hash it never recorded");
+
+        assert!(
+            matches!(error, crate::chain_evidence::ExactReadError::Failed { .. }),
+            "a mutated pin is a loud failed read, never a served or substituted one: {error:?}"
+        );
+        let served = transport.served_snapshot();
+        assert_eq!(served.served, 0, "nothing was served");
+        assert_eq!(served.requests, 1, "no number-only retry exists");
     }
 
     // ── wire-form restoration (the re-hex contract) ──────────────────────

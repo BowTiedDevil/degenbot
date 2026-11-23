@@ -489,7 +489,19 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
         ]),
     );
 
-    // The revision reads the two proxy ids resolve through (block-pinned).
+    // The bootstrap resolves each `ProxyCreated` log's block to its exact
+    // anchor before reading the revision, so the capture owes those heights'
+    // headers (ADR-105 D3).
+    for number in [POOL_PROXY_CREATED_BLOCK, CONFIGURATOR_PROXY_CREATED_BLOCK] {
+        add(
+            "eth_getBlockByNumber",
+            serde_json::json!([format!("0x{number:x}"), false]),
+            terminal_header(number),
+        );
+    }
+
+    // The revision reads the two proxy ids resolve through, hash-pinned at the
+    // exact anchor of the block that created the proxy.
     let revision = |add: &mut dyn FnMut(&str, serde_json::Value, serde_json::Value),
                     selector: &str,
                     target: &str,
@@ -498,8 +510,11 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
         add(
             "eth_call",
             serde_json::json!([
-                {"input": selector, "to": target.to_lowercase()},
-                block_number.to_string()
+                {"data": selector, "to": target.to_lowercase()},
+                {
+                    "blockHash": synthetic_block_hash(block_number),
+                    "requireCanonical": true,
+                }
             ]),
             serde_json::json!(format!("0x{:064x}", value)),
         );
@@ -736,9 +751,11 @@ fn a_reset_market_syncs_normally_over_the_fixture_window() {
     // three empty passes + the chain-wide oracle pass, and the candidate
     // acquisition the bootstrap window's own logs force (the chain binding, the
     // candidate block header, and one complete receipt per candidate
-    // transaction).
-    assert_eq!(requests, 18);
-    assert_eq!(served, 18);
+    // transaction), plus the two exact-anchor header reads the bootstrap's
+    // `ProxyCreated` revision reads now resolve first (ADR-105 D3: the revision
+    // is read at that block's hash, so the block's identity is a request).
+    assert_eq!(requests, 21);
+    assert_eq!(served, 21);
 
     let conn = db.lock();
     let stamp: Option<i64> = conn

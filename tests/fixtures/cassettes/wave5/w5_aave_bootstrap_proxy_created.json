@@ -10,13 +10,13 @@
     }
   },
   "entries": {
-    "[\"eth_call\",[{\"input\":\"0x0148170e\",\"to\":\"0xfcc00a1e250644d89af0df661bc6f04891e21585\"},\"16291127\"]]": {
+    "[\"eth_call\",[{\"data\":\"0x0148170e\",\"to\":\"0xfcc00a1e250644d89af0df661bc6f04891e21585\"},{\"blockHash\":\"0xb5cc06eb5df1e84f6c9a6a72efe9f083fc0dec6bfcfdb2f8f01085e46bf354f5\",\"requireCanonical\":true}]]": {
       "response": {
         "result": "0x0000000000000000000000000000000000000000000000000000000000000001"
       },
       "digest": "0x3208f344e385d579de15748153478178920da95599b82c88999b0bb12d49d29c"
     },
-    "[\"eth_call\",[{\"input\":\"2062955942\",\"to\":\"0xfda7ffa872bdc906d43079ea134ebc9a511db0c2\"},\"16291130\"]]": {
+    "[\"eth_call\",[{\"data\":\"2062955942\",\"to\":\"0xfda7ffa872bdc906d43079ea134ebc9a511db0c2\"},{\"blockHash\":\"0x51cd9da1a1b8930fd33a2cde75766f1c5edfc946d418815bbd04c9f88b7be4f7\",\"requireCanonical\":true}]]": {
       "response": {
         "result": "0x0000000000000000000000000000000000000000000000000000000000000001"
       },

@@ -15,10 +15,14 @@
 //! independent ABI encoder (`eth_abi`/`eth_utils` reference vectors). The RPC
 //! boundary is a thin `eth_call` to [`MULTICALL3_ADDRESS`].
 
+use std::future::Future;
+
 use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{address, Address, Bytes};
 
 use crate::abi::ContractRead;
+use crate::chain_evidence::ExactReadError;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
 /// The canonical Multicall3 deployed address (same on every supported chain —
@@ -263,7 +267,98 @@ pub async fn multicall3_batch(
     Ok(results)
 }
 
-/// Name one sequential sub-call's result: a revert is
+/// A read transport BOUND to one exact block: every call names the snapshot's
+/// own hash (EIP-1898), so no call can be served by another block.
+///
+/// The capability belongs to the transport: one that cannot pin by hash reports
+/// [`ExactReadError::Unsupported`] and never degrades to a number-addressed
+/// call. [`crate::chain_evidence::BlockReads`] is the production
+/// implementation; a recorded replay transport and the test doubles implement
+/// the same contract, so a batch runs over ONE interface live and offline.
+pub trait ExactContractRead: Send + Sync {
+    /// The exact block this transport reads at.
+    fn anchor(&self) -> ChainAnchor;
+
+    /// Issue one hash-pinned `eth_call` to `to` and return the raw return
+    /// bytes.
+    fn call_exact(
+        &self,
+        to: Address,
+        data: Bytes,
+    ) -> impl Future<Output = Result<Bytes, ExactReadError>> + Send;
+}
+
+/// Run a batch of read-only calls through one hash-pinned Multicall3
+/// `aggregate3` `eth_call`, chunked into [`MULTICALL3_BATCH_SIZE`]-sized
+/// batches, and return one [`MulticallOutcome`] per input call in order.
+///
+/// The pin is the transport's own ([`ExactContractRead::anchor`]), so a batch is
+/// ONE read position: a same-height substitution between the anchor's resolution
+/// and this read is refused by the node, never served from another branch.
+///
+/// A batch leg that cannot answer (Multicall3 not deployed, a malformed return)
+/// degrades to one PINNED call per sub-call — the pre-multicall classification,
+/// still at the same anchor. A batch leg REFUSED for its request shape
+/// (`ExactReadError::Unsupported`) does not degrade: the sequential leg would
+/// repeat the same refused shape, so the refusal is the answer (ADR-105 D3, D11).
+///
+/// # Errors
+///
+/// [`ExactReadError`] when the node has no hash-pinned read capability, or when
+/// a sequential sub-call failed for any reason other than an EVM revert. A
+/// revert is a [`MulticallOutcome::Reverted`], never an error.
+pub async fn multicall3_batch_pinned(
+    transport: &impl ExactContractRead,
+    calls: &[(Address, Bytes)],
+) -> Result<Vec<MulticallOutcome>, ExactReadError> {
+    let mut results = Vec::with_capacity(calls.len());
+    for chunk in calls.chunks(MULTICALL3_BATCH_SIZE) {
+        let block_hash = transport.anchor().hash();
+        let batch = async {
+            let calldata = encode_aggregate3(chunk).map_err(|cause| ExactReadError::Failed {
+                method: "eth_call",
+                block_hash,
+                cause,
+            })?;
+            let data = transport.call_exact(MULTICALL3_ADDRESS, calldata).await?;
+            decode_aggregate3_results(&data, chunk.len()).map_err(|cause| ExactReadError::Failed {
+                method: "eth_call",
+                block_hash,
+                cause,
+            })
+        }
+        .await;
+        match batch {
+            Ok(rows) => results.extend(rows.into_iter().map(MulticallOutcome::from)),
+            Err(refusal @ ExactReadError::Unsupported { .. }) => return Err(refusal),
+            Err(ExactReadError::Failed { .. }) => {
+                for (target, calldata) in chunk {
+                    results.push(classify_pinned_sub_call(
+                        transport.call_exact(*target, calldata.clone()).await,
+                    )?);
+                }
+            }
+        }
+    }
+    Ok(results)
+}
+
+/// The pinned twin of [`classify_sub_call`]: a revert is an outcome, every other
+/// failure (including a lost capability) is the transport fault it is.
+fn classify_pinned_sub_call(
+    result: Result<Bytes, ExactReadError>,
+) -> Result<MulticallOutcome, ExactReadError> {
+    match result {
+        Ok(return_data) => Ok(MulticallOutcome::Returned(return_data)),
+        Err(ExactReadError::Failed {
+            cause: ProviderError::ExecutionReverted { .. },
+            ..
+        }) => Ok(MulticallOutcome::Reverted(Bytes::new())),
+        Err(error) => Err(error),
+    }
+}
+
+/// Name one sequential sub-call's result: a revert is: a revert is
 /// [`MulticallOutcome::Reverted`] (payload empty — a provider revert carries its
 /// reason in the error message, not as return data), and every other failure
 /// propagates as the transport fault it is.

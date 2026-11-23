@@ -898,35 +898,6 @@ impl DegenbotDb {
         }
         Ok(out)
     }
-
-    /// Read a user's `gho_discount` by `(market_id, address)` — the lookup the
-    /// discount pre-pass runs (`build_discount_snapshot` in
-    /// `degenbot-aave::config_dispatch`). Returns `None` when the user doesn't
-    /// exist (the RPC-fetch trigger). Pure read (does NOT create a user —
-    /// `get_or_create_user_on_conn` is the dispatch path's responsibility). The
-    /// `_on_conn` bound serves the chunk-loop's single `Transaction` (the
-    /// chunk-atomicity invariant).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a `SQLite` query failure.
-    pub fn fetch_user_gho_discount_by_address_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        address: &str,
-    ) -> Result<Option<i64>, DbError> {
-        let res = conn.query_row(
-            "SELECT gho_discount FROM aave_v3_users \
-             WHERE market_id = ?1 AND address = ?2 LIMIT 1",
-            params![market_id, address],
-            |r| r.get::<_, i64>(0),
-        );
-        match res {
-            Ok(d) => Ok(Some(d)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
 }
 
 #[cfg(test)]

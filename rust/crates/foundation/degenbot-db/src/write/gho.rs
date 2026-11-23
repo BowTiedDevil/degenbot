@@ -271,10 +271,9 @@ impl DegenbotDb {
     conn_writer! {
         /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** — the
         /// event has NO handler: rewards claims surface only via the stkAAVE
-        /// token's `Transfer` events, and the DB has no rewards table.
-        /// The variant exists in `AaveChunkEvent` so the parser can route the
-        /// event through the chunk pipeline (for operation-classification + log
-        /// accounting), but the apply dispatch records the count + writes nothing.
+        /// token's `Transfer` events, and the DB has no rewards table. The
+        /// receipt settles the log as a rewards-accounting role, so the parser
+        /// still accounts for it; the write side records nothing.
         ///
         /// # Errors
         ///

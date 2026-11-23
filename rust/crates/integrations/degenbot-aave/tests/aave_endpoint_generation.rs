@@ -315,6 +315,34 @@ fn two_chunk_rotation_cassette() -> CassetteReplayTransport {
             },
         );
     }
+    // Every NON-final chunk resolves its own terminal anchor for the chunk's
+    // verification gates (the final chunk reuses the run's terminal), so the
+    // capture owes those heights a header as well (ADR-105 D3).
+    let chunk_width = 10;
+    let mut working_start = CHUNK1_START;
+    while working_start <= CHUNK_END {
+        let chunk_end = CHUNK_END.min(working_start + chunk_width - 1);
+        if chunk_end != CHUNK_END {
+            let response = CassetteResponse::Success {
+                result: serde_json::json!({
+                    "number": chunk_end.to_string(),
+                    "hash": format!("0x{chunk_end:064x}"),
+                    "parentHash": format!("0x{:064x}", chunk_end - 1),
+                }),
+            };
+            entries.insert(
+                entry_key(
+                    "eth_getBlockByNumber",
+                    &serde_json::json!([format!("0x{chunk_end:x}"), false]),
+                ),
+                CassetteEntry {
+                    digest: entry_digest(&response),
+                    response,
+                },
+            );
+        }
+        working_start = chunk_end + 1;
+    }
 
     let evidence = common::candidate_evidence_entries(&entries, |block| {
         serde_json::json!({
@@ -375,10 +403,12 @@ fn address_set_pool_rotation_fetches_new_pool_logs_next_chunk() {
     // wire surface, including chunk 2's new-address Pool pass.
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 17,
+        snapshot.requests, 18,
         "eleven filters issued, none repeated, plus the terminal anchor's chain-id \
          and header reads, the candidate acquisition (chain binding, block header, \
-         complete receipt), and the second chunk's one-header recovery fence"
+         complete receipt), the second chunk's one-header recovery fence, and the \
+         first (non-final) chunk's own terminal-anchor header read — the anchor its \
+         verification gates pin"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),

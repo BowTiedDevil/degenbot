@@ -182,7 +182,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_pre_upgrade_control",
         chunks: 2,
-        served: 22,
+        served: 23,
         get_logs: 12,
         eth_calls: 0,
         traces: 0,
@@ -190,7 +190,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_atoken_upgrade_in_chunk",
         chunks: 2,
-        served: 19,
+        served: 20,
         get_logs: 12,
         eth_calls: 1,
         traces: 0,
@@ -198,7 +198,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_upgrade_plus_same_block_config",
         chunks: 2,
-        served: 38,
+        served: 39,
         get_logs: 12,
         eth_calls: 5,
         traces: 0,
@@ -206,7 +206,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_multi_upgrade_one_chunk",
         chunks: 2,
-        served: 33,
+        served: 34,
         get_logs: 12,
         eth_calls: 6,
         traces: 0,
@@ -214,7 +214,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_gho_deprecation_at_chunk_boundary",
         chunks: 2,
-        served: 31,
+        served: 32,
         get_logs: 12,
         eth_calls: 7,
         traces: 0,
@@ -222,7 +222,7 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
         chunks: 2,
-        served: 5112,
+        served: 5113,
         get_logs: 12,
         eth_calls: 7,
         traces: 3,
@@ -752,8 +752,9 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // answer (3) for the post-upgrade tx — what a chunk-start revision
     // snapshot would serve — sends the discount pre-pass down the rev-3
     // branch: a getDiscountPercent(user) eth_call the corpus does not carry.
-    // The replay must fail on the unrecorded call (the transport's
-    // method-not-found contract) with a served/request gap as the fingerprint.
+    // The replay must fail on the unrecorded call (the transport's fixture-gap
+    // contract: a read the capture never served is missing evidence, not a
+    // missing method) with a served/request gap as the fingerprint.
     let w6_seed = read_seed(w6);
     let mut w6_cassette = Cassette::from_json_bytes(&w6_bytes).unwrap();
     // The GHO vToken implementation at the window's block (the recorded rev-4
@@ -774,8 +775,8 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
             panic!("W6: the stale-revision mutation must fail the replay on the unrecorded call")
         });
     assert!(
-        w6_err.contains("cassette: method not found"),
-        "W6: the failure is the unrecorded-call contract, got {w6_err}"
+        w6_err.contains("cassette: fixture gap"),
+        "W6: the failure is the unrecorded-call fixture-gap contract, got {w6_err}"
     );
     assert!(
         w6_served.requests > w6_served.served,

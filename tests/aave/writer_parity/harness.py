@@ -76,6 +76,37 @@ class _UnservedMethod(Exception):
     method-not-found, never as a fabricated success."""
 
 
+class _PinnedBlockMissing(Exception):
+    """A hash-pinned (EIP-1898) read named a block this fixture never served.
+
+    A node refuses a `{blockHash}` id it cannot resolve, and a mock that ignored
+    the pin would answer a read from whatever state it happened to hold — the
+    exact ambiguity an exact read exists to remove. So the pin is load-bearing
+    here too.
+    """
+
+
+def _pinned_block_error(params: list[Any]) -> dict[str, Any] | None:
+    """The refusal a `{blockHash, requireCanonical}` id earns, or None when served.
+
+    Every canned header names the fixture's one block hash, so that hash is
+    served and any other hash is refused by the pin. A number/hex/tag id (the
+    pre-EIP-1898 shape) is left to the caller's own block dispatch.
+    """
+    pin = params[1] if len(params) > 1 else None
+    if not isinstance(pin, dict):
+        return None
+    block_hash = pin.get("blockHash")
+    if not isinstance(block_hash, str):
+        return None
+    if block_hash.lower() == DEFAULT_BLOCK_HASH.lower():
+        return None
+    return {
+        "code": -32000,
+        "message": f"mock RPC holds no canonical block {block_hash}",
+    }
+
+
 def _abi_string(text: str) -> str:
     """Pack `text` as an ABI dynamic-`string` return (offset word, length word, padded data)."""
     raw = text.encode()
@@ -233,6 +264,12 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
                     "message": f"mock RPC serves no {unserved} answer",
                 },
             }
+        except _PinnedBlockMissing as missing:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32000, "message": str(missing)},
+            }
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     def _canned_result(self, method: str, req: dict[str, Any]) -> Any:
@@ -251,6 +288,7 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
         if method == "debug_traceTransaction":
             return self._trace_result(req)
         if method == "eth_getStorageAt":
+            self._require_served_pin(req)
             # The fixture market's addresses are not EIP-1967 proxies, so the
             # implementation slot reads as the zero word.
             return _u256(0)
@@ -316,10 +354,18 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             "calls": [],
         }
 
+    def _require_served_pin(self, req: dict[str, Any]) -> None:
+        """Refuse a hash-pinned id the fixture's headers never named."""
+        params = req.get("params", [])
+        error = _pinned_block_error(params if isinstance(params, list) else [])
+        if error is not None:
+            raise _PinnedBlockMissing(error["message"])
+
     def _eth_call_result(self, req: dict[str, Any]) -> str:
         # alloy/web3 send `eth_call` params as `[{to, data/input, ...}]`.
         # alloy's TransactionRequest serializes the calldata under `input`
         # (the newer field name); web3/legacy uses `data`. Handle both.
+        self._require_served_pin(req)
         params = req.get("params", [])
         filt = params[0] if params and isinstance(params[0], dict) else {}
         calldata = filt.get("data") or filt.get("input") or "0x"

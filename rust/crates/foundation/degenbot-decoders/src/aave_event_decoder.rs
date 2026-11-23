@@ -8,11 +8,10 @@
 //! `degenbot-core`/`degenbot-abi` (the same constraint as
 //! [`crate::pool_created_decoder`] + [`crate::v3_mint_burn_decoder`]).
 //!
-//! The returned `DecodedAaveEvent` variants align by-name with the
-//! `AaveChunkEvent` variants — the decoder
-//! emits raw fields (addresses + U256 amounts + the emitter address); the
-//! orchestrator/parser maps them to resolved ids before constructing
-//! `AaveChunkEvent` variants the apply layer consumes.
+//! The decoder emits raw fields (addresses + U256 amounts + the emitter
+//! address) and nothing else: the orchestrator/parser resolves identities and
+//! reduces these events into `CanonicalDelta`s, which are the apply layer's
+//! only write product (ADR-105 D7).
 //!
 //! Event signatures + topic constants are the `keccak256` of the canonical
 //! Solidity event signature. The topic-hash constants below are the transcribed
@@ -300,7 +299,7 @@ fn log_topics(log: &Log) -> Option<&[B256]> {
     }
 }
 
-// ── decoded structs (one per event family — mirror `AaveChunkEvent`) ───────
+// ── decoded structs (one per event family) ─────────────────────────────────
 // NB: every variant carries the emitter `Address` so the orchestrator can
 // disambiguate which token contract emitted a ScaledToken event (aToken vs
 // vToken — the `ScaledTokenEventType` disambiguation the Python does via the
@@ -751,9 +750,8 @@ pub struct AaveV3Erc20TransferEvent {
     pub value: U256,
 }
 
-/// The discriminated union of all 34 decoded Aave V3 events (mirror of the
-/// `AaveChunkEvent` variant set, but with raw `Address`/`U256` fields — no
-/// id resolution). One variant per event; the
+/// The discriminated union of all 34 decoded Aave V3 events, with raw
+/// `Address`/`U256` fields and no id resolution. One variant per event; the
 /// [`decode_aave_log`] dispatch fn returns `Option<DecodedAaveEvent>` (None
 /// on unknown topic — see the module doc on decode-error handling).
 #[derive(Clone, Debug, PartialEq, Eq)]

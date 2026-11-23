@@ -50,7 +50,7 @@ use degenbot_core::runtime::get_runtime;
 use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
 use degenbot_db::{CursorAnchor, DbError, DegenbotDb};
 use degenbot_rpc::chain_evidence::{
-    place_logs_at, resolve_terminal_anchor, ChainEvidenceError, ProjectionRefusal,
+    place_logs_at, resolve_terminal_anchor, BlockReads, ChainEvidenceError, ProjectionRefusal,
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::{Connection, Transaction};
@@ -327,6 +327,11 @@ pub enum RunError {
     /// before its transaction opens.
     #[error("terminal block evidence disagreed with the resolved anchor: {0}")]
     TerminalEvidence(#[from] ProjectionRefusal),
+    /// A verification or resolution read could not be served at the exact anchor
+    /// it claims: the node has no hash-pinned capability, or the anchored block
+    /// is no longer canonical. Raised before the chunk's transaction opens.
+    #[error("exact read error: {0}")]
+    ExactRead(#[from] degenbot_rpc::chain_evidence::ExactReadError),
 }
 
 /// The run's pre-commit verification policy — the core twin of the CLI's
@@ -817,6 +822,17 @@ async fn run_aave_update_driver(
 
         let chunk_end = last_block.min(working_start + chunk_size - 1);
 
+        // The chunk's terminal read position: the run's already-resolved
+        // terminal anchor for the final chunk, and ONE header read otherwise.
+        // Every verification read of this chunk pins it (`requireCanonical`), so
+        // a same-height substitution between the header and a gate cannot serve
+        // the gate (ADR-105 D3).
+        let chunk_terminal = if chunk_end == last_block {
+            terminal
+        } else {
+            resolve_terminal_anchor(&provider, terminal_chain, Some(chunk_end)).await?
+        };
+
         // The chunk's trace ROOT (the `degenbot.epoch` shape): every stage
         // span below parents onto it through the thread-local span stack —
         // one chunk = one Jaeger waterfall. The guards ride the driver
@@ -1133,8 +1149,11 @@ async fn run_aave_update_driver(
                 let read = db.lock();
                 crate::verify::load_verification_positions(&read, market_id, Some(&touched))?
             };
-            let truth =
-                crate::verify::acquire_position_truth(&provider, chunk_end, &positions).await?;
+            let truth = crate::verify::acquire_position_truth(
+                &BlockReads::at(&provider, chunk_terminal),
+                &positions,
+            )
+            .await?;
             drop(verify_guard);
             verify_span.record(
                 "rpc.round_trips",
@@ -1155,7 +1174,11 @@ async fn run_aave_update_driver(
             let truth = {
                 let read = db.lock();
                 crate::verify::acquire_verification_truth(
-                    &read, &provider, market_id, chain_id, chunk_end, None,
+                    &read,
+                    &BlockReads::at(&provider, chunk_terminal),
+                    market_id,
+                    chain_id,
+                    None,
                 )
                 .await?
             };

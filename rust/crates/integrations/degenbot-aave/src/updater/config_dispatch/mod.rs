@@ -73,8 +73,8 @@ use crate::projection::{
 use alloy::primitives::{keccak256, Address, Bytes, U256};
 use degenbot_db::DbError;
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
-use degenbot_rpc::multicall3::{multicall3_batch, MulticallOutcome};
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::chain_evidence::BlockReads;
+use degenbot_rpc::multicall3::MulticallOutcome;
 
 // ── the module's exported face ────────────────────────────────────────────
 //
@@ -132,6 +132,17 @@ pub enum ConfigDispatchError {
     /// a revision the generation vocabulary cannot hold).
     #[error("projection error: {0}")]
     Projection(#[from] ProjectionError),
+    /// A configuration read could not be served at the exact anchor it claims:
+    /// the node has no hash-pinned read capability, or the anchored block is no
+    /// longer canonical. The chunk fails before its transaction opens, so no
+    /// cursor moves on a read the anchor could not prove (ADR-105 D3, D11).
+    #[error("exact read error: {0}")]
+    ExactRead(#[from] degenbot_rpc::chain_evidence::ExactReadError),
+    /// The parent read position could not be named: a same-height substitution
+    /// between the child's header and the parent's, a missing parent header, or
+    /// a parent on another chain.
+    #[error("parent anchor error: {0}")]
+    ParentAnchor(#[from] degenbot_rpc::chain_evidence::ParentAnchorError),
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
@@ -413,7 +424,7 @@ async fn resolve_missing_variant_event(
 /// (`keccak256(sig)[0..4]`) + 32-byte left-padded address. For
 /// `getConfiguration(address)`, `getSourceOfAsset(address)`,
 /// `getDiscountPercent(address)`.
-fn encode_single_address_call(sig: &str, addr: &Address) -> Bytes {
+pub(crate) fn encode_single_address_call(sig: &str, addr: &Address) -> Bytes {
     let selector = &keccak256(sig.as_bytes())[..4];
     let mut calldata = Vec::with_capacity(36);
     calldata.extend_from_slice(selector);
@@ -443,8 +454,11 @@ fn pad_address(addr: &Address) -> alloy::primitives::B256 {
 /// 2+ are pending, or as the exact single sequential `eth_call` when exactly
 /// one is — the config dispatch's batching seam.
 ///
-/// The batch rides [`degenbot_rpc::multicall3::multicall3_batch`]
-/// (`aggregate3`, `allowFailure = true` — the liquidity verifier's idiom). A
+/// The batch rides the anchored read view's own
+/// [`BlockReads::batch`] (`aggregate3`, `allowFailure = true` — the liquidity
+/// verifier's idiom), so the whole pass is pinned to the transaction's exact
+/// block hash (EIP-1898): a node without that capability refuses the pass, and
+/// no leg degrades to a number-addressed read. A
 /// reverted sub-call is a HARD error here, never a silent default: the
 /// sequential reads this replaces propagate an `eth_call` failure as
 /// [`ConfigDispatchError::Rpc`] (the chunk rolls back), and the batch preserves
@@ -461,20 +475,17 @@ fn pad_address(addr: &Address) -> alloy::primitives::B256 {
 /// Propagates the direct `eth_call`'s error (the 1-call shape), the batch's own
 /// transport error, or fails on any sub-call that reverted.
 async fn eth_calls_batched_or_direct(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     calls: &[(Address, Bytes)],
-    block_number: u64,
 ) -> Result<Vec<Bytes>, ConfigDispatchError> {
     match calls {
         [] => Ok(Vec::new()),
         [(target, data)] => {
-            let ret = provider
-                .eth_call(target, data.clone(), Some(block_number))
-                .await?;
+            let ret = reads.call(*target, data.clone()).await?;
             Ok(vec![ret])
         }
         many => {
-            let results = multicall3_batch(provider, many, Some(block_number)).await?;
+            let results = reads.batch(many).await?;
             let mut out = Vec::with_capacity(results.len());
             for (i, outcome) in results.into_iter().enumerate() {
                 match outcome {
@@ -511,7 +522,7 @@ fn word0_to_u256(ret: &[u8]) -> Option<U256> {
 /// The strict [`word0_to_u256`]: a successful response carrying short return
 /// data is malformed for a `uint256` read, never a zero value — the error
 /// names the read + target so the abort is diagnosable.
-fn require_word0_u256(
+pub(crate) fn require_word0_u256(
     ret: &[u8],
     read: &str,
     target: &Address,
@@ -578,6 +589,7 @@ mod tests {
         AaveV3DiscountTokenUpdatedEvent, AaveV3Erc20TransferEvent, AaveV3ProxyCreatedEvent,
         AaveV3ReserveInitializedEvent,
     };
+    use degenbot_rpc::provider::AlloyProvider;
     use rusqlite::{params, Connection};
     use std::path::Path;
 
@@ -755,10 +767,9 @@ mod tests {
         let provider = dummy_provider();
         let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
-                // no live provider — path #1 doesn't RPC.
-                &provider,
+                // no live ledger read — path #1 doesn't RPC.
+                &fixture_reads(&provider, 100),
                 &[&log],
-                100,
                 Some(vtoken_addr),
                 Some(2),
                 1,
@@ -777,9 +788,8 @@ mod tests {
         let provider = dummy_provider();
         let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
-                &provider,
+                &fixture_reads(&provider, 100),
                 &[],
-                100,
                 None,
                 Some(2),
                 1,
@@ -818,9 +828,8 @@ mod tests {
         let provider = dummy_provider();
         let snapshot = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
-                &provider,
+                &fixture_reads(&provider, 100),
                 &[&log],
-                100,
                 Some(vtoken_addr),
                 Some(4), // V4+ — discount deprecated.
                 1,
@@ -868,9 +877,8 @@ mod tests {
         let provider = transport.as_alloy_provider();
         let err = degenbot_core::runtime::get_runtime()
             .block_on(build_discount_snapshot(
-                &provider,
+                &fixture_reads(&provider, 100),
                 &[&log],
-                100,
                 Some(vtoken_addr),
                 Some(2),
                 1,
@@ -916,13 +924,25 @@ mod tests {
             .unwrap();
         }
         let conn = db.lock();
-        let key = eth_call_key(
+        // The stkAAVE seed reads at the transaction's exact PARENT anchor, so
+        // the ledger carries the parent header plus the hash-pinned balance.
+        let parent = B256::repeat_byte(0xaa);
+        let key = eth_call_hash_key(
             &address_arg_input("balanceOf(address)", &from_user),
             &format!("0x{}", alloy::hex::encode(discount_token)),
-            99,
+            &format!("{parent}"),
         );
-        let transport =
-            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
+        let transport = CassetteReplayTransport::new(test_cassette_values(vec![
+            ("[\"eth_chainId\",null]".to_string(), "\"0x1\"".to_string()),
+            (
+                header_key(99),
+                format!(
+                    "{{\"hash\":\"{parent}\",\"parentHash\":\"{}\"}}",
+                    B256::repeat_byte(0x9f)
+                ),
+            ),
+            (key, "\"0x01\"".to_string()),
+        ]));
         let mut substrate = ChunkSubstrate::lazy(1);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
@@ -978,20 +998,28 @@ mod tests {
         )
         .unwrap();
         let position_id = conn.last_insert_rowid();
-        let key = eth_call_key(
+        // The refresh reads the transaction's PARENT anchor: block 99's own
+        // exact identity, pinned by hash like every other read position.
+        let parent = degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            99,
+            B256::repeat_byte(0x99),
+            B256::repeat_byte(0x98),
+        )
+        .unwrap();
+        let key = eth_call_hash_key(
             &address_arg_input("balanceOf(address)", &user_addr),
             &format!("0x{}", alloy::hex::encode(discount_token)),
-            99,
+            &format!("{}", parent.hash()),
         );
         let transport =
             CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
         let provider = transport.as_alloy_provider();
         let err = degenbot_core::runtime::get_runtime()
             .block_on(discount::refresh_gho_discount(
-                &provider,
+                &BlockReads::at(&provider, parent),
                 &conn,
                 position_id,
-                100,
                 Some(discount_token),
             ))
             .expect_err("a short balanceOf return must abort the refresh, never cache zero");
@@ -1900,14 +1928,60 @@ mod tests {
         Cassette::from_json_str(&json).expect("the in-memory test cassette parses")
     }
 
+    /// An in-memory cassette from `(ledger key, raw JSON result)` pairs: the
+    /// string-result [`test_cassette`] cannot carry a header object or a
+    /// chain-id quantity.
+    fn test_cassette_values(entries: Vec<(String, String)>) -> Cassette {
+        let body: Vec<String> = entries
+            .into_iter()
+            .map(|(key, result)| {
+                let response_json = format!(r#"{{"result":{result}}}"#);
+                let digest = alloy::primitives::keccak256(response_json.as_bytes()).to_string();
+                let escaped_key = key.escape_default().to_string();
+                format!(r#""{escaped_key}": {{"response": {response_json}, "digest": "{digest}"}}"#)
+            })
+            .collect();
+        let json = format!(
+            "{{\"schema\":\"degenbot.cassette/v1\",\"chain_id\":1,\"provenance\":{{\"source\":\"test\",\"recorded_at\":\"1970-01-01T00:00:00Z\",\"span\":{{\"from_block\":0,\"to_block\":0}}}},\"entries\":{{{}}}}}",
+            body.join(",")
+        );
+        Cassette::from_json_str(&json).expect("the in-memory test cassette parses")
+    }
+
+    /// The canonical ledger key for a header read of one height.
+    fn header_key(block: u64) -> String {
+        format!("[\"eth_getBlockByNumber\",[\"{block}\",false]]")
+    }
+
     /// The canonical ledger key for an `eth_call`: the compact JSON pair the
     /// recorder writes — the calldata under `input` in its ALREADY-CANONICAL
     /// form (the caller canonicalizes), the target lowercase (a ≥17-digit
     /// verbatim hex address), and the block tag in the canonical
     /// decimal-string form.
-    fn eth_call_key(canonical_input: &str, to_hex: &str, block: u64) -> String {
+    /// The fixture anchor one test block number resolves to (the deterministic
+    /// fixture identity, not a header read).
+    fn fixture_anchor(block: u64) -> degenbot_core::canonical_head::ChainAnchor {
+        *fixture_tx(block).anchor()
+    }
+
+    /// The hash-pinned read view of one fixture block.
+    fn fixture_reads(provider: &AlloyProvider, block: u64) -> BlockReads<'_> {
+        BlockReads::at(provider, fixture_anchor(block))
+    }
+
+    /// The canonical ledger key of a hash-pinned `eth_call`: the anchor's own
+    /// hash with `requireCanonical`, never a height.
+    fn eth_call_hash_key(canonical_input: &str, to_hex: &str, block_hash: &str) -> String {
         format!(
-            "[\"eth_call\",[{{\"input\":\"{canonical_input}\",\"to\":\"{to_hex}\"}},\"{block}\"]]"
+            "[\"eth_call\",[{{\"data\":\"{canonical_input}\",\"to\":\"{to_hex}\"}},{{\"blockHash\":\"{block_hash}\",\"requireCanonical\":true}}]]"
+        )
+    }
+
+    fn eth_call_key(canonical_input: &str, to_hex: &str, block: u64) -> String {
+        eth_call_hash_key(
+            canonical_input,
+            to_hex,
+            &format!("{}", fixture_anchor(block).hash()),
         )
     }
 
@@ -1986,11 +2060,11 @@ mod tests {
         degenbot_core::runtime::get_runtime().block_on(async {
             let mut memo = RevisionMemo::new();
             let v1 = memo
-                .read(&provider, &target, "ATOKEN_REVISION()", 100)
+                .read(&fixture_reads(&provider, 100), &target, "ATOKEN_REVISION()")
                 .await
                 .unwrap();
             let v2 = memo
-                .read(&provider, &target, "ATOKEN_REVISION()", 100)
+                .read(&fixture_reads(&provider, 100), &target, "ATOKEN_REVISION()")
                 .await
                 .unwrap();
             assert_eq!(v1, U256::from(7));
@@ -2004,7 +2078,7 @@ mod tests {
             // A different block is a different key — the memo never serves a
             // read across blocks (the `Upgraded` safety lane).
             let miss = memo
-                .read(&provider, &target, "ATOKEN_REVISION()", 101)
+                .read(&fixture_reads(&provider, 101), &target, "ATOKEN_REVISION()")
                 .await;
             assert!(
                 miss.is_err(),
@@ -2036,7 +2110,7 @@ mod tests {
         let provider = transport.as_alloy_provider();
         degenbot_core::runtime::get_runtime().block_on(async {
             let calls = vec![(target, input)];
-            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+            let rets = eth_calls_batched_or_direct(&fixture_reads(&provider, 100), &calls)
                 .await
                 .unwrap();
             assert_eq!(word0_to_u256(&rets[0]), Some(U256::from(9)));
@@ -2069,7 +2143,7 @@ mod tests {
         )]));
         let provider = transport.as_alloy_provider();
         degenbot_core::runtime::get_runtime().block_on(async {
-            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+            let rets = eth_calls_batched_or_direct(&fixture_reads(&provider, 100), &calls)
                 .await
                 .unwrap();
             assert_eq!(rets.len(), 2);
@@ -2119,7 +2193,7 @@ mod tests {
         let transport = CassetteReplayTransport::new(test_cassette(direct_keys));
         let provider = transport.as_alloy_provider();
         degenbot_core::runtime::get_runtime().block_on(async {
-            let rets = eth_calls_batched_or_direct(&provider, &calls, 100)
+            let rets = eth_calls_batched_or_direct(&fixture_reads(&provider, 100), &calls)
                 .await
                 .unwrap();
             assert_eq!(rets.len(), 2);
@@ -2161,7 +2235,7 @@ mod tests {
         );
         ctx.begin_transaction_at(100);
         let err = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.read_revision(&target, "ATOKEN_REVISION()", 100))
+            .block_on(ctx.read_revision(&target, "ATOKEN_REVISION()"))
             .expect_err("a short revision return must abort, never decode as zero");
         match err {
             ConfigDispatchError::DecodeShape(msg) => {
@@ -2263,13 +2337,14 @@ mod tests {
     }
 
     /// The canonical ledger key for the EIP-1967 `eth_getStorageAt` read: the
-    /// target lowercase, the slot a verbatim 64-digit word, the block tag in
-    /// its canonical decimal-string form.
+    /// target lowercase, the slot a verbatim 64-digit word, the block its own
+    /// pinned hash.
     fn storage_key(addr: &Address, block: u64) -> String {
         let slot = alloy::hex::encode(EIP_1967_IMPLEMENTATION_SLOT.to_be_bytes::<32>());
         format!(
-            "[\"eth_getStorageAt\",[\"0x{}\",\"0x{slot}\",\"{block}\"]]",
-            alloy::hex::encode(addr)
+            "[\"eth_getStorageAt\",[\"0x{}\",\"0x{slot}\",{{\"blockHash\":\"{}\",\"requireCanonical\":true}}]]",
+            alloy::hex::encode(addr),
+            fixture_anchor(block).hash()
         )
     }
 

@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use alloy::primitives::Address;
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::{DbError, DegenbotDb};
+use degenbot_rpc::chain_evidence::{resolve_anchor_at, BlockReads};
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
+
+use crate::aave_fetch::LogIdentityRefusal;
 
 use super::RunError;
 use crate::aave_fetch::AaveFetchSpec;
@@ -86,17 +89,26 @@ pub(super) async fn bootstrap_pool_contracts(
         else {
             continue;
         };
+        let number = log.block_number.ok_or_else(|| {
+            crate::config_dispatch::ConfigDispatchError::DecodeShape(
+                "ProxyCreated log missing block number".to_string(),
+            )
+        })?;
+        let anchor = resolve_anchor_at(provider, number).await?;
+        if log.block_hash != Some(anchor.hash()) {
+            return Err(RunError::LogIdentity(LogIdentityRefusal::AnchorMismatch {
+                block_number: number,
+                block_hash: log.block_hash.unwrap_or_default(),
+                anchor_number: anchor.number(),
+                anchor_hash: anchor.hash(),
+            }));
+        }
         if let Some(resolved) = match_proxy_id(
             &mut revision_memo,
-            provider,
+            &BlockReads::at(provider, anchor),
             &ev.id,
             &ev.proxy_address,
             &ev.implementation_address,
-            log.block_number.ok_or_else(|| {
-                crate::config_dispatch::ConfigDispatchError::DecodeShape(
-                    "ProxyCreated log missing block number".to_string(),
-                )
-            })?,
         )
         .await?
         {

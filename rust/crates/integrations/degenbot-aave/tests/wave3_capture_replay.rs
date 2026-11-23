@@ -102,9 +102,9 @@ const SPAN_TO: u64 = 1002;
 /// binding (1), the candidate blocks' headers (1 — 1002 is the terminal anchor
 /// already read), and one complete receipt per candidate transaction (2). The
 /// scenarios carry no `LiquidationCall`, so neither asks for a call trace.
-const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 13;
+const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 15;
 const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 14;
-const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 13;
+const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 15;
 
 /// The pinned chain literals (the generator's `ACTOR_PINS` + free literals;
 /// a frame-sequence change fails these loudly at generation time). Each
@@ -510,22 +510,52 @@ fn user_row(db_path: &Path) -> (String, i64) {
     .unwrap()
 }
 
-/// The committed cassette's `eth_call` entries as `(block tag, to)` pairs —
+/// The committed cassette's `eth_call` entries as `(block height, to)` pairs —
 /// the recorded-RPC-shape greps (the `aave_config` suite's committed
 /// discipline).
-fn recorded_eth_calls(cassette: &Cassette) -> Vec<(String, String)> {
+///
+/// Every read is hash-pinned (`{blockHash, requireCanonical}`), so the height is
+/// resolved through the capture's own recorded headers: the pin must name the
+/// block that header states, which is a stronger claim than a height tag.
+/// The capture's own header evidence as `block hash -> height`: the map every
+/// hash-pinned read is resolved through.
+fn heights_by_hash(cassette: &Cassette) -> std::collections::BTreeMap<String, String> {
     cassette
+        .entries
+        .iter()
+        .filter_map(|(key, entry)| {
+            let arr: Vec<Value> = serde_json::from_str(key).ok()?;
+            if arr.first()?.as_str()? != "eth_getBlockByNumber" {
+                return None;
+            }
+            let number = arr.get(1)?.as_array()?.first()?.as_str()?.to_string();
+            let CassetteResponse::Success { result } = &entry.response else {
+                return None;
+            };
+            let hash = result.get("hash")?.as_str()?.to_string();
+            Some((hash, number))
+        })
+        .collect()
+}
+
+fn recorded_eth_calls(cassette: &Cassette) -> Vec<(String, String)> {
+    let heights_by_hash = heights_by_hash(cassette);
+    let mut calls: Vec<(String, String)> = cassette
         .entries
         .keys()
         .filter(|k| k.contains("eth_call") && !k.contains("eth_getLogs"))
         .map(|k| {
             let arr: Vec<Value> = serde_json::from_str(k).unwrap();
             let params = arr[1].as_array().expect("eth_call params are an array");
-            let block = params
-                .get(1)
-                .and_then(Value::as_str)
-                .unwrap_or("?")
-                .to_string();
+            let block = match params.get(1) {
+                Some(Value::String(tag)) => tag.clone(),
+                Some(Value::Object(pin)) => pin
+                    .get("blockHash")
+                    .and_then(Value::as_str)
+                    .and_then(|hash| heights_by_hash.get(hash).cloned())
+                    .unwrap_or_else(|| "?".to_string()),
+                _ => "?".to_string(),
+            };
             let to = params
                 .first()
                 .and_then(|tx| tx.get("to"))
@@ -534,7 +564,11 @@ fn recorded_eth_calls(cassette: &Cassette) -> Vec<(String, String)> {
                 .to_string();
             (block, to)
         })
-        .collect()
+        .collect();
+    // The ledger's key order is an artifact of the pin's hash, so the recorded
+    // surface is compared as the sorted set of shapes it is.
+    calls.sort();
+    calls
 }
 
 /// The committed corpus's expected recorded-RPC shapes, pinned verbatim.
@@ -687,9 +721,26 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     // the loud failure the boundary probe demonstrates.
     let s2_bytes = std::fs::read(cassette_path(s2_name)).unwrap();
     let mut mutated = Cassette::from_json_bytes(&s2_bytes).unwrap();
+    // The block-1002 pin is the hash its own recorded header states.
+    let pinned_1002 = heights_by_hash(&mutated)
+        .into_iter()
+        .find(|(_, number)| number == "1002")
+        .map(|(hash, _)| hash.to_lowercase())
+        .expect("the capture records block 1002's header");
     let mut mutated_entries = 0usize;
     for (key, entry) in &mut mutated.entries {
-        if !key.contains("eth_call") || key.contains("eth_getLogs") || !key.contains("\"1002\"") {
+        if !key.contains("eth_call") || key.contains("eth_getLogs") {
+            continue;
+        }
+        let arr: Vec<Value> = serde_json::from_str(key).expect("a recorded request key");
+        let pin = arr[1]
+            .as_array()
+            .and_then(|params| params.get(1))
+            .and_then(Value::as_object)
+            .and_then(|pin| pin.get("blockHash"))
+            .and_then(Value::as_str)
+            .map(str::to_lowercase);
+        if pin.as_deref() != Some(pinned_1002.as_str()) {
             continue;
         }
         if let CassetteResponse::Success { result } = &mut entry.response {
@@ -737,9 +788,10 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
 
     // ── probe 3 (s3 negative): the deprecation premise is load-bearing ───
     // Seed the asset revision AT the deprecation value: the pre-pass takes
-    // the V4+ snapshot path, the recorded discount call goes unserved, and
-    // the rt gate reads one less — the fixture's premise (revision < 4) is
-    // what keeps the option-(a) shape executable.
+    // the V4+ snapshot path, so the recorded discount call AND the two exact
+    // parent-anchor header reads its pre-block seed owes go unserved — the
+    // fixture's premise (revision < 4) is what keeps the option-(a) shape
+    // executable.
     let s3_probe = replay_probe(
         s3_name,
         &ScenarioSeed::S3,
@@ -749,8 +801,9 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     );
     assert_eq!(
         s3_probe.served.served,
-        S3_EXPECTED_RPC_ROUND_TRIPS - 1,
-        "s3 probe: at the deprecation revision the recorded discount call drops"
+        S3_EXPECTED_RPC_ROUND_TRIPS - 3,
+        "s3 probe: at the deprecation revision the recorded discount call and the \
+         two parent-anchor header reads of its pre-block seed drop"
     );
     assert_eq!(
         served_eth_calls(&s3_probe.served),

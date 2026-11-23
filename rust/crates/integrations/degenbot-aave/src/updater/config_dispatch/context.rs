@@ -35,9 +35,10 @@ use crate::projection::{CanonicalDelta, ConfigurationEffect, ProjectionView};
 use crate::run::CanonicalDeltaWriteReport;
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_core::canonical_head::TxRef;
+use degenbot_core::canonical_head::{ChainAnchor, TxRef};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
+use degenbot_rpc::chain_evidence::{resolve_parent_anchor, BlockReads};
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -46,7 +47,8 @@ use super::dispatch_config_events;
 use super::revision::{match_proxy_id, ProxyCreationResolution};
 use super::revision_selector;
 use super::{
-    encode_no_arg_call, eth_calls_batched_or_direct, require_word0_u256, ConfigDispatchError,
+    encode_no_arg_call, encode_single_address_call, eth_calls_batched_or_direct,
+    require_word0_u256, ConfigDispatchError,
 };
 
 // ── the revision memo ──────────────────────────────────────────────────────
@@ -55,12 +57,14 @@ use super::{
 /// (`ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` / `POOL_REVISION()` /
 /// `CONFIGURATOR_REVISION()`).
 ///
-/// The key is `(implementation, selector, block)`: a revision is chain state
-/// at a block, so one triple can never observe two values within a run — a
-/// memo hit is definitionally the same read. The block lane is what makes an
-/// `Upgraded` chunk safe: the upgrade dispatch reads the NEW implementation
-/// at the upgrade block, and every later read sits at a later block (its own
-/// key), so no read can be served a pre-upgrade value across the boundary.
+/// The key is `(implementation, selector, ChainAnchor)`: a revision is chain
+/// state at one exact block, so one triple can never observe two values within a
+/// run — a memo hit is definitionally the same read. The anchor lane is what
+/// makes an `Upgraded` chunk safe: the upgrade dispatch reads the NEW
+/// implementation at the upgrade block, and every later read sits at a later
+/// block (its own key), so no read can be served a pre-upgrade value across the
+/// boundary. A same-height branch is a different anchor, so it is a different
+/// key: no hit can cross an abandoned hash (ADR-105 D1, D3).
 ///
 /// Lifetime: one instance per chunk apply (`process_chunk_on_conn`), which
 /// is the whole read span the dispatch can observe — chunks partition the
@@ -68,7 +72,7 @@ use super::{
 /// outlives the run (a plain local, not global state).
 #[derive(Debug, Default)]
 pub(crate) struct RevisionMemo {
-    entries: HashMap<(Address, [u8; 4], u64), U256>,
+    entries: HashMap<(Address, [u8; 4], ChainAnchor), U256>,
 }
 
 impl RevisionMemo {
@@ -82,23 +86,20 @@ impl RevisionMemo {
         &self,
         target: &Address,
         selector: [u8; 4],
-        block_number: u64,
+        anchor: ChainAnchor,
     ) -> Option<U256> {
-        self.entries
-            .get(&(*target, selector, block_number))
-            .copied()
+        self.entries.get(&(*target, selector, anchor)).copied()
     }
 
-    /// Record one revision read (the value the chain answered at `block_number`).
+    /// Record one revision read (the value the chain answered at `anchor`).
     pub(super) fn insert(
         &mut self,
         target: &Address,
         selector: [u8; 4],
-        block_number: u64,
+        anchor: ChainAnchor,
         value: U256,
     ) {
-        self.entries
-            .insert((*target, selector, block_number), value);
+        self.entries.insert((*target, selector, anchor), value);
     }
 
     /// The memoized [`read_uint256_return`]: one RPC per
@@ -109,18 +110,58 @@ impl RevisionMemo {
     /// Propagates the underlying `eth_call` failure on a memo miss.
     pub(crate) async fn read(
         &mut self,
-        provider: &AlloyProvider,
+        reads: &BlockReads<'_>,
         target: &Address,
         sig: &str,
-        block_number: u64,
     ) -> Result<U256, ConfigDispatchError> {
+        let anchor = reads.anchor();
         let selector = revision_selector(sig);
-        if let Some(v) = self.get(target, selector, block_number) {
+        if let Some(v) = self.get(target, selector, anchor) {
             return Ok(v);
         }
-        let v = read_uint256_return(provider, target, sig, block_number).await?;
-        self.insert(target, selector, block_number, v);
+        let v = read_uint256_return(reads, target, sig).await?;
+        self.insert(target, selector, anchor, v);
         Ok(v)
+    }
+}
+
+// ── the chunk's parent read positions ─────────────────────────────────────
+
+/// The chunk's resolved parent read positions, keyed by the child anchor.
+///
+/// An intentional pre-block observation (the stkAAVE `balanceOf` at the block
+/// before the transaction that acts on it) reads at the child's PARENT, and a
+/// parent is an exact identity: one header read per distinct child anchor,
+/// validated against that child's own parent hash. The memo makes the shared
+/// case one read per chunk while keeping every position branch-exact.
+#[derive(Debug, Default)]
+pub(crate) struct ParentAnchors {
+    entries: HashMap<ChainAnchor, ChainAnchor>,
+}
+
+impl ParentAnchors {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// The exact anchor of `anchor`'s parent block.
+    ///
+    /// # Errors
+    ///
+    /// [`degenbot_rpc::chain_evidence::ParentAnchorError`] for a genesis block,
+    /// a missing parent header, a parent on another chain, or a same-height
+    /// substitution; the read failure itself propagates.
+    pub(crate) async fn of(
+        &mut self,
+        provider: &AlloyProvider,
+        anchor: ChainAnchor,
+    ) -> Result<ChainAnchor, ConfigDispatchError> {
+        if let Some(known) = self.entries.get(&anchor) {
+            return Ok(*known);
+        }
+        let parent = resolve_parent_anchor(provider, anchor).await?;
+        self.entries.insert(anchor, parent);
+        Ok(parent)
     }
 }
 
@@ -186,6 +227,7 @@ pub(crate) struct ChunkContext<'span> {
     substrate: &'span mut ChunkSubstrate,
     tx: Option<TxRef>,
     block_number: u64,
+    parent_anchors: ParentAnchors,
     /// The stkAAVE balance observations resolution resolved out-of-band (a
     /// `balanceOf` at the exact parent block); the dispatch loop emits them as
     /// their own deltas before the transfer they seed.
@@ -219,6 +261,7 @@ impl<'span> ChunkContext<'span> {
             substrate,
             tx: None,
             block_number: span.chunk_start,
+            parent_anchors: ParentAnchors::new(),
             pending_observations: Vec::new(),
         }
     }
@@ -242,6 +285,75 @@ impl<'span> ChunkContext<'span> {
                 "configuration dispatch outside a transaction scope".to_string(),
             )
         })
+    }
+
+    /// The exact anchor of the current transaction's block — the read position
+    /// every configuration, revision, metadata and discount read of this
+    /// transaction inherits.
+    ///
+    /// # Errors
+    ///
+    /// `ConfigDispatchError::DecodeShape` when a dispatch read arrives before any
+    /// transaction scope was entered.
+    pub(super) fn anchor(&self) -> Result<ChainAnchor, ConfigDispatchError> {
+        let tx = self.tx()?;
+        Ok(*tx.anchor())
+    }
+
+    /// The hash-pinned read view of one exact block.
+    pub(super) fn reads_at(&self, anchor: ChainAnchor) -> BlockReads<'_> {
+        BlockReads::at(&self.provider, anchor)
+    }
+
+    /// The hash-pinned read view of the current transaction's block.
+    ///
+    /// # Errors
+    ///
+    /// `ConfigDispatchError::DecodeShape` when a dispatch read arrives before any
+    /// transaction scope was entered.
+    pub(super) fn reads(&self) -> Result<BlockReads<'_>, ConfigDispatchError> {
+        let anchor = self.anchor()?;
+        Ok(self.reads_at(anchor))
+    }
+
+    /// The exact anchor of the block before the current transaction: the read
+    /// position of an intentional pre-block observation.
+    ///
+    /// # Errors
+    ///
+    /// The parent resolution refusal (a same-height substitution is one), or the
+    /// header read failure.
+    pub(super) async fn parent_anchor(&mut self) -> Result<ChainAnchor, ConfigDispatchError> {
+        let anchor = self.anchor()?;
+        self.parent_anchors.of(&self.provider, anchor).await
+    }
+
+    /// Take the chunk's resolved parent positions, so the post-dispatch refresh
+    /// keeps resolving into the same memo after the context is dropped.
+    pub(crate) fn take_parent_anchors(&mut self) -> ParentAnchors {
+        std::mem::take(&mut self.parent_anchors)
+    }
+
+    /// One `balanceOf(user)` at the exact PARENT block of the current
+    /// transaction — the intentional pre-block position the stkAAVE seed reads.
+    ///
+    /// # Errors
+    ///
+    /// The parent resolution refusal, the exact read failure, or a short return.
+    pub(super) async fn read_stk_aave_balance_at_parent(
+        &mut self,
+        token: Address,
+        user: Address,
+    ) -> Result<U256, ConfigDispatchError> {
+        let parent = self.parent_anchor().await?;
+        let ret = self
+            .reads_at(parent)
+            .call(
+                token,
+                encode_single_address_call("balanceOf(address)", &user),
+            )
+            .await?;
+        require_word0_u256(&ret, "balanceOf(address)", &token)
     }
 
     /// One log's exact position under the current transaction.
@@ -343,11 +455,6 @@ impl<'span> ChunkContext<'span> {
     pub(crate) fn gho_asset(&mut self) -> Result<Option<AaveGhoAsset>, DbError> {
         let conn = self.conn;
         self.substrate.gho_asset(conn)
-    }
-
-    /// The provider every dispatch RPC rides.
-    pub(super) fn provider(&self) -> &AlloyProvider {
-        &self.provider
     }
 
     /// The market the dispatch resolves ids against.
@@ -467,15 +574,14 @@ impl<'span> ChunkContext<'span> {
         &mut self,
         target: &Address,
         sig: &str,
-        block_number: u64,
     ) -> Result<U256, ConfigDispatchError> {
+        let anchor = self.anchor()?;
         debug_assert!(
-            self.span.contains(block_number),
+            self.span.contains(anchor.number()),
             "chunk-dispatch revision read at a block outside the chunk span"
         );
-        self.memo
-            .read(&self.provider, target, sig, block_number)
-            .await
+        let reads = BlockReads::at(&self.provider, anchor);
+        self.memo.read(&reads, target, sig).await
     }
 
     /// Read several same-block calls in ONE transport pass, owning the revision
@@ -497,9 +603,9 @@ impl<'span> ChunkContext<'span> {
         &mut self,
         pending: &[BatchRead<'_>],
     ) -> Result<Vec<BatchReadResult>, ConfigDispatchError> {
-        let block_number = self.block_number;
+        let anchor = self.anchor()?;
         debug_assert!(
-            self.span.contains(block_number),
+            self.span.contains(anchor.number()),
             "chunk-dispatch revision read at a block outside the chunk span"
         );
         let mut calls: Vec<(Address, Bytes)> = Vec::new();
@@ -511,7 +617,7 @@ impl<'span> ChunkContext<'span> {
             match slot {
                 BatchRead::Revision { target, sig } => {
                     let selector = revision_selector(sig);
-                    if let Some(v) = self.memo.get(target, selector, block_number) {
+                    if let Some(v) = self.memo.get(target, selector, anchor) {
                         results[i] = Some(BatchReadResult::Revision(v));
                         call_of_slot.push(None);
                     } else {
@@ -525,7 +631,7 @@ impl<'span> ChunkContext<'span> {
                 }
             }
         }
-        let returns = eth_calls_batched_or_direct(&self.provider, &calls, block_number).await?;
+        let returns = eth_calls_batched_or_direct(&self.reads_at(anchor), &calls).await?;
         for (i, slot) in pending.iter().enumerate() {
             let Some(call_index) = call_of_slot[i] else {
                 continue;
@@ -535,7 +641,7 @@ impl<'span> ChunkContext<'span> {
                 BatchRead::Revision { target, sig } => {
                     let selector = revision_selector(sig);
                     let v = require_word0_u256(ret, sig, target)?;
-                    self.memo.insert(target, selector, block_number, v);
+                    self.memo.insert(target, selector, anchor, v);
                     results[i] = Some(BatchReadResult::Revision(v));
                 }
                 BatchRead::Plain { .. } => {
@@ -593,7 +699,6 @@ impl<'span> ChunkContext<'span> {
     ) -> Result<TransactionDispatch, ConfigDispatchError> {
         let conn = self.conn;
         let market_id = self.market_id;
-        let block_number = self.block_number;
         // (0) Re-resolve the GHO row for THIS transaction — sees a prior
         //     transaction's write through the overlay's dirty-mark contract.
         //     This is the TRANSACTION-START snapshot: the discount pre-pass
@@ -619,11 +724,10 @@ impl<'span> ChunkContext<'span> {
 
         // (2) The discount pre-pass (RPC + the DB-cache path) reads `conn`
         //     (sees prior transactions' writes).
-        let provider = self.provider.clone();
+        let anchor = self.anchor()?;
         let discounts = build_discount_snapshot(
-            &provider,
+            &BlockReads::at(&self.provider, anchor),
             tx_logs,
-            block_number,
             gho_vtoken,
             vtoken_revision,
             market_id,
@@ -682,14 +786,14 @@ impl<'span> ChunkContext<'span> {
         proxy_address: &Address,
         implementation_address: &Address,
     ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
-        let block_number = self.block_number;
+        let anchor = self.anchor()?;
+        let reads = BlockReads::at(&self.provider, anchor);
         match_proxy_id(
             &mut self.memo,
-            &self.provider,
+            &reads,
             id,
             proxy_address,
             implementation_address,
-            block_number,
         )
         .await
     }
@@ -747,14 +851,11 @@ pub(crate) struct TransactionDispatch {
 /// Read a `uint256`-returning no-arg call (`ATOKEN_REVISION()`,
 /// `DEBT_TOKEN_REVISION()`).
 async fn read_uint256_return(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     target: &Address,
     sig: &str,
-    block_number: u64,
 ) -> Result<U256, ConfigDispatchError> {
     let calldata = encode_no_arg_call(sig);
-    let ret = provider
-        .eth_call(target, calldata, Some(block_number))
-        .await?;
+    let ret = reads.call(*target, calldata).await?;
     require_word0_u256(&ret, sig, target)
 }

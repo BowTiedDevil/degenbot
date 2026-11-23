@@ -1,6 +1,6 @@
 # ADR-105: Block-anchored event-sourced chain state
 
-**Status: proposed** (2026-11-23; ergo epic `YMSQIZ`, scoping task `6GTIG7`).
+**Status: accepted (implemented).** (2026-11-23; ergo epic `YMSQIZ`, scoping task `6GTIG7`, certification task `ONNSDV`.) The implemented shape, the seams retired by the cutover, and the deviations this ADR does not yet claim are stated in [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23).
 
 Builds on [ADR-041](ADR-041-block-epoch-pipeline.md) (one stage machine over cheap reads), [ADR-068](ADR-068-updater-golden-capture-replay.md) (recorded updater coherence), [ADR-070](ADR-070-updaters-are-the-sole-db-writers.md) (updater-owned writes), and [ADR-104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) (typed head intake). Those decisions remain foundations; this ADR supplies the chain identity, position, receipt ownership, and projection persistence they do not currently unify.
 
@@ -169,7 +169,140 @@ The detailed implementation graph lives in ergo epic `YMSQIZ`. Each production c
 | Database | Block/transaction/log referential identity, branch-position uniqueness, generation-specific relationships, expected-parent cursors, atomic projection/journal/checkpoint commits |
 | Replay acceptance | Protocol semantics, chunk independence, same-block ordering, reorg recovery, future-state leakage, byte-identical deltas |
 
-# Appendix A — Current type inventory and admitted ambiguity
+## Implemented shape and seam disposition (2026-11-23)
+
+The cutover landed; this section states what the tree now carries, decision by
+decision, so the ADR can be read against code instead of intent.
+
+- **D1** — `degenbot_core::canonical_head` owns `ChainAnchor` (chain id, number,
+  hash, parent hash; `ChainAnchorError` refuses a zero or repeated parent) with
+  `TxRef`, `LogRef`, and `CallRef` qualified by it. RPC `get_block_lineage_at` and
+  `resolve_terminal_anchor` return the same identity; the provider's duplicate
+  `BlockLineage` is gone. Simulation's `ReadAnchor` and bot telemetry's
+  `BlockLineage` carry the resolved anchor and key on it.
+- **D2** — `degenbot_rpc::chain_evidence` acquires a complete `HeaderChain`
+  (`from_anchors` refuses gaps, broken links, and same-height substitutions),
+  `ProjectionRange` places logs by their exact identity, `degenbot_rpc::tx_evidence`
+  binds complete receipts and joins selective traces (`CallRef` paths) to them,
+  and `degenbot_aave::updater::evidence` refuses a filtered log that disagrees
+  with its receipt in any identity fact.
+- **D3** — `BlockReads` is the hash-pinned read view (`{blockHash,
+  requireCanonical}`, `ExactReadError` separating an unsupported capability from a
+  failed read). The chunk's SQLite write transaction covers no acquisition:
+  `resolve_chunk` runs under the connection handle and `persist_chunk` opens the
+  transaction, so verification truth is acquired before the lock and only
+  compared inside it.
+- **D4** — `run/process.rs` interleaves resolve → reduce → advance against
+  `ProjectionView`, and the row identities a delta names are resolved
+  out-of-transaction and idempotently (`get_or_create_*`), so persistence
+  performs no identity lookup.
+- **D5** — `operations_parser::ownership::ReceiptOwnership` is the total ledger:
+  one terminal slot per receipt log (`LogOwner::{Operation, Role, OutOfScope}`),
+  with `DuplicateOwnership`, `NonOperationClaim`, `UncoveredOperationLog`,
+  `UnrecognizedLog`, and `LogOutsideReceipt` as refusals. A liquidation's
+  collateral legs are owned by `CallOwnership` over the trace tree;
+  `ParseError::MissingCallEvidence` refuses a receipt-only parse.
+- **D6** — `GenerationEntity`/`GenerationRef` (activation-keyed, branch-local) seed
+  from the chunk substrate and are journaled and checkpointed with the deltas; a
+  same-block replacement activates a new generation rather than mutating one.
+- **D7** — `CanonicalDelta` is the only write product, persisted by
+  `apply_canonical_deltas_on_conn`. `AaveChunkEvent` and its per-family apply
+  entrypoints are gone.
+- **D8** — `aave_projection_cursors` (`ProjectionCursor{position, journal_sequence,
+  range_end_block}`) plus the delta journal and relational checkpoints commit
+  atomically under `CursorAnchor::{First, At, Unchanged}`, refusing an unexpected
+  parent.
+- **D9** — `run/recovery.rs` compares the cursor anchor's hash at its own height
+  and, on a mismatch, restores the nearest retained per-market checkpoint and
+  replays retained deltas forward; a deeper reorg names the market-reset path.
+- **D10** — `SimulationBlock::based_on` is the solve anchor carried into dispatch,
+  simulation, and the batch executor; telemetry records `chain_id`,
+  `block_hash`, and `parent_block_hash` as span attributes only.
+- **D11** — `LogIdentityRefusal`, `OwnershipRefusal`, `RecoveryError`,
+  `ExactReadError`, `HeaderRefusal`, and `ProjectionRefusal` keep the failure classes
+  distinct.
+- **D12** — the module homes are as listed; no Python projection implementation
+  exists, and the primitive projections and generated stubs are the only Python
+  surface.
+- **D13** — the replay bench and the scoped suites are the acceptance surfaces;
+  Appendix E's cases exist as named tests.
+
+### Seams retired by this cutover
+
+Every symbol below had zero callers in the workspace (compiler- and
+grep-verified) because the canonical pipeline superseded it; deleting them is the
+retirement (ADR-087), not a compatibility shim.
+
+| retired | superseded by |
+|---|---|
+| `DegenbotDb::apply_scaled_token_mint` / `apply_scaled_token_burn` / `apply_scaled_token_transfer` and their `_on_conn` forms, plus the private read-then-write shell they shared | `apply_scaled_token_balance_delta_with_current_on_conn` (the chunk substrate supplies the current state; the `_burnScaled` clamp and the `last_index` max-with-prev rule live in `finish_scaled_token_balance_state`, and the clamp tests now drive that path) |
+| `DegenbotDb::apply_reserve_data_updated` (+ `_on_conn`) | the chunk substrate's batched `flush_reserve_data_updates` |
+| `DegenbotDb::fetch_user_gho_discount_by_address_on_conn` | the discount pre-pass reading the substrate/Projection view |
+| `DegenbotDb::lookup_position_by_user_asset_on_conn` | the generation-aware substrate position lookups |
+| `verify_stk_aave_balances_on_conn` / `verify_gho_discount_amounts_on_conn` | the D3 split: `acquire_verification_truth` in resolution, `compare_verification_truth_on_conn` in the transaction |
+| the last doc prose naming `AaveChunkEvent` | the delta and decoded-event vocabulary |
+
+### Retained, with the reason it is not a retirement candidate
+
+- **Ingress-only number forms** — `sim::ReadAnchor::at` and telemetry
+  `BlockLineage::unattached` remain for an observation that resolved no header (a
+  cold-start sweep, a probe, a lineage with no captured exporter context). ADR-105
+  D1 admits a number-only *observation* and refuses it only at the canonical
+  boundary; both forms fence rather than fabricate an anchor (a hashed anchor and
+  a number-only one never share a memo).
+- **Transaction-local working set** — the parser's assigned-log set and
+  `EventOwnership` remain beside `ReceiptOwnership`. They carry information the
+  ledger deliberately does not: logs a builder consumed as scaffolding without
+  retaining them in the operation's fields, and the mirror/companion roles the
+  ledger keeps a *role* unless an operation claims them (asserted on the real
+  218-log receipt). A receipt *is* one transaction, qualified by its `TxRef`, so
+  the key has no broader scope to widen to.
+- **`RevisionMemo`'s numeric key** — the read it memoizes is a height-pinned
+  `eth_call`; widening the key to a branch needs the hash-pinned read below. The
+  memo lives one chunk, and a chunk is acquired under one terminal anchor, so a
+  number key cannot observe two branches.
+- **`aave_v3_markets.last_update_block`** — retired as the *completeness* claim
+  (D8), which no code reads it as any more. It survives as the numeric *range*
+  claim, and a chunk that journals nothing has no position to journal, so the
+  exact cursor cannot advance for it.
+
+### Deviations this ADR does not yet claim
+
+- **Driver prose.** `run.rs`'s driver docs still describe the pre-cutover
+  transaction shape (RPC under the chunk transaction). The code implements D3/D4;
+  the prose is stale.
+
+### Exact reads landed (2026-11-23)
+
+Every production configuration, revision, discount, metadata, stkAAVE, and
+verification read is hash-pinned; the former "height-pinned dispatch and
+verification reads" deviation is retired.
+
+- `BlockReads` is the one production read view: `call`, `code_at`, `storage_at`,
+  `balance_at`, and `batch` (ONE Multicall3 `aggregate3` over the view's own
+  anchor, the same envelope count the number-pinned batch had). It also
+  implements `ContractRead`, whose block lane is a cross-check rather than a pin,
+  so the ERC-20 read family runs over it unchanged — one implementation, two pin
+  policies.
+- A node that rejects the EIP-1898 shape is `ExactReadError::Unsupported` (D11):
+  no path degrades to a number-addressed read, and the classification reads the
+  node's shape markers only inside the `-32000` family, so a replay or harness
+  gap in the JSON-RPC reserved band cannot masquerade as a missing capability.
+- `resolve_parent_anchor` names the parent read position of an intentional
+  pre-block observation (the stkAAVE balance seed): one header read, refused
+  unless the served parent hashes to the child's own `parent_hash`. The seed
+  therefore reads at an exact anchor, never at a number-only tag.
+- `RevisionMemo` is keyed by `ChainAnchor`, so a same-height branch is a
+  different key and no hit can cross an abandoned hash.
+- Prefetch deltas this adoption adds (all outside the chunk's write transaction):
+  one header read per non-final chunk (its verification gates pin the chunk's own
+  terminal anchor), one per distinct block whose pre-block stkAAVE balance is
+  read, and one per `ProxyCreated` block in the cold-boot bootstrap. The chunk
+  transaction still covers no acquisition.
+
+# Appendix A — Type inventory and admitted ambiguity at scoping
+
+_Scoping snapshot, recorded before the cutover. The rows below state what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._
 
 | Existing surface | Current fact | Ambiguity the target removes |
 |---|---|---|
@@ -193,7 +326,9 @@ The detailed implementation graph lives in ergo epic `YMSQIZ`. Each production c
 | `AaveMarketRow.last_update_block` | Optional numeric cursor | Cannot assert which branch is complete or reject an unexpected-parent commit |
 | Pool `ReorgJournal` | Existing forward/restore journal by block | Remains the pool mechanism; needs exact anchor context rather than replacement |
 
-# Appendix B — Aave provider-read and DB-lineage census
+# Appendix B — Aave provider-read and DB-lineage census at scoping
+
+_Scoping snapshot, recorded before the cutover. The rows below state what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._
 
 ## Run and activation reads
 

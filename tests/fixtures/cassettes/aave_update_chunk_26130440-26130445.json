@@ -3,7 +3,7 @@
   "chain_id": 1,
   "provenance": {
     "source": "reth/v2.11.0-b9abbcc/x86_64-unknown-linux-gnu",
-    "recorded_at": "2026-11-23T04:46:34Z",
+    "recorded_at": "2026-11-23T15:15:47Z",
     "span": {
       "from_block": 26130440,
       "to_block": 26130445
@@ -12,9 +12,9 @@
   "entries": {
     "[\"eth_blockNumber\",null]": {
       "response": {
-        "result": "26475531"
+        "result": "26478666"
       },
-      "digest": "0xfabc110948e137a13f2480fa0eaea0ae8ed3a43a61865e1952c91dcbe75246c2"
+      "digest": "0xa76fbfed79d97cdc217fa68dc6968583c603054c79a75d49e463eb9a4c9f18dd"
     },
     "[\"eth_chainId\",null]": {
       "response": {

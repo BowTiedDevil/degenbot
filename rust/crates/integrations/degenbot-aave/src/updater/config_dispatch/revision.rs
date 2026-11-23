@@ -21,7 +21,7 @@
 
 use crate::projection::ConfigurationEffect;
 use alloy::primitives::Address;
-use degenbot_rpc::provider::AlloyProvider;
+use degenbot_rpc::chain_evidence::BlockReads;
 
 use super::context::{ChunkContext, RevisionMemo};
 use super::{checksum, discount_to_i64, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION};
@@ -79,7 +79,6 @@ pub(super) async fn resolve_upgraded(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let block_number = ctx.block_number();
     let conn = ctx.conn();
     let proxy_str = checksum(&decoded.proxy_address);
     // 1. asset lookup: a_token first, then v_token.
@@ -110,9 +109,7 @@ pub(super) async fn resolve_upgraded(
     } else {
         "DEBT_TOKEN_REVISION()"
     };
-    let new_revision = ctx
-        .read_revision(&decoded.implementation, rev_fn, block_number)
-        .await?;
+    let new_revision = ctx.read_revision(&decoded.implementation, rev_fn).await?;
     let new_revision_i64 = discount_to_i64(new_revision);
     // 3. GHO-discount-deprecation (vToken only).
     let deprecated_gho_token_id = if is_a_token {
@@ -155,10 +152,7 @@ pub(super) async fn resolve_contract_revision_updated(
     contract_name: &str,
     revision_fn: &str,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let block_number = ctx.block_number();
-    let revision = ctx
-        .read_revision(&new_address, revision_fn, block_number)
-        .await?;
+    let revision = ctx.read_revision(&new_address, revision_fn).await?;
     Ok(ConfigurationEffect::ContractRevisionUpdated {
         market_id: ctx.market_id(),
         contract_name: contract_name.to_string(),
@@ -175,14 +169,14 @@ pub(super) async fn resolve_contract_revision_updated(
 ///
 /// Takes the [`RevisionMemo`] directly (not a [`ChunkContext`]) because the
 /// cold-boot bootstrap pass is a pre-chunk phase that owns its own memo
-/// instance — the block lane keeps the keying correct across both owners.
+/// instance and its own anchored read view — the anchor lane keeps the keying
+/// correct across both owners.
 pub(crate) async fn match_proxy_id(
     memo: &mut RevisionMemo,
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     id: &alloy::primitives::B256,
     proxy_address: &Address,
     implementation_address: &Address,
-    block_number: u64,
 ) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
     let (name, rev_fn) = if id.as_slice() == POOL_PROXY_ID {
         ("POOL", "POOL_REVISION()")
@@ -191,9 +185,7 @@ pub(crate) async fn match_proxy_id(
     } else {
         return Ok(None);
     };
-    let revision = memo
-        .read(provider, implementation_address, rev_fn, block_number)
-        .await?;
+    let revision = memo.read(reads, implementation_address, rev_fn).await?;
     Ok(Some(ProxyCreationResolution {
         name: name.to_string(),
         address: checksum(proxy_address),

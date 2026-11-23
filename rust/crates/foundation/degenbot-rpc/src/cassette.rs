@@ -300,7 +300,12 @@ impl Cassette {
                 .and_then(Value::as_str)
                 .and_then(|height| height.parse::<u64>().ok())
                 .ok_or_else(|| HeaderEvidenceError::HeaderWithoutHeight(key.clone()))?;
-            if !(from..=to).contains(&number) {
+            // ONE block below the span is admitted: it is the parent link of the
+            // range's first block, which an intentional pre-block read (the
+            // stkAAVE balance seed) resolves before any read of the range itself.
+            // It states no completeness claim over that block's logs, so the
+            // span's own meaning is unchanged.
+            if !(from.saturating_sub(1)..=to).contains(&number) {
                 return Err(HeaderEvidenceError::HeaderOutsideSpan { number, from, to });
             }
             let CassetteResponse::Success { result } = &entry.response else {
@@ -1172,6 +1177,51 @@ mod tests {
                 Err(ref reason) if reason.contains("outside its span 100-101")
             ),
             "a header the capture's span does not cover is not its evidence: {verdict:?}"
+        );
+    }
+
+    /// The parent of the span's FIRST block is the one height below it that a
+    /// capture legitimately carries: an intentional pre-block read (the stkAAVE
+    /// seed) resolves that header before any read of the range itself.
+    #[tokio::test]
+    async fn the_parent_header_of_the_first_block_is_span_evidence() {
+        let (_, bytes) = header_capture(
+            three_header_node(),
+            100..=101,
+            CassetteSpan {
+                from_block: 101,
+                to_block: 101,
+            },
+        )
+        .await;
+
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            verdict.is_ok(),
+            "the first block's parent link is evidence the span implies: {verdict:?}"
+        );
+    }
+
+    /// Two blocks below the span is still outside it.
+    #[tokio::test]
+    async fn a_header_two_blocks_below_the_span_fails_the_drift_gate() {
+        let (_, bytes) = header_capture(
+            three_header_node(),
+            100..=102,
+            CassetteSpan {
+                from_block: 102,
+                to_block: 102,
+            },
+        )
+        .await;
+
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            matches!(
+                verdict,
+                Err(ref reason) if reason.contains("outside its span 102-102")
+            ),
+            "a header beyond the first block's parent is not span evidence: {verdict:?}"
         );
     }
 

@@ -293,14 +293,17 @@ impl ScratchChain {
             Ok(data) => data,
             Err(message) => return failure_payload(-32602, &message),
         };
+        let head = self.0.lock().head;
         let block = match items.get(1) {
-            None | Some(Value::Null) => {
-                let inner = self.0.lock();
-                inner.head
-            }
-            Some(tag) => match parse_block_tag(tag) {
+            None | Some(Value::Null) => head,
+            Some(id) => match parse_block_id(id, head) {
                 Ok(block) => block,
-                Err(message) => return failure_payload(-32602, &message),
+                Err(BlockIdError::Malformed(message)) => {
+                    return failure_payload(-32602, &message);
+                }
+                Err(BlockIdError::Unknown(message)) => {
+                    return failure_payload(-32_000, &message);
+                }
             },
         };
 
@@ -659,6 +662,43 @@ fn throwaway_evm(snapshot: &Cache) -> FixtureEvm {
 
 /// Parse a block tag: minimal-hex quantity, decimal string, `latest`, or
 /// `earliest` (0). Anything else is refused.
+/// Why a JSON-RPC block id could not be served.
+#[derive(Debug, PartialEq, Eq)]
+enum BlockIdError {
+    /// The id is not one this transport understands (a rejected request shape).
+    Malformed(String),
+    /// The id names a block the capture never served: an unknown block, which a
+    /// node refuses without reading any state.
+    Unknown(String),
+}
+
+/// Decode a JSON-RPC block id: a tag or quantity string, or an EIP-1898
+/// `{blockHash, requireCanonical}` pin.
+///
+/// The pin is resolved against the served range through the device's own
+/// block-hash scheme, so a hash the driver never produced is refused as an
+/// unknown block instead of being read as the head or as empty state — the same
+/// refusal a node gives, and the reason an exact read is worth pinning.
+fn parse_block_id(id: &Value, head: u64) -> Result<u64, BlockIdError> {
+    if let Value::Object(pin) = id {
+        let Some(Value::String(hash)) = pin.get("blockHash") else {
+            return Err(BlockIdError::Malformed(format!(
+                "block id {id} names no blockHash"
+            )));
+        };
+        let wanted = hash.to_lowercase();
+        for number in (0..=head).rev() {
+            if hex_data(block_hash(number).as_slice()).to_lowercase() == wanted {
+                return Ok(number);
+            }
+        }
+        return Err(BlockIdError::Unknown(format!(
+            "block hash {hash} is not one this capture served"
+        )));
+    }
+    parse_block_tag(id).map_err(BlockIdError::Malformed)
+}
+
 fn parse_block_tag(tag: &Value) -> Result<u64, String> {
     let Value::String(s) = tag else {
         return Err(format!("block tag {tag} must be a string"));
@@ -1154,6 +1194,48 @@ mod tests {
         assert!(parse_block_tag(&Value::String("0xzz".into())).is_err());
         assert!(parse_block_tag(&Value::String("pending".into())).is_err());
         assert!(parse_block_tag(&Value::Number(16.into())).is_err());
+    }
+
+    /// A hash-pinned (EIP-1898) id resolves to the height whose capture hash it
+    /// names — the shape every updater read now issues.
+    #[test]
+    fn a_hash_pinned_block_id_resolves_to_its_height() {
+        let head = 9;
+        let pin = serde_json::json!({
+            "blockHash": hex_data(block_hash(7).as_slice()),
+            "requireCanonical": true,
+        });
+        assert_eq!(parse_block_id(&pin, head), Ok(7));
+    }
+
+    /// A hash the capture never served is an UNKNOWN block (`-32000`), never a
+    /// silent read of the head: that is the ambiguity an exact read removes.
+    #[test]
+    fn an_unserved_pinned_hash_is_an_unknown_block() {
+        let pin = serde_json::json!({
+            "blockHash": hex_data([0x11u8; 32].as_slice()),
+            "requireCanonical": true,
+        });
+        assert!(
+            matches!(
+                parse_block_id(&pin, 9),
+                Err(BlockIdError::Unknown(ref message))
+                    if message.contains("not one this capture served")
+            ),
+            "an unserved hash must be an unknown block"
+        );
+    }
+
+    /// A pin without a hash is a malformed id (`-32602`), and every string/tag id
+    /// keeps the tag contract.
+    #[test]
+    fn a_pin_without_a_hash_is_malformed_and_tags_are_unchanged() {
+        let malformed = serde_json::json!({"requireCanonical": true});
+        assert!(matches!(
+            parse_block_id(&malformed, 9),
+            Err(BlockIdError::Malformed(_))
+        ));
+        assert_eq!(parse_block_id(&Value::String("0x9".into()), 9), Ok(9));
     }
 
     #[test]

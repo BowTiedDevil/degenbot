@@ -10,13 +10,13 @@
     }
   },
   "entries": {
-    "[\"eth_call\",[{\"input\":\"3114776098\",\"to\":\"0xbd770416a3345f91e4b34576cb804a576fa48eb1\"},\"1001\"]]": {
+    "[\"eth_call\",[{\"data\":\"3114776098\",\"to\":\"0xbd770416a3345f91e4b34576cb804a576fa48eb1\"},{\"blockHash\":\"0x8d6c98e59b99b453ad086d229fff0a76b26bd736d913256971f1f7e5df0efd77\",\"requireCanonical\":true}]]": {
       "response": {
         "result": "0x0000000000000000000000000000000000000000000000000000000000000002"
       },
       "digest": "0xe1a9e364d76c99447e99d36dd574f4dbe8a379b5020cfd1be48a89b8332fea2c"
     },
-    "[\"eth_call\",[{\"input\":\"3114776098\",\"to\":\"0xbd770416a3345f91e4b34576cb804a576fa48eb1\"},\"1002\"]]": {
+    "[\"eth_call\",[{\"data\":\"3114776098\",\"to\":\"0xbd770416a3345f91e4b34576cb804a576fa48eb1\"},{\"blockHash\":\"0xa71ca41918eda0f02f5b9d034207bc6da722ef3dbac84742f3e5c64d80fd55e5\",\"requireCanonical\":true}]]": {
       "response": {
         "result": "0x0000000000000000000000000000000000000000000000000000000000000002"
       },

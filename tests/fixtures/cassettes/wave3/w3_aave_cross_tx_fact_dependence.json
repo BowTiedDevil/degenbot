@@ -10,7 +10,7 @@
     }
   },
   "entries": {
-    "[\"eth_call\",[{\"input\":\"0x6c53272b000000000000000000000000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"to\":\"0x5a443704dd4b594b382c22a083e2bd3090a6fef3\"},\"1001\"]]": {
+    "[\"eth_call\",[{\"data\":\"0x6c53272b000000000000000000000000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"to\":\"0x5a443704dd4b594b382c22a083e2bd3090a6fef3\"},{\"blockHash\":\"0xa71ca41918eda0f02f5b9d034207bc6da722ef3dbac84742f3e5c64d80fd55e5\",\"requireCanonical\":true}]]": {
       "response": {
         "result": "0x00000000000000000000000000000000000000000000000000000000000007d0"
       },
@@ -21,6 +21,16 @@
         "result": "1"
       },
       "digest": "0x8dfd224581066fc06a67c2becfb96b35e2b756729861a0c3d2af6cfbe5eb6f8b"
+    },
+    "[\"eth_getBlockByNumber\",[\"1000\",false]]": {
+      "response": {
+        "result": {
+          "hash": "0xef9d334ee3e15416314a60312ef616e881c3bfffe4b60b11befc2707c79b7d35",
+          "number": "1000",
+          "parentHash": "0xf2b4e536bd23bd6782833c997983bc4a576dc5faca807b4000f207eec069ebd4"
+        }
+      },
+      "digest": "0xe6eaab45f1897aefcabc93c8abed216f063d5389dab59605bb1667da05dc5204"
     },
     "[\"eth_getBlockByNumber\",[\"1001\",false]]": {
       "response": {

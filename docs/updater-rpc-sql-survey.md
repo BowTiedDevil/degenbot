@@ -541,6 +541,27 @@ full-map persist. The statement counts on this page are their measurement-time
 values; the live chunk loop asserts 16 (`EXPECTED_LEDGER_STATEMENTS` in
 `tests/sql_golden_replay.rs`).
 
+The same rule holds for the Aave columns: every Aave `stmts` value on this page
+is its measurement-time value. The canonical-delta writer, the per-market
+journal, and the projection checkpoints each added statements after those rows
+were taken, so the live chunk loop asserts `EXPECTED_LEDGER_STATEMENTS` 80 on
+`aave_update_chunk_26130440-26130445` and 85 on
+`aave_config_chunk_19091050-19091059` — the counts `just bench-updaters`
+reports, drift-gated by the replay suites. The round-trip and response-byte
+columns did not move with them (19 / 203,117 and 18 / 206,716 at that time),
+because the Aave evidence surface is the terminal-anchor, complete-receipt, and
+trace acquisition, not the write product.
+
+The exact-read cutover (ADR-105 D3) moved one of those two surfaces and no
+statement: `aave_update_chunk_26130440-26130445` still serves **19 / 203,117**
+(its span has no pre-block stkAAVE seed, and its one chunk is the final chunk,
+so the pin changed shape without adding a request), while
+`aave_config_chunk_19091050-19091059` now serves **21 / 252,230**. The three
+added requests are the parent headers its three burn transactions' pre-block
+stkAAVE seeds resolve before their own reads — an intentional pre-block read
+position is an exact anchor, so that height's identity is a request. Every
+pinned count on this page is drift-gated by the replay suites.
+
 ### Projection checkpoints (ergo 7JIC7U — ADR-105 D8, D9: the initial cadence and its measured cost)
 
 A market's recovery used to be "replay the whole delta journal". It now has a

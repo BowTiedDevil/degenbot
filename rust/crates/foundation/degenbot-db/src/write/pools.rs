@@ -1,7 +1,7 @@
 //! Aave Pool-event direct writers: reserve data/init, upgrades, contract rows.
 
 use super::util::existing_row_id;
-use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
+use super::{params, DbError, DegenbotDb, OptionalExtension};
 
 /// Lookup `aave_v3_assets.id` by the `(market_id, underlying_asset_id)`
 /// natural key. The `ReserveInitialized` get-or-create path's existing-row
@@ -41,69 +41,15 @@ impl DegenbotDb {
         Ok(())
     }
 
-    // ── Pool-event direct writers ──────────────────────────────
+    // ── Pool-event direct writer ──────────────────────────────
     //
-    // The two Aave V3 Pool events that write DB rows directly:
-    // `ReserveDataUpdated` (index/rate UPDATE) + `ReserveInitialized`
-    // (asset row seed). The other Pool events (Supply/Borrow/Repay/Withdraw/
-    // LiquidationCall/MintedToTreasury/DeficitCreated) do NOT write DB rows
-    // directly — the parser consumes them to GROUP ScaledToken events, whose
-    // balance mutations the scaled-token apply fns own.
-
-    conn_writer! {
-        /// Apply a `ReserveDataUpdated` event's decoded fields to the
-        /// `aave_v3_assets` row.
-        ///
-        /// Updates `liquidity_rate` / `borrow_rate` (= variable borrow rate;
-        /// stable borrow rate is deprecated on Aave V3, ignored as in Python) /
-        /// `liquidity_index` / `borrow_index` (= variable borrow index) /
-        /// `last_update_block` on the asset row keyed by `asset_id`. Unconditional
-        /// UPDATE (the Python path asserts the asset exists via a `select(...)` +
-        /// `assert ... is not None`; the apply fn's contract is the caller resolved
-        /// the `asset_id` already — a no-op UPDATE on a missing row surfaces as
-        /// [`DbError::MissingRow`]).
-        ///
-        /// No ray-math: the indices/rates are stored raw (as the event emits them,
-        /// 27-decimal ray values persisted as decimal `VARCHAR(78)` per the schema).
-        ///
-        /// # Errors
-        ///
-        /// Returns [`DbError::Sqlite`] on a query failure, or
-        /// [`DbError::MissingRow`] if no `aave_v3_assets` row matches
-        /// `asset_id`.
-        fn apply_reserve_data_updated, apply_reserve_data_updated_on_conn(
-            conn: &rusqlite::Connection,
-            asset_id: i64,
-            liquidity_rate: U256,
-            variable_borrow_rate: U256,
-            liquidity_index: U256,
-            variable_borrow_index: U256,
-            block_number: u64,
-        ) -> Result<(), DbError> {
-            let block = i64::try_from(block_number).unwrap_or(i64::MAX);
-            let updated = conn.execute(
-                "UPDATE aave_v3_assets SET \
-                    liquidity_rate = ?1, borrow_rate = ?2, \
-                    liquidity_index = ?3, borrow_index = ?4, \
-                    last_update_block = ?5 \
-                 WHERE id = ?6",
-                params![
-                    liquidity_rate.to_string(),
-                    variable_borrow_rate.to_string(),
-                    liquidity_index.to_string(),
-                    variable_borrow_index.to_string(),
-                    block,
-                    asset_id,
-                ],
-            )?;
-            if updated == 0 {
-                return Err(DbError::MissingRow(format!(
-                    "aave_v3_assets id={asset_id} (ReserveDataUpdated target)"
-                )));
-            }
-            Ok(())
-        }
-    }
+    // The one Aave V3 Pool event that writes a DB row directly:
+    // `ReserveInitialized` (asset row seed). The other Pool events
+    // (Supply/Borrow/Repay/Withdraw/LiquidationCall/MintedToTreasury/
+    // DeficitCreated) do NOT write DB rows directly — the parser consumes them
+    // to GROUP ScaledToken events, whose balance mutations the canonical delta
+    // writer owns; `ReserveDataUpdated`'s index/rate writes ride the chunk
+    // substrate's batched flush.
 
     conn_writer! {
         /// Seed the `aave_v3_assets` row for a freshly-initialized reserve.
@@ -149,8 +95,8 @@ impl DegenbotDb {
                 // mutates on the existing row (the constructor overwrites
                 // a_token_id/a_token_revision/v_token_id/v_token_revision + the
                 // RPC-resolved price_source; the index/rate fields are left alone
-                // on existing rows — they're owned by
-                // `apply_reserve_data_updated_on_conn`).
+                // on existing rows — the chunk substrate's reserve-data flush owns
+                // them).
                 conn.execute(
                     "UPDATE aave_v3_assets SET \
                         a_token_id = ?1, a_token_revision = ?2, \

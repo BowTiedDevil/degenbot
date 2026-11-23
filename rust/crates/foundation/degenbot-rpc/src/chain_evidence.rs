@@ -33,7 +33,7 @@
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{AnchorLinkError, ChainAnchor};
-use degenbot_core::errors::ProviderError;
+use degenbot_core::errors::{ProviderError, ProviderResult};
 use futures_util::{stream, StreamExt};
 use serde_json::json;
 
@@ -522,10 +522,7 @@ pub async fn resolve_terminal_anchor(
         Some(number) => number,
         None => provider.get_block_number().await?,
     };
-    let served = provider
-        .get_block_lineage_at(number)
-        .await?
-        .ok_or(HeaderRefusal::MissingHeader { number })?;
+    let served = resolve_anchor_at(provider, number).await?;
     if served.chain_id() != chain_id {
         return Err(ChainEvidenceError::CrossChainTerminal {
             number,
@@ -534,6 +531,28 @@ pub async fn resolve_terminal_anchor(
         });
     }
     Ok(served)
+}
+
+/// Resolve one height to its exact [`ChainAnchor`]: ONE header read.
+///
+/// The served block's chain is not judged here — a caller that needs chain
+/// agreement states it itself (see [`resolve_terminal_anchor`]) — so a
+/// height-addressed caller (a verification block, a recorded span's substrate
+/// block) reaches an exact read position without changing its own shape.
+///
+/// # Errors
+///
+/// [`ChainEvidenceError::Provider`] when the read fails and
+/// [`ChainEvidenceError::Header`] with [`HeaderRefusal::MissingHeader`] when the
+/// node holds no complete header at that height.
+pub async fn resolve_anchor_at(
+    provider: &AlloyProvider,
+    number: u64,
+) -> Result<ChainAnchor, ChainEvidenceError> {
+    provider
+        .get_block_lineage_at(number)
+        .await?
+        .ok_or_else(|| HeaderRefusal::MissingHeader { number }.into())
 }
 
 /// Why one hash-pinned read failed.
@@ -599,6 +618,11 @@ impl<'a> BlockReads<'a> {
         json!({ "blockHash": format!("{}", self.anchor.hash()), "requireCanonical": true })
     }
 
+    /// An address in the wire form the recorded corpus carries (lowercase hex).
+    fn wire_address(address: Address) -> String {
+        format!("0x{}", alloy::hex::encode(address.as_slice()))
+    }
+
     /// `eth_call` at the snapshot's block.
     ///
     /// # Errors
@@ -606,8 +630,14 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn call(&self, to: Address, data: Bytes) -> Result<Bytes, ExactReadError> {
+        self.pinned_call(to, data).await
+    }
+
+    /// The `eth_call` body both the exact method and the [`ContractRead`]
+    /// bridge share: one implementation, one pin.
+    async fn pinned_call(&self, to: Address, data: Bytes) -> Result<Bytes, ExactReadError> {
         let params = json!([
-            { "to": format!("{to}"), "data": format!("{data}") },
+            { "to": Self::wire_address(to), "data": format!("{data}") },
             self.pinned_block()
         ]);
         self.read("eth_call", params).await
@@ -620,7 +650,7 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn code_at(&self, address: Address) -> Result<Bytes, ExactReadError> {
-        let params = json!([format!("{address}"), self.pinned_block()]);
+        let params = json!([Self::wire_address(address), self.pinned_block()]);
         self.read("eth_getCode", params).await
     }
 
@@ -632,12 +662,34 @@ impl<'a> BlockReads<'a> {
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn storage_at(&self, address: Address, slot: U256) -> Result<U256, ExactReadError> {
         let params = json!([
-            format!("{address}"),
+            Self::wire_address(address),
             format!("0x{slot:x}"),
             self.pinned_block()
         ]);
         let word: B256 = self.read("eth_getStorageAt", params).await?;
         Ok(U256::from_be_bytes(word.0))
+    }
+
+    /// Run a batch of read-only calls at the snapshot's block through ONE
+    /// pinned Multicall3 `aggregate3` (the [`crate::multicall3::multicall3_batch`]
+    /// shape, one envelope per chunk), and answer no request for an empty list.
+    ///
+    /// A reverted sub-call is a `MulticallOutcome::Reverted` — an outcome, not
+    /// an error — and a node without the hash-pinned shape refuses the batch
+    /// itself rather than degrading to number-addressed reads.
+    ///
+    /// # Errors
+    ///
+    /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
+    /// request shape, [`ExactReadError::Failed`] when a read failed.
+    pub async fn batch(
+        &self,
+        calls: &[(Address, Bytes)],
+    ) -> Result<Vec<crate::multicall3::MulticallOutcome>, ExactReadError> {
+        if calls.is_empty() {
+            return Ok(Vec::new());
+        }
+        crate::multicall3::multicall3_batch_pinned(self, calls).await
     }
 
     /// `eth_getBalance` at the snapshot's block.
@@ -647,7 +699,7 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn balance_at(&self, address: Address) -> Result<U256, ExactReadError> {
-        let params = json!([format!("{address}"), self.pinned_block()]);
+        let params = json!([Self::wire_address(address), self.pinned_block()]);
         self.read("eth_getBalance", params).await
     }
 
@@ -687,6 +739,149 @@ impl<'a> BlockReads<'a> {
     }
 }
 
+/// The exact view as the shared [`ContractRead`] primitive: the ERC-20
+/// metadata and account reads that family declares run over an exact position
+/// unchanged, so there is ONE read implementation and two pin policies.
+///
+/// A caller's block lane is a cross-check, never a pin: the view's own height is
+/// accepted, and any other height is refused rather than silently re-pinned.
+impl crate::abi::ContractRead for BlockReads<'_> {
+    async fn call(&self, to: Address, data: Bytes, block: Option<u64>) -> ProviderResult<Bytes> {
+        if let Some(number) = block {
+            if number != self.anchor.number() {
+                return Err(ProviderError::InvalidParams {
+                    message: format!(
+                        "the exact read view at block {} cannot serve a read stated for block {number}",
+                        self.anchor.number()
+                    ),
+                });
+            }
+        }
+        self.pinned_call(to, data)
+            .await
+            .map_err(ProviderError::from)
+    }
+}
+
+/// The exact-read failure as the shared provider failure, for the read family
+/// that declares `ProviderError` only: a refused capability stays a refusal of
+/// the request SHAPE (`-32602`), and a failed read keeps its own cause.
+impl From<ExactReadError> for ProviderError {
+    fn from(error: ExactReadError) -> Self {
+        match error {
+            ExactReadError::Unsupported {
+                method,
+                block_hash,
+                cause,
+            } => Self::RpcError {
+                code: -32_602,
+                message: format!(
+                    "{method} cannot serve a hash-pinned read at block {block_hash}: {cause}"
+                ),
+            },
+            ExactReadError::Failed { cause, .. } => cause,
+        }
+    }
+}
+
+impl crate::multicall3::ExactContractRead for BlockReads<'_> {
+    fn anchor(&self) -> ChainAnchor {
+        self.anchor
+    }
+
+    async fn call_exact(&self, to: Address, data: Bytes) -> Result<Bytes, ExactReadError> {
+        self.call(to, data).await
+    }
+}
+
+/// Why a block's parent read position could not be named.
+///
+/// A parent position is an EXACT identity, not a height: the node states the
+/// parent's own header, and that header must be the block its child names as its
+/// parent. A same-height substitution between the two reads is a refusal, never a
+/// silently re-read parent.
+#[derive(Debug, thiserror::Error)]
+pub enum ParentAnchorError {
+    /// A genesis block has no predecessor.
+    #[error("block 0 has no parent")]
+    Genesis,
+    /// The node holds no complete header at the parent height.
+    #[error("the node holds no complete header at block {number}")]
+    MissingHeader {
+        /// The parent height.
+        number: u64,
+    },
+    /// The parent height's block is not the block the child names: the
+    /// same-height substitution a branch-local read position must refuse.
+    #[error("block {number} hashes to {served}, but its child names {expected} as its parent")]
+    BranchMismatch {
+        /// The parent height.
+        number: u64,
+        /// The hash the child states as its parent.
+        expected: B256,
+        /// The hash the node serves at that height.
+        served: B256,
+    },
+    /// The parent header names another chain than its child.
+    #[error("parent block {number} is on chain {served}, but its child is on chain {expected}")]
+    CrossChainParent {
+        /// The parent height.
+        number: u64,
+        /// The child's chain.
+        expected: u64,
+        /// The chain the served parent header states.
+        served: u64,
+    },
+    /// The transport or the node failed the header read.
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
+}
+
+/// Resolve `anchor`'s parent to its own exact [`ChainAnchor`]: the read position
+/// of an INTENTIONAL pre-block observation (a `balanceOf` at the block before the
+/// transaction that acts on it).
+///
+/// One header read at the parent height, then the agreement check that makes the
+/// position exact: the served block must hash to `anchor.parent_hash()` on
+/// `anchor`'s chain. A node that has since moved to another branch at that height
+/// is refused ([`ParentAnchorError::BranchMismatch`]) rather than read from.
+///
+/// # Errors
+///
+/// [`ParentAnchorError::Genesis`] for a block with no predecessor (no read is
+/// issued), [`ParentAnchorError::MissingHeader`] when the node states no parent
+/// header, [`ParentAnchorError::CrossChainParent`] or
+/// [`ParentAnchorError::BranchMismatch`] when the served parent contradicts the
+/// child, and [`ParentAnchorError::Provider`] when the read fails.
+pub async fn resolve_parent_anchor(
+    provider: &AlloyProvider,
+    anchor: ChainAnchor,
+) -> Result<ChainAnchor, ParentAnchorError> {
+    let number = anchor
+        .number()
+        .checked_sub(1)
+        .ok_or(ParentAnchorError::Genesis)?;
+    let served = provider
+        .get_block_lineage_at(number)
+        .await?
+        .ok_or(ParentAnchorError::MissingHeader { number })?;
+    if served.chain_id() != anchor.chain_id() {
+        return Err(ParentAnchorError::CrossChainParent {
+            number,
+            expected: anchor.chain_id(),
+            served: served.chain_id(),
+        });
+    }
+    if served.hash() != anchor.parent_hash() {
+        return Err(ParentAnchorError::BranchMismatch {
+            number,
+            expected: anchor.parent_hash(),
+            served: served.hash(),
+        });
+    }
+    Ok(served)
+}
+
 /// Whether the node's failure rejects the EIP-1898 request SHAPE (no
 /// hash-pinned read capability) rather than a particular read.
 fn rejects_hash_pinned_shape(cause: &ProviderError) -> bool {
@@ -695,6 +890,15 @@ fn rejects_hash_pinned_shape(cause: &ProviderError) -> bool {
     };
     if UNSUPPORTED_SHAPE_CODES.contains(code) {
         return true;
+    }
+    // The message markers are the node's own statement about the request, so
+    // they are read only in the `-32000` family a node uses for its execution
+    // and block errors. The reserved JSON-RPC band (-32600..-32699) is a
+    // protocol-level answer — an internal error is not a capability verdict —
+    // and a transport or harness that echoes the request into its own
+    // diagnostic must not turn a missing fixture into one.
+    if !(-32_099..=-32_000).contains(code) {
+        return false;
     }
     let lower = message.to_lowercase();
     UNSUPPORTED_SHAPE_MARKERS
@@ -715,6 +919,8 @@ mod tests {
     use alloy::transports::{TransportError, TransportFut};
     use serde_json::Value;
     use std::collections::BTreeMap;
+
+    use crate::multicall3::{MulticallOutcome, MULTICALL3_ADDRESS};
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
 
@@ -813,6 +1019,12 @@ mod tests {
         logs: Value,
         reads: BTreeMap<&'static str, Value>,
         failures: BTreeMap<&'static str, (i64, String)>,
+        /// The Multicall3 address's own answer (an `aggregate3` envelope), so a
+        /// batch leg is observable apart from the per-target reads.
+        batch: Option<Result<Value, (i64, String)>>,
+        /// Whether a hash-pinned read must name a hash the stub holds as a
+        /// canonical header — a node that refuses a non-canonical block hash.
+        canonical_only: bool,
         reject_hash_pinned: bool,
         /// The chain `eth_chainId` serves; `None` is the fixture's chain 1.
         chain: Option<u64>,
@@ -826,6 +1038,8 @@ mod tests {
                     logs: Value::Array(Vec::new()),
                     reads: BTreeMap::new(),
                     failures: BTreeMap::new(),
+                    batch: None,
+                    canonical_only: false,
                     reject_hash_pinned: false,
                     chain: None,
                 })),
@@ -863,6 +1077,19 @@ mod tests {
 
         fn rejecting_hash_pinned(self) -> Self {
             self.state.lock().unwrap().reject_hash_pinned = true;
+            self
+        }
+
+        /// Serve this `aggregate3` envelope from the Multicall3 address.
+        fn batch(self, envelope: Value) -> Self {
+            self.state.lock().unwrap().batch = Some(Ok(envelope));
+            self
+        }
+
+        /// Refuse any hash-pinned read whose hash is not one of the headers the
+        /// stub holds: the same-height branch the node no longer serves.
+        fn canonical_only(self) -> Self {
+            self.state.lock().unwrap().canonical_only = true;
             self
         }
 
@@ -939,12 +1166,37 @@ mod tests {
                         data: None,
                     }));
                 }
+                if state.canonical_only {
+                    if let Some(named) = pinned_hash(&params) {
+                        let held = state.headers.values().any(|header| {
+                            header.get("hash").and_then(Value::as_str) == Some(named.as_str())
+                        });
+                        if !held {
+                            return Ok(ResponsePayload::Failure(ErrorPayload {
+                                code: -32_000,
+                                message: format!("block hash {named} not found").into(),
+                                data: None,
+                            }));
+                        }
+                    }
+                }
                 if let Some((code, message)) = state.failures.get(req.method()) {
                     return Ok(ResponsePayload::Failure(ErrorPayload {
                         code: *code,
                         message: message.clone().into(),
                         data: None,
                     }));
+                }
+                if req.method() == "eth_call" && calls_multicall3(&params) {
+                    return Ok(match &state.batch {
+                        Some(Ok(envelope)) => success(envelope.clone()),
+                        Some(Err((code, message))) => ResponsePayload::Failure(ErrorPayload {
+                            code: *code,
+                            message: message.clone().into(),
+                            data: None,
+                        }),
+                        None => success(Value::Null),
+                    });
                 }
                 match state.reads.get(req.method()) {
                     Some(result) => success(result.clone()),
@@ -959,6 +1211,51 @@ mod tests {
     }
 
     use serde_json::value::to_raw_value;
+
+    /// The block hash an EIP-1898 request names, when it names one.
+    fn pinned_hash(params: &Value) -> Option<String> {
+        params
+            .as_array()?
+            .iter()
+            .find_map(|arg| arg.get("blockHash").and_then(Value::as_str))
+            .map(str::to_string)
+    }
+
+    /// Whether this `eth_call` addresses Multicall3.
+    fn calls_multicall3(params: &Value) -> bool {
+        let multicall = format!("{MULTICALL3_ADDRESS}");
+        params
+            .as_array()
+            .and_then(|argv| argv.first())
+            .and_then(|call| call.get("to"))
+            .and_then(Value::as_str)
+            .is_some_and(|to| to.eq_ignore_ascii_case(&multicall))
+    }
+
+    /// One 32-byte word holding `value`.
+    fn word(value: u8) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out[31] = value;
+        out
+    }
+
+    /// An `aggregate3` return envelope: one `(bool,bytes)` row per call.
+    fn aggregate3_return(rows: &[(bool, &[u8])]) -> Value {
+        use alloy::dyn_abi::DynSolValue;
+        let values: Vec<DynSolValue> = rows
+            .iter()
+            .map(|(success, data)| {
+                DynSolValue::Tuple(vec![
+                    DynSolValue::Bool(*success),
+                    DynSolValue::Bytes(data.to_vec()),
+                ])
+            })
+            .collect();
+        json!(format!(
+            "0x{}",
+            alloy::hex::encode(DynSolValue::Array(values).abi_encode())
+        ))
+    }
 
     impl tower::Service<RequestPacket> for EvidenceStub {
         type Response = ResponsePacket;
@@ -1317,6 +1614,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_echoed_request_shape_in_a_protocol_error_is_a_failed_read() {
+        let stub = EvidenceStub::new().failing(
+            "eth_call",
+            -32_603,
+            "internal error: no recorded entry for {\"requireCanonical\":true}",
+        );
+        let provider = stub.provider().await;
+
+        let error = BlockReads::at(&provider, anchor(100, 0xa1, 0xa0))
+            .call(Address::repeat_byte(0x11), Bytes::new())
+            .await
+            .expect_err("an internal error states no capability verdict");
+
+        assert!(
+            matches!(error, ExactReadError::Failed { .. }),
+            "a protocol-band error that merely echoes the request shape is not a capability \
+             verdict: {error:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn every_snapshot_read_is_pinned_to_its_own_block_hash() {
         let stub = EvidenceStub::new()
             .read("eth_call", json!("0x1234"))
@@ -1514,5 +1832,286 @@ mod tests {
             ),
             "got {refusal:?}"
         );
+    }
+
+    // ── the hash-pinned batch (Multicall3 over one exact anchor) ─────────
+
+    /// Two sub-calls ride ONE `aggregate3` `eth_call`, and the request names the
+    /// snapshot's hash: a batch is one read position, exactly like a single call.
+    #[tokio::test]
+    async fn a_batch_pins_every_sub_call_to_the_snapshot_hash_in_one_request() {
+        let stub =
+            EvidenceStub::new().batch(aggregate3_return(&[(true, &word(42)), (true, &word(7))]));
+        let provider = stub.provider().await;
+        let pinned = anchor(100, 0xa1, 0xa0);
+        let reads = BlockReads::at(&provider, pinned);
+        let target = Address::repeat_byte(0x11);
+
+        let outcomes = reads
+            .batch(&[
+                (target, Bytes::from(vec![0xaa])),
+                (target, Bytes::from(vec![0xbb])),
+            ])
+            .await
+            .expect("the stub answers the pinned batch");
+
+        assert_eq!(
+            outcomes,
+            vec![
+                MulticallOutcome::Returned(Bytes::from(word(42).to_vec())),
+                MulticallOutcome::Returned(Bytes::from(word(7).to_vec())),
+            ]
+        );
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "one aggregate3 round trip for the whole batch"
+        );
+        let params: Value = serde_json::from_str(&packets[0].1).expect("the stub records JSON");
+        let call = &params[0];
+        assert!(
+            call.get("to")
+                .and_then(Value::as_str)
+                .is_some_and(|to| to.eq_ignore_ascii_case(&format!("{MULTICALL3_ADDRESS}"))),
+            "the batch is one call to Multicall3: {call}"
+        );
+        let calldata = call
+            .get("data")
+            .and_then(Value::as_str)
+            .expect("the batch names its calldata");
+        assert!(
+            calldata.starts_with("0x134dd343"),
+            "the batch carries the aggregate3 selector: {calldata}"
+        );
+        let pin = &params[1];
+        assert_eq!(
+            pin.get("blockHash").and_then(Value::as_str),
+            Some(format!("{}", pinned.hash()).as_str()),
+            "the batch pins the snapshot's own hash"
+        );
+        assert_eq!(
+            pin.get("requireCanonical").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(
+            pin.as_str().is_none(),
+            "a batch never names its block by number"
+        );
+    }
+
+    /// A one-call batch is still ONE `aggregate3` envelope — the shape the
+    /// number-pinned batch has always had, so the verification fan-out keeps its
+    /// exact request set and only its pin changes.
+    #[tokio::test]
+    async fn a_one_call_batch_is_one_pinned_aggregate3_envelope() {
+        let stub = EvidenceStub::new().batch(aggregate3_return(&[(true, &word(12))]));
+        let provider = stub.provider().await;
+        let pinned = anchor(100, 0xa1, 0xa0);
+        let target = Address::repeat_byte(0x22);
+
+        let outcomes = BlockReads::at(&provider, pinned)
+            .batch(&[(target, Bytes::from(vec![0xcc]))])
+            .await
+            .expect("the stub answers the single-call batch");
+
+        assert_eq!(
+            outcomes,
+            vec![MulticallOutcome::Returned(Bytes::from(word(12).to_vec()))]
+        );
+        let packets = stub.packets();
+        assert_eq!(packets.len(), 1);
+        let params: Value = serde_json::from_str(&packets[0].1).expect("the stub records JSON");
+        assert!(
+            params[0]
+                .get("to")
+                .and_then(Value::as_str)
+                .is_some_and(|to| to.eq_ignore_ascii_case(&format!("{MULTICALL3_ADDRESS}"))),
+            "a one-call batch still addresses Multicall3: {}",
+            params[0]
+        );
+        assert_eq!(
+            params[1].get("blockHash").and_then(Value::as_str),
+            Some(format!("{}", pinned.hash()).as_str())
+        );
+        // An empty batch issues nothing at all.
+        stub.forget_packets();
+        let empty = BlockReads::at(&provider, pinned)
+            .batch(&[])
+            .await
+            .expect("an empty batch is no request");
+        assert!(empty.is_empty());
+        assert!(stub.packets().is_empty());
+    }
+
+    /// A node without the hash-pinned shape refuses the batch's OWN request: the
+    /// capability is absent, so no sequential number-only sub-call is issued.
+    #[tokio::test]
+    async fn a_batch_without_the_capability_never_degrades_to_number_only_reads() {
+        let stub = EvidenceStub::new().rejecting_hash_pinned();
+        let provider = stub.provider().await;
+        let target = Address::repeat_byte(0x11);
+
+        let error = BlockReads::at(&provider, anchor(100, 0xa1, 0xa0))
+            .batch(&[
+                (target, Bytes::from(vec![0xaa])),
+                (target, Bytes::from(vec![0xbb])),
+            ])
+            .await
+            .expect_err("a node without the capability cannot serve an exact batch");
+
+        assert!(
+            matches!(
+                error,
+                ExactReadError::Unsupported {
+                    method: "eth_call",
+                    ..
+                }
+            ),
+            "got {error:?}"
+        );
+        assert_eq!(
+            stub.methods(),
+            vec!["eth_call".to_string()],
+            "the refusal is the batch's own request — no per-call retry exists"
+        );
+    }
+
+    /// A reverted sub-call is an outcome of the pinned batch, exactly as it is of
+    /// the number-pinned one: the caller decides what a revert means.
+    #[tokio::test]
+    async fn a_batch_classifies_a_reverted_sub_call_as_an_outcome() {
+        let stub = EvidenceStub::new().batch(aggregate3_return(&[(true, &word(9)), (false, &[])]));
+        let provider = stub.provider().await;
+        let target = Address::repeat_byte(0x11);
+
+        let outcomes = BlockReads::at(&provider, anchor(100, 0xa1, 0xa0))
+            .batch(&[
+                (target, Bytes::from(vec![0xaa])),
+                (target, Bytes::from(vec![0xbb])),
+            ])
+            .await
+            .expect("a reverted sub-call does not fail the batch");
+
+        assert_eq!(
+            outcomes,
+            vec![
+                MulticallOutcome::Returned(Bytes::from(word(9).to_vec())),
+                MulticallOutcome::Reverted(Bytes::new()),
+            ]
+        );
+    }
+
+    // ── the parent read position ──────────────────────────────────────────
+
+    /// The parent of an anchored block is named by ONE header read, and the
+    /// header must be the block the child claims as its parent.
+    #[tokio::test]
+    async fn a_parent_anchor_names_the_parent_block_exactly() {
+        let stub = EvidenceStub::new()
+            .header(99, 0xa0, 0x9f)
+            .header(100, 0xa1, 0xa0);
+        let provider = stub.provider().await;
+
+        let parent = resolve_parent_anchor(&provider, anchor(100, 0xa1, 0xa0))
+            .await
+            .expect("the stub states the parent header");
+
+        assert_eq!(parent, anchor(99, 0xa0, 0x9f));
+        assert_eq!(
+            stub.methods(),
+            vec!["eth_getBlockByNumber".to_string()],
+            "one header read names the parent position"
+        );
+    }
+
+    /// A parent height whose block is not the child's stated parent is a
+    /// same-height substitution: refused, never re-read as the parent.
+    #[tokio::test]
+    async fn a_parent_anchor_refuses_a_same_height_substitution() {
+        let stub = EvidenceStub::new()
+            .header(99, 0xb0, 0x9f)
+            .header(100, 0xa1, 0xa0);
+        let provider = stub.provider().await;
+
+        let refusal = resolve_parent_anchor(&provider, anchor(100, 0xa1, 0xa0))
+            .await
+            .expect_err("the served parent is not the child's parent");
+
+        assert!(
+            matches!(
+                refusal,
+                ParentAnchorError::BranchMismatch {
+                    number: 99,
+                    expected,
+                    served,
+                } if expected == hash(0xa0) && served == hash(0xb0)
+            ),
+            "got {refusal:?}"
+        );
+    }
+
+    /// A genesis anchor has no parent read position, and no read is issued to
+    /// find that out.
+    #[tokio::test]
+    async fn a_genesis_anchor_has_no_parent_position() {
+        let stub = EvidenceStub::new();
+        let provider = stub.provider().await;
+
+        let refusal = resolve_parent_anchor(&provider, anchor(0, 0xa1, 0xa0))
+            .await
+            .expect_err("genesis has no parent");
+
+        assert!(
+            matches!(refusal, ParentAnchorError::Genesis),
+            "got {refusal:?}"
+        );
+        assert!(
+            stub.methods().is_empty(),
+            "no read is issued for a genesis anchor"
+        );
+    }
+
+    /// A missing parent header cannot name the parent position.
+    #[tokio::test]
+    async fn a_missing_parent_header_refuses_the_parent_anchor() {
+        let stub = EvidenceStub::new().header(100, 0xa1, 0xa0);
+        let provider = stub.provider().await;
+
+        let refusal = resolve_parent_anchor(&provider, anchor(100, 0xa1, 0xa0))
+            .await
+            .expect_err("the node holds no parent header");
+
+        assert!(
+            matches!(refusal, ParentAnchorError::MissingHeader { number: 99 }),
+            "got {refusal:?}"
+        );
+    }
+
+    /// A same-height reorg abandons the hash an anchored read names: the node
+    /// refuses the pin, so the abandoned branch can never serve the read.
+    #[tokio::test]
+    async fn a_same_height_branch_cannot_serve_a_pinned_read() {
+        let stub = EvidenceStub::new()
+            .canonical_only()
+            .header(100, 0xb1, 0xa0)
+            .read("eth_call", json!("0x1234"));
+        let provider = stub.provider().await;
+
+        let abandoned = anchor(100, 0xa1, 0xa0);
+        let error = BlockReads::at(&provider, abandoned)
+            .call(Address::repeat_byte(0x11), Bytes::new())
+            .await
+            .expect_err("the abandoned hash is no longer canonical");
+        assert!(
+            matches!(error, ExactReadError::Failed { .. }),
+            "an abandoned pin is a failed read, never a served one: {error:?}"
+        );
+
+        let served = BlockReads::at(&provider, anchor(100, 0xb1, 0xa0))
+            .call(Address::repeat_byte(0x11), Bytes::new())
+            .await
+            .expect("the canonical branch still answers");
+        assert_eq!(served, Bytes::from(vec![0x12, 0x34]));
     }
 }

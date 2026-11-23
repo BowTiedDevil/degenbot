@@ -11,6 +11,7 @@ use alloy::primitives::{Address, B256};
 use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{ChainAnchor, TxRef};
 use degenbot_db::{CursorAnchor, DegenbotDb, ProjectionCursor, ProjectionUnit};
+use degenbot_rpc::chain_evidence::BlockReads;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -269,7 +270,7 @@ pub(super) async fn resolve_chunk(
     ctx.substrate_mut()
         .observe_seed_generations(&mut view, market_id, chain_id);
     let mut chunk_deltas: Vec<crate::projection::CanonicalDelta> = Vec::new();
-    let mut pending_refreshes: Vec<(crate::projection::CanonicalDelta, i64, u64)> = Vec::new();
+    let mut pending_refreshes: Vec<(crate::projection::CanonicalDelta, i64)> = Vec::new();
     for candidate in candidates {
         let group = &candidate.group;
         let block_number = group.block_number;
@@ -449,17 +450,19 @@ pub(super) async fn resolve_chunk(
         let _ = discount_token_tx;
         for delta in &deltas {
             if let DeltaEffect::GhoRefreshDiscount { position_id } = delta.effect() {
-                pending_refreshes.push((delta.clone(), *position_id, block_number));
+                pending_refreshes.push((delta.clone(), *position_id));
             }
         }
     }
+    let mut parent_anchors = ctx.take_parent_anchors();
     drop(ctx);
-    for (signal, position_id, block_number) in pending_refreshes {
+    for (signal, position_id) in pending_refreshes {
+        let anchor = *signal.source().tx().anchor();
+        let parent = parent_anchors.of(provider, anchor).await?;
         resolve_discount_refresh(
-            provider,
+            &BlockReads::at(provider, parent),
             conn,
             market_id,
-            block_number,
             &signal,
             position_id,
             &view,
@@ -492,15 +495,15 @@ pub(super) async fn resolve_chunk(
 
 /// Recompute the users' GHO discounts the transaction's debt movements require
 /// (the `(C)` refresh): the debt state is the view's post-transaction state and
-/// the stkAAVE balance is the projection's (a `balanceOf` at the exact parent
-/// block seeds it when the column was never observed). The settled values travel
+/// the stkAAVE balance is the projection's (`reads` is the exact PARENT anchor of
+/// the transaction that signalled the refresh, so a `balanceOf` there seeds it
+/// when the column was never observed without a number-only tag). The settled values travel
 /// as their own deltas, so persistence writes them without recomputing.
 #[expect(clippy::too_many_arguments)]
 async fn resolve_discount_refresh(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     conn: &Connection,
     market_id: i64,
-    block_number: u64,
     signal: &crate::projection::CanonicalDelta,
     position_id: i64,
     view: &crate::projection::ProjectionView,
@@ -533,23 +536,26 @@ async fn resolve_discount_refresh(
                     user.user_address
                 )))
             })?;
-            let balance = degenbot_rpc::erc20::balance_of(
-                provider,
-                discount_token,
-                address,
-                Some(block_number.saturating_sub(1)),
+            let ret = reads
+                .call(
+                    discount_token,
+                    crate::config_dispatch::encode_single_address_call(
+                        "balanceOf(address)",
+                        &address,
+                    ),
+                )
+                .await
+                .map_err(ConfigDispatchError::from)?;
+            let balance = crate::config_dispatch::require_word0_u256(
+                &ret,
+                "balanceOf(address)",
+                &discount_token,
             )
-            .await
-            .map_err(|error| match error {
-                degenbot_rpc::erc20::AccountReadError::Call(provider_error) => {
-                    RunError::Provider(provider_error)
-                }
-                degenbot_rpc::erc20::AccountReadError::NotUint256 { returned, .. } => {
-                    RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
-                        "balanceOf for user {}: short return ({returned} bytes)",
-                        user.user_address
-                    )))
-                }
+            .map_err(|error| {
+                RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
+                    "balanceOf for user {}: {error}",
+                    user.user_address
+                )))
             })?;
             substrate.record_user_stk_aave_balance_by_id(user.user_id, Some(balance));
             chunk_deltas.push(crate::projection::CanonicalDelta::new(

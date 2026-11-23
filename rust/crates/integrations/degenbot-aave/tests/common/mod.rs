@@ -61,6 +61,12 @@ pub fn candidate_evidence_entries(
                 .expect("a fixture log states its transaction")
                 .to_string();
             blocks.insert(block);
+            // The stkAAVE seed and a discount refresh read at the transaction's
+            // PARENT, which resolves through that height's own header — so a
+            // candidate block's predecessor owes a header too (ADR-105 D3).
+            if let Some(parent) = block.checked_sub(1) {
+                blocks.insert(parent);
+            }
             logs_by_tx.entry(tx).or_default().push(log.clone());
         }
     }

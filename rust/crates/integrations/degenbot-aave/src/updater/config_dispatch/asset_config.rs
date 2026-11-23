@@ -24,8 +24,8 @@
 use crate::projection::ConfigurationEffect;
 use alloy::primitives::{Address, U256};
 use degenbot_db::DegenbotDb;
+use degenbot_rpc::chain_evidence::BlockReads;
 use degenbot_rpc::erc20;
-use degenbot_rpc::provider::AlloyProvider;
 
 use super::context::{BatchRead, BatchReadResult, ChunkContext};
 use super::{
@@ -268,7 +268,6 @@ pub(super) async fn resolve_collateral_configuration(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3CollateralConfigurationChangedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let block_number = ctx.block_number();
     let pool_address = ctx.pool_address();
     let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
@@ -282,10 +281,7 @@ pub(super) async fn resolve_collateral_configuration(
         })?;
     // getConfiguration(address) — 4-byte selector + 32-byte address.
     let calldata = encode_single_address_call("getConfiguration(address)", &decoded.asset);
-    let ret = ctx
-        .provider()
-        .eth_call(&pool_address, calldata, Some(block_number))
-        .await?;
+    let ret = ctx.reads()?.call(pool_address, calldata).await?;
     let config_bitmap = word0_to_u256(&ret).ok_or_else(|| {
         ConfigDispatchError::DecodeShape(
             "CollateralConfigurationChanged: getConfiguration returned < 32 bytes".to_string(),
@@ -320,7 +316,6 @@ pub(super) async fn resolve_reserve_initialized(
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let chain_id = ctx.chain_id();
-    let block_number = ctx.block_number();
     let conn = ctx.conn();
     // The GHO asset through the ctx-owned always-fresh accessor, for the
     // GHO-vToken-FK link below (a cache hit until an apply marks it dirty).
@@ -339,10 +334,10 @@ pub(super) async fn resolve_reserve_initialized(
     let v_token_str = checksum(&decoded.variable_debt_token);
     let metadata = fold_metadata_rows(
         erc20::read_batch(
-            ctx.provider(),
+            &ctx.reads()?,
             &[decoded.asset, decoded.a_token, decoded.variable_debt_token],
             erc20::MetadataShape::LowerUpperStopOnCallError,
-            Some(block_number),
+            None,
         )
         .await,
     )?;
@@ -375,11 +370,8 @@ pub(super) async fn resolve_reserve_initialized(
 
     // 2. EIP-1967: resolve the aToken + vToken implementation addresses.
     //    `get_storage_at` has no Multicall3 shape — these two stay sequential.
-    let atoken_impl =
-        read_implementation_slot(ctx.provider(), &decoded.a_token, block_number).await?;
-    let vtoken_impl =
-        read_implementation_slot(ctx.provider(), &decoded.variable_debt_token, block_number)
-            .await?;
+    let atoken_impl = read_implementation_slot(&ctx.reads()?, &decoded.a_token).await?;
+    let vtoken_impl = read_implementation_slot(&ctx.reads()?, &decoded.variable_debt_token).await?;
 
     // 3. + 4. ATOKEN_REVISION() / DEBT_TOKEN_REVISION() on the implementations
     //    + getSourceOfAsset(address) on the PRICE_ORACLE — three
@@ -477,15 +469,15 @@ fn fold_metadata_rows(
 /// Read the EIP-1967 implementation slot for `proxy` at `block_number` +
 /// decode the address.
 async fn read_implementation_slot(
-    provider: &AlloyProvider,
+    reads: &BlockReads<'_>,
     proxy: &Address,
-    block_number: u64,
 ) -> Result<Address, ConfigDispatchError> {
-    let slot = provider
-        .get_storage_at(proxy, EIP_1967_IMPLEMENTATION_SLOT, Some(block_number))
+    let slot = reads
+        .storage_at(*proxy, EIP_1967_IMPLEMENTATION_SLOT)
         .await?;
     // The slot is a 32-byte word; the address is the low 20 bytes.
-    Ok(Address::from_slice(&slot.as_slice()[12..]))
+    let word = slot.to_be_bytes::<32>();
+    Ok(Address::from_slice(&word[12..]))
 }
 
 #[cfg(test)]
