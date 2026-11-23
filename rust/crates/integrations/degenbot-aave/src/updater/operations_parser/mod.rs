@@ -112,9 +112,6 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// `_decode_transfer_event` uses this to classify a Transfer on the GHO
     /// vToken contract as a `GhoDebtTransfer`.
     pub gho_vtoken_address: Option<Address>,
-    /// The borrowed `&Connection` — every substrate lookup runs on this
-    /// (the chunk-atomicity invariant).
-    pub conn: &'a rusqlite::Connection,
     /// The chunk substrate cache — the parse-time lookups + the
     /// POOL-revision read ride its prefetch + write-overlay (the
     /// chunk-atomicity
@@ -127,6 +124,9 @@ pub struct TransactionOperationsParser<'a, 's> {
     /// the chunk substrate cache (the per-parse read behind it); mid-tx `PoolUpdated`
     /// config events are the orchestrator's concern.
     pub pool_revision: u32,
+    /// The log borrow's lifetime appears only in the parse entry points, so the
+    /// struct carries it as a marker rather than a field.
+    marker: std::marker::PhantomData<&'a ()>,
 }
 
 /// Errors raised by the parser — the chunk-atomicity invariant surfaces these
@@ -160,6 +160,10 @@ pub enum ParseError {
         /// The log whose owner is named by a call.
         log_index: u64,
     },
+    /// A relational fact the chunk's seed does not hold: the seed is the
+    /// complete read position, so a miss refuses (ADR-105 D4).
+    #[error("{0}")]
+    IncompleteSeed(#[from] crate::updater::run::seed::IncompleteChunkSeed),
 }
 
 // ── the entry-point types ─────────────────────────────────────────────────
@@ -196,25 +200,22 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         pool_address: Address,
         gho_token_address: Option<Address>,
         gho_vtoken_address: Option<Address>,
-        conn: &'a rusqlite::Connection,
         substrate: &'s mut ChunkSubstrate,
     ) -> Result<Self, ParseError> {
-        let pool_revision = substrate
-            .pool_revision(conn, market_id, "POOL")?
-            .ok_or_else(|| {
-                ParseError::Substrate(format!(
-                    "POOL contract revision missing for market_id={market_id}"
-                ))
-            })?;
+        let pool_revision = substrate.pool_revision("POOL")?.ok_or_else(|| {
+            ParseError::Substrate(format!(
+                "POOL contract revision missing for market_id={market_id}"
+            ))
+        })?;
         Ok(Self {
             market_id,
             chain_id,
             pool_address,
             gho_token_address,
             gho_vtoken_address,
-            conn,
             substrate,
             pool_revision,
+            marker: std::marker::PhantomData,
         })
     }
 
@@ -448,7 +449,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
             &mut assigned_log_indices,
             &mut next_op_id,
             &minted_to_treasury_events,
-        );
+        )?;
         for op in &mint_to_treasury_ops {
             op.claim_into(&mut assigned_log_indices);
         }

@@ -616,6 +616,14 @@ pub enum ProjectionError {
     /// wider-than-`u32` revision is a refusal, never a synthesized zero.
     #[error("generation revision {revision} is outside the u32 domain")]
     InvalidGenerationRevision { revision: i64 },
+    /// The chunk's seed holds no fact this projection needs: the seed is the
+    /// complete relational read position, so a miss refuses (ADR-105 D4).
+    #[error("{0}")]
+    IncompleteSeed(#[from] crate::updater::run::seed::IncompleteChunkSeed),
+    /// A substrate projection failure (a balance leg leaving the `U256`
+    /// domain).
+    #[error("substrate error: {0}")]
+    Substrate(String),
     /// A later-started operation names an earlier chain position than the
     /// operation reduced before it: the operation stream must advance, even
     /// though one operation's own legs may sit at earlier logs than its
@@ -691,6 +699,7 @@ pub struct ProjectionView {
     operation_anchor: Option<LogRef>,
     positions: HashMap<(ScaledTokenPosition, i64), PositionState>,
     generations: HashMap<GenerationEntity, GenerationRef>,
+    sealed: Vec<GenerationRef>,
 }
 
 impl ProjectionView {
@@ -748,6 +757,24 @@ impl ProjectionView {
     /// observation is the generation the view reads under.
     pub fn observe_generation(&mut self, generation: GenerationRef) {
         self.generations.insert(generation.entity(), generation);
+    }
+
+    /// Record a generation a replacement sealed: the lineage keeps it beside the
+    /// generation that superseded it, so a chunk that upgrades an entity reports
+    /// both the generation it began under and the one it now reads under
+    /// (ADR-105 D6). Sealing the generation the view currently reads under is
+    /// the ordinary case — it is the one the replacement displaces.
+    pub fn seal_generation(&mut self, generation: GenerationRef) {
+        if self.sealed.contains(&generation) {
+            return;
+        }
+        self.sealed.push(generation);
+    }
+
+    /// Every generation a later observation superseded: the sealed lineage the
+    /// projection began under or replaced mid-chunk.
+    pub fn sealed_generations(&self) -> impl Iterator<Item = GenerationRef> + '_ {
+        self.sealed.iter().copied()
     }
 
     /// The generation the view reads for an entity, if resolution observed one.

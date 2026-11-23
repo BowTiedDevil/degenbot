@@ -34,12 +34,13 @@ use crate::projection::{CanonicalDelta, ConfigurationEffect, ProjectionView};
 #[cfg(test)]
 use crate::run::CanonicalDeltaWriteReport;
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, U256};
 use degenbot_core::canonical_head::{ChainAnchor, TxRef};
 use degenbot_db::aave::AaveGhoAsset;
 use degenbot_db::DbError;
 use degenbot_rpc::chain_evidence::{resolve_parent_anchor, BlockReads};
 use degenbot_rpc::provider::AlloyProvider;
+#[cfg(test)]
 use rusqlite::Connection;
 
 use super::build_discount_snapshot;
@@ -47,8 +48,7 @@ use super::dispatch_config_events;
 use super::revision::{match_proxy_id, ProxyCreationResolution};
 use super::revision_selector;
 use super::{
-    encode_no_arg_call, encode_single_address_call, eth_calls_batched_or_direct,
-    require_word0_u256, ConfigDispatchError,
+    encode_no_arg_call, encode_single_address_call, require_word0_u256, ConfigDispatchError,
 };
 
 // ── the revision memo ──────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ impl RevisionMemo {
     }
 
     /// The memo hit for one revision-read key, if any.
-    pub(super) fn get(
+    pub(crate) fn get(
         &self,
         target: &Address,
         selector: [u8; 4],
@@ -92,7 +92,7 @@ impl RevisionMemo {
     }
 
     /// Record one revision read (the value the chain answered at `anchor`).
-    pub(super) fn insert(
+    pub(crate) fn insert(
         &mut self,
         target: &Address,
         selector: [u8; 4],
@@ -223,7 +223,6 @@ pub(crate) struct ChunkContext<'span> {
     chain_id: i64,
     pool_address: Address,
     memo: RevisionMemo,
-    conn: &'span Connection,
     substrate: &'span mut ChunkSubstrate,
     tx: Option<TxRef>,
     block_number: u64,
@@ -241,13 +240,36 @@ impl<'span> ChunkContext<'span> {
     /// `block_number` starts at the span's first block; each log-transaction's
     /// dispatch enters its own block through [`ChunkContext::begin_transaction`]
     /// before any read or emitted event.
+    #[cfg(test)]
     pub(crate) fn for_chunk(
         span: &'span ChunkSpan,
         provider: AlloyProvider,
         market_id: i64,
         chain_id: i64,
         pool_address: Address,
-        conn: &'span Connection,
+        substrate: &'span mut ChunkSubstrate,
+    ) -> Self {
+        Self::for_chunk_with_memo(
+            span,
+            provider,
+            market_id,
+            chain_id,
+            pool_address,
+            RevisionMemo::new(),
+            substrate,
+        )
+    }
+
+    /// Build the context with the chunk's already-populated revision memo, so
+    /// the reserve-identity reads the seed acquired and the dispatch's own
+    /// revision reads share one block-pinned memo.
+    pub(crate) fn for_chunk_with_memo(
+        span: &'span ChunkSpan,
+        provider: AlloyProvider,
+        market_id: i64,
+        chain_id: i64,
+        pool_address: Address,
+        memo: RevisionMemo,
         substrate: &'span mut ChunkSubstrate,
     ) -> Self {
         Self {
@@ -256,8 +278,7 @@ impl<'span> ChunkContext<'span> {
             market_id,
             chain_id,
             pool_address,
-            memo: RevisionMemo::new(),
-            conn,
+            memo,
             substrate,
             tx: None,
             block_number: span.chunk_start,
@@ -334,6 +355,12 @@ impl<'span> ChunkContext<'span> {
         std::mem::take(&mut self.parent_anchors)
     }
 
+    /// Take the chunk's revision memo, so the resolver keeps the block-pinned
+    /// reads the dispatch answered after the context is dropped.
+    pub(crate) fn take_memo(&mut self) -> RevisionMemo {
+        std::mem::take(&mut self.memo)
+    }
+
     /// One `balanceOf(user)` at the exact PARENT block of the current
     /// transaction — the intentional pre-block position the stkAAVE seed reads.
     ///
@@ -390,6 +417,7 @@ impl<'span> ChunkContext<'span> {
     #[cfg(test)]
     pub(super) fn apply_effects_for_test(
         &mut self,
+        conn: &Connection,
         effects: &[ConfigurationEffect],
     ) -> Result<crate::run::CanonicalDeltaWriteReport, DbError> {
         let tx = self
@@ -402,7 +430,7 @@ impl<'span> ChunkContext<'span> {
                 None,
                 DeltaEffect::Configuration(effect.clone()),
             );
-            report = self.apply_configuration_delta(&delta)?;
+            report = self.apply_configuration_delta(conn, &delta)?;
         }
         Ok(report)
     }
@@ -423,18 +451,20 @@ impl<'span> ChunkContext<'span> {
         self.block_number
     }
 
-    /// The chunk `Connection` — the single transaction the whole dispatch
-    /// rides. Returned with the context's own lifetime so a caller may keep it
-    /// while borrowing the substrate.
-    pub(super) fn conn(&self) -> &'span Connection {
-        self.conn
-    }
-
     /// The chunk substrate, for the callers that drive it directly (the
     /// per-transaction ops parser, the end-of-chunk flush, the stkAAVE
     /// backfill).
     pub(crate) fn substrate_mut(&mut self) -> &mut ChunkSubstrate {
         &mut *self.substrate
+    }
+
+    /// The generation a revision-changing effect is about to replace, read from
+    /// the substrate's current position before the effect is projected.
+    pub(crate) fn superseded_generation(
+        &self,
+        effect: &crate::projection::ConfigurationEffect,
+    ) -> Option<crate::projection::GenerationRef> {
+        self.substrate.superseded_generation(effect)
     }
 
     /// The GHO asset row for the current transaction, re-resolved FRESH
@@ -452,9 +482,23 @@ impl<'span> ChunkContext<'span> {
     /// # Errors
     ///
     /// Propagates the substrate lookup failure.
-    pub(crate) fn gho_asset(&mut self) -> Result<Option<AaveGhoAsset>, DbError> {
-        let conn = self.conn;
-        self.substrate.gho_asset(conn)
+    pub(crate) fn gho_asset(&mut self) -> Option<AaveGhoAsset> {
+        self.substrate.gho_asset()
+    }
+
+    /// The chunk's interned reserve identity for an underlying token address.
+    ///
+    /// # Errors
+    ///
+    /// The seed refusal when the chunk never initialized the reserve.
+    pub(crate) fn reserve(
+        &self,
+        underlying: &str,
+    ) -> Result<
+        crate::updater::run::seed::ChunkReserve,
+        crate::updater::run::seed::IncompleteChunkSeed,
+    > {
+        self.substrate.reserve(underlying).cloned()
     }
 
     /// The market the dispatch resolves ids against.
@@ -518,9 +562,10 @@ impl<'span> ChunkContext<'span> {
     #[cfg(test)]
     pub(crate) fn apply_configuration_delta(
         &mut self,
+        conn: &Connection,
         delta: &CanonicalDelta,
     ) -> Result<CanonicalDeltaWriteReport, DbError> {
-        let report = self.apply_deltas(std::slice::from_ref(delta))?;
+        let report = self.apply_deltas(conn, std::slice::from_ref(delta))?;
         // Same-transition RPC targets: the dispatch's own `getConfiguration`
         // + ops-parser scope RPCs the POOL proxy by this field, so an
         // `AddressSet` POOL rotation applied mid-chunk must repoint it at the
@@ -557,15 +602,15 @@ impl<'span> ChunkContext<'span> {
     #[cfg(test)]
     pub(crate) fn apply_deltas(
         &mut self,
+        conn: &Connection,
         deltas: &[crate::projection::CanonicalDelta],
     ) -> Result<crate::run::CanonicalDeltaWriteReport, DbError> {
-        crate::run::apply_canonical_deltas_on_conn(self.conn, deltas, &mut *self.substrate)
+        crate::run::apply_canonical_deltas_on_conn(conn, deltas, &mut *self.substrate)
     }
 
-    /// Read `sig` on `target` at `block_number` through the memo — one of the
-    /// two seams every revision read in the dispatch goes through (the other is
-    /// [`ChunkContext::read_revision_batch`]), so the memo's block lane is
-    /// applied at exactly the reads that need it.
+    /// Read `sig` on `target` at `block_number` through the memo — the one seam
+    /// every revision read in the dispatch goes through, so the memo's block
+    /// lane is applied at exactly the reads that need it.
     ///
     /// # Errors
     ///
@@ -582,86 +627,6 @@ impl<'span> ChunkContext<'span> {
         );
         let reads = BlockReads::at(&self.provider, anchor);
         self.memo.read(&reads, target, sig).await
-    }
-
-    /// Read several same-block calls in ONE transport pass, owning the revision
-    /// memo for every [`BatchRead::Revision`] slot — the batched sibling of
-    /// [`ChunkContext::read_revision`], and the second of the two seams every
-    /// revision read goes through.
-    ///
-    /// A revision slot is a memo key lookup first: a hit issues no call. Every
-    /// remaining revision miss and every plain slot fold into ONE
-    /// [`eth_calls_batched_or_direct`] pass in slot order, and each answered
-    /// revision value is recorded under its `(implementation, selector, block)`
-    /// key before the call returns. Results come back aligned with `pending`,
-    /// so the caller never touches the memo or the block lane directly.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the underlying `eth_call` failure on a memo miss.
-    pub(super) async fn read_revision_batch(
-        &mut self,
-        pending: &[BatchRead<'_>],
-    ) -> Result<Vec<BatchReadResult>, ConfigDispatchError> {
-        let anchor = self.anchor()?;
-        debug_assert!(
-            self.span.contains(anchor.number()),
-            "chunk-dispatch revision read at a block outside the chunk span"
-        );
-        let mut calls: Vec<(Address, Bytes)> = Vec::new();
-        // The index into `calls` each slot's read occupies, or `None` when the
-        // memo already answered the slot.
-        let mut call_of_slot: Vec<Option<usize>> = Vec::with_capacity(pending.len());
-        let mut results: Vec<Option<BatchReadResult>> = (0..pending.len()).map(|_| None).collect();
-        for (i, slot) in pending.iter().enumerate() {
-            match slot {
-                BatchRead::Revision { target, sig } => {
-                    let selector = revision_selector(sig);
-                    if let Some(v) = self.memo.get(target, selector, anchor) {
-                        results[i] = Some(BatchReadResult::Revision(v));
-                        call_of_slot.push(None);
-                    } else {
-                        call_of_slot.push(Some(calls.len()));
-                        calls.push((*target, encode_no_arg_call(sig)));
-                    }
-                }
-                BatchRead::Plain { target, calldata } => {
-                    call_of_slot.push(Some(calls.len()));
-                    calls.push((*target, calldata.clone()));
-                }
-            }
-        }
-        let returns = eth_calls_batched_or_direct(&self.reads_at(anchor), &calls).await?;
-        for (i, slot) in pending.iter().enumerate() {
-            let Some(call_index) = call_of_slot[i] else {
-                continue;
-            };
-            let ret = &returns[call_index];
-            match slot {
-                BatchRead::Revision { target, sig } => {
-                    let selector = revision_selector(sig);
-                    let v = require_word0_u256(ret, sig, target)?;
-                    self.memo.insert(target, selector, anchor, v);
-                    results[i] = Some(BatchReadResult::Revision(v));
-                }
-                BatchRead::Plain { .. } => {
-                    results[i] = Some(BatchReadResult::Plain(ret.clone()));
-                }
-            }
-        }
-        // Every slot is filled by construction — a memo hit or its own batched
-        // read. The guard keeps the invariant loud rather than assumed.
-        results
-            .into_iter()
-            .map(|r| {
-                r.ok_or_else(|| {
-                    ConfigDispatchError::DecodeShape(
-                        "read_revision_batch: a slot was left unfilled after the batched reads"
-                            .to_string(),
-                    )
-                })
-            })
-            .collect()
     }
 
     /// Run one log-transaction's overlay-mediated read + dispatch stages in
@@ -697,13 +662,11 @@ impl<'span> ChunkContext<'span> {
         view: &mut ProjectionView,
         tx_logs: &[&alloy::rpc::types::Log],
     ) -> Result<TransactionDispatch, ConfigDispatchError> {
-        let conn = self.conn;
-        let market_id = self.market_id;
-        // (0) Re-resolve the GHO row for THIS transaction — sees a prior
-        //     transaction's write through the overlay's dirty-mark contract.
-        //     This is the TRANSACTION-START snapshot: the discount pre-pass
-        //     below runs against it even when the tx later links the vToken.
-        let gho_asset = self.gho_asset()?;
+        // (0) The GHO row as THIS transaction sees it — the overlay carries
+        //     every prior transaction's projection. This is the
+        //     TRANSACTION-START snapshot: the discount pre-pass below runs
+        //     against it even when the tx later links the vToken.
+        let gho_asset = self.gho_asset();
         let gho_vtoken = gho_asset
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
@@ -717,7 +680,7 @@ impl<'span> ChunkContext<'span> {
         {
             Some(addr_str) => self
                 .substrate
-                .lookup_asset_row(conn, market_id, ASSET_KIND_V_TOKEN, addr_str)?
+                .lookup_asset_row(ASSET_KIND_V_TOKEN, addr_str)?
                 .map(|row| row.v_token_revision),
             None => None,
         };
@@ -730,8 +693,6 @@ impl<'span> ChunkContext<'span> {
             tx_logs,
             gho_vtoken,
             vtoken_revision,
-            market_id,
-            conn,
             self.substrate,
         )
         .await?;
@@ -751,7 +712,7 @@ impl<'span> ChunkContext<'span> {
         //     addresses, and the discount token the post-apply refresh
         //     reads — a same-tx `DiscountTokenUpdated` rotation must refresh
         //     against the NEW contract's ledger, never the tx-start one.
-        let gho_asset_post = self.gho_asset()?;
+        let gho_asset_post = self.gho_asset();
         let underlying = gho_asset_post
             .as_ref()
             .and_then(|g| g.gho_token_address.parse().ok());
@@ -759,17 +720,11 @@ impl<'span> ChunkContext<'span> {
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
             .and_then(|s| s.parse().ok());
-        let stk_aave_post = gho_asset_post
-            .as_ref()
-            .and_then(|g| g.v_gho_discount_token.as_deref())
-            .and_then(|s| s.parse().ok());
-
         Ok(TransactionDispatch {
             discounts,
             deltas,
             gho_underlying_address: underlying,
             gho_vtoken_address: gho_vtoken_post,
-            stk_aave_address: stk_aave_post,
         })
     }
 
@@ -799,31 +754,6 @@ impl<'span> ChunkContext<'span> {
     }
 }
 
-/// One slot in a [`ChunkContext::read_revision_batch`] pass, in caller order.
-///
-/// A revision slot is memo-keyed by the context (the batch derives the
-/// selector, checks the memo, and records the answered value) and reads `sig`
-/// as a no-arg call; a plain slot is any other same-block `eth_call` that
-/// rides the same transport pass but is never cached.
-#[derive(Debug)]
-pub(super) enum BatchRead<'a> {
-    /// A memoized revision read: `sig` on `target`, at the context block.
-    Revision { target: Address, sig: &'a str },
-    /// A plain same-block read: `calldata` on `target`, never memoized.
-    Plain { target: Address, calldata: Bytes },
-}
-
-/// The decoded outcome of one [`BatchRead`], aligned by index with the pass.
-/// A revision outcome is the memoized value; a plain outcome is the raw return
-/// the caller decodes itself.
-#[derive(Debug)]
-pub(super) enum BatchReadResult {
-    /// The revision value (also recorded in the memo).
-    Revision(U256),
-    /// The raw return of a plain read.
-    Plain(Bytes),
-}
-
 /// The products of one log-transaction's dispatch stages — the GHO-discount
 /// snapshot, the emitted config events, and the overlay-resolved GHO addresses
 /// the caller's operation parser consumes.
@@ -840,12 +770,6 @@ pub(crate) struct TransactionDispatch {
     /// The GHO vToken (`v_token`) address, resolved POST-config (a same-tx
     /// `ReserveInitialized` link is visible).
     pub(crate) gho_vtoken_address: Option<Address>,
-    /// The GHO discount token (stkAAVE) address, resolved POST-config — the
-    /// address the post-apply discount refresh rides (an in-tx
-    /// `DiscountTokenUpdated` rotation is visible, so the refresh reseeds
-    /// from the NEW contract's ledger). The discount pre-pass does not
-    /// consume this field: its transaction-start snapshot lives in stage (2).
-    pub(crate) stk_aave_address: Option<Address>,
 }
 
 /// Read a `uint256`-returning no-arg call (`ATOKEN_REVISION()`,

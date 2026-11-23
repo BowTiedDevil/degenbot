@@ -85,7 +85,8 @@ use degenbot_rpc::multicall3::MulticallOutcome;
 // own dispatch loop and the in-crate unit tests, so it stays a private import
 // (its definition drops to `pub(super)` at the child-module seam).
 
-pub(crate) use context::{ChunkContext, ChunkSpan, RevisionMemo};
+pub(crate) use asset_config::read_implementation_slot;
+pub(crate) use context::{ChunkContext, ChunkSpan, ParentAnchors, RevisionMemo};
 pub(crate) use revision::{match_proxy_id, ProxyCreationResolution};
 
 use asset_config::{
@@ -143,10 +144,15 @@ pub enum ConfigDispatchError {
     /// a parent on another chain.
     #[error("parent anchor error: {0}")]
     ParentAnchor(#[from] degenbot_rpc::chain_evidence::ParentAnchorError),
+    /// Resolution asked for a relational fact the chunk's seed does not hold.
+    /// Nothing was queried and nothing moved: the seed is the complete read
+    /// position, so a miss is a refusal (ADR-105 D4).
+    #[error("{0}")]
+    IncompleteSeed(#[from] crate::updater::run::seed::IncompleteChunkSeed),
 }
 
 /// The 4-byte selector of a revision signature (the memo key's middle lane).
-fn revision_selector(sig: &str) -> [u8; 4] {
+pub(crate) fn revision_selector(sig: &str) -> [u8; 4] {
     let hash = keccak256(sig.as_bytes());
     [hash[0], hash[1], hash[2], hash[3]]
 }
@@ -204,9 +210,10 @@ pub(crate) async fn dispatch_config_events(
             // chunk substrate here — `CollateralConfigurationChanged` sees the
             // asset `ReserveInitialized` created. The VIEW advance is the
             // caller's, in canonical event order with the operations.
-            {
-                let conn = ctx.conn();
-                effect.project(ctx.substrate_mut(), conn)?;
+            let sealed = ctx.superseded_generation(&effect);
+            effect.project(ctx.substrate_mut())?;
+            if let Some(sealed) = sealed {
+                view.seal_generation(sealed);
             }
             ctx.repoint_pool(&effect)?;
             for (user_id, balance) in ctx.take_observations() {
@@ -242,11 +249,7 @@ fn config_projection_error(error: ProjectionError) -> ConfigDispatchError {
 fn resolve_reserve_oracle_address(
     ctx: &mut ChunkContext<'_>,
 ) -> Result<Address, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
-    let projected = ctx
-        .substrate_mut()
-        .contract_address(conn, market_id, "PRICE_ORACLE")?;
+    let projected = ctx.substrate_mut().contract_address("PRICE_ORACLE")?;
     projected.and_then(|s| s.parse().ok()).ok_or_else(|| {
         ConfigDispatchError::DecodeShape(
             "ReserveInitialized: no PRICE_ORACLE contract resolved".to_string(),
@@ -474,7 +477,7 @@ fn pad_address(addr: &Address) -> alloy::primitives::B256 {
 ///
 /// Propagates the direct `eth_call`'s error (the 1-call shape), the batch's own
 /// transport error, or fails on any sub-call that reverted.
-async fn eth_calls_batched_or_direct(
+pub(crate) async fn eth_calls_batched_or_direct(
     reads: &BlockReads<'_>,
     calls: &[(Address, Bytes)],
 ) -> Result<Vec<Bytes>, ConfigDispatchError> {
@@ -510,7 +513,7 @@ async fn eth_calls_batched_or_direct(
 }
 
 /// Decode the first 32-byte word of an `eth_call` return as a `U256`.
-fn word0_to_u256(ret: &[u8]) -> Option<U256> {
+pub(crate) fn word0_to_u256(ret: &[u8]) -> Option<U256> {
     if ret.len() < 32 {
         return None;
     }
@@ -539,7 +542,7 @@ pub(crate) fn require_word0_u256(
 /// Decode an `eth_call` return as an `address` (the low 20 bytes of the first
 /// 32-byte word). Returns `None` when the return is < 32 bytes (shouldn't
 /// happen for a well-formed `getSourceOfAsset` / oracle return).
-fn decode_address_return(ret: &[u8]) -> Option<String> {
+pub(crate) fn decode_address_return(ret: &[u8]) -> Option<String> {
     if ret.len() < 32 {
         return None;
     }
@@ -577,7 +580,6 @@ pub(crate) fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> S
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::asset_config::EIP_1967_IMPLEMENTATION_SLOT;
-    use super::context::BatchRead;
     use super::revision::{POOL_CONFIGURATOR_PROXY_ID, POOL_PROXY_ID};
     use super::*;
     use crate::updater::run::substrate::ChunkSubstrate;
@@ -651,14 +653,17 @@ mod tests {
     /// Build a dispatch context over `conn` + `substrate` for the unit tests:
     /// a whole-range span (every test block sits inside it) and a dead-URL
     /// provider (the sync handlers never reach the wire).
-    fn ctx_for<'a>(conn: &'a Connection, substrate: &'a mut ChunkSubstrate) -> ChunkContext<'a> {
+    fn seed(conn: &Connection, users: &[Address]) -> ChunkSubstrate {
+        crate::updater::run::seed::ChunkSeed::for_tests_users(conn, 1, 1, users).into_substrate()
+    }
+
+    fn ctx_for(substrate: &mut ChunkSubstrate) -> ChunkContext<'_> {
         ChunkContext::for_chunk(
             super::context::whole_range_span(),
             dummy_provider(),
             1,
             1,
             Address::ZERO,
-            conn,
             substrate,
         )
     }
@@ -772,9 +777,7 @@ mod tests {
                 &[&log],
                 Some(vtoken_addr),
                 Some(2),
-                1,
-                &conn,
-                &mut ChunkSubstrate::lazy(1),
+                &mut seed(&conn, &[user_addr]),
             ))
             .unwrap();
         assert_eq!(snapshot.get(&user_addr), Some(&U256::from(15)));
@@ -792,9 +795,7 @@ mod tests {
                 &[],
                 None,
                 Some(2),
-                1,
-                &conn,
-                &mut ChunkSubstrate::lazy(1),
+                &mut seed(&conn, &[]),
             ))
             .unwrap();
         assert!(snapshot.is_empty());
@@ -832,9 +833,7 @@ mod tests {
                 &[&log],
                 Some(vtoken_addr),
                 Some(4), // V4+ — discount deprecated.
-                1,
-                &conn,
-                &mut ChunkSubstrate::lazy(1),
+                &mut seed(&conn, &[fresh_user]),
             ))
             .unwrap();
         assert_eq!(snapshot.get(&fresh_user), Some(&U256::ZERO));
@@ -881,9 +880,7 @@ mod tests {
                 &[&log],
                 Some(vtoken_addr),
                 Some(2),
-                1,
-                &conn,
-                &mut ChunkSubstrate::lazy(1),
+                &mut seed(&conn, &[fresh_user]),
             ))
             .expect_err("a short getDiscountPercent return must abort, never record zero");
         match err {
@@ -943,14 +940,13 @@ mod tests {
             ),
             (key, "\"0x01\"".to_string()),
         ]));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed(&conn, &[from_user, to_user]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -1064,8 +1060,8 @@ mod tests {
             liquidity_index: U256::from(300),
             variable_borrow_index: U256::from(400),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let chunk_ev = dispatch_reserve_data_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
@@ -1101,8 +1097,8 @@ mod tests {
             liquidity_index: U256::ZERO,
             variable_borrow_index: U256::ZERO,
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         assert!(dispatch_reserve_data_updated(&mut ctx, &ev).is_err());
     }
@@ -1121,8 +1117,8 @@ mod tests {
             asset: Address::repeat_byte(0xff), // no asset at this underlying.
             source: Address::repeat_byte(0x81),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         let out = dispatch_asset_source_updated(&mut ctx, &ev).unwrap();
         assert!(
             out.is_none(),
@@ -1143,8 +1139,8 @@ mod tests {
             asset: underlying, // db_seeded's asset id 1.
             source: Address::repeat_byte(0x81),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         let out = dispatch_asset_source_updated(&mut ctx, &ev).unwrap();
         match out {
             Some(ConfigurationEffect::AssetSourceUpdated {
@@ -1168,8 +1164,8 @@ mod tests {
             user: fresh_user,
             category_id: 2,
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[fresh_user]);
+        let mut ctx = ctx_for(&mut substrate);
         let chunk_ev = dispatch_user_e_mode_set(&mut ctx, &ev).unwrap();
         match chunk_ev {
             ConfigurationEffect::UserEModeSet { e_mode, .. } => assert_eq!(e_mode, 2),
@@ -1187,8 +1183,8 @@ mod tests {
             old_address: Address::ZERO,
             new_address: new_oracle,
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         let chunk_ev = dispatch_price_oracle_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
             ConfigurationEffect::PriceOracleUpdated {
@@ -1220,14 +1216,13 @@ mod tests {
             true,
             &replacement_oracle,
         )));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -1264,8 +1259,8 @@ mod tests {
             oracle,
             label: "stablecoins".to_string(),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         let chunk_ev = dispatch_e_mode_category_added(&mut ctx, &ev).unwrap();
         match chunk_ev {
             ConfigurationEffect::EModeCategoryAdded {
@@ -1312,8 +1307,8 @@ mod tests {
             oracle: Address::ZERO,
             label: String::new(),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         let chunk_ev = dispatch_e_mode_category_added(&mut ctx, &ev).unwrap();
         match chunk_ev {
             ConfigurationEffect::EModeCategoryAdded { price_source, .. } => {
@@ -1338,8 +1333,8 @@ mod tests {
             old_discount_percent: U256::from(10),
             new_discount_percent: U256::from(25),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let chunk_ev = dispatch_discount_percent_updated(&mut ctx, &ev).unwrap();
         match chunk_ev {
@@ -1425,8 +1420,8 @@ mod tests {
         let (db, _) = db_seeded();
         let conn = db.lock();
         let new_addr = Address::repeat_byte(0x71);
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
@@ -1451,7 +1446,7 @@ mod tests {
             }
             other => panic!("expected ContractInserted, got {other:?}"),
         }
-        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+        ctx.apply_effects_for_test(&conn, std::slice::from_ref(&ev))
             .unwrap();
         let (addr, rev): (String, Option<i64>) = conn
             .query_row(
@@ -1480,8 +1475,8 @@ mod tests {
             params![checksum(&old_addr)],
         )
         .unwrap();
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
@@ -1506,7 +1501,7 @@ mod tests {
             }
             other => panic!("expected ContractAddressChanged, got {other:?}"),
         }
-        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+        ctx.apply_effects_for_test(&conn, std::slice::from_ref(&ev))
             .unwrap();
         // The old row moved to the new address; its revision is untouched;
         // replace-in-place leaves exactly one row.
@@ -1544,8 +1539,8 @@ mod tests {
         let conn = db.lock();
         let first = Address::repeat_byte(0x61);
         let second = Address::repeat_byte(0x62);
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let registration = DecodedAaveEvent::AddressSet(AaveV3AddressSetEvent {
             address_provider: Address::ZERO,
@@ -1564,7 +1559,7 @@ mod tests {
                 .block_on(resolve_missing_variant_event(decoded, &mut ctx))
                 .unwrap()
                 .expect("each log emits a chunk event");
-            ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+            ctx.apply_effects_for_test(&conn, std::slice::from_ref(&ev))
                 .unwrap();
         }
         let address: String = conn
@@ -1603,14 +1598,13 @@ mod tests {
         );
         let transport =
             CassetteReplayTransport::new(test_cassette(vec![(key, word_result_hex(3))]));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed(&conn, &[]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -1637,7 +1631,7 @@ mod tests {
             }
             other => panic!("expected ContractInserted, got {other:?}"),
         }
-        ctx.apply_effects_for_test(std::slice::from_ref(&ev))
+        ctx.apply_effects_for_test(&conn, std::slice::from_ref(&ev))
             .unwrap();
         let (addr, rev): (String, Option<i64>) = conn
             .query_row(
@@ -1660,8 +1654,8 @@ mod tests {
         let proxy_addr = Address::repeat_byte(0x81);
         let implementation_addr = Address::repeat_byte(0x82);
         let unknown_id = B256::from([0x11u8; 32]);
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         ctx.begin_transaction_at(100);
         let decoded = DecodedAaveEvent::ProxyCreated(AaveV3ProxyCreatedEvent {
             address_provider: Address::ZERO,
@@ -1741,21 +1735,14 @@ mod tests {
             .unwrap();
         }
         let conn = db.lock();
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
-        // Before the link the accessor sees no v_token_address.
-        assert!(
-            ctx.gho_asset().unwrap().unwrap().v_token_address.is_none(),
-            "pre-link read: v_token_address is None"
-        );
-        // Simulate the same-tx ReserveInitialized apply: link v_token_id=11 and
-        // mark the overlay dirty (exactly what the apply arm does).
-        conn.execute(
-            "UPDATE aave_gho_tokens SET v_token_id = 11 WHERE id = 1",
-            [],
-        )
-        .unwrap();
-        ctx.substrate_mut().mark_gho_dirty();
+        let mut substrate = seed_with_reserve(&conn, &[]);
+        // Simulate the same-tx ReserveInitialized projection: the effect links
+        // the vToken identity onto the resolution read position.
+        substrate.project_gho(|gho| {
+            gho.v_token_id = Some(11);
+            gho.v_token_address = Some(addr_str(gho_vtoken));
+        });
+        let mut ctx = ctx_for(&mut substrate);
         let ev = AaveV3DiscountTokenUpdatedEvent {
             v_token_address: gho_vtoken,       // the GHO vToken emitter
             old_discount_token: Address::ZERO, // the INITIAL set (old=None)
@@ -1789,8 +1776,8 @@ mod tests {
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         assert!(dispatch_discount_token_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
@@ -1807,8 +1794,8 @@ mod tests {
             old_discount_token: Address::ZERO,
             new_discount_token: Address::from([0xc; 20]),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         assert!(dispatch_discount_token_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
@@ -1826,8 +1813,8 @@ mod tests {
             old_discount_token: Address::ZERO,
             new_discount_token: new_tok,
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         match dispatch_discount_token_updated(&mut ctx, &ev).unwrap() {
             Some(ConfigurationEffect::GhoDiscountTokenUpdated {
                 gho_token_id,
@@ -1855,8 +1842,8 @@ mod tests {
             old_strategy: Address::ZERO,
             new_strategy: Address::from([0xd; 20]),
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         assert!(dispatch_discount_rate_strategy_updated(&mut ctx, &ev)
             .unwrap()
             .is_none());
@@ -1874,8 +1861,8 @@ mod tests {
             old_strategy: Address::ZERO,
             new_strategy: new_strat,
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ctx_for(&conn, &mut substrate);
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
         match dispatch_discount_rate_strategy_updated(&mut ctx, &ev).unwrap() {
             Some(ConfigurationEffect::GhoDiscountRateStrategyUpdated {
                 gho_token_id,
@@ -2223,59 +2210,18 @@ mod tests {
         );
         let transport =
             CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed(&conn, &[]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(ctx.read_revision(&target, "ATOKEN_REVISION()"))
-            .expect_err("a short revision return must abort, never decode as zero");
-        match err {
-            ConfigDispatchError::DecodeShape(msg) => {
-                assert!(msg.contains("ATOKEN_REVISION()"), "names the read: {msg}");
-                assert!(msg.contains(&checksum(&target)), "names the target: {msg}");
-            }
-            other => panic!("expected DecodeShape, got {other:?}"),
-        }
-    }
-
-    /// The batched revision seam has the same contract: a short return word
-    /// aborts naming the read + target, never memoizes a zero revision.
-    #[test]
-    fn read_revision_batch_short_return_aborts_naming_read_and_target() {
-        let (db, _) = db_seeded();
-        let conn = db.lock();
-        let target = Address::repeat_byte(0x11);
-        let key = eth_call_key(
-            &canonical_selector_input("ATOKEN_REVISION()"),
-            &format!("0x{}", alloy::hex::encode(target)),
-            100,
-        );
-        let transport =
-            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ChunkContext::for_chunk(
-            super::context::whole_range_span(),
-            transport.as_alloy_provider(),
-            1,
-            1,
-            Address::ZERO,
-            &conn,
-            &mut substrate,
-        );
-        ctx.begin_transaction_at(100);
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.read_revision_batch(&[BatchRead::Revision {
-                target,
-                sig: "ATOKEN_REVISION()",
-            }]))
             .expect_err("a short revision return must abort, never decode as zero");
         match err {
             ConfigDispatchError::DecodeShape(msg) => {
@@ -2416,6 +2362,42 @@ mod tests {
 
     /// One resolution's ledger entries: the three tokens' metadata (the
     /// `with_metadata` arm) plus the auxiliary reads.
+    fn reserve_facts() -> crate::updater::run::seed::ReserveFacts {
+        let t = reserve_init_tokens();
+        crate::updater::run::seed::ReserveFacts {
+            underlying: t[0].0,
+            a_token: t[1].0,
+            v_token: t[2].0,
+            a_token_revision: 3,
+            v_token_revision: 2,
+            metadata: [
+                (
+                    Some(t[0].1.to_string()),
+                    Some(t[0].2.to_string()),
+                    Some(t[0].3.cast_signed()),
+                ),
+                (
+                    Some(t[1].1.to_string()),
+                    Some(t[1].2.to_string()),
+                    Some(t[1].3.cast_signed()),
+                ),
+                (
+                    Some(t[2].1.to_string()),
+                    Some(t[2].2.to_string()),
+                    Some(t[2].3.cast_signed()),
+                ),
+            ],
+        }
+    }
+
+    fn seed_with_reserve(conn: &Connection, users: &[Address]) -> ChunkSubstrate {
+        let substrate =
+            crate::updater::run::seed::ChunkSeed::for_tests_reserve(conn, 1, 1, &[reserve_facts()])
+                .into_substrate();
+        let _ = users;
+        substrate
+    }
+
     fn reserve_init_entries(with_metadata: bool) -> Vec<(String, String)> {
         reserve_init_entries_oracle(with_metadata, &reserve_init_oracle())
     }
@@ -2476,14 +2458,13 @@ mod tests {
         let conn = db.lock();
         let t = reserve_init_tokens();
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[reserve_init_tokens()[0].0]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -2548,14 +2529,13 @@ mod tests {
         let conn = db.lock();
         let t = reserve_init_tokens();
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[reserve_init_tokens()[0].0]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -2612,33 +2592,28 @@ mod tests {
     /// null-metadata rows that nothing would ever backfill (the chunk rolls
     /// back rather than writing nulls forever).
     #[test]
-    fn reserve_initialized_all_absent_metadata_aborts_the_dispatch() {
-        let (db, _) = db_seeded();
-        let conn = db.lock();
+    fn reserve_initialized_all_absent_metadata_aborts_the_acquisition() {
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(false)));
-        let mut substrate = ChunkSubstrate::lazy(1);
-        let mut ctx = ChunkContext::for_chunk(
-            super::context::whole_range_span(),
-            transport.as_alloy_provider(),
-            1,
-            1,
-            Address::ZERO,
-            &conn,
-            &mut substrate,
+        let provider = transport.as_alloy_provider();
+        let initialization = crate::updater::run::seed::ReserveInitialization {
+            tx: fixture_tx(100),
+            event: reserve_initialized_event(),
+        };
+        let mut memo = RevisionMemo::new();
+        let result = degenbot_core::runtime::get_runtime().block_on(
+            crate::updater::run::seed::acquire_reserve_facts(
+                &provider,
+                &mut memo,
+                &[initialization],
+            ),
         );
-        ctx.begin_transaction_at(100);
-        let result = degenbot_core::runtime::get_runtime().block_on(resolve_reserve_initialized(
-            &mut ctx,
-            &reserve_initialized_event(),
-            reserve_init_oracle(),
-        ));
         match result {
             Err(ConfigDispatchError::DecodeShape(reason)) => assert!(
                 reason.contains("metadata"),
                 "the abort must name the metadata burst, got: {reason}"
             ),
             Err(other) => panic!("expected the metadata shape error, got {other:?}"),
-            Ok(_) => panic!("an all-absent metadata burst must abort the dispatch"),
+            Ok(_) => panic!("an all-absent metadata burst must abort the acquisition"),
         }
     }
 
@@ -2771,14 +2746,13 @@ mod tests {
         let conn = db.lock();
         let t = reserve_init_tokens();
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[Address::repeat_byte(0x42)]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -2809,7 +2783,6 @@ mod tests {
             Address::repeat_byte(0x88),
             dispatch.gho_underlying_address,
             dispatch.gho_vtoken_address,
-            &conn,
             ctx.substrate_mut(),
         )
         .unwrap();
@@ -2870,14 +2843,13 @@ mod tests {
         let conn = db.lock();
         // An EMPTY cassette: any wire read would be a loud miss.
         let transport = CassetteReplayTransport::new(test_cassette(vec![]));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[Address::repeat_byte(0x42)]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -2917,14 +2889,13 @@ mod tests {
         let conn = db.lock();
         let t = reserve_init_tokens();
         let transport = CassetteReplayTransport::new(test_cassette(reserve_init_entries(true)));
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = seed_with_reserve(&conn, &[Address::repeat_byte(0x42)]);
         let mut ctx = ChunkContext::for_chunk(
             super::context::whole_range_span(),
             transport.as_alloy_provider(),
             1,
             1,
             Address::ZERO,
-            &conn,
             &mut substrate,
         );
         ctx.begin_transaction_at(100);
@@ -2942,6 +2913,94 @@ mod tests {
             dispatch.gho_vtoken_address,
             Some(t[2].0),
             "the operation parser still resolves POST-config in the same dispatch"
+        );
+    }
+
+    /// A same-entity multi-upgrade seals EVERY revision it replaces, in order:
+    /// the second replacement seals the revision the first one installed, not the
+    /// chunk-start one. Both families are covered (a scaled-token leg and a
+    /// contract role).
+    #[test]
+    fn a_second_upgrade_in_one_chunk_seals_the_revision_the_first_installed() {
+        use crate::projection::{
+            ConfigurationEffect, ContractRole, GenerationEntity, GenerationRef, ProjectionView,
+            ScaledTokenPosition,
+        };
+
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let mut substrate = seed(&conn, &[]);
+        let mut view = ProjectionView::new();
+        let leg = GenerationEntity::ScaledToken {
+            asset_id: 1,
+            position: ScaledTokenPosition::Collateral,
+        };
+        let role = GenerationEntity::Contract {
+            market_id: 1,
+            role: ContractRole::PriceOracle,
+        };
+        substrate.observe_seed_generations(&mut view, 1, 1);
+        assert_eq!(view.generation(leg), Some(GenerationRef::new(leg, 1)));
+        assert_eq!(view.generation(role), Some(GenerationRef::new(role, 1)));
+
+        for (asset_revision, contract_revision) in [(2_i64, 2_i64), (3, 3)] {
+            let upgraded = ConfigurationEffect::Upgraded {
+                asset_id: 1,
+                market_id: 1,
+                is_a_token: true,
+                new_revision: asset_revision,
+                deprecated_gho_token_id: None,
+            };
+            let sealed = substrate
+                .superseded_generation(&upgraded)
+                .expect("the upgrade replaces the revision the leg reads under");
+            upgraded.project(&mut substrate).unwrap();
+            view.seal_generation(sealed);
+
+            let bumped = ConfigurationEffect::ContractRevisionUpdated {
+                market_id: 1,
+                contract_name: "PRICE_ORACLE".to_string(),
+                new_revision: contract_revision,
+            };
+            let sealed = substrate
+                .superseded_generation(&bumped)
+                .expect("the update replaces the revision the role reads under");
+            bumped.project(&mut substrate).unwrap();
+            view.seal_generation(sealed);
+        }
+
+        let mut leg_sealed: Vec<Option<u32>> = view
+            .sealed_generations()
+            .filter(|generation| generation.entity() == leg)
+            .map(|generation| generation.revision())
+            .collect();
+        leg_sealed.sort_unstable();
+        assert_eq!(
+            leg_sealed,
+            vec![Some(1), Some(2)],
+            "rev1 then rev2 are sealed; the second upgrade does not re-seal rev1"
+        );
+        let mut role_sealed: Vec<Option<u32>> = view
+            .sealed_generations()
+            .filter(|generation| generation.entity() == role)
+            .map(|generation| generation.revision())
+            .collect();
+        role_sealed.sort_unstable();
+        assert_eq!(
+            role_sealed,
+            vec![Some(1), Some(2)],
+            "the contract role seals each revision it was replaced under"
+        );
+        assert_eq!(
+            substrate.superseded_generation(&ConfigurationEffect::Upgraded {
+                asset_id: 1,
+                market_id: 1,
+                is_a_token: true,
+                new_revision: 3,
+                deprecated_gho_token_id: None,
+            }),
+            None,
+            "a repeat of the installed revision replaces nothing"
         );
     }
 }

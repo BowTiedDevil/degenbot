@@ -1,8 +1,8 @@
 use super::util::{clone_scaled_event, EventDisposition, EventOwnership};
 use super::{
     aave_event_decoder, addr_to_hex, parse_address, Address, DecodedAaveEvent, HashSet, Log,
-    Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType, TransactionOperationsParser,
-    U256,
+    Operation, OperationType, ParseError, ScaledTokenEvent, ScaledTokenEventType,
+    TransactionOperationsParser, U256,
 };
 
 impl<'a> TransactionOperationsParser<'a, '_> {
@@ -17,7 +17,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         assigned_indices: &mut HashSet<u64>,
         next_op_id: &mut u32,
         minted_to_treasury_events: &[&'a Log],
-    ) -> Vec<Operation<'a>> {
+    ) -> Result<Vec<Operation<'a>>, ParseError> {
         let mut operations: Vec<Operation<'a>> = Vec::new();
         for ev in scaled_events {
             if assigned_indices.contains(&ev.log_index) {
@@ -31,16 +31,13 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 continue;
             }
             // Determine the underlying asset (the Mint event's aToken → asset row).
+            // A seed hole is a refusal, never an unknown asset: interpreting it
+            // as the zero address would silently attach the mint to no reserve
+            // (ADR-105 D4). A proven absence keeps its existing zero-address
+            // reading.
             let asset_row = self
                 .substrate
-                .lookup_asset_row(
-                    self.conn,
-                    self.market_id,
-                    "a_token",
-                    &addr_to_hex(ev.token_address),
-                )
-                .ok()
-                .flatten();
+                .lookup_asset_row("a_token", &addr_to_hex(ev.token_address))?;
             let underlying_addr = asset_row
                 .as_ref()
                 .and_then(|a| parse_address(&a.underlying_token_address))
@@ -83,7 +80,7 @@ impl<'a> TransactionOperationsParser<'a, '_> {
                 validation_errors: Vec::new(),
             });
         }
-        operations
+        Ok(operations)
     }
 
     /// `DEFICIT_CREATED` → Unknown — `DEFICIT_CREATED` must not interfere

@@ -93,6 +93,11 @@
         [
           1,
           1,
+          10
+        ],
+        [
+          1,
+          1,
           1
         ],
         [
@@ -129,6 +134,11 @@
           1,
           1,
           8
+        ],
+        [
+          1,
+          1,
+          9
         ]
       ],
       "table": "aave_v3_checkpoint_generations"
@@ -251,6 +261,20 @@
           0
         ],
         [
+          10,
+          1,
+          "scaled-token{asset=2,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
           2,
           1,
           "scaled-token{asset=2,leg=debt}",
@@ -336,6 +360,20 @@
         ],
         [
           8,
+          1,
+          "scaled-token{asset=1,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          9,
           1,
           "scaled-token{asset=2,leg=collateral}",
           "seed",

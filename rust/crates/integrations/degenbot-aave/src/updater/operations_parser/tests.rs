@@ -2,7 +2,6 @@ use super::liquidation::{CallOwnership, LiquidationCallScope};
 use super::util::{CompanionSide, EventDisposition, EventOwnership};
 use super::*;
 use crate::operations::{LiquidationGroup, LiquidationPattern};
-use crate::updater::run::substrate::ChunkSubstrate;
 use alloy::primitives::B256;
 use degenbot_core::canonical_head::{CallRef, ChainAnchor, TxRef};
 
@@ -221,14 +220,14 @@ fn unrelated_transfer_skips_only_after_successful_classification() {
         U256::from(5),
     );
     let events = vec![&log];
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         1,
         Address::repeat_byte(0x99),
         None,
         None,
-        &conn,
         &mut substrate,
     )
     .unwrap();
@@ -239,14 +238,13 @@ fn unrelated_transfer_skips_only_after_successful_classification() {
     );
 }
 
-/// A DB failure inside the classification lookups must abort the whole parse
-/// (the chunk rolls back) — never degrade into the unrelated-token skip and
-/// silently drop the transfer.
+/// A classification the seed cannot answer must abort the whole parse (the
+/// chunk rolls back) — never degrade into the unrelated-token skip and silently
+/// drop the transfer.
 #[test]
-fn parse_aborts_when_classification_db_lookup_fails() {
+fn parse_aborts_when_classification_is_outside_the_seed() {
     let db = fresh_db_for_classification();
     let conn = db.lock();
-    conn.execute("DROP TABLE aave_gho_tokens", []).unwrap();
     let log = erc20_transfer_log(
         0,
         Address::repeat_byte(0x77),
@@ -255,21 +253,28 @@ fn parse_aborts_when_classification_db_lookup_fails() {
         U256::from(5),
     );
     let events = vec![&log];
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate = crate::updater::run::seed::ChunkSeed::load(&conn, 1, 1, &[], &[])
+        .expect("the classification fixture seed loads")
+        .into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         1,
         Address::repeat_byte(0x99),
         None,
         None,
-        &conn,
         &mut substrate,
     )
     .unwrap();
     let Err(err) = parser.parse(&events, [0u8; 32]) else {
-        panic!("a DB failure during classification must fail the parse, never skip the event")
+        panic!("a classification outside the seed must fail the parse, never skip the event")
     };
-    assert!(matches!(err, ParseError::Substrate(_)), "got {err:?}");
+    assert!(
+        matches!(
+            err,
+            ParseError::IncompleteSeed(_) | ParseError::Substrate(_)
+        ),
+        "got {err:?}"
+    );
 }
 
 // ── liquidation engine tests (parity-gate zero-drift surface) ──────────────
@@ -1750,14 +1755,14 @@ fn refused_liquidation_payload(
 ) -> String {
     let db = fresh_db_with_liquidation_reserves(collateral_asset, a_token, debt_asset, v_token);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         1,
         liquidation_fixture_pool(),
         None,
         None,
-        &conn,
         &mut substrate,
     )
     .unwrap();
@@ -2438,14 +2443,14 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     // Crate the parser with the in-memory DB. The Pool contract revision 8
     // is configured in `aave_v3_contracts` → `lookup_pool_revision_on_conn`
     // returns 8 (= the bug path, `pool_revision < 9`).
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1, // market_id
         1, // chain_id
         pool_address,
         None, // gho_token_address
         None, // gho_vtoken_address
-        &conn,
         &mut substrate,
     )
     .unwrap();
@@ -2453,12 +2458,14 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     // === BUILDER STEP (the parse-time site) ===
     let mut assigned_indices: HashSet<u64> = HashSet::new();
     let mut next_op_id: u32 = 0;
-    let mut ops = parser.create_mint_to_treasury_operations(
-        &scaled_events,
-        &mut assigned_indices,
-        &mut next_op_id,
-        &minted_to_treasury_events,
-    );
+    let mut ops = parser
+        .create_mint_to_treasury_operations(
+            &scaled_events,
+            &mut assigned_indices,
+            &mut next_op_id,
+            &minted_to_treasury_events,
+        )
+        .expect("the fixture's seed holds the aToken's asset row");
     assert_eq!(
         ops.len(),
         1,
@@ -2504,9 +2511,9 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     crate::transaction_processor::dispatch_mint_to_treasury(
         &op,
         1, // market_id
-        &conn,
         &mut out,
-        &mut ChunkSubstrate::lazy(1),
+        &mut crate::updater::run::seed::ChunkSeed::for_tests_users(&conn, 1, 1, &[treasury])
+            .into_substrate(),
     )
     .unwrap();
     assert_eq!(out.deltas().len(), 1);
@@ -2620,14 +2627,14 @@ fn deficit_coverage_triplet_claims_every_log_it_owns() {
         ),
     ];
     let events: Vec<&Log> = logs.iter().collect();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         1,
         Address::repeat_byte(0x99),
         None,
         None,
-        &conn,
         &mut substrate,
     )
     .unwrap();
@@ -2681,10 +2688,10 @@ fn an_unrecognized_log_from_the_market_pool_refuses_the_transaction() {
     let a_token = Address::from([0x98; 20]);
     let db = fresh_db_with_aave_reserve(a_token);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser =
-        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
-            .unwrap();
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &mut substrate).unwrap();
     let unknown = log_with_topic(10, census_pool(), vec![B256::repeat_byte(0x5A)]);
     let events: Vec<&Log> = vec![&unknown];
 
@@ -2709,10 +2716,10 @@ fn a_genuinely_unrelated_log_is_out_of_scope() {
     let a_token = Address::from([0x98; 20]);
     let db = fresh_db_with_aave_reserve(a_token);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser =
-        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
-            .unwrap();
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &mut substrate).unwrap();
     // A Uniswap V3 `Swap` and a reserve underlying's `Transfer`.
     let foreign = log_with_topic(10, Address::repeat_byte(0x77), vec![B256::from([0xC4; 32])]);
     let underlying = erc20_transfer_log(
@@ -2751,10 +2758,10 @@ fn an_untracked_proxy_component_is_out_of_scope_and_a_tracked_one_is_configurati
     let a_token = Address::from([0x98; 20]);
     let db = fresh_db_with_aave_reserve(a_token);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser =
-        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
-            .unwrap();
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &mut substrate).unwrap();
     let metrics_controller = Address::repeat_byte(0x81);
     let mut pool_id = [0u8; 32];
     pool_id[..4].copy_from_slice(b"POOL");
@@ -2818,10 +2825,10 @@ fn an_uncovered_scaled_report_refuses_the_transaction() {
     let a_token = Address::from([0x98; 20]);
     let db = fresh_db_with_aave_reserve(a_token);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(1);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, 1, &[]).into_substrate();
     let mut parser =
-        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &conn, &mut substrate)
-            .unwrap();
+        TransactionOperationsParser::new(1, 1, census_pool(), None, None, &mut substrate).unwrap();
     let user = Address::from([0x53; 20]);
     let recipient = Address::from([0xD4; 20]);
     let index = U256::from(1_000_000_000u64) * U256::from(1_000_000_000u64);
@@ -2845,4 +2852,73 @@ fn an_uncovered_scaled_report_refuses_the_transaction() {
         })) => assert_eq!(log_index, 10),
         other => panic!("an unowned scaled report refuses: {other:?}"),
     }
+}
+
+// ── a seed hole refuses, it never degrades ───────────────────────────────
+
+/// The classification lookup must keep the typed seed refusal: an unanticipated
+/// address is a hole in the chunk's read position, not a substrate error string
+/// and not an unknown token (ADR-105 D4).
+#[test]
+fn classify_token_type_propagates_a_seed_hole_as_the_typed_refusal() {
+    let db = fresh_db_with_liquidation_reserves(
+        Address::from([0x31; 20]),
+        Address::from([0x32; 20]),
+        Address::from([0x33; 20]),
+        Address::from([0x34; 20]),
+    );
+    let conn = db.lock();
+    let mut substrate = crate::updater::run::seed::ChunkSeed::load(&conn, 1, 1, &[], &[])
+        .expect("the fixture market's families load")
+        .into_substrate();
+    let pool = Address::from([0x11; 20]);
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, pool, None, None, &mut substrate).unwrap();
+    let err = parser
+        .classify_token_type(alloy::primitives::Address::repeat_byte(0x77))
+        .expect_err("an address the seed never saw is a refusal");
+    assert!(
+        matches!(err, ParseError::IncompleteSeed(_)),
+        "the refusal keeps its typed variant: {err:?}"
+    );
+}
+
+/// A `MintToTreasury` whose aToken the seed does not hold refuses the parse
+/// instead of resolving the underlying as the zero address (which would attach
+/// the mint to no reserve and silently drop the treasury movement).
+#[test]
+fn mint_to_treasury_propagates_a_seed_hole_instead_of_the_zero_address() {
+    let db = fresh_db_with_liquidation_reserves(
+        Address::from([0x31; 20]),
+        Address::from([0x32; 20]),
+        Address::from([0x33; 20]),
+        Address::from([0x34; 20]),
+    );
+    let conn = db.lock();
+    let mut substrate = crate::updater::run::seed::ChunkSeed::load(&conn, 1, 1, &[], &[])
+        .expect("the fixture market's families load")
+        .into_substrate();
+    let pool = Address::from([0x11; 20]);
+    let a_token = Address::from([0x22; 20]);
+    let treasury = Address::from([0x33; 20]);
+    let index = U256::from(1_000_000_000_000_000_000_000_000_000u128);
+    let scaled_events = vec![mint_to_treasury_collateral_mint_event(
+        7,
+        pool,
+        a_token,
+        treasury,
+        U256::from(1_000u64),
+        index,
+    )];
+    let mut parser =
+        TransactionOperationsParser::new(1, 1, pool, None, None, &mut substrate).unwrap();
+    let mut assigned: HashSet<u64> = HashSet::new();
+    let mut next_op_id: u32 = 0;
+    let err = parser
+        .create_mint_to_treasury_operations(&scaled_events, &mut assigned, &mut next_op_id, &[])
+        .expect_err("the seed holds no asset row for this aToken");
+    assert!(
+        matches!(err, ParseError::IncompleteSeed(_)),
+        "the refusal keeps its typed variant: {err:?}"
+    );
 }

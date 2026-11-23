@@ -73,6 +73,7 @@ struct ChainState {
     chain_id: u64,
     code: BTreeMap<Address, Bytes>,
     answers: BTreeMap<(Address, [u8; 4]), Answer>,
+    stall_calls: bool,
 }
 
 /// A chain that answers one exact head block and refuses everything else.
@@ -89,6 +90,7 @@ impl ScriptedChain {
                 chain_id: CHAIN_ID,
                 code: BTreeMap::new(),
                 answers: BTreeMap::new(),
+                stall_calls: false,
             })),
             issued: Arc::new(Mutex::new(Vec::new())),
         }
@@ -108,6 +110,13 @@ impl ScriptedChain {
     /// chain than the caller's market.
     pub(crate) fn chain(self, chain_id: u64) -> Self {
         self.state.lock().unwrap().chain_id = chain_id;
+        self
+    }
+
+    /// Park every `eth_call` forever: the seam under test reaches its RPC and
+    /// never returns, so a caller can observe what it holds while parked.
+    pub(crate) fn stall_calls(self) -> Self {
+        self.state.lock().unwrap().stall_calls = true;
         self
     }
 
@@ -230,6 +239,7 @@ fn reply(chain: &ScriptedChain, req: &SerializedRequest) -> ResponsePayload {
                 success(&Value::Null)
             }
         }
+        "eth_getLogs" => success(&json!([])),
         "eth_getCode" | "eth_call" => {
             if !names_head(params.get(1)) {
                 return refusal(
@@ -285,6 +295,13 @@ impl tower::Service<RequestPacket> for ScriptedChain {
 
     fn call(&mut self, req: RequestPacket) -> Self::Future {
         let chain = self.clone();
+        if chain.state.lock().unwrap().stall_calls {
+            let stalled = matches!(&req, RequestPacket::Single(single) if single.method() == "eth_call")
+                || matches!(&req, RequestPacket::Batch(batch) if batch.iter().any(|single| single.method() == "eth_call"));
+            if stalled {
+                return Box::pin(std::future::pending());
+            }
+        }
         Box::pin(async move {
             let respond = |req: &SerializedRequest| -> Response {
                 let params = req

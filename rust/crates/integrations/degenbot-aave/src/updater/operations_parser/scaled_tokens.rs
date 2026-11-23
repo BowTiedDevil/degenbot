@@ -241,16 +241,14 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         // Try aToken first.
         if self
             .substrate
-            .lookup_asset_id(self.conn, self.market_id, "a_token", &addr_hex)
-            .map_err(|e| ParseError::Substrate(format!("a_token lookup for {addr_hex}: {e}")))?
+            .lookup_asset_id("a_token", &addr_hex)?
             .is_some()
         {
             return Ok(Some(TokenType::Atoken));
         }
         if self
             .substrate
-            .lookup_asset_id(self.conn, self.market_id, "v_token", &addr_hex)
-            .map_err(|e| ParseError::Substrate(format!("v_token lookup for {addr_hex}: {e}")))?
+            .lookup_asset_id("v_token", &addr_hex)?
             .is_some()
         {
             return Ok(Some(TokenType::Vtoken));
@@ -261,13 +259,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         // a live SQL probe: a same-chunk `DiscountTokenUpdated` is projected
         // into the substrate before this parse, and its durable write lands in
         // the chunk's one transaction.
-        let conn = self.conn;
         let discount_token = self
             .substrate
-            .gho_asset(conn)
-            .map_err(|e| {
-                ParseError::Substrate(format!("discount-token lookup for {addr_hex}: {e}"))
-            })?
+            .gho_asset()
             .and_then(|gho| gho.v_gho_discount_token);
         if discount_token.is_some_and(|s| s.eq_ignore_ascii_case(&addr_hex)) {
             return Ok(Some(TokenType::GhoDiscount));

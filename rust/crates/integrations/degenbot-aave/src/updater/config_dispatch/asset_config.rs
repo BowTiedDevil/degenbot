@@ -23,14 +23,11 @@
 
 use crate::projection::ConfigurationEffect;
 use alloy::primitives::{Address, U256};
-use degenbot_db::DegenbotDb;
 use degenbot_rpc::chain_evidence::BlockReads;
-use degenbot_rpc::erc20;
 
-use super::context::{BatchRead, BatchReadResult, ChunkContext};
+use super::context::ChunkContext;
 use super::{
-    checksum, decode_address_return, discount_to_i64, encode_single_address_call, word0_to_u256,
-    ConfigDispatchError,
+    checksum, decode_address_return, encode_single_address_call, word0_to_u256, ConfigDispatchError,
 };
 
 /// The EIP-1967 implementation storage slot
@@ -38,7 +35,7 @@ use super::{
 /// read via `get_storage_at` to resolve a proxy's logic contract. Written as
 /// the canonical hex and parsed at compile time (a typo fails the build
 /// rather than silently mis-routing proxy resolution).
-pub(super) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix(
+pub(crate) const EIP_1967_IMPLEMENTATION_SLOT: U256 = match U256::from_str_radix(
     "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
     16,
 ) {
@@ -55,13 +52,12 @@ pub(super) fn dispatch_reserve_data_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveDataUpdatedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let market_id = ctx.market_id();
     let block_number = ctx.block_number();
-    let conn = ctx.conn();
+    let market_id = ctx.market_id();
     let addr_str = checksum(&decoded.reserve);
     let asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "underlying", &addr_str)?
+        .lookup_asset_row("underlying", &addr_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
                 "ReserveDataUpdated: no asset for underlying {addr_str} in market {market_id}"
@@ -82,12 +78,8 @@ pub(super) fn dispatch_user_e_mode_set(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UserEModeSetEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let addr_str = checksum(&decoded.user);
-    let user_id = ctx
-        .substrate_mut()
-        .user_id_or_create(conn, market_id, &addr_str, 0)?;
+    let user_id = ctx.substrate_mut().user_id_or_create(&addr_str, 0)?;
     Ok(ConfigurationEffect::UserEModeSet {
         user_id,
         e_mode: i64::from(decoded.category_id),
@@ -105,15 +97,12 @@ pub(super) fn dispatch_reserve_used_as_collateral(
     enabled: bool,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let user_str = checksum(&user);
-    let user_id = ctx
-        .substrate_mut()
-        .user_id_or_create(conn, market_id, &user_str, 0)?;
+    let user_id = ctx.substrate_mut().user_id_or_create(&user_str, 0)?;
     let asset_str = checksum(&reserve);
     let asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+        .lookup_asset_row("underlying", &asset_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
                 "ReserveUsedAsCollateral: no asset for underlying {asset_str} in market {market_id}"
@@ -148,12 +137,10 @@ pub(super) fn dispatch_asset_source_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetSourceUpdatedEvent,
 ) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
-    let Some(asset) =
-        ctx.substrate_mut()
-            .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+    let Some(asset) = ctx
+        .substrate_mut()
+        .lookup_asset_row("underlying", &asset_str)?
     else {
         // Cold-boot tolerance: on a fresh-market cold-boot, the
         // `AssetSourceUpdated` for a not-yet-initialized reserve can precede
@@ -214,11 +201,10 @@ pub(super) fn dispatch_e_mode_asset_category_changed(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3EModeAssetCategoryChangedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
     let asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+        .lookup_asset_row("underlying", &asset_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
             "EModeAssetCategoryChanged: no asset for underlying {asset_str} in market {market_id}"
@@ -238,11 +224,10 @@ pub(super) fn dispatch_asset_collateral_in_emode_changed(
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3AssetCollateralInEModeChangedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
     let asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+        .lookup_asset_row("underlying", &asset_str)?
     .ok_or_else(|| {
         ConfigDispatchError::DecodeShape(format!(
             "AssetCollateralInEModeChanged: no asset for underlying {asset_str} in market {market_id}"
@@ -269,11 +254,10 @@ pub(super) async fn resolve_collateral_configuration(
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
     let market_id = ctx.market_id();
     let pool_address = ctx.pool_address();
-    let conn = ctx.conn();
     let asset_str = checksum(&decoded.asset);
     let asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "underlying", &asset_str)?
+        .lookup_asset_row("underlying", &asset_str)?
         .ok_or_else(|| {
             ConfigDispatchError::DecodeShape(format!(
                 "CollateralConfigurationChanged: no asset for underlying {asset_str} in market {market_id}"
@@ -294,235 +278,68 @@ pub(super) async fn resolve_collateral_configuration(
 }
 
 /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken, …)`
-/// → [`ConfigurationEffect::ReserveInitialized`] with the RPC-resolved revisions +
-/// price source. The 3 erc20 tokens (asset/aToken/vToken) are `get_or_create`d
-/// with their
-/// RPC-fetched metadata, and per EIP-1967 the aToken/vToken implementation
-/// slot → `ATOKEN_REVISION()` / `DEBT_TOKEN_REVISION()` `eth_call` +
-/// `getSourceOfAsset(address)` `eth_call` on the PRICE_ORACLE contract.
+/// → [`ConfigurationEffect::ReserveInitialized`] with the seed's interned ids and
+/// revisions plus the RPC-resolved price source.
 ///
-/// The metadata step: the
-/// name/symbol/decimals tuple rides the ctx's injected provider (ADR-068 D5 —
-/// the core never builds a transport), ONE Multicall3 pass for the three
-/// tokens, and each field is `None` when its reads fail (the reference's
-/// per-field tolerance — an unrecorded or reverting read is not a chunk
-/// fault). The `get_or_create_erc20_token_on_conn` contract carries the
-/// idempotency: a row that already holds metadata keeps it — only its null
-/// cells are backfilled — so a re-dispatch never overwrites a resolved value.
+/// The reserve's three ERC-20 rows, its asset row and both implementation
+/// revisions were acquired and interned by the chunk's seed, so this resolution
+/// names ids the database already holds and issues exactly one read: the
+/// reserve's `getSourceOfAsset(asset)` on the PRICE_ORACLE contract as the
+/// resolution read position has it (a same-chunk `PriceOracleUpdated` is
+/// visible). The price source reaches the row through the effect's delta; the
+/// chunk's write transaction is the only place it is persisted.
+///
+/// # Errors
+///
+/// A seed miss refuses with [`crate::updater::run::seed::IncompleteChunkSeed`];
+/// a reverting or malformed `getSourceOfAsset` read refuses the chunk.
 pub(super) async fn resolve_reserve_initialized(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3ReserveInitializedEvent,
     oracle_address: Address,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let chain_id = ctx.chain_id();
-    let conn = ctx.conn();
-    // The GHO asset through the ctx-owned always-fresh accessor, for the
-    // GHO-vToken-FK link below (a cache hit until an apply marks it dirty).
-    let gho_asset = ctx.gho_asset()?;
-    // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
-    //    RPC-fetching the name/symbol/decimals from the chain (the
-    //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
-    //    metadata). The 3 tokens' fields ride ONE Multicall3 pass through the
-    //    shared `degenbot_rpc::erc20` read (same block, mutually independent
-    //    reads; the per-field selector fallbacks are part of the batch — both
-    //    spellings are issued and the decision consumes the batched results
-    //    in the sequential logic's exact order). Each field lands on the DB's
-    //    nullable column; `decimals` keeps the reference's `i64` width.
-    let underlying_str = checksum(&decoded.asset);
-    let a_token_str = checksum(&decoded.a_token);
-    let v_token_str = checksum(&decoded.variable_debt_token);
-    let metadata = fold_metadata_rows(
-        erc20::read_batch(
-            &ctx.reads()?,
-            &[decoded.asset, decoded.a_token, decoded.variable_debt_token],
-            erc20::MetadataShape::LowerUpperStopOnCallError,
-            None,
+    let reserve = ctx.reserve(&checksum(&decoded.asset))?;
+    let ret = ctx
+        .reads()?
+        .call(
+            oracle_address,
+            encode_single_address_call("getSourceOfAsset(address)", &decoded.asset),
         )
-        .await,
-    )?;
-    let [(underlying_name, underlying_symbol, underlying_decimals), (a_name, a_symbol, a_decimals), (v_name, v_symbol, v_decimals)] =
-        metadata;
-    let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
-        conn,
-        chain_id,
-        &underlying_str,
-        underlying_name.as_deref(),
-        underlying_symbol.as_deref(),
-        underlying_decimals,
-    )?;
-    let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
-        conn,
-        chain_id,
-        &a_token_str,
-        a_name.as_deref(),
-        a_symbol.as_deref(),
-        a_decimals,
-    )?;
-    let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
-        conn,
-        chain_id,
-        &v_token_str,
-        v_name.as_deref(),
-        v_symbol.as_deref(),
-        v_decimals,
-    )?;
-
-    // 2. EIP-1967: resolve the aToken + vToken implementation addresses.
-    //    `get_storage_at` has no Multicall3 shape — these two stay sequential.
-    let atoken_impl = read_implementation_slot(&ctx.reads()?, &decoded.a_token).await?;
-    let vtoken_impl = read_implementation_slot(&ctx.reads()?, &decoded.variable_debt_token).await?;
-
-    // 3. + 4. ATOKEN_REVISION() / DEBT_TOKEN_REVISION() on the implementations
-    //    + getSourceOfAsset(address) on the PRICE_ORACLE — three
-    //    mutually-independent same-block reads folded into ONE transport pass
-    //    when 2+ remain after the memo (a lone remaining call keeps the exact
-    //    sequential shape; see `eth_calls_batched_or_direct`). The context owns
-    //    the memo keying for the two revision slots.
-    let pending = [
-        BatchRead::Revision {
-            target: atoken_impl,
-            sig: "ATOKEN_REVISION()",
-        },
-        BatchRead::Revision {
-            target: vtoken_impl,
-            sig: "DEBT_TOKEN_REVISION()",
-        },
-        BatchRead::Plain {
-            target: oracle_address,
-            calldata: encode_single_address_call("getSourceOfAsset(address)", &decoded.asset),
-        },
-    ];
-    let results = ctx.read_revision_batch(&pending).await?;
-    let [BatchReadResult::Revision(a_token_revision), BatchReadResult::Revision(v_token_revision), BatchReadResult::Plain(source_return)] =
-        results.as_slice()
-    else {
-        return Err(ConfigDispatchError::DecodeShape(
-            "ReserveInitialized: the batched read returned an unexpected slot shape".to_string(),
-        ));
-    };
-    let price_source = decode_address_return(source_return);
-
+        .await?;
+    let price_source = decode_address_return(&ret);
+    let gho_link_token_id = ctx
+        .gho_asset()
+        .filter(|gho| {
+            gho.gho_token_address
+                .eq_ignore_ascii_case(&checksum(&decoded.asset))
+        })
+        .map(|gho| gho.id);
     Ok(ConfigurationEffect::ReserveInitialized {
-        market_id,
-        underlying_asset_id,
-        a_token_id,
-        a_token_revision: discount_to_i64(*a_token_revision),
-        v_token_id,
-        v_token_revision: discount_to_i64(*v_token_revision),
+        market_id: ctx.market_id(),
+        underlying_asset_id: reserve.underlying_id,
+        a_token_id: reserve.a_token_id,
+        a_token_revision: reserve.facts.a_token_revision,
+        v_token_id: reserve.v_token_id,
+        v_token_revision: reserve.facts.v_token_revision,
         price_source,
-        // 5. GHO-vToken-FK link: when the asset IS the GHO token, the GHO token
-        //    row's `v_token_id` points at this vToken. The FK is
-        //    the precondition for the discount-event emitter guard (which compares
-        //    against `gho_asset.v_token_address`, resolved via the FK).
-        gho_link_token_id: gho_asset
-            .as_ref()
-            .filter(|g| g.gho_token_address == underlying_str)
-            .map(|g| g.id),
+        gho_link_token_id,
     })
 }
 
-/// A token's stored metadata fields — `(name, symbol, decimals)` — each
-/// absent when the token's call yielded no decodable value.
-type MetadataFields = (Option<String>, Option<String>, Option<i64>);
-
-/// The `[underlying, aToken, vToken]` metadata triple the dispatch consumes.
-type MetadataTriple = [MetadataFields; 3];
-
-/// Fold the metadata burst's per-token rows — one [`MetadataFields`] per
-/// input address — into the [`MetadataTriple`] the dispatch consumes.
-/// `erc20::read_batch` contracts one row per input address; any other count is
-/// an explicit [`ConfigDispatchError`], and so is a triple whose every field is
-/// absent — never three null records over the token rows.
-fn fold_metadata_rows(
-    rows: Vec<erc20::TokenMetadata>,
-) -> Result<MetadataTriple, ConfigDispatchError> {
-    let folded: MetadataTriple = rows
-        .into_iter()
-        .map(|meta| (meta.name, meta.symbol, meta.decimals.map(u64::cast_signed)))
-        .collect::<Vec<_>>()
-        .try_into()
-        .map_err(|_| {
-            ConfigDispatchError::DecodeShape(
-                "ReserveInitialized: expected exactly three metadata rows".to_string(),
-            )
-        })?;
-
-    // A triple carrying no field at all is an outage, not token identity. The
-    // row-count guard above cannot see it, and the null cells it would persist
-    // are only ever backfilled by a LATER dispatch of the same event — which a
-    // healthy re-run of the same chunk never issues, since the chunk committed.
-    if folded
-        .iter()
-        .all(|(name, symbol, decimals)| name.is_none() && symbol.is_none() && decimals.is_none())
-    {
-        return Err(ConfigDispatchError::DecodeShape(
-            "ReserveInitialized: every token metadata read came back empty (no name, symbol or \
-             decimals for the underlying, aToken and vToken)"
-                .to_string(),
-        ));
-    }
-
-    Ok(folded)
-}
-
-/// Read the EIP-1967 implementation slot for `proxy` at `block_number` +
-/// decode the address.
-async fn read_implementation_slot(
+/// Read the EIP-1967 implementation slot for `proxy` at the reads' exact block
+/// and decode the address.
+///
+/// # Errors
+///
+/// A transport failure or unserved exact read refuses the acquisition; a slot
+/// word the runtime cannot decode cannot occur (the read is a 32-byte word).
+pub(crate) async fn read_implementation_slot(
     reads: &BlockReads<'_>,
     proxy: &Address,
 ) -> Result<Address, ConfigDispatchError> {
     let slot = reads
         .storage_at(*proxy, EIP_1967_IMPLEMENTATION_SLOT)
         .await?;
-    // The slot is a 32-byte word; the address is the low 20 bytes.
     let word = slot.to_be_bytes::<32>();
     Ok(Address::from_slice(&word[12..]))
-}
-
-#[cfg(test)]
-#[expect(clippy::expect_used, clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    /// The metadata burst's fold accepts exactly the three rows the batched
-    /// read contracts — one per token — and fails loudly on any other count,
-    /// never emitting three null records over the token rows.
-    #[test]
-    fn fold_metadata_rows_requires_exactly_three_rows() {
-        let rows = vec![
-            erc20::TokenMetadata {
-                name: Some("Dai".into()),
-                symbol: Some("DAI".into()),
-                decimals: Some(18),
-            },
-            erc20::TokenMetadata::default(),
-            erc20::TokenMetadata {
-                decimals: Some(6),
-                ..Default::default()
-            },
-        ];
-        let folded = fold_metadata_rows(rows).unwrap();
-        assert_eq!(folded[0].0.as_deref(), Some("Dai"));
-        assert_eq!(folded[0].2, Some(18));
-        assert_eq!(folded[1].0, None);
-        assert_eq!(folded[2].2, Some(6));
-        assert!(fold_metadata_rows(Vec::new()).is_err());
-        assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 2]).is_err());
-        assert!(fold_metadata_rows(vec![erc20::TokenMetadata::default(); 4]).is_err());
-    }
-
-    /// A triple whose every field is absent is an outage, not token identity:
-    /// the count guard passes it, so without this refusal the dispatch
-    /// persists NULL name/symbol/decimals for the underlying, aToken and
-    /// vToken rows that never fill in later.
-    #[test]
-    fn fold_metadata_rows_rejects_an_all_absent_triple() {
-        let error = fold_metadata_rows(vec![erc20::TokenMetadata::default(); 3])
-            .expect_err("an all-absent metadata triple must not reach the token rows");
-        assert!(
-            matches!(error, ConfigDispatchError::DecodeShape(ref reason) if reason.contains("metadata")),
-            "expected the fold's shape error, got {error:?}"
-        );
-    }
 }

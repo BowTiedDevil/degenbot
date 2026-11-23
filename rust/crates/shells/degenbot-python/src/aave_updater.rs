@@ -36,8 +36,9 @@ use degenbot_aave::{
     activate_aave_market as core_activate_aave_market,
     deactivate_aave_market as core_deactivate_aave_market, run_aave_update as core_run_aave_update,
     verify::{
-        cleanup_zero_balance_positions_on_conn, verify_all_positions_on_conn,
-        verify_touched_positions_on_conn,
+        acquire_position_truth_at, acquire_verification_truth_at,
+        cleanup_zero_balance_positions_on_conn, compare_position_truth, compare_verification_truth,
+        load_verification_positions, load_verification_truth_rows,
     },
     AaveUpdateReport, NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
 };
@@ -309,34 +310,25 @@ fn verify_touched_positions_on_chain(
             // source in the live process).
             crate::provider_seam::require_ambient_runtime()?;
 
-            // Lock the DB handle for a read-only connection (verify uses no
-            // SQL writes; the lock guarantees no concurrent mutator inside
-            // the same `DegenbotDb` handle — the drive harness calls
-            // from a SEPARATE connection from `run_aave_update`'s writer).
             let db = DegenbotDb::open(&path)?.0;
-            let conn = db.lock();
-            let touched_ref = touched.as_deref();
-            // Runtime strategy: the ambient handle is resolved up front (the
-            // Policy — a missing runtime errors, never a per-call
-            // build), and the live provider is constructed inside that
-            // runtime's context to avoid its internals' runtime-handle
-            // binding. Invoking from inside an existing runtime (e.g. a
-            // caller driving verification from the updater worker — context
-            // set + multi-thread) parks the thread instead of nesting a
-            // `block_on` inside it.
+            // The relational load is one locked window: it takes no chain read,
+            // so the guard is dropped before the provider is built and before
+            // any header, batch, or code read runs.
+            let positions = {
+                let conn = db.lock();
+                load_verification_positions(&conn, market_id, touched.as_deref())?
+            };
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
                 rpc_url,
                 crate::provider_seam::UPDATER_MAX_RETRIES,
             ))
             .map_err(RunError::from)?;
-            let fut = verify_touched_positions_on_conn(
-                &conn,
+            let truth = crate::provider_seam::drive(acquire_position_truth_at(
                 &provider,
-                market_id,
                 block_number,
-                touched_ref,
-            );
-            crate::provider_seam::drive(fut)
+                &positions,
+            ))?;
+            Ok(compare_position_truth(&positions, &truth, block_number))
         })
         .map_err(run_err_to_py)?;
 
@@ -422,27 +414,25 @@ fn verify_all_positions_on_chain(
             crate::provider_seam::require_ambient_runtime()?;
 
             let db = DegenbotDb::open(&path)?.0;
-            let conn = db.lock();
-            let touched_ref = touched.as_deref();
-
-            // Runtime strategy: the live provider is constructed inside the
-            // caller's runtime context (the Policy — a missing runtime
-            // errors, never a per-call build) to avoid its internals'
-            // runtime-handle binding.
+            // Two locked windows with the chain reads between them: the full
+            // verification's read side (positions, stkAAVE balance rows, GHO
+            // discount rows) is loaded with the guard held, the guard is
+            // dropped, and the acquisition runs with no connection at all.
+            let rows = {
+                let conn = db.lock();
+                load_verification_truth_rows(&conn, market_id, chain_id, touched.as_deref())?
+            };
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
                 rpc_url,
                 crate::provider_seam::UPDATER_MAX_RETRIES,
             ))
             .map_err(RunError::from)?;
-            let fut = verify_all_positions_on_conn(
-                &conn,
+            let truth = crate::provider_seam::drive(acquire_verification_truth_at(
                 &provider,
-                market_id,
-                chain_id,
                 block_number,
-                touched_ref,
-            );
-            crate::provider_seam::drive(fut)
+                &rows,
+            ))?;
+            Ok(compare_verification_truth(&rows, &truth, block_number))
         })
         .map_err(run_err_to_py)?;
 

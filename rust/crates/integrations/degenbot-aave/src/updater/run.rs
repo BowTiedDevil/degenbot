@@ -16,6 +16,8 @@ mod fetch;
 mod process;
 mod recovery;
 mod reset;
+mod resolver;
+pub mod seed;
 pub mod substrate;
 
 pub use activate::{
@@ -29,9 +31,11 @@ pub use apply::{
 pub use evidence::EvidenceAcquisitionError;
 use evidence::{bind_chunk_evidence, trace_backed_count};
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
-use process::{group_logs_by_tx, guard_terminal_transaction_identity, resolve_chunk};
+use process::{group_logs_by_tx, guard_terminal_transaction_identity};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
-use substrate::{candidate_addresses, ChunkSubstrate};
+use resolver::ChunkResolver;
+use seed::{acquire_reserve_facts, collect_reserve_initializations, ChunkSeed};
+pub use seed::{IncompleteChunkSeed, SeedEntity};
 
 // ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
 
@@ -338,6 +342,13 @@ pub enum RunError {
     /// never persist a NULL identity fact.
     #[error("activation metadata: {0}")]
     ActivationMetadata(Box<ActivationMetadataError>),
+    /// Resolution named a relational fact the chunk's seed does not hold: the
+    /// seed is the complete read position, so the run refuses rather than
+    /// deferring a query into the async path (ADR-105 D4). Raised in
+    /// resolution, before the chunk's transaction opens, so nothing rolls back
+    /// and no cursor moves.
+    #[error("{0}")]
+    IncompleteChunkSeed(Box<IncompleteChunkSeed>),
     /// A verification read carried no value for a tracked row: the token
     /// reverted, answered a payload that is not the declared word, or holds no
     /// code at the verification anchor. The acquisition refuses instead of
@@ -361,6 +372,13 @@ impl From<ActivationMetadataError> for RunError {
 impl From<crate::verify::VerificationEvidenceError> for RunError {
     fn from(error: crate::verify::VerificationEvidenceError) -> Self {
         Self::VerificationEvidence(Box::new(error))
+    }
+}
+
+/// The boxed seed refusal, under the same rule.
+impl From<IncompleteChunkSeed> for RunError {
+    fn from(error: IncompleteChunkSeed) -> Self {
+        Self::IncompleteChunkSeed(Box::new(error))
     }
 }
 
@@ -676,20 +694,19 @@ impl Drop for ChunkTx<'_> {
 /// shared-runtime nesting constraint, the parity-gate notes) lives on the
 /// sync entry fn.
 ///
-/// # The `await_holding_lock` expectation
+/// # The no-guard-across-RPC contract
 ///
-/// The chunk body holds `db.lock()` (the writable `Connection`) across the
-/// resolution phase's RPC `.await`s (config dispatch, pre-block discount
-/// facts, the verification gates' chain truth). No SQLite transaction is open
-/// across those awaits: `transaction()` is opened after resolution and covers
-/// only SQL. Sound because the driver future is never polled concurrently —
-/// the entry fn's `block_on` polls it on the calling thread only, so no other
-/// thread can contend the guard mid-await.
+/// No `db.lock()` guard is held across any `.await` in this future. The
+/// relational reads that seed resolution and the verification gates happen in
+/// their own synchronous windows, each releasing the lock before the chunk's
+/// chain reads start; resolution itself takes no connection at all (ADR-105
+/// D4). A stalled provider therefore parks only this future, never another
+/// thread's database work.
 ///
 /// # Errors
 ///
 /// See [`run_aave_update`].
-#[expect(clippy::await_holding_lock, clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn run_aave_update_driver(
     db: &DegenbotDb,
     spec: RunSpec,
@@ -1108,54 +1125,46 @@ async fn run_aave_update_driver(
             degenbot_rpc::provider::rpc_round_trips().saturating_sub(evidence_rt_start),
         );
 
-        // 1c. The operation family's read-side substrate access, taken BEFORE
-        //     the chunk's transaction opens (ADR-105 D4): one set-shaped read of
-        //     the chunk's touched entities (candidate users and their
-        //     positions/configs, the market's assets and contracts, the chain's
-        //     GHO row). Resolution then runs against this read position — the
-        //     projection view seeds from it and advances by deltas — instead of
-        //     holding the write lock across its own reads.
-        let substrate = if candidates.is_empty() {
-            ChunkSubstrate::lazy(chain_id)
+        // 1c. The chunk's relational seed (ADR-105 D4). Its chain facts — the
+        //     metadata and implementation revisions of every reserve the chunk
+        //     initializes — are acquired by exact reads first; the seed then
+        //     loads the chunk's complete relational starting point and interns
+        //     every identity resolution may name, synchronously and OUTSIDE the
+        //     chunk's transaction. An empty chunk seeds nothing.
+        let mut resolver = ChunkResolver::new();
+        let seed = if candidates.is_empty() {
+            ChunkSeed::empty(chain_id)
         } else {
             let all_logs: Vec<&Log> = candidates
                 .iter()
                 .flat_map(|candidate| candidate.group.logs.iter().copied())
                 .collect();
-            let (user_candidates, asset_candidates) = candidate_addresses(&all_logs);
+            let initializations = collect_reserve_initializations(&candidates);
+            let reserve_facts = if initializations.is_empty() {
+                Vec::new()
+            } else {
+                acquire_reserve_facts(&provider, resolver.memo_mut(), &initializations).await?
+            };
             let read = db.lock();
-            ChunkSubstrate::prefetch_on_conn(
-                &read,
-                market_id,
-                chain_id,
-                &user_candidates,
-                &asset_candidates,
-            )?
+            ChunkSeed::load(&read, market_id, chain_id, &all_logs, &reserve_facts)?
         };
 
-        // 2. The single-transaction chunk write (chunk atomicity). The per-tx
-        //    processing (discount pre-pass + config dispatch + parse) borrows
-        //    the Transaction's `&Connection` for substrate lookups + writes —
-        //    they MUST be atomic with the chunk's apply.
-        // 2. Resolution: every per-transaction RPC and every read-side
-        //    substrate access happens BEFORE the chunk's write transaction
-        //    opens (ADR-105 D4). The chunk's deltas are the only write product
-        //    that crosses into the transaction.
-        let mut resolution = {
-            let read = db.lock();
-            resolve_chunk(
-                &read,
+        // 2. Resolution: every per-transaction RPC and every relational read
+        //    happens BEFORE the chunk's write transaction opens (ADR-105 D4),
+        //    and resolution holds no connection at all. The chunk's deltas are
+        //    the only write product that crosses into the transaction.
+        let mut resolution = resolver
+            .resolve(
                 &provider,
+                seed,
                 market_id,
                 chain_id,
                 pool_address,
                 &candidates,
-                substrate,
                 working_start,
                 chunk_end,
             )
-            .await?
-        };
+            .await?;
 
         let max_chunks_hit = max_chunks.is_some_and(|limit| report.chunks_committed + 1 >= limit);
         let is_final = crate::verify::is_final_chunk(chunk_end, last_block, max_chunks_hit);
@@ -1205,17 +1214,15 @@ async fn run_aave_update_driver(
             );
             let verify_rt_start = degenbot_rpc::provider::rpc_round_trips();
             let verify_guard = verify_span.enter();
-            let truth = {
+            let rows = {
                 let read = db.lock();
-                crate::verify::acquire_verification_truth(
-                    &read,
-                    &BlockReads::at(&provider, chunk_terminal),
-                    market_id,
-                    chain_id,
-                    None,
-                )
-                .await?
+                crate::verify::load_verification_truth_rows(&read, market_id, chain_id, None)?
             };
+            let truth = crate::verify::acquire_verification_truth(
+                &rows,
+                &BlockReads::at(&provider, chunk_terminal),
+            )
+            .await?;
             drop(verify_guard);
             verify_span.record(
                 "rpc.round_trips",
@@ -1287,14 +1294,14 @@ async fn run_aave_update_driver(
             }
             if let Some(truth) = &full_truth {
                 let verify_started = Instant::now();
-                let divergences = crate::verify::compare_verification_truth_on_conn(
+                let rows = crate::verify::load_verification_truth_rows(
                     chunk_tx.conn(),
                     market_id,
                     chain_id,
-                    chunk_end,
                     None,
-                    truth,
                 )?;
+                let divergences =
+                    crate::verify::compare_verification_truth(&rows, truth, chunk_end);
                 chunk_tx.add_verify_time(verify_started.elapsed());
                 if !divergences.is_empty() {
                     return Err(RunError::FullVerification {
@@ -1365,6 +1372,113 @@ async fn run_aave_update_driver(
     }
 
     Ok(report)
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+/// A provider parked on an `eth_call` must never keep the connection: the
+/// driver future is polled here until it is parked on the verification
+/// acquisition, and the database is asked for its guard at that exact
+/// moment. A guard held across the await (the pre-seed resolution shape)
+/// fails this, and so does any future that re-enters the lock.
+#[test]
+#[expect(clippy::panic)]
+fn a_stalled_provider_does_not_block_an_unrelated_database_operation() {
+    use crate::updater::test_chain::{ScriptedChain, HEAD_NUMBER};
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+    {
+        let conn = db.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, ?1)",
+            [i64::try_from(HEAD_NUMBER).unwrap() - 1],
+        )
+        .unwrap();
+        for (name, address) in [
+            ("POOL", Address::repeat_byte(0x11)),
+            ("POOL_CONFIGURATOR", Address::repeat_byte(0x22)),
+            ("POOL_ADDRESS_PROVIDER", Address::repeat_byte(0x44)),
+        ] {
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (market_id, name, address) VALUES (1, ?1, ?2)",
+                rusqlite::params![
+                    name,
+                    degenbot_core::address_utils::address_to_checksum_string(&address)
+                ],
+            )
+            .unwrap();
+        }
+        conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, ?1), (2, 1, ?2), (3, 1, ?3)",
+                rusqlite::params![
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x31)),
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x32)),
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x33)),
+                ],
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 2, 1, 3, 1, '0', '0', '1', '0')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+                "INSERT INTO aave_v3_users (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                 isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (1, 1, ?1, 0, 0, NULL, NULL, '0')",
+                [degenbot_core::address_utils::address_to_checksum_string(
+                    &Address::repeat_byte(0x41),
+                )],
+            )
+            .unwrap();
+        conn.execute(
+                "INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance, last_index) \
+                 VALUES (1, 1, 1, '1000', NULL)",
+                [],
+            )
+            .unwrap();
+    }
+
+    let chain = ScriptedChain::new().stall_calls();
+    let provider = degenbot_core::runtime::get_runtime().block_on(chain.provider());
+    let spec = RunSpec {
+        chain_id: 1,
+        market_id: 1,
+        to_block: Some(HEAD_NUMBER),
+        chunk_size: 10,
+        max_block_range: 10_000,
+        max_chunks: None,
+        verify: VerifyPolicy {
+            verify_chunk: false,
+            verify_all_interval: None,
+            verify_all_at_completion: true,
+        },
+        cancel: Arc::new(AtomicBool::new(false)),
+        progress: Arc::new(NoProgress),
+        provider,
+    };
+    degenbot_core::runtime::get_runtime().block_on(async {
+        let mut driver = Box::pin(run_aave_update_driver(&db, spec));
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        match driver.as_mut().poll(&mut cx) {
+            Poll::Pending => {}
+            Poll::Ready(outcome) => {
+                panic!("the driver completed instead of parking: {outcome:?}")
+            }
+        }
+        assert!(
+            db.try_lock().is_some(),
+            "no database guard may be held across an RPC await"
+        );
+    });
 }
 
 #[cfg(test)]

@@ -83,11 +83,39 @@ impl CheckpointState {
     /// Project the resume state of one projection unit's boundary.
     #[must_use]
     pub fn capture(view: &ProjectionView, substrate: &ChunkSubstrate) -> Self {
-        let mut generations: Vec<GenerationRecord> = view
-            .generations()
-            .map(|(_, generation)| generation_record(generation))
-            .collect();
-        generations.sort_by(|left, right| left.entity.cmp(&right.entity));
+        // The order IS the current-vs-sealed statement: for every entity its
+        // sealed generations come first, in a deterministic order, and the
+        // generation it reads under comes last. A restore replays the list in
+        // order and takes the last record per entity as current, so the
+        // selection never consults a revision or an activation kind — a
+        // non-monotonic replacement cannot make it pick the sealed one.
+        let mut per_entity: std::collections::BTreeMap<
+            String,
+            (Vec<GenerationRecord>, Option<GenerationRecord>),
+        > = std::collections::BTreeMap::new();
+        for generation in view.sealed_generations() {
+            let record = generation_record(generation);
+            per_entity
+                .entry(record.entity.clone())
+                .or_default()
+                .0
+                .push(record);
+        }
+        for (_, generation) in view.generations() {
+            let record = generation_record(generation);
+            let entity = record.entity.clone();
+            per_entity.entry(entity).or_default().1 = Some(record);
+        }
+        let mut generations: Vec<GenerationRecord> = Vec::new();
+        for (_, (mut sealed, current)) in per_entity {
+            sealed.sort_by_key(sealed_order);
+            sealed.dedup();
+            if let Some(current) = &current {
+                sealed.retain(|record| record != current);
+            }
+            generations.extend(sealed);
+            generations.extend(current);
+        }
         let mut positions: Vec<CheckpointPositionState> = view
             .positions()
             .map(|(subject, (balance, index))| CheckpointPositionState {
@@ -265,6 +293,22 @@ impl CheckpointState {
 
 /// A restored view's generation: the entity and revision a checkpoint names,
 /// with the activation position a journaled delta carries.
+/// The deterministic order an entity's sealed generations are stated in: by
+/// revision, seed before an event of the same revision, then by position. It
+/// orders only the sealed run; which record is current is stated by position
+/// within the run (last), never by this key.
+fn sealed_order(
+    generation: &GenerationRecord,
+) -> (Option<u32>, u8, alloy::primitives::B256, u64, u64) {
+    let (rank, hash, block, log_index) = match generation.activation {
+        degenbot_db::GenerationActivation::Seed => (0, alloy::primitives::B256::ZERO, 0, 0),
+        degenbot_db::GenerationActivation::Event(at) => {
+            (1, at.tx_hash(), at.anchor().number(), at.log_index())
+        }
+    };
+    (generation.revision, rank, hash, block, log_index)
+}
+
 fn restored_generation(record: &GenerationRecord) -> Result<GenerationRef, super::ProjectionError> {
     let entity = GenerationEntity::decode(&record.entity)?;
     let activation = match record.activation {
@@ -357,8 +401,16 @@ impl CheckpointState {
             };
             view.seed_position(subject, (state.balance, state.index));
         }
-        for record in &self.generations {
-            view.observe_generation(restored_generation(record)?);
+        for (index, record) in self.generations.iter().enumerate() {
+            let generation = restored_generation(record)?;
+            let is_current = self.generations[index + 1..]
+                .iter()
+                .all(|later| later.entity != record.entity);
+            if is_current {
+                view.observe_generation(generation);
+            } else {
+                view.seal_generation(generation);
+            }
         }
         Ok(view)
     }
@@ -802,6 +854,43 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used)]
+    fn a_checkpoint_records_the_generation_a_replacement_sealed() {
+        let substrate = ChunkSubstrate::lazy(1);
+        let entity = GenerationEntity::ScaledToken {
+            asset_id: 2,
+            position: ScaledTokenPosition::Collateral,
+        };
+        let mut view = ProjectionView::new();
+        view.observe_generation(GenerationRef::new(entity, 3));
+        view.seal_generation(GenerationRef::new(entity, 1));
+        assert_eq!(
+            view.generation(entity),
+            Some(GenerationRef::new(entity, 3)),
+            "a sealed generation never displaces the generation the view reads under"
+        );
+
+        let state = CheckpointState::capture(&view, &substrate);
+        let stated: Vec<Option<u32>> = state
+            .generations()
+            .iter()
+            .map(|generation| generation.revision)
+            .collect();
+        assert_eq!(
+            stated,
+            vec![Some(1), Some(3)],
+            "the sealed generation the chunk began under is recorded beside the replacement"
+        );
+
+        let restored = state.restore_view().expect("the checkpoint restores");
+        assert_eq!(
+            restored.generation(entity),
+            Some(GenerationRef::new(entity, 3)),
+            "a restore reads under the replacement, not the sealed generation"
+        );
+    }
+
+    #[test]
     fn a_checkpoint_captures_every_position_state_the_view_holds() {
         let substrate = ChunkSubstrate::lazy(1);
         let mut view = ProjectionView::new();
@@ -837,5 +926,60 @@ mod tests {
         assert!(state.assets().is_empty());
         assert!(state.contracts().is_empty());
         assert!(state.gho().is_none());
+    }
+
+    /// The generation a checkpoint states as current is positional, not
+    /// revision-ordered: a replacement that moves the revision BACKWARD (or an
+    /// activation kind that sorts first) must not make a restore adopt the
+    /// sealed generation, and a recapture of the restored view must keep the
+    /// sealed lineage.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn a_checkpoint_restores_the_current_generation_and_keeps_the_sealed_lineage() {
+        let substrate = ChunkSubstrate::lazy(1);
+        let entity = GenerationEntity::ScaledToken {
+            asset_id: 2,
+            position: ScaledTokenPosition::Collateral,
+        };
+        let current = GenerationRef::new(entity, 1);
+        let mut view = ProjectionView::new();
+        view.observe_generation(current);
+        view.seal_generation(GenerationRef::new(entity, 5));
+        view.seal_generation(GenerationRef::activated_at(entity, Some(3), at(7)));
+
+        let state = CheckpointState::capture(&view, &substrate);
+        let stated: Vec<Option<u32>> = state
+            .generations()
+            .iter()
+            .map(|generation| generation.revision)
+            .collect();
+        assert_eq!(
+            stated,
+            vec![Some(3), Some(5), Some(1)],
+            "the sealed generations precede the current one, whose lower revision sorts last"
+        );
+
+        let restored = state.restore_view().expect("the checkpoint restores");
+        assert_eq!(
+            restored.generation(entity),
+            Some(current),
+            "a restore reads under the generation the checkpoint stated as current"
+        );
+        let mut sealed: Vec<Option<u32>> = restored
+            .sealed_generations()
+            .map(|generation| generation.revision())
+            .collect();
+        sealed.sort_unstable();
+        assert_eq!(
+            sealed,
+            vec![Some(3), Some(5)],
+            "the restored view keeps the sealed lineage"
+        );
+
+        let recaptured = CheckpointState::capture(&restored, &substrate);
+        assert_eq!(
+            recaptured, state,
+            "a recapture after restore states the same current-vs-sealed lineage"
+        );
     }
 }

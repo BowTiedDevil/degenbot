@@ -19,7 +19,6 @@
 
 use super::*;
 use crate::operations::OperationType;
-use crate::updater::run::substrate::ChunkSubstrate;
 use std::collections::BTreeMap;
 
 /// The committed capture (machine-emitted from a live archive node + the
@@ -220,14 +219,15 @@ fn every_collateral_leg_belongs_to_the_liquidation_that_emitted_it() {
     let (_document, market, _logs) = captured();
     let db = seeded_market(&market);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(market.chain_id);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, market.chain_id, &[])
+            .into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         market.chain_id,
         market.pool,
         Some(market.gho_token),
         Some(market.gho_vtoken),
-        &conn,
         &mut substrate,
     )
     .expect("the parser resolves the market's pool revision");
@@ -354,14 +354,15 @@ fn with_parsed_capture<R>(
     let (_document, market, logs) = captured();
     let db = seeded_market(&market);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(market.chain_id);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, market.chain_id, &[])
+            .into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         market.chain_id,
         market.pool,
         Some(market.gho_token),
         Some(market.gho_vtoken),
-        &conn,
         &mut substrate,
     )
     .expect("the parser resolves the market's pool revision");
@@ -603,14 +604,15 @@ fn the_capture_cannot_be_parsed_receipt_only() {
     let (_document, market, logs) = captured();
     let db = seeded_market(&market);
     let conn = db.lock();
-    let mut substrate = ChunkSubstrate::lazy(market.chain_id);
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests(&conn, 1, market.chain_id, &[])
+            .into_substrate();
     let mut parser = TransactionOperationsParser::new(
         1,
         market.chain_id,
         market.pool,
         Some(market.gho_token),
         Some(market.gho_vtoken),
-        &conn,
         &mut substrate,
     )
     .expect("the parser resolves the market's pool revision");

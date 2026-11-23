@@ -67,26 +67,6 @@
       "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
     },
     {
-      "arg_count": 7,
-      "rows_changed": 0,
-      "sql": "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ? AND address IN (?, ?, ?, ?, ?, ?)"
-    },
-    {
-      "arg_count": 7,
-      "rows_changed": 0,
-      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?)"
-    },
-    {
-      "arg_count": 7,
-      "rows_changed": 0,
-      "sql": "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?)"
-    },
-    {
-      "arg_count": 7,
-      "rows_changed": 0,
-      "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?)"
-    },
-    {
       "arg_count": 0,
       "rows_changed": 0,
       "sql": "BEGIN DEFERRED"

@@ -26,11 +26,11 @@ use crate::projection::ConfigurationEffect;
 #[cfg(test)]
 use crate::ray_mul;
 use alloy::primitives::{Address, Bytes, U256};
-use degenbot_db::DbError;
 #[cfg(test)]
 use degenbot_db::{DebtPositionRefreshContext, DegenbotDb};
 use degenbot_rpc::chain_evidence::BlockReads;
-use rusqlite::{Connection, OptionalExtension as _};
+#[cfg(test)]
+use rusqlite::Connection;
 
 use super::context::ChunkContext;
 use super::{
@@ -45,12 +45,8 @@ pub(super) fn dispatch_discount_percent_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountPercentUpdatedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let user_str = checksum(&decoded.user);
-    let user_id = ctx
-        .substrate_mut()
-        .user_id_or_create(conn, market_id, &user_str, 0)?;
+    let user_id = ctx.substrate_mut().user_id_or_create(&user_str, 0)?;
     Ok(ConfigurationEffect::GhoDiscountPercentUpdated {
         user_id,
         new_discount_percent: discount_to_i64(decoded.new_discount_percent),
@@ -84,13 +80,11 @@ pub(super) async fn dispatch_stk_aave_transfer(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3Erc20TransferEvent,
 ) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
     // Read the GHO asset through the ctx-owned always-fresh accessor: a same-tx
     // `DiscountTokenUpdated` at an earlier logIndex bumps
     // `v_gho_discount_token` through an apply that marks the overlay dirty, so
     // this read sees it (the per-call re-resolution is a cache hit until then).
-    let gho = ctx.gho_asset()?;
+    let gho = ctx.gho_asset();
     // Scope: only the discount-token (stkAAVE) emitter.
     let Some(g) = gho.as_ref() else {
         return Ok(None);
@@ -124,7 +118,7 @@ pub(super) async fn dispatch_stk_aave_transfer(
     } else {
         Some(
             ctx.substrate_mut()
-                .user_id_or_create(conn, market_id, &checksum(&decoded.from), 0)?,
+                .user_id_or_create(&checksum(&decoded.from), 0)?,
         )
     };
     let to_user_id = if decoded.to == Address::ZERO {
@@ -132,7 +126,7 @@ pub(super) async fn dispatch_stk_aave_transfer(
     } else {
         Some(
             ctx.substrate_mut()
-                .user_id_or_create(conn, market_id, &checksum(&decoded.to), 0)?,
+                .user_id_or_create(&checksum(&decoded.to), 0)?,
         )
     };
     // Pre-apply backfill of either side when the column is `NULL` — mirrors
@@ -140,10 +134,10 @@ pub(super) async fn dispatch_stk_aave_transfer(
     // it, an apply would treat `NULL` as zero and omit the pre-event on-chain
     // balance). No-op when the column is already populated.
     if let Some(uid) = from_user_id {
-        backfill_user_stk_aave_balance_if_none(ctx, conn, market_id, uid, discount_token).await?;
+        backfill_user_stk_aave_balance_if_none(ctx, uid, discount_token).await?;
     }
     if let Some(uid) = to_user_id {
-        backfill_user_stk_aave_balance_if_none(ctx, conn, market_id, uid, discount_token).await?;
+        backfill_user_stk_aave_balance_if_none(ctx, uid, discount_token).await?;
     }
     // The degenerate `Transfer(0x0 → 0x0)` lands both `None` (no real user) —
     // still emitted (counts as processed) but the apply is a no-op.
@@ -163,30 +157,13 @@ pub(super) async fn dispatch_stk_aave_transfer(
 /// column is already populated (the apply will mutate the cached value).
 async fn backfill_user_stk_aave_balance_if_none(
     ctx: &mut ChunkContext<'_>,
-    conn: &Connection,
-    market_id: i64,
     user_id: i64,
     discount_token: Address,
 ) -> Result<(), ConfigDispatchError> {
-    let row: Option<String> = conn
-        .query_row(
-            "SELECT address FROM aave_v3_users WHERE id = ?1",
-            [user_id],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(DbError::Sqlite)?;
-    let Some(addr_str) = row else {
-        return Err(ConfigDispatchError::DecodeShape(format!(
-            "aave_v3_users id={user_id} (backfill target — row vanished)"
-        )));
-    };
+    let addr_str = ctx.substrate_mut().user_address(user_id)?;
     // The projected balance (not a live probe): a discount-token replacement in
     // this chunk invalidated it, and the reseed must come from the NEW ledger.
-    let conn = ctx.conn();
-    let projected = ctx
-        .substrate_mut()
-        .user_stk_aave_balance(conn, market_id, &addr_str)?;
+    let projected = ctx.substrate_mut().user_stk_aave_balance(&addr_str)?;
     if matches!(projected, Some(Some(_))) {
         return Ok(());
     }
@@ -210,6 +187,7 @@ async fn backfill_user_stk_aave_balance_if_none(
 /// missing OR the decoded
 /// emitter (`decoded.v_token_address` = `log.address()`) doesn't match
 /// `gho_asset.v_token_address`. The apply fn never sees the skip.
+#[expect(clippy::unnecessary_wraps)]
 pub(super) fn dispatch_discount_token_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountTokenUpdatedEvent,
@@ -219,7 +197,7 @@ pub(super) fn dispatch_discount_token_updated(
     // `ReserveInitialized` at an earlier logIndex is visible), never a per-tx
     // snapshot. No row → `Ok(None)` (a chain-wide fetch can surface events from
     // chains without a seeded GHO market).
-    let Some(g) = ctx.gho_asset()? else {
+    let Some(g) = ctx.gho_asset() else {
         return Ok(None);
     };
     if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
@@ -237,11 +215,12 @@ pub(super) fn dispatch_discount_token_updated(
 /// Same emitter-validation guard as [`dispatch_discount_token_updated`] — see
 /// its docs; the chain-wide fetch + the emitter-address guard apply
 /// identically.
+#[expect(clippy::unnecessary_wraps)]
 pub(super) fn dispatch_discount_rate_strategy_updated(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3DiscountRateStrategyUpdatedEvent,
 ) -> Result<Option<ConfigurationEffect>, ConfigDispatchError> {
-    let Some(g) = ctx.gho_asset()? else {
+    let Some(g) = ctx.gho_asset() else {
         return Ok(None);
     };
     if g.v_token_address.as_deref() != Some(&checksum(&decoded.v_token_address)) {
@@ -282,8 +261,6 @@ pub(super) async fn build_discount_snapshot(
     tx_logs: &[&alloy::rpc::types::Log],
     gho_vtoken_address: Option<Address>,
     vtoken_revision: Option<u32>,
-    market_id: i64,
-    conn: &Connection,
     substrate: &mut crate::updater::run::substrate::ChunkSubstrate,
 ) -> Result<HashMap<Address, U256>, ConfigDispatchError> {
     use degenbot_decoders::aave_event_decoder::{AAVE_BURN_TOPIC, AAVE_MINT_TOPIC};
@@ -296,10 +273,10 @@ pub(super) async fn build_discount_snapshot(
     };
 
     let mut snapshot: HashMap<Address, U256> = HashMap::new();
-    // path #2 is DEFERRED: the users the DB cache cannot answer collect here
+    // path #2 is DEFERRED: the users the projection cannot settle collect here
     // (first-encounter order) and resolve in ONE transport pass after the
-    // scan. The DB reads keep their per-log position + order; nothing writes
-    // to `conn` between them, so the deferral cannot observe different DB
+    // scan. The projection reads keep their per-log position; nothing mutates
+    // the read position between them, so the deferral cannot observe different
     // state — the only change is the transport shape (2+ same-block
     // `getDiscountPercent` calls fold into one Multicall3 `aggregate3`; a
     // single pending user keeps the exact sequential request shape).
@@ -326,7 +303,7 @@ pub(super) async fn build_discount_snapshot(
         // deprecated): a checkpoint restates its three inputs, so the restored
         // driver and this loop cannot disagree about which path answers a user.
         let user_str = checksum(&user);
-        let settled = substrate.user_gho_discount(conn, market_id, &user_str)?;
+        let settled = substrate.user_gho_discount(&user_str)?;
         match crate::projection::classify_discount_prepass(
             crate::projection::DiscountPrepassInputs {
                 vtoken: Some(vtoken_addr),

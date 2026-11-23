@@ -296,9 +296,6 @@ fn apply_configuration_effect(
                 // exactly as the SQL JOIN would). The GHO link wrote
                 // `aave_gho_tokens` — the cached GHO row is stale.
                 substrate.refresh_asset_row(conn, asset_row_id)?;
-                if gho_link_token_id.is_some() {
-                    substrate.mark_gho_dirty();
-                }
                 report.reserve_initialized += 1;
             }
             ConfigurationEffect::GhoDiscountPercentUpdated {
@@ -323,7 +320,6 @@ fn apply_configuration_effect(
                 )?;
                 // The write touched `aave_gho_tokens` — the cached GHO row is
                 // stale (the next per-tx re-resolve re-queries).
-                substrate.mark_gho_dirty();
                 report.gho_discount_rate_strategy_updated += 1;
             }
             ConfigurationEffect::GhoDiscountTokenUpdated {
@@ -338,7 +334,6 @@ fn apply_configuration_effect(
                 // The write touched `aave_gho_tokens` — the cached GHO row is
                 // stale (the next per-tx re-resolve re-queries; the discount
                 // refresh must hit the NEW contract).
-                substrate.mark_gho_dirty();
                 report.gho_discount_token_updated += 1;
             }
             ConfigurationEffect::StkAaveTransfer {
@@ -389,9 +384,6 @@ fn apply_configuration_effect(
                 // fresh revision). The deprecation side effect cleared
                 // `aave_gho_tokens` — the cached GHO row is stale.
                 substrate.record_asset_revision(*asset_id, *is_a_token, *new_revision);
-                if deprecated_gho_token_id.is_some() {
-                    substrate.mark_gho_dirty();
-                }
                 report.upgraded += 1;
             }
             ConfigurationEffect::ContractRevisionUpdated {
@@ -719,6 +711,7 @@ pub fn apply_aave_chunk_writes_on_conn(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use alloy::primitives::Address;
 
     /// A canonical delta at a fixed fixture position (block 100, transaction
     /// index 0) whose block-wide log index orders a sequence strictly forward.
@@ -2631,6 +2624,7 @@ mod tests {
     /// resolve the new asset, its aToken/vToken bindings and its source, and a
     /// retried resolution must converge on the single row.
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn reserve_initialized_projects_the_reserve_immediately_and_idempotently() {
         let db = fresh_db();
         {
@@ -2644,60 +2638,105 @@ mod tests {
             }
         }
 
-        let effect = ConfigurationEffect::ReserveInitialized {
-            market_id: 1,
-            underlying_asset_id: 1,
-            a_token_id: 2,
+        let facts = crate::updater::run::seed::ReserveFacts {
+            underlying: Address::from([0x01; 20]),
+            a_token: Address::from([0x02; 20]),
+            v_token: Address::from([0x03; 20]),
             a_token_revision: 8,
-            v_token_id: 3,
             v_token_revision: 4,
-            price_source: Some("0xoracle".to_string()),
-            gho_link_token_id: None,
+            metadata: [
+                (None, None, Some(18)),
+                (None, None, Some(18)),
+                (None, None, Some(18)),
+            ],
         };
-        let mut substrate = ChunkSubstrate::lazy(1);
-
         {
             let conn = db.lock();
-            effect.project(&mut substrate, &conn).unwrap();
-
+            for id in 1..=3 {
+                let address = match id {
+                    1 => Address::from([0x01; 20]),
+                    2 => Address::from([0x02; 20]),
+                    _ => Address::from([0x03; 20]),
+                };
+                conn.execute(
+                    "UPDATE erc20_tokens SET address = ?1 WHERE id = ?2",
+                    params![
+                        degenbot_core::address_utils::address_to_checksum_string(&address),
+                        id
+                    ],
+                )
+                .unwrap();
+            }
+            let seed = crate::updater::run::seed::ChunkSeed::for_tests_reserve(
+                &conn,
+                1,
+                1,
+                std::slice::from_ref(&facts),
+            );
+            let mut substrate = seed.into_substrate();
+            let reserve = substrate
+                .reserve(&degenbot_core::address_utils::address_to_checksum_string(
+                    &facts.underlying,
+                ))
+                .unwrap()
+                .clone();
+            let effect = ConfigurationEffect::ReserveInitialized {
+                market_id: 1,
+                underlying_asset_id: reserve.underlying_id,
+                a_token_id: reserve.a_token_id,
+                a_token_revision: reserve.facts.a_token_revision,
+                v_token_id: reserve.v_token_id,
+                v_token_revision: reserve.facts.v_token_revision,
+                price_source: Some("0xoracle".to_string()),
+                gho_link_token_id: None,
+            };
             let assets: i64 = conn
                 .query_row("SELECT COUNT(*) FROM aave_v3_assets", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(
-                assets, 1,
+            assert_eq!(assets, 1, "the seed interned exactly the chunk's reserve");
+
+            effect.project(&mut substrate).unwrap();
+            assert!(
+                substrate
+                    .lookup_asset_row(
+                        "a_token",
+                        &degenbot_core::address_utils::address_to_checksum_string(&facts.a_token)
+                    )
+                    .unwrap()
+                    .is_some(),
                 "the reserve exists the moment its event resolves"
             );
 
-            substrate.require_asset(&conn, 1).unwrap();
+            substrate.require_asset(&conn, reserve.asset_id).unwrap();
 
-            // A later event of the SAME chunk operates on the new reserve.
             ConfigurationEffect::ReserveDataUpdated {
-                asset_id: 1,
+                asset_id: reserve.asset_id,
                 liquidity_rate: U256::from(1u64),
                 variable_borrow_rate: U256::from(2u64),
                 liquidity_index: U256::from(3u64),
                 variable_borrow_index: U256::from(4u64),
                 block_number: 99,
             }
-            .project(&mut substrate, &conn)
+            .project(&mut substrate)
             .unwrap();
 
-            // A retried resolution re-applies the same effect: one row, not two.
-            effect.project(&mut substrate, &conn).unwrap();
+            effect.project(&mut substrate).unwrap();
             let assets: i64 = conn
                 .query_row("SELECT COUNT(*) FROM aave_v3_assets", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(assets, 1, "the create is idempotent - no duplicate asset");
+            assert_eq!(
+                assets, 1,
+                "the interning is idempotent - no duplicate asset"
+            );
 
-            let (a_rev, v_rev, source): (i64, i64, Option<String>) = conn
+            let (a_rev, v_rev): (i64, i64) = conn
                 .query_row(
-                    "SELECT a_token_revision, v_token_revision, price_source FROM aave_v3_assets WHERE id = 1",
+                    "SELECT a_token_revision, v_token_revision FROM aave_v3_assets WHERE id = 1",
                     [],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .unwrap();
-            assert_eq!((a_rev, v_rev), (8, 4), "the event's revisions landed");
-            assert_eq!(source.as_deref(), Some("0xoracle"));
+            assert_eq!((a_rev, v_rev), (8, 4), "the interned revisions landed");
         }
     }
 }

@@ -48,8 +48,7 @@ use crate::ray_div;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{LogRef, TxRef};
-use degenbot_db::{DegenbotDb, ScaledTokenPosition};
-use rusqlite::Connection;
+use degenbot_db::ScaledTokenPosition;
 
 use super::evidence::TransactionEvidence;
 use super::projection::{
@@ -83,6 +82,10 @@ pub enum ProcessTxError {
     /// A projection refusal: a delta the view cannot reduce or advance.
     #[error("projection error: {0}")]
     Projection(#[from] ProjectionError),
+    /// The chunk's seed holds no relational fact the parse asked for: the seed
+    /// is the complete read position, so a miss refuses (ADR-105 D4).
+    #[error("{0}")]
+    IncompleteSeed(#[from] crate::updater::run::seed::IncompleteChunkSeed),
     /// An internal-shape violation: an `Operation` missing a field the parser
     /// guarantees, or a `ScaledTokenEventType` reaching a dispatch arm its
     /// caller already excluded. No feature path returns it.
@@ -172,18 +175,12 @@ impl<'a> DeltaSink<'a> {
     pub(crate) fn position_facts(
         &mut self,
         substrate: &mut ChunkSubstrate,
-        conn: &Connection,
         subject: PositionSubject,
     ) -> Result<PositionState, ProcessTxError> {
         if let Some(state) = self.view.position_state(subject) {
             return Ok(state);
         }
-        let state = match substrate.known_position_state(subject.position, subject.position_id) {
-            Some(state) => state,
-            None => {
-                substrate.position_state_for_apply(conn, subject.position, subject.position_id)?
-            }
-        };
+        let state = substrate.position_state_or_refuse(subject.position, subject.position_id)?;
         self.view.seed_position(subject, state);
         Ok(state)
     }
@@ -194,7 +191,6 @@ impl<'a> DeltaSink<'a> {
     pub(crate) fn emit(
         &mut self,
         substrate: &mut ChunkSubstrate,
-        conn: &Connection,
         resolved: ResolvedDelta,
     ) -> Result<(), ProcessTxError> {
         let ResolvedDelta {
@@ -204,7 +200,7 @@ impl<'a> DeltaSink<'a> {
         } = resolved;
         let source = LogRef::new(self.tx, log_index);
         for subject in effect.subjects() {
-            self.position_facts(substrate, conn, subject)?;
+            self.position_facts(substrate, subject)?;
         }
         self.view.observe_generation(generation);
         let delta = match effect {
@@ -285,7 +281,6 @@ pub fn process_transaction(
     pool_address: Address,
     gho_token_address: Option<Address>,
     gho_vtoken_address: Option<Address>,
-    conn: &Connection,
     evidence: &TransactionEvidence,
     discounts: &HashMap<Address, U256>,
     substrate: &mut ChunkSubstrate,
@@ -298,7 +293,6 @@ pub fn process_transaction(
         pool_address,
         gho_token_address,
         gho_vtoken_address,
-        conn,
         &mut *substrate,
     )?;
     let tx_logs: Vec<&Log> = evidence.logs();
@@ -313,8 +307,7 @@ pub fn process_transaction(
     // `_preprocess_liquidation_aggregates` → `detect_liquidation_patterns`).
     // Drives the COMBINED_BURN aggregated-burn + Mint-skip behavior in
     // `dispatch_liquidation` (N liquidations share 1 burn).
-    let mut liq_patterns =
-        build_liquidation_patterns(conn, market_id, &parsed.operations, substrate);
+    let mut liq_patterns = build_liquidation_patterns(market_id, &parsed.operations, substrate)?;
 
     // Sort the parsed operations by pool_event logIndex (or minimum
     // scaled_event log_index for the no-pool-event operations — INTEREST_
@@ -348,7 +341,6 @@ pub fn process_transaction(
         dispatch_operation(
             op,
             market_id,
-            conn,
             gho_vtoken_address,
             &gho_ctx,
             &mut liq_patterns,
@@ -392,16 +384,20 @@ fn operation_sort_key(op: &Operation) -> u64 {
 /// their vToken emitter (`ev.token_address`), which equals the
 /// `LiquidationCall`'s resolved vToken — so burns attach to the same group.
 ///
-/// Non-liquidation ops + liquidation ops with an unresolvable vToken are
-/// skipped. Infallible
-/// (a substrate miss degrades to `None` → no aggregation → the per-op path
-/// runs unchanged).
+/// Non-liquidation ops + liquidation ops whose reserve the seed proved absent
+/// are skipped; a seed HOLE refuses the transaction instead of degrading to the
+/// per-op path, because a silently skipped aggregation would dispatch N
+/// liquidations where the chain emitted one aggregated burn (ADR-105 D4).
+///
+/// # Errors
+///
+/// A seed hole refuses with the typed incomplete-seed error for the
+/// liquidation's debt reserve.
 fn build_liquidation_patterns(
-    conn: &Connection,
-    market_id: i64,
+    _market_id: i64,
     operations: &[Operation<'_>],
     substrate: &mut ChunkSubstrate,
-) -> LiquidationPatternContext {
+) -> Result<LiquidationPatternContext, ProcessTxError> {
     let mut ctx = LiquidationPatternContext::default();
     // 1. Group liquidations by (user, debt_v_token); record each call's
     //    `(operation_id, debt_to_cover, pool_event_log_index)`.
@@ -421,11 +417,7 @@ fn build_liquidation_patterns(
         }
         let user = Address::from_word(topics[3]);
         let debt_asset = Address::from_word(topics[2]);
-        let Some(row) = substrate
-            .lookup_asset_row(conn, market_id, "underlying", &addr_to_hex(debt_asset))
-            .ok()
-            .flatten()
-        else {
+        let Some(row) = substrate.lookup_asset_row("underlying", &addr_to_hex(debt_asset))? else {
             continue;
         };
         let Some(v_token) = parse_address(&row.v_token_address) else {
@@ -470,16 +462,14 @@ fn build_liquidation_patterns(
     for (key, group) in &ctx.groups {
         ctx.patterns.insert(*key, group.detect_pattern());
     }
-    ctx
+    Ok(ctx)
 }
 
 /// Dispatch a single Operation's scaled-token events → [`CanonicalDelta`]s —
 /// the per-event-type dispatch loop.
-#[expect(clippy::too_many_arguments)]
 fn dispatch_operation(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
@@ -491,52 +481,26 @@ fn dispatch_operation(
         | OperationType::Withdraw
         | OperationType::Borrow
         | OperationType::Repay
-        | OperationType::RepayWithAtokens => dispatch_standard(op, market_id, conn, out, substrate),
-        OperationType::BalanceTransfer => {
-            dispatch_balance_transfer(op, market_id, conn, out, substrate)
-        }
+        | OperationType::RepayWithAtokens => dispatch_standard(op, market_id, out, substrate),
+        OperationType::BalanceTransfer => dispatch_balance_transfer(op, market_id, out, substrate),
         // Standalone interest accrual (amount == balance_increase). Delta = 0
         // (only the index updates — the apply fn reconciles `last_index`).
         // The Operation carries the scaled events; pass them through as
         // zero-delta mints/burns so the position's `last_index` advances.
-        OperationType::InterestAccrual => dispatch_interest_accrual(
-            op,
-            market_id,
-            conn,
-            gho_vtoken_address,
-            gho_ctx,
-            out,
-            substrate,
-        ),
+        OperationType::InterestAccrual => {
+            dispatch_interest_accrual(op, market_id, gho_vtoken_address, gho_ctx, out, substrate)
+        }
         OperationType::Liquidation => {
-            dispatch_liquidation(op, market_id, conn, gho_ctx, liq_patterns, out, substrate)
+            dispatch_liquidation(op, market_id, gho_ctx, liq_patterns, out, substrate)
         }
-        OperationType::GhoLiquidation => dispatch_gho_liquidation(
-            op,
-            market_id,
-            conn,
-            gho_vtoken_address,
-            gho_ctx,
-            out,
-            substrate,
-        ),
+        OperationType::GhoLiquidation => {
+            dispatch_gho_liquidation(op, market_id, gho_vtoken_address, gho_ctx, out, substrate)
+        }
         OperationType::GhoBorrow | OperationType::GhoRepay | OperationType::GhoFlashLoan => {
-            dispatch_gho_standard(
-                op,
-                market_id,
-                conn,
-                gho_vtoken_address,
-                gho_ctx,
-                out,
-                substrate,
-            )
+            dispatch_gho_standard(op, market_id, gho_vtoken_address, gho_ctx, out, substrate)
         }
-        OperationType::DeficitCoverage => {
-            dispatch_deficit_coverage(op, market_id, conn, out, substrate)
-        }
-        OperationType::MintToTreasury => {
-            dispatch_mint_to_treasury(op, market_id, conn, out, substrate)
-        }
+        OperationType::DeficitCoverage => dispatch_deficit_coverage(op, market_id, out, substrate),
+        OperationType::MintToTreasury => dispatch_mint_to_treasury(op, market_id, out, substrate),
         OperationType::StkAaveTransfer => {
             // Pre-processed by the orchestrator (the stkAAVE transfers run
             // BEFORE GHO operations for the discount computation); no apply
@@ -559,7 +523,6 @@ fn dispatch_operation(
 fn dispatch_standard(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
@@ -577,8 +540,8 @@ fn dispatch_standard(
         // resolves to word 0; the liquidation path, handled in
         // `dispatch_liquidation`, resolves per event type).
         let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
-        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-        out.emit(substrate, conn, resolved)?;
+        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, substrate)?;
+        out.emit(substrate, resolved)?;
     }
     Ok(())
 }
@@ -666,7 +629,6 @@ fn build_scaled_event_chunk_event(
     op: &Operation,
     raw_amount: U256,
     market_id: i64,
-    conn: &Connection,
     substrate: &mut ChunkSubstrate,
 ) -> Result<ResolvedDelta, ProcessTxError> {
     // Resolve the emitter's AssetRow (id + revisions + sibling addresses).
@@ -690,7 +652,7 @@ fn build_scaled_event_chunk_event(
         }
     };
     let asset = substrate
-        .lookup_asset_row(conn, market_id, token_type, &token_addr_str)?
+        .lookup_asset_row(token_type, &token_addr_str)?
         .ok_or_else(|| {
             ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
                 "no asset for token {token_addr_str} ({token_type}) in market {market_id}"
@@ -810,7 +772,6 @@ fn build_scaled_event_chunk_event(
                 };
                 let result = processor.process_debt_burn(&event_data, None)?;
                 let position_id = resolve_position_id(
-                    conn,
                     market_id,
                     position,
                     ev.user_address,
@@ -848,7 +809,6 @@ fn build_scaled_event_chunk_event(
                 };
                 let result = processor.process_collateral_burn(&event_data, None)?;
                 let position_id = resolve_position_id(
-                    conn,
                     market_id,
                     position,
                     ev.user_address,
@@ -893,7 +853,6 @@ fn build_scaled_event_chunk_event(
                     processor.process_collateral_mint(&event_data)
                 }?;
                 let position_id = resolve_position_id(
-                    conn,
                     market_id,
                     position,
                     ev.user_address,
@@ -945,7 +904,6 @@ fn build_scaled_event_chunk_event(
                 processor.process_collateral_burn(&event_data, None)
             }?;
             let position_id = resolve_position_id(
-                conn,
                 market_id,
                 position,
                 ev.user_address,
@@ -978,7 +936,6 @@ fn build_scaled_event_chunk_event(
             let from_addr = ev.from_address.unwrap_or(ev.user_address);
             let to_addr = ev.target_address.unwrap_or_default();
             let from_position_id = resolve_position_id(
-                conn,
                 market_id,
                 ScaledTokenPosition::Collateral,
                 from_addr,
@@ -990,7 +947,6 @@ fn build_scaled_event_chunk_event(
                 None
             } else {
                 Some(resolve_position_id(
-                    conn,
                     market_id,
                     ScaledTokenPosition::Collateral,
                     to_addr,
@@ -1029,7 +985,6 @@ fn build_scaled_event_chunk_event(
 fn dispatch_balance_transfer(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
@@ -1058,11 +1013,10 @@ fn dispatch_balance_transfer(
             Some((_, idx)) => idx,
             None => ev.index.unwrap_or_default(),
         };
-        let resolved =
-            build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn, substrate)?;
+        let resolved = build_scaled_event_chunk_event(ev, op, raw_amount, market_id, substrate)?;
         let resolved =
             override_transfer_with_paired_bt(resolved, bt_pair, raw_amount, transfer_index);
-        out.emit(substrate, conn, resolved)?;
+        out.emit(substrate, resolved)?;
     }
     Ok(())
 }
@@ -1118,7 +1072,6 @@ fn decode_balance_transfer_log(log: &Log) -> Option<(Address, Address, Address, 
     let index = U256::from_be_bytes::<32>(buf);
     Some((from, to, token, value, index))
 }
-#[expect(clippy::too_many_lines)]
 /// Dispatch an `InterestAccrual` operation (amount == `balance_increase` →
 /// delta = 0; only the position's `last_index` advances). The enricher passes
 /// `scaled_amount: Some(0)` (the accrued-interest-only path — the balance
@@ -1126,7 +1079,6 @@ fn decode_balance_transfer_log(log: &Log) -> Option<(Address, Address, Address, 
 fn dispatch_interest_accrual(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     out: &mut DeltaSink<'_>,
@@ -1165,13 +1117,12 @@ fn dispatch_interest_accrual(
                 Some(U256::ZERO),
                 gho_ctx,
                 market_id,
-                conn,
                 out,
                 substrate,
             )?;
-            out.emit(substrate, conn, resolved)?;
+            out.emit(substrate, resolved)?;
             if let Some(refresh) = refresh {
-                out.emit(substrate, conn, refresh)?;
+                out.emit(substrate, refresh)?;
             }
             continue;
         }
@@ -1188,17 +1139,13 @@ fn dispatch_interest_accrual(
                 )));
             }
         };
-        let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
-            conn,
-            market_id,
-            &token_addr_str,
-            token_type,
-        )?
-        .ok_or_else(|| {
-            ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
-                "no asset for token {token_addr_str} ({token_type}) in market {market_id}"
-            )))
-        })?;
+        let asset = substrate
+            .lookup_asset_row(token_type, &token_addr_str)?
+            .ok_or_else(|| {
+                ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                    "no asset for token {token_addr_str} ({token_type}) in market {market_id}"
+                )))
+            })?;
         let index = ev.index.unwrap_or_default();
         let balance_increase = ev.balance_increase.unwrap_or_default();
         let event_data = ScaledTokenEventData {
@@ -1215,7 +1162,6 @@ fn dispatch_interest_accrual(
             (ScaledTokenPosition::Debt, r)
         };
         let position_id = resolve_position_id(
-            conn,
             market_id,
             position,
             ev.user_address,
@@ -1225,7 +1171,6 @@ fn dispatch_interest_accrual(
         )?;
         out.emit(
             substrate,
-            conn,
             ResolvedDelta {
                 effect: DeltaEffect::ScaledBalance {
                     subject: PositionSubject {
@@ -1426,7 +1371,6 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 fn dispatch_gho_standard(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     out: &mut DeltaSink<'_>,
@@ -1450,16 +1394,15 @@ fn dispatch_gho_standard(
             // A non-GHO scaled event within a GHO operation (e.g. the
             // collateral leg of a GHO FlashLoan) → standard builder.
             let raw = pool_event.map_or(ev.amount, extract_pool_amount_word0);
-            let resolved = build_scaled_event_chunk_event(ev, op, raw, market_id, conn, substrate)?;
-            out.emit(substrate, conn, resolved)?;
+            let resolved = build_scaled_event_chunk_event(ev, op, raw, market_id, substrate)?;
+            out.emit(substrate, resolved)?;
             continue;
         }
-        let (resolved, refresh) = build_gho_chunk_event(
-            ev, op, pool_event, None, gho_ctx, market_id, conn, out, substrate,
-        )?;
-        out.emit(substrate, conn, resolved)?;
+        let (resolved, refresh) =
+            build_gho_chunk_event(ev, op, pool_event, None, gho_ctx, market_id, out, substrate)?;
+        out.emit(substrate, resolved)?;
         if let Some(refresh) = refresh {
-            out.emit(substrate, conn, refresh)?;
+            out.emit(substrate, refresh)?;
         }
     }
     Ok(())
@@ -1475,11 +1418,9 @@ fn emit_bad_debt_reset(
     log_index: u64,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
-    conn: &Connection,
 ) -> Result<(), ProcessTxError> {
     out.emit(
         substrate,
-        conn,
         ResolvedDelta {
             effect: DeltaEffect::DebtPositionReset {
                 position_id,
@@ -1491,7 +1432,6 @@ fn emit_bad_debt_reset(
     )
 }
 
-#[expect(clippy::too_many_lines)]
 /// Dispatch the GHO `LiquidationCall`. Mirrors the GHO branch of
 /// `_process_debt_burn_with_match` (the bad-debt override) + the GHO branch of
 /// `_process_debt_mint_with_match` (the `COMBINED_BURN` Mint-skip for the
@@ -1500,7 +1440,6 @@ fn emit_bad_debt_reset(
 fn dispatch_gho_liquidation(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     out: &mut DeltaSink<'_>,
@@ -1529,9 +1468,8 @@ fn dispatch_gho_liquidation(
             // `last_index`. The delta-based apply may be off by 1 wei here: the
             // contract zeroes a balance, the apply derives a delta.
             if gho_ctx.is_bad_debt(ev.user_address) {
-                let asset = lookup_gho_debt_asset(ev, market_id, conn, substrate)?;
+                let asset = lookup_gho_debt_asset(ev, market_id, substrate)?;
                 let position_id = resolve_position_id(
-                    conn,
                     market_id,
                     ScaledTokenPosition::Debt,
                     ev.user_address,
@@ -1550,7 +1488,6 @@ fn dispatch_gho_liquidation(
                     ev.log_index,
                     out,
                     substrate,
-                    conn,
                 )?;
                 continue;
             }
@@ -1561,13 +1498,12 @@ fn dispatch_gho_liquidation(
                 None,
                 gho_ctx,
                 market_id,
-                conn,
                 out,
                 substrate,
             )?;
-            out.emit(substrate, conn, resolved)?;
+            out.emit(substrate, resolved)?;
             if let Some(refresh) = refresh {
-                out.emit(substrate, conn, refresh)?;
+                out.emit(substrate, refresh)?;
             }
         } else {
             // Non-GHO event within a GHO liquidation: either the aToken
@@ -1590,19 +1526,14 @@ fn dispatch_gho_liquidation(
             );
             if is_debt && gho_ctx.is_bad_debt(ev.user_address) {
                 let token_addr_str = addr_to_hex(ev.token_address);
-                let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
-                    conn,
-                    market_id,
-                    &token_addr_str,
-                    "v_token",
-                )?
-                .ok_or_else(|| {
-                    ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
-                        "no vToken asset for token {token_addr_str} in market {market_id}"
-                    )))
-                })?;
+                let asset = substrate
+                    .lookup_asset_row("v_token", &token_addr_str)?
+                    .ok_or_else(|| {
+                        ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                            "no vToken asset for token {token_addr_str} in market {market_id}"
+                        )))
+                    })?;
                 let position_id = resolve_position_id(
-                    conn,
                     market_id,
                     ScaledTokenPosition::Debt,
                     ev.user_address,
@@ -1621,16 +1552,14 @@ fn dispatch_gho_liquidation(
                     ev.log_index,
                     out,
                     substrate,
-                    conn,
                 )?;
                 continue;
             }
             // The collateral leg (or a non-bad-debt stranded debt burn) →
             // standard builder.
             let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
-            let resolved =
-                build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-            out.emit(substrate, conn, resolved)?;
+            let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, substrate)?;
+            out.emit(substrate, resolved)?;
         }
     }
     Ok(())
@@ -1649,11 +1578,10 @@ fn build_gho_chunk_event(
     scaled_amount_override: Option<U256>,
     gho_ctx: &GhoDiscountContext,
     market_id: i64,
-    conn: &Connection,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(ResolvedDelta, Option<ResolvedDelta>), ProcessTxError> {
-    let asset = lookup_gho_debt_asset(ev, market_id, conn, substrate)?;
+    let asset = lookup_gho_debt_asset(ev, market_id, substrate)?;
     let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
     let balance_increase = ev.balance_increase.unwrap_or_default();
     let index = ev.index.unwrap_or_default();
@@ -1717,7 +1645,6 @@ fn build_gho_chunk_event(
         None
     };
     let position_id = resolve_position_id(
-        conn,
         market_id,
         ScaledTokenPosition::Debt,
         ev.user_address,
@@ -1748,7 +1675,7 @@ fn build_gho_chunk_event(
     // of this transaction established (including a bad-debt reset's zeroed
     // balance), and the reduction below reads it.
     let (prev_balance, prev_index) = {
-        let (balance, index_opt) = out.position_facts(substrate, conn, subject)?;
+        let (balance, index_opt) = out.position_facts(substrate, subject)?;
         (balance, index_opt.unwrap_or(index))
     };
     let effective_discount =
@@ -1815,12 +1742,11 @@ fn build_gho_chunk_event(
 fn lookup_gho_debt_asset(
     ev: &ScaledTokenEvent,
     market_id: i64,
-    conn: &Connection,
     substrate: &mut ChunkSubstrate,
 ) -> Result<degenbot_db::AssetRow, ProcessTxError> {
     let token_addr_str = addr_to_hex(ev.token_address);
     substrate
-        .lookup_asset_row(conn, market_id, "v_token", &token_addr_str)?
+        .lookup_asset_row("v_token", &token_addr_str)?
         .ok_or_else(|| {
             ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
                 "no GHO vToken asset for token {token_addr_str} in market {market_id}"
@@ -1841,7 +1767,6 @@ fn lookup_gho_debt_asset(
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
     out: &mut DeltaSink<'_>,
@@ -1892,19 +1817,14 @@ fn dispatch_liquidation(
         );
         if is_debt && gho_ctx.is_bad_debt(ev.user_address) {
             let token_addr_str = addr_to_hex(ev.token_address);
-            let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
-                conn,
-                market_id,
-                &token_addr_str,
-                "v_token",
-            )?
-            .ok_or_else(|| {
-                ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
-                    "no vToken asset for token {token_addr_str} in market {market_id}"
-                )))
-            })?;
+            let asset = substrate
+                .lookup_asset_row("v_token", &token_addr_str)?
+                .ok_or_else(|| {
+                    ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                        "no vToken asset for token {token_addr_str} in market {market_id}"
+                    )))
+                })?;
             let position_id = resolve_position_id(
-                conn,
                 market_id,
                 ScaledTokenPosition::Debt,
                 ev.user_address,
@@ -1923,7 +1843,6 @@ fn dispatch_liquidation(
                 ev.log_index,
                 out,
                 substrate,
-                conn,
             )?;
             continue;
         }
@@ -1948,8 +1867,8 @@ fn dispatch_liquidation(
                 }
             }
         }
-        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-        out.emit(substrate, conn, resolved)?;
+        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, substrate)?;
+        out.emit(substrate, resolved)?;
     }
     Ok(())
 }
@@ -1963,7 +1882,6 @@ fn dispatch_liquidation(
 fn dispatch_deficit_coverage(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
@@ -2030,10 +1948,10 @@ fn dispatch_deficit_coverage(
                 None => ev.index.unwrap_or_default(),
             };
             let resolved =
-                build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn, substrate)?;
+                build_scaled_event_chunk_event(ev, op, raw_amount, market_id, substrate)?;
             let resolved =
                 override_transfer_with_paired_bt(resolved, bt_pair, raw_amount, transfer_index);
-            out.emit(substrate, conn, resolved)?;
+            out.emit(substrate, resolved)?;
         }
     }
     for ev in &scaled {
@@ -2042,9 +1960,8 @@ fn dispatch_deficit_coverage(
             // the burn's `amount` (the raw value) + `index` (the collateral-burn
             // strategy). Skip enrichment validation — the burn includes interest
             // accrued between the transfer + the burn.
-            let resolved =
-                build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn, substrate)?;
-            out.emit(substrate, conn, resolved)?;
+            let resolved = build_scaled_event_chunk_event(ev, op, ev.amount, market_id, substrate)?;
+            out.emit(substrate, resolved)?;
         }
     }
     Ok(())
@@ -2059,7 +1976,6 @@ fn dispatch_deficit_coverage(
 pub(crate) fn dispatch_mint_to_treasury(
     op: &Operation,
     market_id: i64,
-    conn: &Connection,
     out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
@@ -2073,7 +1989,7 @@ pub(crate) fn dispatch_mint_to_treasury(
     for ev in &scaled {
         let token_addr_str = addr_to_hex(ev.token_address);
         let asset = substrate
-            .lookup_asset_row(conn, market_id, "a_token", &token_addr_str)?
+            .lookup_asset_row("a_token", &token_addr_str)?
             .ok_or_else(|| {
                 ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
                     "no aToken asset for {token_addr_str} in market {market_id}"
@@ -2096,7 +2012,6 @@ pub(crate) fn dispatch_mint_to_treasury(
         };
         let result = processor.process_collateral_mint(&event_data)?;
         let position_id = resolve_position_id(
-            conn,
             market_id,
             ScaledTokenPosition::Collateral,
             ev.user_address,
@@ -2106,7 +2021,6 @@ pub(crate) fn dispatch_mint_to_treasury(
         )?;
         out.emit(
             substrate,
-            conn,
             ResolvedDelta {
                 effect: DeltaEffect::ScaledBalance {
                     subject: PositionSubject {
@@ -2131,8 +2045,7 @@ pub(crate) fn dispatch_mint_to_treasury(
 /// Resolve a `position_id` via `get_or_create_*_position_on_conn`. First
 /// resolves the `user_id` via `get_or_create_user_on_conn`.
 fn resolve_position_id(
-    conn: &Connection,
-    market_id: i64,
+    _market_id: i64,
     position: ScaledTokenPosition,
     user_address: Address,
     asset_id: i64,
@@ -2141,20 +2054,15 @@ fn resolve_position_id(
 ) -> Result<i64, ProcessTxError> {
     let user_addr_str = addr_to_hex(user_address);
     let user_id = substrate.user_id_or_create(
-        conn,
-        market_id,
         &user_addr_str,
         0, // gho_discount — effective discount resolution lives in the GHO-discount context
     )?;
     let position_id = match position {
-        ScaledTokenPosition::Collateral => substrate.position_id_or_create(
-            conn,
-            ScaledTokenPosition::Collateral,
-            user_id,
-            asset_id,
-        )?,
+        ScaledTokenPosition::Collateral => {
+            substrate.position_id_or_create(ScaledTokenPosition::Collateral, user_id, asset_id)?
+        }
         ScaledTokenPosition::Debt => {
-            substrate.position_id_or_create(conn, ScaledTokenPosition::Debt, user_id, asset_id)?
+            substrate.position_id_or_create(ScaledTokenPosition::Debt, user_id, asset_id)?
         }
     };
     Ok(position_id)
@@ -2181,6 +2089,11 @@ mod tests {
     /// A fresh in-memory write-capable DB seeded with a single market
     /// (id 1, chain 1) + a single asset (id 1, aToken rev 1) + its erc20
     /// parents. Mirrors run.rs's `fresh_db` test harness.
+    fn fixture_seed(conn: &rusqlite::Connection, users: &[Address]) -> ChunkSubstrate {
+        let _ = users;
+        crate::updater::run::seed::ChunkSeed::for_tests_users(conn, 1, 1, users).into_substrate()
+    }
+
     fn fresh_db_with_asset() -> DegenbotDb {
         let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
         {
@@ -2625,11 +2538,10 @@ mod tests {
         dispatch_interest_accrual(
             &op,
             1,
-            &conn,
             Some(vtoken),
             &gho_ctx,
             &mut out,
-            &mut ChunkSubstrate::lazy(1),
+            &mut fixture_seed(&conn, &[user]),
         )
         .expect("GHO interest accrual must not defer");
         assert_eq!(
@@ -2872,8 +2784,13 @@ mod tests {
         let conn = db.lock();
         let mut view = ProjectionView::new();
         let mut out = DeltaSink::new(fixture_tx(), &mut view);
-        dispatch_deficit_coverage(&op, 1, &conn, &mut out, &mut ChunkSubstrate::lazy(1))
-            .expect("DeficitCoverage dispatch must not defer");
+        dispatch_deficit_coverage(
+            &op,
+            1,
+            &mut out,
+            &mut fixture_seed(&conn, &[user, recipient]),
+        )
+        .expect("DeficitCoverage dispatch must not defer");
 
         // Expectation: exactly TWO chunk_events — ONE `ScaledTokenTransfer`
         // (the ERC20 paired with the BT — the BT-supplied scaled amount),
@@ -3148,7 +3065,8 @@ mod tests {
         // The pattern context detects COMBINED_BURN.
         let conn = db.lock();
         let mut liq_patterns =
-            build_liquidation_patterns(&conn, 1, &operations, &mut ChunkSubstrate::lazy(1));
+            build_liquidation_patterns(1, &operations, &mut fixture_seed(&conn, &[user]))
+                .expect("the fixture seed holds both debt reserves");
         assert_eq!(
             liq_patterns.get_pattern(user, vtoken),
             Some(LiquidationPattern::CombinedBurn),
@@ -3173,21 +3091,19 @@ mod tests {
         dispatch_liquidation(
             &op0,
             1,
-            &conn,
             &gho_ctx,
             &mut liq_patterns,
             &mut out,
-            &mut ChunkSubstrate::lazy(1),
+            &mut fixture_seed(&conn, &[user]),
         )
         .expect("op0 dispatch");
         dispatch_liquidation(
             &op1,
             1,
-            &conn,
             &gho_ctx,
             &mut liq_patterns,
             &mut out,
-            &mut ChunkSubstrate::lazy(1),
+            &mut fixture_seed(&conn, &[user]),
         )
         .expect("op1 dispatch");
 
@@ -3309,11 +3225,11 @@ mod tests {
         };
         let conn = db.lock();
         let liq_patterns = build_liquidation_patterns(
-            &conn,
             1,
             std::slice::from_ref(&op),
-            &mut ChunkSubstrate::lazy(1),
-        );
+            &mut fixture_seed(&conn, &[user]),
+        )
+        .expect("the fixture seed holds both debt reserves");
         // The WBTC group exists (1 liquidation, 1 burn would be attached if it
         // matched) — but the GHO burn must NOT have created a group.
         assert_eq!(
@@ -3461,11 +3377,10 @@ mod tests {
         dispatch_liquidation(
             &op,
             1,
-            &conn,
             &gho_ctx,
             &mut liq_patterns,
             &mut out,
-            &mut ChunkSubstrate::lazy(1),
+            &mut fixture_seed(&conn, &[user]),
         )
         .expect("dispatch");
 
@@ -3651,7 +3566,7 @@ mod tests {
         );
 
         let conn = db.lock();
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = fixture_seed(&conn, &[user]);
         // The read-side snapshot: the substrate holds the tuple as of the reset
         // event (balance before the write-off, index before the burn) because
         // the chunk's writes land only after `process_transaction` returns —
@@ -3669,7 +3584,6 @@ mod tests {
         dispatch_operation(
             &op_liq,
             1,
-            &conn,
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
@@ -3680,7 +3594,6 @@ mod tests {
         dispatch_operation(
             &op_borrow,
             1,
-            &conn,
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
@@ -3822,7 +3735,7 @@ mod tests {
         );
 
         let conn = db.lock();
-        let mut substrate = ChunkSubstrate::lazy(1);
+        let mut substrate = fixture_seed(&conn, &[user]);
         substrate.record_position_write(
             ScaledTokenPosition::Debt,
             gho_pid,
@@ -3836,7 +3749,6 @@ mod tests {
         dispatch_operation(
             &op_liq,
             1,
-            &conn,
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
@@ -3847,7 +3759,6 @@ mod tests {
         dispatch_operation(
             &op_repay,
             1,
-            &conn,
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
@@ -3966,11 +3877,10 @@ mod tests {
         dispatch_liquidation(
             &op,
             1,
-            &conn,
             &GhoDiscountContext::new(&[], &HashMap::new(), None, fixture_pool()),
             &mut liq_patterns,
             &mut out,
-            &mut ChunkSubstrate::lazy(1),
+            &mut fixture_seed(&conn, &[user]),
         )
         .expect("dispatch");
         // The Mint must be dispatched as a BURN sized by debtToCover (= raw_amount
@@ -4128,7 +4038,7 @@ mod tests {
         let conn = db.lock();
         let mut view = ProjectionView::new();
         let mut out = DeltaSink::new(fixture_tx(), &mut view);
-        dispatch_standard(&op, 1, &conn, &mut out, &mut ChunkSubstrate::lazy(1)).expect("dispatch");
+        dispatch_standard(&op, 1, &mut out, &mut fixture_seed(&conn, &[user])).expect("dispatch");
         assert_eq!(out.deltas().len(), 1, "the single Mint must emit one delta");
         match out.deltas()[0].effect() {
             DeltaEffect::ScaledBalance {
@@ -4311,6 +4221,45 @@ mod tests {
         assert!(
             !is_bad_debt(&logs),
             "only this market's Pool reports its own deficit"
+        );
+    }
+
+    /// A liquidation whose debt reserve the seed does not hold refuses the
+    /// transaction: silently skipping the aggregation would dispatch N
+    /// liquidations where the chain emitted one aggregated burn (ADR-105 D4).
+    #[test]
+    fn build_liquidation_patterns_propagates_a_seed_hole() {
+        let db = fresh_db_with_asset();
+        let conn = db.lock();
+        let unknown_reserve = Address::from([0xD5; 20]);
+        let user = Address::from([0x4A; 20]);
+        let call = Box::leak(Box::new(make_liquidation_call_log(
+            17,
+            Address::from([0xC0; 20]),
+            unknown_reserve,
+            user,
+            U256::from(1_000u64),
+        )));
+        let operations = vec![Operation {
+            operation_id: 0,
+            operation_type: OperationType::Liquidation,
+            pool_revision: 9,
+            pool_event: Some(call),
+            scaled_events: Vec::new(),
+            transfer_events: Vec::new(),
+            balance_transfer_events: Vec::new(),
+            minted_to_treasury_amount: None,
+            debt_to_cover: Some(U256::from(1_000u64)),
+            validation_errors: Vec::new(),
+        }];
+        let mut substrate = crate::updater::run::seed::ChunkSeed::load(&conn, 1, 1, &[], &[])
+            .expect("the fixture market's families load")
+            .into_substrate();
+        let err = build_liquidation_patterns(1, &operations, &mut substrate)
+            .expect_err("the seed holds no asset row for this debt reserve");
+        assert!(
+            matches!(err, ProcessTxError::IncompleteSeed(_)),
+            "the refusal keeps its typed variant: {err:?}"
         );
     }
 }

@@ -569,6 +569,7 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     }
 
     // ── the drift-gated replays (one serialized pass) ────────────────────
+    let mut gho_run = None;
     for expect in WINDOWS {
         let run = replay_and_gate(expect.name, expect);
         assert_eq!(
@@ -603,7 +604,42 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
             "{}: traces are acquired only for the transactions whose legs are named by a call",
             expect.name
         );
+        if expect.name == "w4_aave_gho_deprecation_then_discount_read_in_chunk" {
+            gho_run = Some(run);
+        }
     }
+
+    // ── the sealed pre-upgrade lineage survives the multi-chunk span ─────
+    //
+    // Every leg the span upgrades keeps BOTH generations in the lineage: the
+    // seed row for the revision the chunk began under (sealed by the event that
+    // replaced it) and the seed/event rows for the revision it now reads under.
+    // A migration that drops the pre-upgrade rows loses the replacement history
+    // ADR-105 D6 requires a checkpoint to state, so this count is an acceptance
+    // pin, not a convenience.
+    let gho_run = gho_run.expect("the GHO/discount window replayed");
+    assert_eq!(
+        scalar(
+            &gho_run.db_path,
+            "SELECT COUNT(*) FROM aave_v3_generations s \
+             WHERE s.activation_kind = 'seed' AND s.revision = 1 \
+               AND EXISTS (SELECT 1 FROM aave_v3_generations e \
+                           WHERE e.market_id = s.market_id AND e.entity = s.entity \
+                             AND e.activation_kind = 'event' AND e.revision != s.revision)"
+        ),
+        96,
+        "every collateral and debt leg the span upgrades keeps its pre-upgrade seed row \
+         beside the event that replaced it"
+    );
+    assert_eq!(
+        scalar(
+            &gho_run.db_path,
+            "SELECT COUNT(*) FROM aave_v3_generations \
+             WHERE activation_kind = 'seed' AND revision = 3"
+        ),
+        95,
+        "the post-upgrade generation is recorded for the same legs"
+    );
 
     // ── control: no Upgraded in the span, revisions unchanged ────────────
     let control = WINDOWS[0].name;

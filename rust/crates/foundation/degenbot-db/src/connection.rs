@@ -218,6 +218,16 @@ impl DegenbotDb {
     pub fn lock(&self) -> parking_lot::MutexGuard<'_, Connection> {
         self.conn.lock()
     }
+
+    /// The handle's guard when no one holds it.
+    ///
+    /// The non-blocking sibling of [`Self::lock`]: a caller that must prove it
+    /// holds no guard at a given moment (a resolution stage parked on an RPC
+    /// await) asks here instead of waiting.
+    #[must_use]
+    pub fn try_lock(&self) -> Option<parking_lot::MutexGuard<'_, Connection>> {
+        self.conn.try_lock()
+    }
 }
 
 #[cfg(test)]

@@ -306,12 +306,13 @@ impl ConfigurationEffect {
     ///
     /// # Errors
     ///
-    /// Returns [`degenbot_db::DbError`] on any substrate failure.
+    /// Returns [`degenbot_db::DbError`] on a substrate projection failure, or
+    /// the seed refusal when a `ReserveInitialized` effect names a reserve the
+    /// chunk's seed did not intern.
     pub fn project(
         &self,
         substrate: &mut crate::updater::run::substrate::ChunkSubstrate,
-        conn: &rusqlite::Connection,
-    ) -> Result<(), degenbot_db::DbError> {
+    ) -> Result<(), ProjectionError> {
         match self {
             Self::PriceOracleUpdated {
                 market_id,
@@ -357,8 +358,15 @@ impl ConfigurationEffect {
                     });
                 }
             }
-            Self::ReserveInitialized { .. } => {
-                self.project_reserve_initialized(substrate, conn)?;
+            Self::ReserveInitialized {
+                underlying_asset_id,
+                gho_link_token_id,
+                ..
+            } => {
+                substrate.project_reserve_identity(*underlying_asset_id)?;
+                if gho_link_token_id.is_some() {
+                    substrate.project_reserve_gho_link(*underlying_asset_id)?;
+                }
             }
             Self::GhoDiscountTokenUpdated {
                 new_discount_token, ..
@@ -367,7 +375,7 @@ impl ConfigurationEffect {
                 // denominated; the initial `None -> Some` link has no old
                 // generation to invalidate.
                 let replaced = substrate
-                    .gho_asset(conn)?
+                    .gho_asset()
                     .and_then(|gho| gho.v_gho_discount_token)
                     .is_some();
                 if replaced {
@@ -388,10 +396,14 @@ impl ConfigurationEffect {
             } => {
                 use crate::updater::run::substrate::StkAaveLeg;
                 if let Some(user_id) = from_user_id {
-                    substrate.project_stk_aave_leg(*user_id, *amount, StkAaveLeg::From)?;
+                    substrate
+                        .project_stk_aave_leg(*user_id, *amount, StkAaveLeg::From)
+                        .map_err(|error| ProjectionError::Substrate(error.to_string()))?;
                 }
                 if let Some(user_id) = to_user_id {
-                    substrate.project_stk_aave_leg(*user_id, *amount, StkAaveLeg::To)?;
+                    substrate
+                        .project_stk_aave_leg(*user_id, *amount, StkAaveLeg::To)
+                        .map_err(|error| ProjectionError::Substrate(error.to_string()))?;
                 }
             }
             Self::GhoDiscountRateStrategyUpdated { new_strategy, .. } => {
@@ -400,55 +412,6 @@ impl ConfigurationEffect {
                 });
             }
             _ => {}
-        }
-        Ok(())
-    }
-
-    /// Project a `ReserveInitialized` event: the reserve's identity is created
-    /// HERE, during resolution, so every later event of the chunk (and the
-    /// parse that follows) resolves the new asset, its aToken/vToken bindings
-    /// and its source. Persistence applies the same operation again,
-    /// idempotently, so a retry converges on one row.
-    fn project_reserve_initialized(
-        &self,
-        substrate: &mut crate::updater::run::substrate::ChunkSubstrate,
-        conn: &rusqlite::Connection,
-    ) -> Result<(), degenbot_db::DbError> {
-        let Self::ReserveInitialized {
-            market_id,
-            underlying_asset_id,
-            a_token_id,
-            a_token_revision,
-            v_token_id,
-            v_token_revision,
-            price_source,
-            gho_link_token_id,
-        } = self
-        else {
-            return Ok(());
-        };
-        let asset_row_id = degenbot_db::DegenbotDb::apply_reserve_initialized_on_conn(
-            conn,
-            *market_id,
-            *underlying_asset_id,
-            *a_token_id,
-            *a_token_revision,
-            *v_token_id,
-            *v_token_revision,
-            price_source.as_deref(),
-            *gho_link_token_id,
-        )?;
-        substrate.refresh_asset_row(conn, asset_row_id)?;
-        if gho_link_token_id.is_some() {
-            substrate.project_gho(|gho| {
-                if let Ok(address) = conn.query_row(
-                    "SELECT address FROM erc20_tokens WHERE id = ?1",
-                    [v_token_id],
-                    |r| r.get::<_, String>(0),
-                ) {
-                    gho.v_token_address = Some(address);
-                }
-            });
         }
         Ok(())
     }

@@ -78,19 +78,17 @@ pub(super) async fn resolve_upgraded(
     ctx: &mut ChunkContext<'_>,
     decoded: &degenbot_decoders::aave_event_decoder::AaveV3UpgradedEvent,
 ) -> Result<ConfigurationEffect, ConfigDispatchError> {
-    let market_id = ctx.market_id();
-    let conn = ctx.conn();
     let proxy_str = checksum(&decoded.proxy_address);
     // 1. asset lookup: a_token first, then v_token.
     let a_asset = ctx
         .substrate_mut()
-        .lookup_asset_row(conn, market_id, "a_token", &proxy_str)?;
+        .lookup_asset_row("a_token", &proxy_str)?;
     let (asset_id, is_a_token) = if let Some(row) = a_asset {
         (row.id, true)
     } else {
         let v_asset = ctx
             .substrate_mut()
-            .lookup_asset_row(conn, market_id, "v_token", &proxy_str)?;
+            .lookup_asset_row("v_token", &proxy_str)?;
         let Some(row) = v_asset else {
             return Err(ConfigDispatchError::DecodeShape(format!(
                 "Upgraded: proxy {proxy_str} is neither a known aToken nor vToken \
@@ -120,7 +118,7 @@ pub(super) async fn resolve_upgraded(
         // same-tx `ReserveInitialized` at an earlier logIndex is visible), never
         // a per-tx snapshot. Read here (only the vToken path consults it) so an
         // aToken `Upgraded` never touches the GHO row.
-        let gho_asset = ctx.gho_asset()?;
+        let gho_asset = ctx.gho_asset();
         let matches_gho_vtoken = gho_asset
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())

@@ -1,69 +1,42 @@
-//! The chunk-level substrate cache: set-shaped prefetch + a
-//! write-overlay consulted before the prefetched indexes.
+//! The chunk-level relational state: the seed loader, the resolution read
+//! position, and the write overlay persistence advances.
 //!
-//! The aave chunk loop's per-event substrate reads (the asset-resolution
-//! JOINs, the `get_or_create_user`/`get_or_create_position` SELECT-then-INSERT
-//! chains, the per-apply balance reads, the per-tx GHO re-resolve, the
-//! per-parse POOL-revision read) issue ~100 single-row statements per chunk
-//! against a working set of a handful of entities. This cache collapses them
-//! to a handful of set-shaped `SELECT ... IN` prefetches at chunk start plus
-//! in-memory map hits.
+//! [`ChunkSubstrate`] carries three capability levels:
+//!
+//! - **Seed loading** ([`ChunkSubstrate::load_market_families`],
+//!   [`ChunkSubstrate::intern_reserves`],
+//!   [`ChunkSubstrate::load_identity_families`],
+//!   [`ChunkSubstrate::intern_identities`]): synchronous, on the caller's
+//!   connection, BEFORE the chunk's write transaction opens. Every fact
+//!   resolution reads is loaded here, and every identity resolution may name
+//!   is interned here, so the rows are inert until a delta references them
+//!   (ADR-105 D4).
+//! - **Resolution reads** ([`ChunkSubstrate::lookup_asset_row`],
+//!   [`ChunkSubstrate::user_id_or_create`],
+//!   [`ChunkSubstrate::position_id_or_create`],
+//!   [`ChunkSubstrate::gho_asset`], ...): no `Connection`, no SQL. A fact the
+//!   seed does not hold is an [`IncompleteChunkSeed`] refusal naming the
+//!   market and the entity — never a lazy query.
+//! - **Persistence** (`*_for_apply`, `refresh_asset_row`, `require_asset`,
+//!   `flush_reserve_data_updates`, `apply_reserve_used_as_collateral`): the
+//!   apply-side reads and writes, on the chunk's write transaction.
 //!
 //! # The read-your-own-writes contract (chunk atomicity)
 //!
-//! The chunk loop applies each log-transaction's events to `conn` BEFORE the
-//! next log-transaction's parse reads (`process.rs` step (f)), and the
-//! config dispatch applies each event intra-dispatch — both under the ONE
-//! chunk `Transaction`. A prefetch snapshot taken at chunk start reflects all
-//! COMMITTED state; reads for log-transaction N may consult the cache ONLY
-//! where the cached state reflects every write of transactions < N. This
-//! struct guarantees that by routing EVERY cache-visible write through an
-//! overlay update at the apply site (the dispatch arms in `apply.rs` +
-//! `config_dispatch.rs`):
-//!
-//! - **asset rows** — the `ReserveInitialized` apply re-reads the fresh row
-//!   (one projection SELECT) and re-binds all three address indexes; the
-//!   `Upgraded` apply bumps the cached revision in place (the address indexes
-//!   point at the row id, so every lookup re-reads the fresh revision).
-//! - **users / positions / collateral configs** — the get-or-create shells
-//!   record each INSERT's row id (with its zero defaults) so the next read —
-//!   this log-transaction or the next — is a map hit, byte-exact with what
-//!   the SQL probe would have returned.
-//! - **position balances** — every scaled-token apply records the new
-//!   `(balance, last_index)` it just wrote; the next read (the per-tx GHO
-//!   the next apply's read-modify-write) is served from
-//!   the overlay, not from a stale prefetch.
-//! - **the GHO row** — every write touching `aave_gho_tokens` (the
-//!   `ReserveInitialized` GHO link, the discount-config applies, the
-//!   deprecation clear) marks the cached row dirty; the next per-tx fetch
-//!   re-queries `conn` once and re-caches. Reads NEVER serve a stale GHO row
-//!   across a write.
-//! - **contract revisions** — the revision applies/inserts update the cached
-//!   `(market, name)` revision; the parser's per-parse POOL read sees the
-//!   prior log-transaction's `ContractRevisionUpdated` exactly as the SQL
-//!   probe would.
-//!
-//! Reads with NO cache-visible writer (the discount pre-pass's
-//! `gho_discount` read, the refresh pass's post-apply context read, the
-//! erc20-token upserts) stay on `conn` — direct SQL against the transaction
-//! is always correct and stays out of the cache's blast radius.
+//! Resolution advances this state as it reduces each event — the asset
+//! re-binds (`ReserveInitialized`), the revision bumps (`Upgraded`), the
+//! contract roles, the GHO row, the users' discount columns, the position
+//! balances — so transaction N+1's reads see exactly what transaction N
+//! established, with no SQL between them. Persistence then applies the deltas
+//! in the chunk's one transaction and records the same writes back here.
 //!
 //! # The one deferred write class
 //!
-//! `ReserveDataUpdated` writes (`UPDATE aave_v3_assets SET liquidity_rate =
-//! ..., last_update_block = ...`) have no mid-chunk reader (the asset
-//! lookups read only id/revisions/addresses; the verification gate runs
-//! post-commit; the position math uses the EVENT's index), so the applies
-//! buffer into `ChunkSubstrate::reserve_data_updates` and flush as ONE
-//! multi-row `UPDATE ... FROM (VALUES ...)` at end-of-chunk — the
-//! `liquidity_updater.rs` sorted multi-row idiom (deterministic asset-id
-//! order; the golden-captured ledger replays this statement). Same-asset
-//! events collapse to their LAST values (each event overwrites all five
-//! columns — the collapsed write is the same end state). The buffer is
-//! dropped with the struct on rollback (chunk atomicity: the flush sits
-//! inside the
-//! chunk's transaction, so an error at flush reverts the chunk exactly as
-//! the per-event write would have).
+//! `ReserveDataUpdated` writes buffer into
+//! [`ChunkSubstrate::buffer_reserve_data_update`] and flush as ONE sorted
+//! multi-row `UPDATE ... FROM (VALUES ...)` at end-of-chunk (no mid-chunk
+//! reader of those columns; the golden ledger replays the statement). The
+//! buffer is dropped with the struct on rollback.
 
 use std::collections::{HashMap, HashSet};
 
@@ -72,6 +45,7 @@ use degenbot_db::{AaveGhoAsset, AssetRow, DbError, DegenbotDb, ScaledTokenPositi
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
+use super::seed::{ChunkReserve, IdentityDemands, IncompleteChunkSeed, SeedEntity};
 use crate::operations::TokenType;
 use crate::updater::operations_parser::addr_to_hex;
 
@@ -81,7 +55,7 @@ const SQLITE_MAX_VARIABLES: usize = 32_766;
 
 /// Which position table a cache key refers to (a `Hash`-capable mirror of
 /// [`ScaledTokenPosition`], which the substrate fns take).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum PositionTable {
     /// `aave_v3_collateral_positions`.
     Collateral,
@@ -107,11 +81,22 @@ impl PositionTable {
             Self::Debt => "aave_v3_debt_positions",
         }
     }
+
+    /// The seed refusal's name for this table.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Collateral => "collateral",
+            Self::Debt => "debt",
+        }
+    }
 }
 
 /// A cached position's balance state: `(balance, last_index)` — the same
 /// shape [`degenbot_db`'s balance reads] return.
 pub(crate) type PositionState = (U256, Option<U256>);
+
+/// The state a freshly interned position row carries.
+const FRESH_POSITION_STATE: PositionState = (U256::ZERO, None);
 
 /// Parse a decimal-`VARCHAR` `U256` value (the substrate's
 /// `parse_decimal_u256` shape — same error text).
@@ -146,28 +131,35 @@ pub(crate) struct UserProjection {
     pub(crate) stk_aave_balance: Option<U256>,
 }
 
-/// The chunk-level substrate cache. Built once per chunk inside the chunk's
-/// `Transaction`; threaded `&mut` through the per-tx parse + the apply
-/// dispatch (single-threaded under `block_on`'s single-thread poll).
+/// The chunk's complete relational state.
 #[derive(Debug)]
 pub struct ChunkSubstrate {
+    market_id: i64,
     chain_id: i64,
     /// `aave_v3_assets` rows by row id — the asset overlay's source of truth
     /// (the address indexes point here, so a revision bump in place is
     /// visible to every lookup).
     assets_by_id: HashMap<i64, AssetRow>,
-    /// `(lookup kind, address)` → asset id; `None` = probed-absent (the
-    /// negative cache that stands in for the SQL probe's `Ok(None)`).
+    /// `(lookup kind, address)` → asset id; `None` = proven-absent (every
+    /// address the chunk's logs can name is indexed, so absence is a fact the
+    /// seed states rather than a query it defers).
     assets_by_address: HashMap<(&'static str, String), Option<i64>>,
-    /// `(market_id, address)` → the user's projected row (positive-only: a
-    /// miss for a candidate address — the get-or-create INSERT runs without
-    /// the SQL probe; a key ABSENT from the map means probe-then-insert,
-    /// exactly today's get-or-create).
+    /// `(market_id, address)` → the user's CHUNK-START row (`None` = proven
+    /// absent). Interning a demanded user commits its row outside the chunk
+    /// transaction but leaves this entry `None` until the resolution that asks
+    /// for the id, so a transaction-start discount read still sees the state the
+    /// chunk began under.
     users: HashMap<(i64, String), Option<UserProjection>>,
+    /// `(market_id, address)` → the id of a user row interned for a demand.
+    interned_users: HashMap<(i64, String), i64>,
+    /// `user id` → `(market_id, address)` for every user this chunk can name.
+    users_by_id: HashMap<i64, (i64, String)>,
     /// `(table, user_id, asset_id)` → position row id.
     positions_by_key: HashMap<(PositionTable, i64, i64), i64>,
     /// `(table, position id)` → `(balance, last_index)`.
     position_state: HashMap<(PositionTable, i64), PositionState>,
+    /// `(table, position id)` → the user the row belongs to.
+    position_users: HashMap<(PositionTable, i64), i64>,
     /// `(user_id, asset_id)` → `aave_v3_user_collateral_configs.id`.
     collateral_configs: HashMap<(i64, i64), i64>,
     /// `(market_id, contract name)` → revision (the decoded
@@ -176,68 +168,85 @@ pub struct ChunkSubstrate {
     contract_revisions: HashMap<(i64, String), Option<u32>>,
     /// `(market_id, contract name)` → the role's current endpoint address.
     contract_addresses: HashMap<(i64, String), String>,
-    /// The chain's GHO row (the per-tx re-resolve). `gho_queried == false`
-    /// means the cached value is absent/stale — the next read re-queries.
+    /// The chain's GHO row as the chunk starts (advanced in place by the
+    /// overlay's projections).
     gho: Option<AaveGhoAsset>,
-    gho_queried: bool,
+    /// `(chain_id, address)` → ERC-20 row id (the interned identities).
+    erc20_ids: HashMap<(i64, String), i64>,
+    /// `underlying address` → the interned reserve identity.
+    reserves: HashMap<String, ChunkReserve>,
+    /// `underlying erc20 id` → the reserve's `aave_v3_assets.id`.
+    reserves_by_underlying_id: HashMap<i64, i64>,
+    /// `aToken or vToken address` → the reserve's scaled leg (table + asset id).
+    reserves_by_token: HashMap<String, (PositionTable, i64)>,
+    /// The CHUNK-START asset revisions, `(a_token, v_token)` by asset id: the
+    /// sealed generations the chunk begins under, captured before the seed's
+    /// interning re-points any row.
+    seed_asset_revisions: HashMap<i64, (u32, u32)>,
+    /// The CHUNK-START contract revisions by role name, captured before the
+    /// seed's interning.
+    seed_contract_revisions: HashMap<String, Option<u32>>,
+    /// Whether this substrate is an in-crate fixture seed whose market was
+    /// loaded whole: a miss then states the market's own absence instead of a
+    /// seed hole. Production seeds ([`super::seed::ChunkSeed::load`]) never set
+    /// it, so a real resolution miss still refuses.
+    #[cfg(test)]
+    pub(crate) fixture_complete: bool,
     /// The deferred `ReserveDataUpdated` writes: asset id → the LAST event's
     /// `(liquidity_rate, variable_borrow_rate, liquidity_index,
     /// variable_borrow_index, block)`. Flushed as one sorted multi-row
     /// `UPDATE ... FROM (VALUES ...)` at end-of-chunk.
     reserve_data_updates: HashMap<i64, (U256, U256, U256, U256, i64)>,
 }
-
 impl ChunkSubstrate {
-    /// An empty, lazily-probing cache (no prefetch). The batched-apply
-    /// entrypoint and empty chunks start here; every read falls through to
-    /// its SQL probe once and caches.
+    /// An empty, lazily-probing cache. The batched-apply entrypoint starts here;
+    /// the chunk loop always starts from a loaded [`super::seed::ChunkSeed`].
     pub(crate) fn lazy(chain_id: i64) -> Self {
         Self {
+            market_id: 0,
             chain_id,
             assets_by_id: HashMap::new(),
             assets_by_address: HashMap::new(),
             users: HashMap::new(),
+            interned_users: HashMap::new(),
+            users_by_id: HashMap::new(),
             positions_by_key: HashMap::new(),
             position_state: HashMap::new(),
+            position_users: HashMap::new(),
             collateral_configs: HashMap::new(),
             contract_revisions: HashMap::new(),
             contract_addresses: HashMap::new(),
             gho: None,
-            gho_queried: false,
+            erc20_ids: HashMap::new(),
+            reserves: HashMap::new(),
+            reserves_by_underlying_id: HashMap::new(),
+            reserves_by_token: HashMap::new(),
+            seed_asset_revisions: HashMap::new(),
+            seed_contract_revisions: HashMap::new(),
+            #[cfg(test)]
+            fixture_complete: false,
             reserve_data_updates: HashMap::new(),
         }
     }
 
-    /// Prefetch the chunk's touched entity sets in a handful of set-shaped
-    /// `SELECT ... IN` statements (plus the market-scoped asset/contract/GHO
-    /// reads — a market's reserve set is tens of rows):
-    ///
-    /// - the market's `aave_v3_assets` rows (the full six-column projection
-    ///   the lookup fns return), indexed by id + all three address columns;
-    /// - the candidate users (the chunk's topic-derived address superset —
-    ///   the same extraction `process_chunk_on_conn` reports as
-    ///   `touched_user_addresses`) + their positions + their collateral
-    ///   configs;
-    /// - the market's contract revisions + the chain's GHO row.
-    ///
-    #[expect(clippy::too_many_lines)] // the seven set-shaped prefetches, one body
-    /// `candidate_user_addresses` MUST be checksummed (`addr_to_hex`) — the
-    /// address columns use BINARY collation (the duplicate-user parity guard).
+    // ── seed loading (synchronous, before the chunk transaction opens) ──
+
+    /// Load the market-scoped relational families: the market's asset rows (the
+    /// full six-column projection the lookup fns return, indexed by id + all
+    /// three address columns), the market's contract roles, and the chain's GHO
+    /// row.
     ///
     /// # Errors
     ///
     /// Returns [`DbError`] on any prefetch query failure.
-    pub(crate) fn prefetch_on_conn(
+    pub(crate) fn load_market_families(
+        &mut self,
         conn: &Connection,
         market_id: i64,
         chain_id: i64,
-        candidate_user_addresses: &[String],
-        asset_candidate_addresses: &[String],
-    ) -> Result<Self, DbError> {
-        let mut cache = Self::lazy(chain_id);
-
-        // (1) the market's asset rows — the EXACT projection the substrate
-        //     lookups return (column order + NULL-revision decode included).
+    ) -> Result<(), DbError> {
+        self.market_id = market_id;
+        self.chain_id = chain_id;
         let mut stmt = conn.prepare(
             "SELECT a.id, a.a_token_revision, a.v_token_revision, \
                 t_underlying.address AS underlying, t_a.address AS a_token, t_v.address AS v_token \
@@ -250,30 +259,10 @@ impl ChunkSubstrate {
         let mut rows = stmt.query(rusqlite::params![market_id])?;
         while let Some(row) = rows.next()? {
             let asset = decode_asset_row(row)?;
-            cache.index_asset(asset);
+            self.seed_asset_revisions
+                .insert(asset.id, (asset.a_token_revision, asset.v_token_revision));
+            self.index_asset(asset);
         }
-
-        // Negative-cache the candidate addresses against the asset indexes:
-        // the market's asset rows are the only JOIN rows a lookup with
-        // this market_id can return, so a candidate address absent from the
-        // indexes is a proven SQL `Ok(None)` — cached per kind, zero
-        // statements. The candidate set covers the parse-time askings:
-        // topic words (users/liquidation assets) + log emitters (the
-        // scaled-token classification).
-        for addr in asset_candidate_addresses {
-            for kind in [
-                ASSET_KIND_UNDERLYING,
-                ASSET_KIND_A_TOKEN,
-                ASSET_KIND_V_TOKEN,
-            ] {
-                cache
-                    .assets_by_address
-                    .entry((kind, addr.clone()))
-                    .or_insert(None);
-            }
-        }
-
-        // (2) the market's contract roles: revision + endpoint address.
         let mut stmt = conn.prepare(
             "SELECT name, revision, address FROM aave_v3_contracts WHERE market_id = ?1",
         )?;
@@ -281,42 +270,132 @@ impl ChunkSubstrate {
         while let Some(row) = rows.next()? {
             let name: String = row.get(0)?;
             let address: String = row.get(2)?;
-            cache
-                .contract_addresses
+            self.contract_addresses
                 .insert((market_id, name.clone()), address);
             let revision: Option<i64> = row.get(1)?;
-            cache.contract_revisions.insert(
-                (market_id, name),
-                revision.map(|v| u32::try_from(v).unwrap_or(0)),
+            let revision = revision.map(|v| u32::try_from(v).unwrap_or(0));
+            self.seed_contract_revisions.insert(name.clone(), revision);
+            self.contract_revisions.insert((market_id, name), revision);
+        }
+        self.gho = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
+        Ok(())
+    }
+
+    /// Record the candidate addresses the chunk's logs can name as
+    /// proven-absent asset lookups (the market's asset rows are the only JOIN
+    /// rows a lookup with this market id can return, so an address outside them
+    /// is a fact, not a deferred query).
+    pub(crate) fn cache_asset_absences(&mut self, addresses: &[String]) {
+        for address in addresses {
+            for kind in [
+                ASSET_KIND_UNDERLYING,
+                ASSET_KIND_A_TOKEN,
+                ASSET_KIND_V_TOKEN,
+            ] {
+                self.assets_by_address
+                    .entry((kind, address.clone()))
+                    .or_insert(None);
+            }
+        }
+    }
+
+    /// Intern the ERC-20 rows and the asset row of every reserve the chunk
+    /// initializes, so resolution names ids the database already holds
+    /// (ADR-105 D4: interning is synchronous and outside the chunk transaction).
+    ///
+    /// The interned reserve is deliberately NOT indexed as an address
+    /// resolution can see: a configuration event that precedes the reserve's own
+    /// `ReserveInitialized` in the same transaction still observes the reserve
+    /// as absent, exactly as it did before the row existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on any interning write failure.
+    pub(crate) fn intern_reserves(
+        &mut self,
+        conn: &Connection,
+        chain_id: i64,
+        reserves: &[super::seed::ReserveFacts],
+    ) -> Result<(), DbError> {
+        let mut linked_gho = false;
+        for facts in reserves {
+            let mut ids = [0_i64; 3];
+            let tokens = [facts.underlying, facts.a_token, facts.v_token];
+            for (index, (token, metadata)) in tokens.iter().zip(facts.metadata.iter()).enumerate() {
+                let id = DegenbotDb::get_or_create_erc20_token_on_conn(
+                    conn,
+                    chain_id,
+                    &addr_to_hex(*token),
+                    metadata.0.as_deref(),
+                    metadata.1.as_deref(),
+                    metadata.2,
+                )?;
+                self.erc20_ids.insert((chain_id, addr_to_hex(*token)), id);
+                ids[index] = id;
+            }
+            let [underlying_id, a_token_id, v_token_id] = ids;
+            let underlying_str = addr_to_hex(facts.underlying);
+            let gho_link_token_id = self
+                .gho
+                .as_ref()
+                .filter(|gho| gho.gho_token_address.eq_ignore_ascii_case(&underlying_str))
+                .map(|gho| gho.id);
+            let asset_id = DegenbotDb::apply_reserve_initialized_on_conn(
+                conn,
+                self.market_id,
+                underlying_id,
+                a_token_id,
+                facts.a_token_revision,
+                v_token_id,
+                facts.v_token_revision,
+                None,
+                gho_link_token_id,
+            )?;
+            if gho_link_token_id.is_some() {
+                linked_gho = true;
+            }
+            self.reserves_by_underlying_id
+                .insert(underlying_id, asset_id);
+            self.reserves_by_token.insert(
+                addr_to_hex(facts.a_token),
+                (PositionTable::Collateral, asset_id),
+            );
+            self.reserves_by_token
+                .insert(addr_to_hex(facts.v_token), (PositionTable::Debt, asset_id));
+            self.reserves.insert(
+                underlying_str,
+                super::seed::ChunkReserve {
+                    facts: facts.clone(),
+                    underlying_id,
+                    a_token_id,
+                    v_token_id,
+                    asset_id,
+                },
             );
         }
-
-        // (3) the chain's GHO row.
-        cache.gho = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, chain_id)?;
-        cache.gho_queried = true;
-
-        // (4..7) the candidate users + their positions + their collateral
-        // configs. Skipped when the chunk's logs carry no address topics —
-        // an empty `IN ()` is invalid SQL, and the lazy probes cover the
-        // (degenerate) reads anyway.
-        if candidate_user_addresses.is_empty() {
-            return Ok(cache);
+        if linked_gho {
+            self.gho = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, self.chain_id)?;
         }
-        // Sorted + deduped: the IN-list's ORDER defines the statement's
-        // bind-parameter shape, and the statement ledger is golden-captured —
-        // the list must not depend on hashbrown iteration order.
-        let candidates: Vec<&String> = {
-            let mut seen: HashSet<&String> = HashSet::new();
-            let mut out: Vec<&String> = Vec::new();
-            for addr in candidate_user_addresses {
-                if seen.insert(addr) {
-                    out.push(addr);
-                }
-            }
-            out.sort();
-            out
-        };
-        // (4) the candidate users.
+        Ok(())
+    }
+
+    /// Load the chunk's identity demands: the demanded users' chunk-start rows,
+    /// the positions both families hold for them, and their collateral configs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on any prefetch query failure.
+    #[expect(clippy::too_many_lines)]
+    pub(crate) fn load_identity_families(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        demands: &IdentityDemands,
+    ) -> Result<(), DbError> {
+        let candidates: Vec<&String> = demands.users.iter().collect();
+        if candidates.is_empty() {
+            return Ok(());
+        }
         let mut chunk_start = 0;
         while chunk_start < candidates.len() {
             let chunk_end = usize::min(chunk_start + SQLITE_MAX_VARIABLES - 1, candidates.len());
@@ -342,32 +421,23 @@ impl ChunkSubstrate {
                     .as_deref()
                     .map(parse_decimal_u256)
                     .transpose()?;
-                cache.users.insert(
-                    (market_id, address),
+                self.users.insert(
+                    (market_id, address.clone()),
                     Some(UserProjection {
                         id,
                         gho_discount,
                         stk_aave_balance,
                     }),
                 );
+                self.users_by_id.insert(id, (market_id, address));
             }
             chunk_start = chunk_end;
         }
-
-        // Negative-cache the absent candidates: the candidate set is a
-        // SUPERSET of the addresses the parse will ask get-or-create for,
-        // so an absent candidate is a proven DB absence — the INSERT runs
-        // without the probe (the INSERT's UNIQUE constraint stays the
-        // loud backstop).
         for addr in &candidates {
-            cache
-                .users
+            self.users
                 .entry((market_id, (*addr).clone()))
                 .or_insert(None);
         }
-
-        // (5)+(6) the candidates' positions (both tables) — with their
-        // balance state (the per-apply read-modify-write's seed).
         for table in [PositionTable::Collateral, PositionTable::Debt] {
             chunk_start = 0;
             while chunk_start < candidates.len() {
@@ -399,17 +469,13 @@ impl ChunkSubstrate {
                         parse_decimal_u256(&balance)?,
                         last_index.as_deref().map(parse_decimal_u256).transpose()?,
                     );
-                    cache
-                        .positions_by_key
-                        .insert((table, user_id, asset_id), id);
-                    cache.position_state.insert((table, id), state);
+                    self.positions_by_key.insert((table, user_id, asset_id), id);
+                    self.position_state.insert((table, id), state);
+                    self.position_users.insert((table, id), user_id);
                 }
                 chunk_start = chunk_end;
             }
         }
-
-        // (7) the candidates' collateral configs (the
-        // `ReserveUsedAsCollateral` probe's rows).
         chunk_start = 0;
         while chunk_start < candidates.len() {
             let chunk_end = usize::min(chunk_start + SQLITE_MAX_VARIABLES - 1, candidates.len());
@@ -432,13 +498,576 @@ impl ChunkSubstrate {
                 let user_id: i64 = row.get(0)?;
                 let asset_id: i64 = row.get(1)?;
                 let id: i64 = row.get(2)?;
-                cache.collateral_configs.insert((user_id, asset_id), id);
+                self.collateral_configs.insert((user_id, asset_id), id);
             }
             chunk_start = chunk_end;
         }
-
-        Ok(cache)
+        Ok(())
     }
+
+    /// The asset row ids this seed holds, in id order — the fixture seeds'
+    /// position denominator.
+    #[cfg(test)]
+    pub(crate) fn asset_ids(&self) -> Vec<i64> {
+        let mut ids: Vec<i64> = self.assets_by_id.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Load every user, position and collateral config this market holds, for
+    /// the in-crate fixtures' seeds: a unit test's market is small, and loading
+    /// it whole means a fixture that writes rows directly still gets a complete
+    /// read position.
+    #[cfg(test)]
+    pub(crate) fn load_all_identity_families(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+    ) -> Result<(), DbError> {
+        let mut stmt = conn.prepare(
+            "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![market_id])?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let address: String = row.get(1)?;
+            let gho_discount: i64 = row.get(2)?;
+            let stk_aave_balance: Option<String> = row.get(3)?;
+            let stk_aave_balance = stk_aave_balance
+                .as_deref()
+                .map(parse_decimal_u256)
+                .transpose()?;
+            self.users.insert(
+                (market_id, address.clone()),
+                Some(UserProjection {
+                    id,
+                    gho_discount,
+                    stk_aave_balance,
+                }),
+            );
+            self.users_by_id.insert(id, (market_id, address));
+        }
+        for table in [PositionTable::Collateral, PositionTable::Debt] {
+            let sql = format!(
+                "SELECT p.id, p.user_id, p.asset_id, p.balance, p.last_index \
+                 FROM {} p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ?1",
+                table.table()
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query(rusqlite::params![market_id])?;
+            while let Some(row) = rows.next()? {
+                let id: i64 = row.get(0)?;
+                let user_id: i64 = row.get(1)?;
+                let asset_id: i64 = row.get(2)?;
+                let balance: String = row.get(3)?;
+                let last_index: Option<String> = row.get(4)?;
+                let state = (
+                    parse_decimal_u256(&balance)?,
+                    last_index.as_deref().map(parse_decimal_u256).transpose()?,
+                );
+                self.positions_by_key.insert((table, user_id, asset_id), id);
+                self.position_state.insert((table, id), state);
+                self.position_users.insert((table, id), user_id);
+            }
+        }
+        let mut stmt = conn.prepare(
+            "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc \
+             JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![market_id])?;
+        while let Some(row) = rows.next()? {
+            let user_id: i64 = row.get(0)?;
+            let asset_id: i64 = row.get(1)?;
+            let id: i64 = row.get(2)?;
+            self.collateral_configs.insert((user_id, asset_id), id);
+        }
+        Ok(())
+    }
+
+    /// Intern every demanded identity the chunk-start state does not hold: the
+    /// user rows (with the zero defaults the resolution's own get-or-create
+    /// would have written) and the position rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on any interning write failure.
+    pub(crate) fn intern_identities(
+        &mut self,
+        conn: &Connection,
+        market_id: i64,
+        demands: &IdentityDemands,
+    ) -> Result<(), DbError> {
+        for address in &demands.users {
+            let key = (market_id, address.clone());
+            let present = match self.users.get(&key) {
+                Some(Some(user)) => Some(user.id),
+                _ => None,
+            };
+            if let Some(id) = present {
+                self.users_by_id.insert(id, key);
+                continue;
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?1, ?2, 0, 0, NULL, NULL, '0')",
+                rusqlite::params![market_id, address],
+            )?;
+            let id = conn.last_insert_rowid();
+            self.interned_users.insert(key.clone(), id);
+            self.users_by_id.insert(id, key);
+        }
+        for (table, address, asset_id) in &demands.positions {
+            let key = (market_id, address.clone());
+            let user_id = match self.users.get(&key) {
+                Some(Some(user)) => user.id,
+                _ => match self.interned_users.get(&key) {
+                    Some(id) => *id,
+                    None => continue,
+                },
+            };
+            if self
+                .positions_by_key
+                .contains_key(&(*table, user_id, *asset_id))
+            {
+                continue;
+            }
+            let id = match table {
+                PositionTable::Collateral => {
+                    DegenbotDb::get_or_create_collateral_position_on_conn(conn, user_id, *asset_id)?
+                }
+                PositionTable::Debt => {
+                    DegenbotDb::get_or_create_debt_position_on_conn(conn, user_id, *asset_id)?
+                }
+            };
+            self.positions_by_key
+                .insert((*table, user_id, *asset_id), id);
+            self.position_state
+                .insert((*table, id), FRESH_POSITION_STATE);
+            self.position_users.insert((*table, id), user_id);
+        }
+        Ok(())
+    }
+
+    // ── resolution reads (no connection, no SQL) ────────────────────────
+
+    /// The asset row an address names under one lookup kind.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] when the seed holds no answer for the address
+    /// (a read the seed did not anticipate, never a lazy query).
+    pub(crate) fn lookup_asset_row(
+        &self,
+        kind: &str,
+        token_address: &str,
+    ) -> Result<Option<AssetRow>, IncompleteChunkSeed> {
+        let Some(kind) = Self::asset_kind(kind) else {
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Asset {
+                    kind: "unknown",
+                    address: token_address.to_string(),
+                },
+            ));
+        };
+        let Some(maybe_id) = self
+            .assets_by_address
+            .get(&(kind, token_address.to_string()))
+        else {
+            #[cfg(test)]
+            if self.fixture_complete {
+                return Ok(None);
+            }
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Asset {
+                    kind,
+                    address: token_address.to_string(),
+                },
+            ));
+        };
+        Ok(match *maybe_id {
+            Some(id) => self.assets_by_id.get(&id).cloned(),
+            None => None,
+        })
+    }
+
+    /// The id-only classification lookup (the same index, a cheaper projection).
+    ///
+    /// # Errors
+    ///
+    /// Same refusal as [`Self::lookup_asset_row`].
+    pub(crate) fn lookup_asset_id(
+        &self,
+        token_type: &str,
+        token_address: &str,
+    ) -> Result<Option<i64>, IncompleteChunkSeed> {
+        Ok(self
+            .lookup_asset_row(token_type, token_address)?
+            .map(|row| row.id))
+    }
+
+    /// The scaled leg a token address names: the position table its emitter
+    /// family owns plus the reserve's asset id. A token that is not this
+    /// market's scaled leg is `None` (the caller is classifying, not asking
+    /// for an id).
+    pub(crate) fn scaled_leg(&self, token_address: &str) -> Option<(PositionTable, i64)> {
+        if let Some(Some(id)) = self
+            .assets_by_address
+            .get(&(ASSET_KIND_A_TOKEN, token_address.to_string()))
+        {
+            return Some((PositionTable::Collateral, *id));
+        }
+        if let Some(Some(id)) = self
+            .assets_by_address
+            .get(&(ASSET_KIND_V_TOKEN, token_address.to_string()))
+        {
+            return Some((PositionTable::Debt, *id));
+        }
+        self.reserves_by_token.get(token_address).copied()
+    }
+
+    /// The user id a demanded address names.
+    ///
+    /// A user the seed interned but the chunk has not yet named resolves here
+    /// into the created row (the zero-default projection the resolution's own
+    /// get-or-create established), so a later transaction's reads see the row
+    /// exactly as the SQL write would have left it.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] for an address the seed never anticipated.
+    pub(crate) fn user_id_or_create(
+        &mut self,
+        address: &str,
+        gho_discount: i64,
+    ) -> Result<i64, IncompleteChunkSeed> {
+        let key = (self.market_id, address.to_string());
+        match self.users.get(&key) {
+            Some(Some(user)) => Ok(user.id),
+            Some(None) => {
+                let Some(id) = self.interned_users.get(&key).copied() else {
+                    return Err(IncompleteChunkSeed::user(self.market_id, address));
+                };
+                self.users.insert(
+                    key,
+                    Some(UserProjection {
+                        id,
+                        gho_discount,
+                        stk_aave_balance: None,
+                    }),
+                );
+                Ok(id)
+            }
+            None => Err(IncompleteChunkSeed::user(self.market_id, address)),
+        }
+    }
+
+    /// The projected user row for a demanded address.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] for an address the seed never anticipated.
+    pub(crate) fn user_projection(
+        &self,
+        address: &str,
+    ) -> Result<Option<UserProjection>, IncompleteChunkSeed> {
+        match self.users.get(&(self.market_id, address.to_string())) {
+            Some(user) => Ok(*user),
+            #[cfg(test)]
+            None if self.fixture_complete => Ok(None),
+            None => Err(IncompleteChunkSeed::user(self.market_id, address)),
+        }
+    }
+
+    /// The projected `gho_discount` for a user address.
+    ///
+    /// # Errors
+    ///
+    /// Same refusal as [`Self::user_projection`].
+    pub(crate) fn user_gho_discount(
+        &self,
+        address: &str,
+    ) -> Result<Option<i64>, IncompleteChunkSeed> {
+        self.user_projection(address)
+            .map(|user| user.map(|user| user.gho_discount))
+    }
+
+    /// The projected `stk_aave_balance` for a user address: `Some(None)` for a
+    /// user whose column was never seeded, `None` for an address this market
+    /// has no row for.
+    ///
+    /// # Errors
+    ///
+    /// Same refusal as [`Self::user_projection`].
+    #[expect(clippy::option_option)]
+    pub(crate) fn user_stk_aave_balance(
+        &self,
+        address: &str,
+    ) -> Result<Option<Option<U256>>, IncompleteChunkSeed> {
+        self.user_projection(address)
+            .map(|user| user.map(|user| user.stk_aave_balance))
+    }
+
+    /// The checksummed address a user id names.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] for an id the seed never interned.
+    pub(crate) fn user_address(&self, user_id: i64) -> Result<String, IncompleteChunkSeed> {
+        match self.users_by_id.get(&user_id) {
+            Some((_, address)) => Ok(address.clone()),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::UserAddress { user_id },
+            )),
+        }
+    }
+
+    /// Project the discount-token replacement's balance invalidation: every
+    /// cached balance was denominated in the replaced token's ledger, so the
+    /// next resolution reseeds it from the new contract.
+    pub(crate) fn invalidate_stk_aave_balances(&mut self) {
+        for user in self.users.values_mut().flatten() {
+            user.stk_aave_balance = None;
+        }
+    }
+
+    /// The mutable projection of one user row addressed by id (the
+    /// configuration effects carry settled ids rather than addresses). A row the
+    /// seed interned but the chunk has not named yet projects at its created
+    /// defaults.
+    fn user_projection_mut(&mut self, user_id: i64) -> Option<&mut UserProjection> {
+        let key = self.users_by_id.get(&user_id)?.clone();
+        let entry = self.users.get_mut(&key)?;
+        if entry.is_none() {
+            *entry = Some(UserProjection {
+                id: user_id,
+                gho_discount: 0,
+                stk_aave_balance: None,
+            });
+        }
+        entry.as_mut()
+    }
+
+    /// Project one `stk_aave_balance` write addressed by row id.
+    pub(crate) fn record_user_stk_aave_balance_by_id(
+        &mut self,
+        user_id: i64,
+        balance: Option<U256>,
+    ) {
+        if let Some(user) = self.user_projection_mut(user_id) {
+            user.stk_aave_balance = balance;
+        }
+    }
+
+    /// Project one user write addressed by row id.
+    pub(crate) fn record_user_gho_discount_by_id(&mut self, user_id: i64, gho_discount: i64) {
+        if let Some(user) = self.user_projection_mut(user_id) {
+            user.gho_discount = gho_discount;
+        }
+    }
+
+    /// Project one `stk_aave_balance` write addressed by row id, with the
+    /// apply's own arithmetic: the from-leg subtracts (underflow is a refusal),
+    /// the to-leg adds, and a never-seeded column reads as zero.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Decode`] when a leg leaves the `U256` domain.
+    pub(crate) fn project_stk_aave_leg(
+        &mut self,
+        user_id: i64,
+        amount: U256,
+        side: StkAaveLeg,
+    ) -> Result<(), DbError> {
+        let Some(user) = self.user_projection_mut(user_id) else {
+            return Ok(());
+        };
+        let balance = user.stk_aave_balance.unwrap_or(U256::ZERO);
+        user.stk_aave_balance = Some(match side {
+            StkAaveLeg::From => balance.checked_sub(amount).ok_or_else(|| {
+                DbError::Decode(format!(
+                    "stk_aave_balance underflow on Transfer from-leg: {balance} - {amount} (user_id={user_id})"
+                ))
+            })?,
+            StkAaveLeg::To => balance.checked_add(amount).ok_or_else(|| {
+                DbError::Decode(format!(
+                    "stk_aave_balance overflow on Transfer to-leg: {balance} + {amount} (user_id={user_id})"
+                ))
+            })?,
+        });
+        Ok(())
+    }
+
+    /// The `get_or_create_*_position_on_conn` id for one natural key — the id
+    /// the seed interned, never a lazily created row.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] for a position the seed never anticipated.
+    pub(crate) fn position_id_or_create(
+        &mut self,
+        position: ScaledTokenPosition,
+        user_id: i64,
+        asset_id: i64,
+    ) -> Result<i64, IncompleteChunkSeed> {
+        let table = PositionTable::from(position);
+        match self.positions_by_key.get(&(table, user_id, asset_id)) {
+            Some(id) => Ok(*id),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Position {
+                    position: table.name(),
+                    user_id,
+                    asset_id,
+                },
+            )),
+        }
+    }
+
+    /// The cache's KNOWN state for a position — a prefetched row or a write
+    /// this chunk recorded — without probing the database. The projection view
+    /// seeds from this read.
+    pub(crate) fn known_position_state(
+        &self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+    ) -> Option<PositionState> {
+        self.position_state
+            .get(&(PositionTable::from(position), position_id))
+            .copied()
+    }
+
+    /// The user a position row belongs to.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] naming the position the resolution asked for and
+    /// the seed did not hold.
+    pub(crate) fn position_user(
+        &self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+    ) -> Result<i64, IncompleteChunkSeed> {
+        let table = PositionTable::from(position);
+        match self.position_users.get(&(table, position_id)) {
+            Some(user_id) => Ok(*user_id),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::PositionState {
+                    position: table.name(),
+                    position_id,
+                },
+            )),
+        }
+    }
+
+    /// A position's projected state, refusing when the seed never resolved it.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] naming the position the resolution asked for and
+    /// the seed did not hold.
+    pub(crate) fn position_state_or_refuse(
+        &self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+    ) -> Result<PositionState, IncompleteChunkSeed> {
+        self.known_position_state(position, position_id)
+            .ok_or_else(|| {
+                IncompleteChunkSeed::new(
+                    self.market_id,
+                    SeedEntity::PositionState {
+                        position: PositionTable::from(position).name(),
+                        position_id,
+                    },
+                )
+            })
+    }
+
+    /// The scaled-token apply's read-modify-write seed read. Missing row →
+    /// the apply body's `MissingRow` (same message, tagged with the apply
+    /// target).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::lookup_position_balance_index`] with the apply-side
+    /// error text.
+    pub(crate) fn position_state_for_apply(
+        &mut self,
+        conn: &Connection,
+        position: ScaledTokenPosition,
+        position_id: i64,
+    ) -> Result<PositionState, DbError> {
+        self.position_state_inner(conn, position, position_id, PositionRead::Apply)
+    }
+
+    /// The bad-debt reset's read (`reset_debt_position_to_zero_on_conn`'s
+    /// max-with-prev seed — debt table only). Missing row → the reset shell's
+    /// `MissingRow` (same message).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::MissingRow`] when the position has no row, or
+    /// [`DbError`] on a probe/decode failure.
+    pub(crate) fn debt_position_state_for_reset(
+        &mut self,
+        conn: &Connection,
+        position_id: i64,
+    ) -> Result<PositionState, DbError> {
+        self.position_state_inner(
+            conn,
+            ScaledTokenPosition::Debt,
+            position_id,
+            PositionRead::Reset,
+        )
+    }
+
+    /// Record the state a scaled-token apply just WROTE (the overlay's
+    /// read-your-own-writes backbone: the next read is a map hit carrying
+    /// exactly what the SQL probe would return).
+    pub(crate) fn record_position_write(
+        &mut self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        balance: U256,
+        last_index: Option<U256>,
+    ) {
+        self.position_state.insert(
+            (PositionTable::from(position), position_id),
+            (balance, last_index),
+        );
+    }
+
+    /// The `apply_reserve_used_as_collateral_on_conn` cache shell: map hit →
+    /// the inline flag UPDATE (the substrate's exact SQL text, zero probes);
+    /// miss → the substrate fn (probe + UPDATE-or-INSERT) → record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a write failure.
+    pub(crate) fn apply_reserve_used_as_collateral(
+        &mut self,
+        conn: &Connection,
+        user_id: i64,
+        asset_id: i64,
+        enabled: bool,
+    ) -> Result<i64, DbError> {
+        if let Some(id) = self.collateral_configs.get(&(user_id, asset_id)) {
+            conn.execute(
+                "UPDATE aave_v3_user_collateral_configs SET enabled = ?1 \
+                 WHERE user_id = ?2 AND asset_id = ?3",
+                rusqlite::params![enabled, user_id, asset_id],
+            )?;
+            return Ok(*id);
+        }
+        let id =
+            DegenbotDb::apply_reserve_used_as_collateral_on_conn(conn, user_id, asset_id, enabled)?;
+        self.collateral_configs.insert((user_id, asset_id), id);
+        Ok(id)
+    }
+
+    // ── overlay projections (resolution-time mutations, no SQL) ─────────
 
     /// Index one prefetched/refreshed asset row (id map + all three address
     /// kinds).
@@ -464,86 +1093,201 @@ impl ChunkSubstrate {
 
     /// Drop every address index pointing at `asset_id` (the
     /// `ReserveInitialized` re-bind — a re-initialized reserve's OLD token
-    /// addresses must stop resolving after the substrate UPDATE re-points the
-    /// row's token ids, exactly as the SQL JOIN would).
+    /// addresses must stop resolving after the row re-points its token ids,
+    /// exactly as the SQL JOIN would).
     fn unindex_asset(&mut self, asset_id: i64) {
         self.assets_by_address.retain(|_, v| *v != Some(asset_id));
     }
 
-    // ── asset lookups (the per-event resolution JOINs) ──────────────────
-
-    /// The `lookup_asset_by_token_address_on_conn` /
-    /// `lookup_asset_by_underlying_address_on_conn` cache shell. `kind` is
-    /// one of the `ASSET_KIND_*` constants (a bad kind is the substrate's
-    /// loud `DbError::Decode`, BEFORE any map access — no silent default).
-    ///
-    /// Map hit → the cached row. Miss → the SQL probe (once per
-    /// `(kind, address)`, including a cached negative) → cache → return.
+    /// Project a `ReserveInitialized` effect's asset identity onto the
+    /// resolution read position: the row the seed interned becomes visible to
+    /// the address lookups that follow it, and an earlier generation's addresses
+    /// stop resolving.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a probe failure or a bad `kind`.
-    pub(crate) fn lookup_asset_row(
+    /// [`IncompleteChunkSeed`] when the seed holds no reserve for the
+    /// underlying token the effect names.
+    pub(crate) fn project_reserve_identity(
         &mut self,
-        conn: &Connection,
-        market_id: i64,
-        kind: &str,
-        token_address: &str,
-    ) -> Result<Option<AssetRow>, DbError> {
-        let kind = Self::asset_kind(kind)?;
-        let key = (kind, token_address.to_string());
-        if let Some(maybe_id) = self.assets_by_address.get(&key) {
-            return match *maybe_id {
-                Some(id) => Ok(self.assets_by_id.get(&id).cloned()),
-                None => Ok(None),
-            };
-        }
-        // Lazy probe — the substrate's own lookup (its SQL text is the
-        // golden ledger's), then cache the answer (positive or negative).
-        let row = match kind {
-            ASSET_KIND_UNDERLYING => DegenbotDb::lookup_asset_by_underlying_address_on_conn(
-                conn,
-                market_id,
-                token_address,
-            )?,
-            _ => DegenbotDb::lookup_asset_by_token_address_on_conn(
-                conn,
-                market_id,
-                token_address,
-                kind,
-            )?,
+        underlying_asset_id: i64,
+    ) -> Result<(), IncompleteChunkSeed> {
+        let Some(asset_id) = self
+            .reserves_by_underlying_id
+            .get(&underlying_asset_id)
+            .copied()
+        else {
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Reserve {
+                    underlying: format!("erc20 id={underlying_asset_id}"),
+                },
+            ));
         };
-        let probed_id = row.as_ref().map(|r| r.id);
-        self.assets_by_address.insert(key, probed_id);
-        if let Some(r) = row {
-            self.assets_by_id.insert(r.id, r.clone());
-            return Ok(Some(r));
-        }
-        Ok(None)
+        let Some(reserve) = self
+            .reserves
+            .values()
+            .find(|r| r.asset_id == asset_id)
+            .cloned()
+        else {
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Reserve {
+                    underlying: format!("asset id={asset_id}"),
+                },
+            ));
+        };
+        let row = AssetRow {
+            id: asset_id,
+            a_token_revision: u32::try_from(reserve.facts.a_token_revision).unwrap_or(0),
+            v_token_revision: u32::try_from(reserve.facts.v_token_revision).unwrap_or(0),
+            underlying_token_address: addr_to_hex(reserve.facts.underlying),
+            a_token_address: addr_to_hex(reserve.facts.a_token),
+            v_token_address: addr_to_hex(reserve.facts.v_token),
+        };
+        self.unindex_asset(asset_id);
+        self.index_asset(row);
+        self.reserves_by_token.insert(
+            addr_to_hex(reserve.facts.a_token),
+            (PositionTable::Collateral, asset_id),
+        );
+        self.reserves_by_token.insert(
+            addr_to_hex(reserve.facts.v_token),
+            (PositionTable::Debt, asset_id),
+        );
+        Ok(())
     }
 
-    /// The `lookup_asset_id_by_token_address_on_conn` cache shell (the
-    /// id-only classification lookup — the same index, a cheaper projection).
+    /// Project the GHO vToken link a `ReserveInitialized` effect establishes:
+    /// the row's `v_token_id` points at the reserve's vToken, so every later
+    /// resolution of the chunk reads the linked token address.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError`] on a probe failure or a bad `token_type`.
-    pub(crate) fn lookup_asset_id(
+    /// [`IncompleteChunkSeed`] when the seed holds no reserve for the underlying
+    /// token the effect names.
+    pub(crate) fn project_reserve_gho_link(
         &mut self,
-        conn: &Connection,
-        market_id: i64,
-        token_type: &str,
-        token_address: &str,
-    ) -> Result<Option<i64>, DbError> {
-        Ok(self
-            .lookup_asset_row(conn, market_id, token_type, token_address)?
-            .map(|r| r.id))
+        underlying_asset_id: i64,
+    ) -> Result<(), IncompleteChunkSeed> {
+        let Some(asset_id) = self
+            .reserves_by_underlying_id
+            .get(&underlying_asset_id)
+            .copied()
+        else {
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Reserve {
+                    underlying: format!("erc20 id={underlying_asset_id}"),
+                },
+            ));
+        };
+        let Some(reserve) = self
+            .reserves
+            .values()
+            .find(|r| r.asset_id == asset_id)
+            .cloned()
+        else {
+            return Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Reserve {
+                    underlying: format!("asset id={asset_id}"),
+                },
+            ));
+        };
+        let v_token_address = addr_to_hex(reserve.facts.v_token);
+        self.project_gho(|gho| {
+            gho.v_token_id = Some(reserve.v_token_id);
+            gho.v_token_address = Some(v_token_address);
+        });
+        Ok(())
     }
 
-    /// Loud existence probe for the deferred `ReserveDataUpdated` writes: the
-    /// single-row UPDATE's `updated == 0 → DbError::MissingRow` contract,
-    /// checked at `buffer` time so the error surfaces at the failing event
-    /// (byte-parity with today's rollback semantics).
+    /// The `Upgraded` apply's overlay bump: the revision columns changed in
+    /// place (addresses unchanged — the address indexes keep pointing at the
+    /// row id, so every lookup sees the fresh revision).
+    pub(crate) fn record_asset_revision(
+        &mut self,
+        asset_id: i64,
+        is_a_token: bool,
+        new_revision: i64,
+    ) {
+        let revision = u32::try_from(new_revision).unwrap_or(0);
+        if let Some(row) = self.assets_by_id.get_mut(&asset_id) {
+            if is_a_token {
+                row.a_token_revision = revision;
+            } else {
+                row.v_token_revision = revision;
+            }
+        }
+    }
+
+    /// The generation a revision-changing effect is about to replace: the
+    /// CURRENT revision the substrate reads for that leg or role, read fresh at
+    /// each projection (a second upgrade in the same chunk seals the revision
+    /// the first one installed, not the chunk-start one). An uncached row or an
+    /// unchanged revision seals nothing.
+    pub(crate) fn superseded_generation(
+        &self,
+        effect: &crate::projection::ConfigurationEffect,
+    ) -> Option<crate::projection::GenerationRef> {
+        use crate::projection::{
+            ConfigurationEffect, ContractRole, GenerationEntity, GenerationRef, ScaledTokenPosition,
+        };
+        match effect {
+            ConfigurationEffect::Upgraded {
+                asset_id,
+                is_a_token,
+                new_revision,
+                ..
+            } => {
+                let row = self.assets_by_id.get(asset_id)?;
+                let (position, revision) = if *is_a_token {
+                    (ScaledTokenPosition::Collateral, row.a_token_revision)
+                } else {
+                    (ScaledTokenPosition::Debt, row.v_token_revision)
+                };
+                (Some(revision) != u32::try_from(*new_revision).ok()).then(|| {
+                    GenerationRef::new(
+                        GenerationEntity::ScaledToken {
+                            asset_id: *asset_id,
+                            position,
+                        },
+                        revision,
+                    )
+                })
+            }
+            ConfigurationEffect::ContractRevisionUpdated {
+                market_id,
+                contract_name,
+                new_revision,
+            } => {
+                let role = ContractRole::from_contract_name(contract_name)?;
+                let revision = *self
+                    .contract_revisions
+                    .get(&(*market_id, contract_name.clone()))?;
+                (revision != u32::try_from(*new_revision).ok()).then(|| match revision {
+                    Some(revision) => GenerationRef::new(
+                        GenerationEntity::Contract {
+                            market_id: *market_id,
+                            role,
+                        },
+                        revision,
+                    ),
+                    None => GenerationRef::seed(GenerationEntity::Contract {
+                        market_id: *market_id,
+                        role,
+                    }),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The `ReserveDataUpdated` apply's existence probe: the single-row
+    /// UPDATE's `updated == 0 → DbError::MissingRow` contract, checked at
+    /// `buffer` time so the error surfaces at the failing event (byte-parity
+    /// with the single-row UPDATE's own rollback semantics).
     ///
     /// # Errors
     ///
@@ -579,10 +1323,6 @@ impl ChunkSubstrate {
                 "aave_v3_assets id={asset_id} (ReserveDataUpdated target)"
             )));
         }
-        // Present but unprefetched (a foreign-market id or a post-prefetch
-        // insert this cache didn't see — both loud-error or overlay-tracked
-        // paths) — nothing to index (the lookups don't consult require_asset's
-        // result); the write proceeds exactly as the single-row UPDATE would.
         Ok(())
     }
 
@@ -623,7 +1363,6 @@ impl ChunkSubstrate {
         if self.reserve_data_updates.is_empty() {
             return Ok(());
         }
-        // Deterministic write order: sort by asset id (the multi-row idiom).
         let mut entries: Vec<ReserveDataUpdateEntry> = self.reserve_data_updates.drain().collect();
         entries.sort_by_key(|(id, _)| *id);
         for chunk in entries.chunks(SQLITE_MAX_VARIABLES / 6) {
@@ -644,8 +1383,6 @@ impl ChunkSubstrate {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            // SQLite VALUES columns are positional (column1..N) — the
-            // `AS v(cols)` derived-column list is PostgreSQL-only.
             let sql = format!(
                 "UPDATE aave_v3_assets AS a SET \
                     liquidity_rate = v.column2, borrow_rate = v.column3, \
@@ -689,8 +1426,8 @@ impl ChunkSubstrate {
         Ok(())
     }
 
-    /// The `ReserveInitialized` apply's overlay refresh: re-read the fresh
-    /// row (one projection SELECT — the create/re-point changed the token
+    /// The `ReserveInitialized` apply's persistence-side refresh: re-read the
+    /// fresh row (one projection SELECT — the create/re-point changed the token
     /// bindings) and re-bind the address indexes.
     ///
     /// # Errors
@@ -723,360 +1460,15 @@ impl ChunkSubstrate {
         Ok(())
     }
 
-    /// The `Upgraded` apply's overlay bump: the revision columns changed in
-    /// place (addresses unchanged — the address indexes keep pointing at the
-    /// row id, so every lookup sees the fresh revision).
-    pub(crate) fn record_asset_revision(
-        &mut self,
-        asset_id: i64,
-        is_a_token: bool,
-        new_revision: i64,
-    ) {
-        let revision = u32::try_from(new_revision).unwrap_or(0);
-        if let Some(row) = self.assets_by_id.get_mut(&asset_id) {
-            if is_a_token {
-                row.a_token_revision = revision;
-            } else {
-                row.v_token_revision = revision;
-            }
-        }
-    }
-
-    // ── users + positions + collateral configs (get-or-create shells) ────
-
-    /// The `get_or_create_user_on_conn` cache shell: map hit → the id (zero
-    /// statements); miss → the substrate fn (probe + INSERT, its own SQL
-    /// text) → record.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on the substrate call.
-    pub(crate) fn user_id_or_create(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        address: &str,
-        gho_discount: i64,
-    ) -> Result<i64, DbError> {
-        match self.users.get(&(market_id, address.to_string())) {
-            Some(Some(user)) => return Ok(user.id),
-            Some(None) => {
-                // Proven absent (the prefetch's candidate scan) — the
-                // INSERT-only path: byte-identical SQL to the substrate
-                // probe-then-insert body's INSERT, minus the probe (the
-                // ledger golden pins the text).
-                conn.execute(
-                    "INSERT INTO aave_v3_users (market_id, address, e_mode, gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, isolation_mode_debt) VALUES (?1, ?2, 0, ?3, NULL, NULL, '0')",
-                    rusqlite::params![market_id, address, gho_discount],
-                )?;
-                let id = conn.last_insert_rowid();
-                self.users.insert(
-                    (market_id, address.to_string()),
-                    Some(UserProjection {
-                        id,
-                        gho_discount,
-                        stk_aave_balance: None,
-                    }),
-                );
-                return Ok(id);
-            }
-            None => {} // not yet probed — the lazy path below.
-        }
-        let id = DegenbotDb::get_or_create_user_on_conn(conn, market_id, address, gho_discount)?;
-        let disc: i64 = conn.query_row(
-            "SELECT gho_discount FROM aave_v3_users WHERE id = ?1",
-            [id],
-            |r| r.get(0),
-        )?;
-        let balance: Option<String> = conn.query_row(
-            "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
-            [id],
-            |r| r.get(0),
-        )?;
-        let stk_aave_balance = balance.as_deref().map(parse_decimal_u256).transpose()?;
-        self.users.insert(
-            (market_id, address.to_string()),
-            Some(UserProjection {
-                id,
-                gho_discount: disc,
-                stk_aave_balance,
-            }),
-        );
-        Ok(id)
-    }
-
-    /// The projected `gho_discount` for a user address: the resolution read
-    /// position, not a live SQL probe (a same-chunk discount event or refresh
-    /// is already projected).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a probe failure.
-    pub(crate) fn user_gho_discount(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        address: &str,
-    ) -> Result<Option<i64>, DbError> {
-        self.user_projection(conn, market_id, address)
-            .map(|user| user.map(|user| user.gho_discount))
-    }
-
-    /// The projected `stk_aave_balance` for a user address: `Some(None)` for a
-    /// user whose column was never seeded, `None` for an address this market
-    /// has no row for.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a probe failure.
-    #[expect(clippy::option_option)]
-    pub(crate) fn user_stk_aave_balance(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        address: &str,
-    ) -> Result<Option<Option<U256>>, DbError> {
-        self.user_projection(conn, market_id, address)
-            .map(|user| user.map(|user| user.stk_aave_balance))
-    }
-
-    /// Project the discount-token replacement's balance invalidation: every
-    /// cached balance was denominated in the replaced token's ledger, so the
-    /// next resolution reseeds it from the new contract.
-    pub(crate) fn invalidate_stk_aave_balances(&mut self) {
-        for user in self.users.values_mut().flatten() {
-            user.stk_aave_balance = None;
-        }
-    }
-
-    /// Project one `stk_aave_balance` write addressed by row id.
-    pub(crate) fn record_user_stk_aave_balance_by_id(
-        &mut self,
-        user_id: i64,
-        balance: Option<U256>,
-    ) {
-        for user in self.users.values_mut().flatten() {
-            if user.id == user_id {
-                user.stk_aave_balance = balance;
-            }
-        }
-    }
-
-    /// Project one user write addressed by row id (the configuration effects
-    /// carry settled ids rather than addresses).
-    pub(crate) fn record_user_gho_discount_by_id(&mut self, user_id: i64, gho_discount: i64) {
-        for user in self.users.values_mut().flatten() {
-            if user.id == user_id {
-                user.gho_discount = gho_discount;
-            }
-        }
-    }
-
-    /// Project one `stk_aave_balance` write addressed by row id, with the
-    /// apply's own arithmetic: the from-leg subtracts (underflow is a refusal),
-    /// the to-leg adds, and a never-seeded column reads as zero.
-    ///
-    /// # Errors
-    ///
-    /// [`DbError::Decode`] when a leg leaves the `U256` domain.
-    pub(crate) fn project_stk_aave_leg(
-        &mut self,
-        user_id: i64,
-        amount: U256,
-        side: StkAaveLeg,
-    ) -> Result<(), DbError> {
-        for user in self.users.values_mut().flatten() {
-            if user.id != user_id {
-                continue;
-            }
-            let balance = user.stk_aave_balance.unwrap_or(U256::ZERO);
-            user.stk_aave_balance = Some(match side {
-                StkAaveLeg::From => balance.checked_sub(amount).ok_or_else(|| {
-                    DbError::Decode(format!(
-                        "stk_aave_balance underflow on Transfer from-leg: {balance} - {amount} (user_id={user_id})"
-                    ))
-                })?,
-                StkAaveLeg::To => balance.checked_add(amount).ok_or_else(|| {
-                    DbError::Decode(format!(
-                        "stk_aave_balance overflow on Transfer to-leg: {balance} + {amount} (user_id={user_id})"
-                    ))
-                })?,
-            });
-        }
-        Ok(())
-    }
-
-    fn user_projection(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        address: &str,
-    ) -> Result<Option<UserProjection>, DbError> {
-        if let Some(user) = self.users.get(&(market_id, address.to_string())) {
-            return Ok(*user);
-        }
-        let row: Option<(i64, i64, Option<String>)> = conn
-            .query_row(
-                "SELECT id, gho_discount, stk_aave_balance FROM aave_v3_users \
-                 WHERE market_id = ?1 AND address = ?2",
-                rusqlite::params![market_id, address],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        let user = row
-            .map(|(id, gho_discount, balance)| {
-                Ok::<_, DbError>(UserProjection {
-                    id,
-                    gho_discount,
-                    stk_aave_balance: balance.as_deref().map(parse_decimal_u256).transpose()?,
-                })
-            })
-            .transpose()?;
-        self.users.insert((market_id, address.to_string()), user);
-        Ok(user)
-    }
-
-    /// The `get_or_create_*_position_on_conn` cache shell. A fresh INSERT's
-    /// zero defaults are recorded as the position's state (the next balance
-    /// read — this log-transaction's apply or the next's — is a map hit).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on the substrate call.
-    pub(crate) fn position_id_or_create(
-        &mut self,
-        conn: &Connection,
-        position: ScaledTokenPosition,
-        user_id: i64,
-        asset_id: i64,
-    ) -> Result<i64, DbError> {
-        let table = PositionTable::from(position);
-        if let Some(id) = self.positions_by_key.get(&(table, user_id, asset_id)) {
-            return Ok(*id);
-        }
-        let id = match position {
-            ScaledTokenPosition::Collateral => {
-                DegenbotDb::get_or_create_collateral_position_on_conn(conn, user_id, asset_id)?
-            }
-            ScaledTokenPosition::Debt => {
-                DegenbotDb::get_or_create_debt_position_on_conn(conn, user_id, asset_id)?
-            }
-        };
-        self.positions_by_key.insert((table, user_id, asset_id), id);
-        self.position_state
-            .entry((table, id))
-            .or_insert((U256::ZERO, None));
-        Ok(id)
-    }
-
-    /// The cache's KNOWN state for a position — a prefetched row or a write
-    /// this chunk recorded — without probing the database. The projection view
-    /// seeds from this read.
-    pub(crate) fn known_position_state(
-        &self,
-        position: ScaledTokenPosition,
-        position_id: i64,
-    ) -> Option<PositionState> {
-        self.position_state
-            .get(&(PositionTable::from(position), position_id))
-            .copied()
-    }
-
-    /// The scaled-token apply's read-modify-write seed read. Missing row →
-    /// the apply body's `MissingRow` (same message, tagged with the apply
-    /// target).
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::lookup_position_balance_index`] with the apply-side
-    /// error text.
-    pub(crate) fn position_state_for_apply(
-        &mut self,
-        conn: &Connection,
-        position: ScaledTokenPosition,
-        position_id: i64,
-    ) -> Result<PositionState, DbError> {
-        self.position_state_inner(conn, position, position_id, PositionRead::Apply)
-    }
-
-    /// The bad-debt reset's read (`reset_debt_position_to_zero_on_conn`'s
-    /// max-with-prev seed — debt table only). Missing row → the reset shell's
-    /// `MissingRow` (same message).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::MissingRow`] when the position has no row, or
-    /// [`DbError`] on a probe/decode failure.
-    pub(crate) fn debt_position_state_for_reset(
-        &mut self,
-        conn: &Connection,
-        position_id: i64,
-    ) -> Result<PositionState, DbError> {
-        self.position_state_inner(
-            conn,
-            ScaledTokenPosition::Debt,
-            position_id,
-            PositionRead::Reset,
-        )
-    }
-
-    /// Record the state a scaled-token apply just WROTE (the overlay's
-    /// read-your-own-writes backbone: the next read — the next apply's
-    /// seed, the next read — is a map hit carrying exactly what
-    /// the SQL probe would return).
-    pub(crate) fn record_position_write(
-        &mut self,
-        position: ScaledTokenPosition,
-        position_id: i64,
-        balance: U256,
-        last_index: Option<U256>,
-    ) {
-        self.position_state.insert(
-            (PositionTable::from(position), position_id),
-            (balance, last_index),
-        );
-    }
-
-    /// The `apply_reserve_used_as_collateral_on_conn` cache shell: map hit →
-    /// the inline flag UPDATE (the substrate's exact SQL text, zero probes);
-    /// miss → the substrate fn (probe + UPDATE-or-INSERT) → record.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a write failure.
-    pub(crate) fn apply_reserve_used_as_collateral(
-        &mut self,
-        conn: &Connection,
-        user_id: i64,
-        asset_id: i64,
-        enabled: bool,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = self.collateral_configs.get(&(user_id, asset_id)) {
-            conn.execute(
-                "UPDATE aave_v3_user_collateral_configs SET enabled = ?1 \
-                 WHERE user_id = ?2 AND asset_id = ?3",
-                rusqlite::params![enabled, user_id, asset_id],
-            )?;
-            return Ok(*id);
-        }
-        let id =
-            DegenbotDb::apply_reserve_used_as_collateral_on_conn(conn, user_id, asset_id, enabled)?;
-        self.collateral_configs.insert((user_id, asset_id), id);
-        Ok(id)
-    }
-
     // ── contracts + the GHO row ─────────────────────────────────────────
 
-    /// The market's tracked token census, read from the prefetched asset rows and
-    /// the chain's GHO row — deliberately no SQL.
+    /// The market's tracked token census, read from the prefetched asset rows
+    /// and the chain's GHO row — deliberately no SQL.
     ///
-    /// Every aToken row is a collateral series, every vToken row a debt series, and
-    /// the GHO discount token its own series; an address outside this census is not
-    /// a token this market tracks, so a receipt log it emits is out of scope rather
-    /// than a question for the database. The complete receipt carries far more
-    /// emitters than the filtered acquisition named, so answering the census from
-    /// the prefetched rows keeps a batch of unrelated logs from turning into a
-    /// probe apiece.
+    /// Every aToken row is a collateral series, every vToken row a debt series,
+    /// and the GHO discount token its own series; an address outside this census
+    /// is not a token this market tracks, so a receipt log it emits is out of
+    /// scope rather than a question for the database.
     pub(crate) fn market_token_census(&self) -> HashMap<Address, TokenType> {
         let mut census: HashMap<Address, TokenType> = HashMap::new();
         for asset in self.assets_by_id.values() {
@@ -1086,6 +1478,10 @@ impl ChunkSubstrate {
             if let Ok(address) = asset.v_token_address.parse() {
                 census.insert(address, TokenType::Vtoken);
             }
+        }
+        for reserve in self.reserves.values() {
+            census.insert(reserve.facts.a_token, TokenType::Atoken);
+            census.insert(reserve.facts.v_token, TokenType::Vtoken);
         }
         if let Some(gho) = &self.gho {
             if let Some(address) = gho.v_token_address.as_ref().and_then(|a| a.parse().ok()) {
@@ -1102,20 +1498,184 @@ impl ChunkSubstrate {
         census
     }
 
+    /// Whether the cache holds prefetched asset rows: when it does, the market's
+    /// token census is answerable in memory and needs no probe.
+    pub(crate) fn has_prefetched_assets(&self) -> bool {
+        !self.assets_by_id.is_empty()
+    }
+
+    /// The reserve identity a `ReserveInitialized` event names.
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] when the seed holds no reserve for the
+    /// underlying token.
+    pub(crate) fn reserve(&self, underlying: &str) -> Result<&ChunkReserve, IncompleteChunkSeed> {
+        match self.reserves.get(underlying) {
+            Some(reserve) => Ok(reserve),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Reserve {
+                    underlying: underlying.to_string(),
+                },
+            )),
+        }
+    }
+
+    /// The `lookup_pool_revision_on_conn` shape (the parser's per-parse read).
+    /// Missing row / NULL revision → `None` (the substrate's flatten).
+    ///
+    /// # Errors
+    ///
+    /// [`IncompleteChunkSeed`] when the seed never loaded the role.
+    pub(crate) fn pool_revision(
+        &self,
+        contract_name: &str,
+    ) -> Result<Option<u32>, IncompleteChunkSeed> {
+        match self
+            .contract_revisions
+            .get(&(self.market_id, contract_name.to_string()))
+        {
+            Some(revision) => Ok(*revision),
+            #[cfg(test)]
+            None if self.fixture_complete => Ok(None),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Contract {
+                    name: contract_name.to_string(),
+                },
+            )),
+        }
+    }
+
+    /// The role's projected endpoint address (the resolution read position for
+    /// the market's price oracle and the other fetch endpoints).
+    ///
+    /// # Errors
+    ///
+    /// Same refusal as [`Self::pool_revision`].
+    pub(crate) fn contract_address(
+        &self,
+        name: &str,
+    ) -> Result<Option<String>, IncompleteChunkSeed> {
+        match self
+            .contract_addresses
+            .get(&(self.market_id, name.to_string()))
+        {
+            Some(address) => Ok(Some(address.clone())),
+            #[cfg(test)]
+            None if self.fixture_complete => Ok(None),
+            None => Err(IncompleteChunkSeed::new(
+                self.market_id,
+                SeedEntity::Contract {
+                    name: name.to_string(),
+                },
+            )),
+        }
+    }
+
+    /// Project a contract role's endpoint address onto the resolution read
+    /// position.
+    pub(crate) fn record_contract_address(&mut self, market_id: i64, name: &str, address: &str) {
+        self.contract_addresses
+            .insert((market_id, name.to_string()), address.to_string());
+    }
+
+    /// The `ContractRevisionUpdated` apply's overlay write.
+    pub(crate) fn record_contract_revision(
+        &mut self,
+        market_id: i64,
+        contract_name: &str,
+        new_revision: i64,
+    ) {
+        self.contract_revisions.insert(
+            (market_id, contract_name.to_string()),
+            Some(u32::try_from(new_revision).unwrap_or(0)),
+        );
+    }
+
+    /// A mid-chunk contract INSERT's overlay write (a name the cache hasn't
+    /// seen gets the event's revision; a seen name keeps its cached value — the
+    /// substrate INSERT would have hit the UNIQUE constraint first).
+    pub(crate) fn record_contract_insert(
+        &mut self,
+        market_id: i64,
+        contract_name: &str,
+        revision: Option<i64>,
+    ) {
+        self.contract_revisions
+            .entry((market_id, contract_name.to_string()))
+            .or_insert_with(|| revision.map(|v| u32::try_from(v).unwrap_or(0)));
+    }
+
+    /// The chain's GHO row as the resolution read position holds it.
+    pub(crate) fn gho_asset(&self) -> Option<AaveGhoAsset> {
+        self.gho.clone()
+    }
+
+    /// Project one GHO-row mutation onto the resolution read position without
+    /// leaving the read side: a same-chunk link, discount-token replacement,
+    /// strategy change or deprecation is read by every later resolution of the
+    /// same chunk.
+    pub(crate) fn project_gho(&mut self, mutate: impl FnOnce(&mut AaveGhoAsset)) {
+        if let Some(gho) = self.gho.as_mut() {
+            mutate(gho);
+        }
+    }
+
     /// Observe the sealed generations a chunk starts from (ADR-105 D6): every
     /// generation the prefetched rows already carry is a `Seed`-activated
     /// generation of its logical entity, so a replacement later in the chunk
     /// activates a NEW generation instead of mutating the one the chunk began
     /// under.
-    ///
-    /// The rows are the resolution's own read position — no probe is issued
-    /// for a fact the prefetch already carries.
-    /// The reserve identities this resolution cache holds, in asset-id order —
-    /// the checkpoint's asset family (ADR-105 D8, D9). The prefetch loads every
-    /// market asset, so a chunk-boundary capture is complete.
+    pub(crate) fn observe_seed_generations(
+        &self,
+        view: &mut crate::projection::ProjectionView,
+        market_id: i64,
+        chain_id: i64,
+    ) {
+        use crate::projection::{
+            ContractRole, GenerationEntity, GenerationRef, ScaledTokenPosition,
+        };
+        for (name, revision) in &self.seed_contract_revisions {
+            let Some(role) = ContractRole::from_contract_name(name) else {
+                continue;
+            };
+            let entity = GenerationEntity::Contract { market_id, role };
+            view.observe_generation(match revision {
+                Some(revision) => GenerationRef::new(entity, *revision),
+                None => GenerationRef::seed(entity),
+            });
+        }
+        for asset in self.assets_by_id.values() {
+            let (asset_id, a_token_revision, v_token_revision) =
+                (asset.id, asset.a_token_revision, asset.v_token_revision);
+            for (position, revision) in [
+                (ScaledTokenPosition::Collateral, a_token_revision),
+                (ScaledTokenPosition::Debt, v_token_revision),
+            ] {
+                view.observe_generation(GenerationRef::new(
+                    GenerationEntity::ScaledToken { asset_id, position },
+                    revision,
+                ));
+            }
+        }
+        if let Some(gho) = &self.gho {
+            if gho.v_gho_discount_token.is_some() {
+                view.observe_generation(GenerationRef::seed(GenerationEntity::DiscountToken {
+                    chain_id,
+                }));
+            }
+            if gho.v_token_address.is_some() {
+                view.observe_generation(GenerationRef::seed(GenerationEntity::GhoDiscountLink {
+                    chain_id,
+                }));
+            }
+        }
+    }
+
     /// The contract endpoints and revisions this resolution cache holds, in role
-    /// order — the checkpoint's endpoint family. The prefetch loads every market
-    /// contract role, so a chunk-boundary capture is complete.
+    /// order — the checkpoint's endpoint family.
     pub(crate) fn capture_contracts(&self) -> Vec<degenbot_db::CheckpointContract> {
         let mut contracts: Vec<degenbot_db::CheckpointContract> = self
             .contract_addresses
@@ -1137,9 +1697,7 @@ impl ChunkSubstrate {
     }
 
     /// The chain's GHO row as resolution read it, if the chain has one — the
-    /// checkpoint's GHO family. `None` covers both "no GHO row" and "not read
-    /// yet"; a unit boundary always has read it (the driver ensures the read
-    /// before it captures).
+    /// checkpoint's GHO family.
     pub(crate) fn capture_gho(&self) -> Option<degenbot_db::CheckpointGho> {
         self.gho.as_ref().map(|gho| degenbot_db::CheckpointGho {
             gho_id: gho.id,
@@ -1152,202 +1710,23 @@ impl ChunkSubstrate {
         })
     }
 
-    pub(crate) fn observe_seed_generations(
-        &self,
-        view: &mut crate::projection::ProjectionView,
-        market_id: i64,
-        chain_id: i64,
-    ) {
-        use crate::projection::{
-            ContractRole, GenerationEntity, GenerationRef, ScaledTokenPosition,
-        };
-        for ((row_market_id, name), revision) in &self.contract_revisions {
-            if *row_market_id != market_id {
-                continue;
-            }
-            let Some(role) = ContractRole::from_contract_name(name) else {
-                continue;
-            };
-            let entity = GenerationEntity::Contract { market_id, role };
-            view.observe_generation(match revision {
-                Some(revision) => GenerationRef::new(entity, *revision),
-                None => GenerationRef::seed(entity),
-            });
-        }
-        for asset in self.assets_by_id.values() {
-            for (position, revision) in [
-                (ScaledTokenPosition::Collateral, asset.a_token_revision),
-                (ScaledTokenPosition::Debt, asset.v_token_revision),
-            ] {
-                view.observe_generation(GenerationRef::new(
-                    GenerationEntity::ScaledToken {
-                        asset_id: asset.id,
-                        position,
-                    },
-                    revision,
-                ));
-            }
-        }
-        if let Some(gho) = &self.gho {
-            if gho.v_gho_discount_token.is_some() {
-                view.observe_generation(GenerationRef::seed(GenerationEntity::DiscountToken {
-                    chain_id,
-                }));
-            }
-            if gho.v_token_address.is_some() {
-                view.observe_generation(GenerationRef::seed(GenerationEntity::GhoDiscountLink {
-                    chain_id,
-                }));
-            }
-        }
-    }
-
-    /// Whether the cache holds prefetched asset rows: when it does, the market's
-    /// token census is answerable in memory and needs no probe.
-    pub(crate) fn has_prefetched_assets(&self) -> bool {
-        !self.assets_by_id.is_empty()
-    }
-
-    /// The `lookup_pool_revision_on_conn` cache shell (the parser's per-parse
-    /// read). Missing row / NULL revision → `None` (the substrate's flatten).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a probe failure.
-    pub(crate) fn pool_revision(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        contract_name: &str,
-    ) -> Result<Option<u32>, DbError> {
-        if let Some(rev) = self
-            .contract_revisions
-            .get(&(market_id, contract_name.to_string()))
-        {
-            return Ok(*rev);
-        }
-        let rev = DegenbotDb::lookup_pool_revision_on_conn(conn, market_id, contract_name)?;
-        self.contract_revisions
-            .insert((market_id, contract_name.to_string()), rev);
-        Ok(rev)
-    }
-
-    /// The role's projected endpoint address (the resolution read position for
-    /// the market's price oracle and the other fetch endpoints).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a probe failure, or
-    /// [`DbError::MissingRow`] when the market has no such role.
-    pub(crate) fn contract_address(
-        &mut self,
-        conn: &Connection,
-        market_id: i64,
-        name: &str,
-    ) -> Result<Option<String>, DbError> {
-        if let Some(address) = self.contract_addresses.get(&(market_id, name.to_string())) {
-            return Ok(Some(address.clone()));
-        }
-        let address: Option<String> = conn
-            .query_row(
-                "SELECT address FROM aave_v3_contracts WHERE market_id = ?1 AND name = ?2",
-                rusqlite::params![market_id, name],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(address) = &address {
-            self.contract_addresses
-                .insert((market_id, name.to_string()), address.clone());
-        }
-        Ok(address)
-    }
-
-    /// Project a contract role's endpoint address onto the resolution read
-    /// position.
-    pub(crate) fn record_contract_address(&mut self, market_id: i64, name: &str, address: &str) {
-        self.contract_addresses
-            .insert((market_id, name.to_string()), address.to_string());
-    }
-
-    /// The `ContractRevisionUpdated` apply's overlay write.
-    pub(crate) fn record_contract_revision(
-        &mut self,
-        market_id: i64,
-        contract_name: &str,
-        new_revision: i64,
-    ) {
-        self.contract_revisions
-            .insert((market_id, contract_name.to_string()), {
-                Some(u32::try_from(new_revision).unwrap_or(0))
-            });
-    }
-
-    /// A mid-chunk contract INSERT's overlay write (a name the cache hasn't
-    /// seen gets the event's revision; a seen name keeps its cached value —
-    /// the substrate INSERT would have hit the UNIQUE constraint first).
-    pub(crate) fn record_contract_insert(
-        &mut self,
-        market_id: i64,
-        contract_name: &str,
-        revision: Option<i64>,
-    ) {
-        self.contract_revisions
-            .entry((market_id, contract_name.to_string()))
-            .or_insert_with(|| revision.map(|v| u32::try_from(v).unwrap_or(0)));
-    }
-
-    /// The per-tx GHO re-resolve (`fetch_aave_gho_asset_on_conn`'s cache
-    /// shell): serves the prefetched row until a write marks it dirty.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError`] on a re-query failure.
-    pub(crate) fn gho_asset(&mut self, conn: &Connection) -> Result<Option<AaveGhoAsset>, DbError> {
-        if !self.gho_queried {
-            self.gho = DegenbotDb::fetch_aave_gho_asset_on_conn(conn, self.chain_id)?;
-            self.gho_queried = true;
-        }
-        Ok(self.gho.clone())
-    }
-
-    /// Project one GHO-row mutation onto the resolution read position without
-    /// leaving the read side: a same-chunk link, discount-token replacement,
-    /// strategy change or deprecation is read by every later resolution of the
-    /// same chunk.
-    pub(crate) fn project_gho(&mut self, mutate: impl FnOnce(&mut AaveGhoAsset)) {
-        if self.gho_queried {
-            if let Some(gho) = self.gho.as_mut() {
-                mutate(gho);
-            }
-        }
-    }
-
-    /// Mark the cached GHO row dirty (every write touching
-    /// `aave_gho_tokens`: the `ReserveInitialized` GHO link, the discount
-    /// applies, the deprecation clear). The next read re-queries `conn` —
-    /// read-your-own-writes across log transactions.
-    pub(crate) fn mark_gho_dirty(&mut self) {
-        self.gho_queried = false;
-    }
-
     /// The substrate lookup kinds are the two `token_type` strings plus the
-    /// underlying-JOIN kind; anything else is the substrate's loud
-    /// `DbError::Decode` (no catch-all default).
-    fn asset_kind(kind: &str) -> Result<&'static str, DbError> {
+    /// underlying-JOIN kind; anything else is a caller error, reported as an
+    /// unknown-kind seed refusal.
+    fn asset_kind(kind: &str) -> Option<&'static str> {
         match kind {
-            ASSET_KIND_UNDERLYING => Ok(ASSET_KIND_UNDERLYING),
-            ASSET_KIND_A_TOKEN => Ok(ASSET_KIND_A_TOKEN),
-            ASSET_KIND_V_TOKEN => Ok(ASSET_KIND_V_TOKEN),
-            other => Err(DbError::Decode(format!(
-                "unexpected TokenType '{other}' (expected 'a_token' or 'v_token')"
-            ))),
+            ASSET_KIND_UNDERLYING => Some(ASSET_KIND_UNDERLYING),
+            ASSET_KIND_A_TOKEN => Some(ASSET_KIND_A_TOKEN),
+            ASSET_KIND_V_TOKEN => Some(ASSET_KIND_V_TOKEN),
+            _ => None,
         }
     }
 
-    /// The shared position-state read: map hit → clone; miss → the SQL probe
-    /// (the table's `SELECT balance, last_index ... WHERE id`) → cache →
-    /// return. The error text mirrors the calling substrate fn's
-    /// (`lookup_position_balance_index_on_conn` vs the apply body's).
+    /// The shared position-state read for the persistence side: map hit →
+    /// clone; miss → the SQL probe (the table's `SELECT balance, last_index ...
+    /// WHERE id`) → cache → return. The error text mirrors the calling
+    /// substrate fn's (`lookup_position_balance_index_on_conn` vs the apply
+    /// body's).
     fn position_state_inner(
         &mut self,
         conn: &Connection,
@@ -1400,8 +1779,8 @@ impl ChunkSubstrate {
     }
 }
 
-/// Which error text a position-state read carries (the substrate readers
-/// the cache shells for).
+/// Which error text a position-state read carries (the substrate readers the
+/// cache shells for).
 #[derive(Copy, Clone)]
 enum PositionRead {
     /// The scaled-token apply body's read.
@@ -1410,8 +1789,8 @@ enum PositionRead {
     Reset,
 }
 
-/// Decode one row of the asset projection (the substrate lookups' exact
-/// column order + NULL-revision rule).
+/// Decode one row of the asset projection (the substrate lookups' exact column
+/// order + NULL-revision rule).
 fn decode_asset_row(row: &rusqlite::Row<'_>) -> Result<AssetRow, rusqlite::Error> {
     Ok(AssetRow {
         id: row.get(0)?,
@@ -1427,26 +1806,17 @@ fn decode_asset_row(row: &rusqlite::Row<'_>) -> Result<AssetRow, rusqlite::Error
     })
 }
 
-/// The chunk's candidate substrate-address strings: every `topics[1]`/
-/// `topics[2]` word's low-20-bytes address PLUS every log's emitter
-/// address across the chunk's logs, checksummed (the substrate's
-/// `addr_to_hex` — the BINARY-collation guard), deduped + sorted. The
-/// prefetch's IN-list supersets (the parse-time addresses — user
-/// get-or-creates, asset lookups by topic and by emitter — are all drawn
-/// from these sets; the cache's lazy probes cover any stragglers).
+/// The chunk's candidate substrate-address strings: every `topics[1]`-
+/// `topics[3]` word's low-20-bytes address PLUS every log's emitter address
+/// across the chunk's logs, checksummed (the substrate's `addr_to_hex` — the
+/// BINARY-collation guard), deduped + sorted. The seed's indexes superset the
+/// parse-time addresses — user get-or-creates, asset lookups by topic and by
+/// emitter — so resolution answers them from memory.
 pub(crate) fn candidate_addresses(logs: &[&alloy::rpc::types::Log]) -> (Vec<String>, Vec<String>) {
     let mut out: HashSet<String> = HashSet::new();
     for log in logs {
-        let topics = log.topics();
-        if let Some(t1) = topics.get(1) {
-            out.insert(addr_to_hex(alloy::primitives::Address::from_slice(
-                &t1.as_slice()[12..],
-            )));
-        }
-        if let Some(t2) = topics.get(2) {
-            out.insert(addr_to_hex(alloy::primitives::Address::from_slice(
-                &t2.as_slice()[12..],
-            )));
+        for topic in log.topics().iter().skip(1).take(3) {
+            out.insert(addr_to_hex(Address::from_slice(&topic.as_slice()[12..])));
         }
     }
     let mut emitters: HashSet<String> = HashSet::new();
@@ -1458,7 +1828,6 @@ pub(crate) fn candidate_addresses(logs: &[&alloy::rpc::types::Log]) -> (Vec<Stri
     for addr in &users {
         assets.push(addr.clone());
     }
-    // Deterministic IN-list order (the statement ledger is golden-captured).
     users.sort();
     assets.sort();
     (users, assets)

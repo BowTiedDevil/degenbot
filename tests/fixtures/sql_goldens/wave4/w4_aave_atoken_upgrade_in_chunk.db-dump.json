@@ -781,6 +781,11 @@
         [
           1,
           1,
+          61
+        ],
+        [
+          1,
+          1,
           6
         ],
         [
@@ -956,7 +961,7 @@
         [
           12,
           1,
-          "scaled-token{asset=11,leg=debt}",
+          "scaled-token{asset=11,leg=collateral}",
           "seed",
           1,
           null,
@@ -970,7 +975,7 @@
         [
           13,
           1,
-          "scaled-token{asset=12,leg=collateral}",
+          "scaled-token{asset=11,leg=debt}",
           "seed",
           1,
           null,
@@ -984,7 +989,7 @@
         [
           14,
           1,
-          "scaled-token{asset=12,leg=debt}",
+          "scaled-token{asset=12,leg=collateral}",
           "seed",
           1,
           null,
@@ -998,7 +1003,7 @@
         [
           15,
           1,
-          "scaled-token{asset=13,leg=collateral}",
+          "scaled-token{asset=12,leg=debt}",
           "seed",
           1,
           null,
@@ -1012,7 +1017,7 @@
         [
           16,
           1,
-          "scaled-token{asset=13,leg=debt}",
+          "scaled-token{asset=13,leg=collateral}",
           "seed",
           1,
           null,
@@ -1026,7 +1031,7 @@
         [
           17,
           1,
-          "scaled-token{asset=14,leg=collateral}",
+          "scaled-token{asset=13,leg=debt}",
           "seed",
           1,
           null,
@@ -1040,7 +1045,7 @@
         [
           18,
           1,
-          "scaled-token{asset=14,leg=debt}",
+          "scaled-token{asset=14,leg=collateral}",
           "seed",
           1,
           null,
@@ -1054,7 +1059,7 @@
         [
           19,
           1,
-          "scaled-token{asset=15,leg=collateral}",
+          "scaled-token{asset=14,leg=debt}",
           "seed",
           1,
           null,
@@ -1082,7 +1087,7 @@
         [
           20,
           1,
-          "scaled-token{asset=15,leg=debt}",
+          "scaled-token{asset=15,leg=collateral}",
           "seed",
           1,
           null,
@@ -1096,7 +1101,7 @@
         [
           21,
           1,
-          "scaled-token{asset=16,leg=collateral}",
+          "scaled-token{asset=15,leg=debt}",
           "seed",
           1,
           null,
@@ -1110,7 +1115,7 @@
         [
           22,
           1,
-          "scaled-token{asset=16,leg=debt}",
+          "scaled-token{asset=16,leg=collateral}",
           "seed",
           1,
           null,
@@ -1124,7 +1129,7 @@
         [
           23,
           1,
-          "scaled-token{asset=17,leg=collateral}",
+          "scaled-token{asset=16,leg=debt}",
           "seed",
           1,
           null,
@@ -1138,7 +1143,7 @@
         [
           24,
           1,
-          "scaled-token{asset=17,leg=debt}",
+          "scaled-token{asset=17,leg=collateral}",
           "seed",
           1,
           null,
@@ -1152,7 +1157,7 @@
         [
           25,
           1,
-          "scaled-token{asset=18,leg=collateral}",
+          "scaled-token{asset=17,leg=debt}",
           "seed",
           1,
           null,
@@ -1166,7 +1171,7 @@
         [
           26,
           1,
-          "scaled-token{asset=18,leg=debt}",
+          "scaled-token{asset=18,leg=collateral}",
           "seed",
           1,
           null,
@@ -1180,7 +1185,7 @@
         [
           27,
           1,
-          "scaled-token{asset=19,leg=collateral}",
+          "scaled-token{asset=18,leg=debt}",
           "seed",
           1,
           null,
@@ -1194,7 +1199,7 @@
         [
           28,
           1,
-          "scaled-token{asset=19,leg=debt}",
+          "scaled-token{asset=19,leg=collateral}",
           "seed",
           1,
           null,
@@ -1208,7 +1213,7 @@
         [
           29,
           1,
-          "scaled-token{asset=2,leg=collateral}",
+          "scaled-token{asset=19,leg=debt}",
           "seed",
           1,
           null,
@@ -1236,7 +1241,7 @@
         [
           30,
           1,
-          "scaled-token{asset=2,leg=debt}",
+          "scaled-token{asset=2,leg=collateral}",
           "seed",
           1,
           null,
@@ -1250,7 +1255,7 @@
         [
           31,
           1,
-          "scaled-token{asset=20,leg=collateral}",
+          "scaled-token{asset=2,leg=debt}",
           "seed",
           1,
           null,
@@ -1264,7 +1269,7 @@
         [
           32,
           1,
-          "scaled-token{asset=20,leg=debt}",
+          "scaled-token{asset=20,leg=collateral}",
           "seed",
           1,
           null,
@@ -1278,7 +1283,7 @@
         [
           33,
           1,
-          "scaled-token{asset=21,leg=collateral}",
+          "scaled-token{asset=20,leg=debt}",
           "seed",
           1,
           null,
@@ -1292,7 +1297,7 @@
         [
           34,
           1,
-          "scaled-token{asset=21,leg=debt}",
+          "scaled-token{asset=21,leg=collateral}",
           "seed",
           1,
           null,
@@ -1306,7 +1311,7 @@
         [
           35,
           1,
-          "scaled-token{asset=22,leg=collateral}",
+          "scaled-token{asset=21,leg=debt}",
           "seed",
           1,
           null,
@@ -1320,7 +1325,7 @@
         [
           36,
           1,
-          "scaled-token{asset=22,leg=debt}",
+          "scaled-token{asset=22,leg=collateral}",
           "seed",
           1,
           null,
@@ -1334,7 +1339,7 @@
         [
           37,
           1,
-          "scaled-token{asset=23,leg=collateral}",
+          "scaled-token{asset=22,leg=debt}",
           "seed",
           1,
           null,
@@ -1348,7 +1353,7 @@
         [
           38,
           1,
-          "scaled-token{asset=23,leg=debt}",
+          "scaled-token{asset=23,leg=collateral}",
           "seed",
           1,
           null,
@@ -1362,7 +1367,7 @@
         [
           39,
           1,
-          "scaled-token{asset=24,leg=collateral}",
+          "scaled-token{asset=23,leg=debt}",
           "seed",
           1,
           null,
@@ -1390,7 +1395,7 @@
         [
           40,
           1,
-          "scaled-token{asset=24,leg=debt}",
+          "scaled-token{asset=24,leg=collateral}",
           "seed",
           1,
           null,
@@ -1404,7 +1409,7 @@
         [
           41,
           1,
-          "scaled-token{asset=25,leg=collateral}",
+          "scaled-token{asset=24,leg=debt}",
           "seed",
           1,
           null,
@@ -1418,7 +1423,7 @@
         [
           42,
           1,
-          "scaled-token{asset=25,leg=debt}",
+          "scaled-token{asset=25,leg=collateral}",
           "seed",
           1,
           null,
@@ -1432,7 +1437,7 @@
         [
           43,
           1,
-          "scaled-token{asset=26,leg=collateral}",
+          "scaled-token{asset=25,leg=debt}",
           "seed",
           1,
           null,
@@ -1446,7 +1451,7 @@
         [
           44,
           1,
-          "scaled-token{asset=26,leg=debt}",
+          "scaled-token{asset=26,leg=collateral}",
           "seed",
           1,
           null,
@@ -1460,7 +1465,7 @@
         [
           45,
           1,
-          "scaled-token{asset=27,leg=collateral}",
+          "scaled-token{asset=26,leg=debt}",
           "seed",
           1,
           null,
@@ -1474,7 +1479,7 @@
         [
           46,
           1,
-          "scaled-token{asset=27,leg=debt}",
+          "scaled-token{asset=27,leg=collateral}",
           "seed",
           1,
           null,
@@ -1488,7 +1493,7 @@
         [
           47,
           1,
-          "scaled-token{asset=3,leg=collateral}",
+          "scaled-token{asset=27,leg=debt}",
           "seed",
           1,
           null,
@@ -1502,7 +1507,7 @@
         [
           48,
           1,
-          "scaled-token{asset=3,leg=debt}",
+          "scaled-token{asset=3,leg=collateral}",
           "seed",
           1,
           null,
@@ -1516,7 +1521,7 @@
         [
           49,
           1,
-          "scaled-token{asset=4,leg=collateral}",
+          "scaled-token{asset=3,leg=debt}",
           "seed",
           1,
           null,
@@ -1544,7 +1549,7 @@
         [
           50,
           1,
-          "scaled-token{asset=4,leg=debt}",
+          "scaled-token{asset=4,leg=collateral}",
           "seed",
           1,
           null,
@@ -1558,7 +1563,7 @@
         [
           51,
           1,
-          "scaled-token{asset=5,leg=collateral}",
+          "scaled-token{asset=4,leg=debt}",
           "seed",
           1,
           null,
@@ -1572,7 +1577,7 @@
         [
           52,
           1,
-          "scaled-token{asset=5,leg=debt}",
+          "scaled-token{asset=5,leg=collateral}",
           "seed",
           1,
           null,
@@ -1586,7 +1591,7 @@
         [
           53,
           1,
-          "scaled-token{asset=6,leg=collateral}",
+          "scaled-token{asset=5,leg=debt}",
           "seed",
           1,
           null,
@@ -1600,7 +1605,7 @@
         [
           54,
           1,
-          "scaled-token{asset=6,leg=debt}",
+          "scaled-token{asset=6,leg=collateral}",
           "seed",
           1,
           null,
@@ -1614,7 +1619,7 @@
         [
           55,
           1,
-          "scaled-token{asset=7,leg=collateral}",
+          "scaled-token{asset=6,leg=debt}",
           "seed",
           1,
           null,
@@ -1628,7 +1633,7 @@
         [
           56,
           1,
-          "scaled-token{asset=7,leg=debt}",
+          "scaled-token{asset=7,leg=collateral}",
           "seed",
           1,
           null,
@@ -1642,7 +1647,7 @@
         [
           57,
           1,
-          "scaled-token{asset=8,leg=collateral}",
+          "scaled-token{asset=7,leg=debt}",
           "seed",
           1,
           null,
@@ -1656,7 +1661,7 @@
         [
           58,
           1,
-          "scaled-token{asset=8,leg=debt}",
+          "scaled-token{asset=8,leg=collateral}",
           "seed",
           1,
           null,
@@ -1670,7 +1675,7 @@
         [
           59,
           1,
-          "scaled-token{asset=9,leg=collateral}",
+          "scaled-token{asset=8,leg=debt}",
           "seed",
           1,
           null,
@@ -1697,6 +1702,20 @@
         ],
         [
           60,
+          1,
+          "scaled-token{asset=9,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          61,
           1,
           "scaled-token{asset=9,leg=debt}",
           "seed",

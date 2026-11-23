@@ -105,7 +105,7 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// checkpoint it commits (the settled position rows, the generation lineage it
 /// reads under, and the checkpoint row itself: six statements, fixed per
 /// checkpointed unit).
-const EXPECTED_LEDGER_STATEMENTS: usize = 85;
+const EXPECTED_LEDGER_STATEMENTS: usize = 82;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the

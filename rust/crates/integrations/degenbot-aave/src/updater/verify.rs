@@ -636,6 +636,7 @@ pub struct VerificationTruth {
 }
 
 /// One row of the stkAAVE check's read side.
+#[derive(Debug)]
 struct StkAaveRow {
     user_id: i64,
     user_address: Address,
@@ -643,10 +644,57 @@ struct StkAaveRow {
 }
 
 /// One row of the GHO discount check's read side.
+#[derive(Debug)]
 struct GhoDiscountRow {
     user_id: i64,
     user_address: Address,
     expected: i64,
+}
+
+/// The verify pass's read side: every relational fact the acquisition needs,
+/// loaded in one synchronous pass so the async acquisition issues no SQL (and
+/// no caller's SQLite guard is held across its RPC).
+#[derive(Debug, Default)]
+pub struct VerificationTruthRows {
+    positions: Vec<VerificationPosition>,
+    stk_aave_token: Option<Address>,
+    stk_aave_rows: Vec<StkAaveRow>,
+    gho_target: Option<(i64, Address)>,
+    gho_rows: Vec<GhoDiscountRow>,
+}
+
+/// Load the full (market-wide or user-filtered) verification read side.
+///
+/// # Errors
+///
+/// A row whose address, balance or `last_index` column does not parse refuses
+/// the load (never a dropped row).
+pub fn load_verification_truth_rows(
+    conn: &Connection,
+    market_id: i64,
+    chain_id: i64,
+    user_addresses: Option<&[Address]>,
+) -> Result<VerificationTruthRows, DbError> {
+    let positions = load_verification_positions(conn, market_id, user_addresses)?;
+    let stk_aave_token = stk_aave_discount_token(conn, chain_id)?;
+    let stk_aave_rows = match stk_aave_token {
+        Some(_) => load_stk_aave_rows(conn, market_id, user_addresses)?,
+        None => Vec::new(),
+    };
+    let gho_target = gho_discount_target(conn, market_id, chain_id)?;
+    let gho_rows = match gho_target {
+        Some((v_token_id, _)) => {
+            load_gho_discount_rows(conn, market_id, v_token_id, user_addresses)?
+        }
+        None => Vec::new(),
+    };
+    Ok(VerificationTruthRows {
+        positions,
+        stk_aave_token,
+        stk_aave_rows,
+        gho_target,
+        gho_rows,
+    })
 }
 
 /// The stkAAVE token the balance check reads, when the market carries one.
@@ -788,18 +836,14 @@ fn load_gho_discount_rows(
 /// transport fault aborts the acquisition rather than reading every fact as
 /// zero.
 pub async fn acquire_verification_truth(
-    conn: &Connection,
+    rows: &VerificationTruthRows,
     reads: &BlockReads<'_>,
-    market_id: i64,
-    chain_id: i64,
-    user_addresses: Option<&[Address]>,
 ) -> Result<VerificationTruth, RunError> {
-    let positions = load_verification_positions(conn, market_id, user_addresses)?;
-    let positions = acquire_position_truth(reads, &positions).await?;
+    let positions = acquire_position_truth(reads, &rows.positions).await?;
 
-    let stk_aave = match stk_aave_discount_token(conn, chain_id)? {
+    let stk_aave = match rows.stk_aave_token {
         Some(token_address) => {
-            let rows = load_stk_aave_rows(conn, market_id, user_addresses)?;
+            let rows = &rows.stk_aave_rows;
             if rows.is_empty() {
                 Vec::new()
             } else {
@@ -838,9 +882,9 @@ pub async fn acquire_verification_truth(
         None => Vec::new(),
     };
 
-    let gho_discount = match gho_discount_target(conn, market_id, chain_id)? {
-        Some((v_token_id, v_token_address)) => {
-            let rows = load_gho_discount_rows(conn, market_id, v_token_id, user_addresses)?;
+    let gho_discount = match rows.gho_target {
+        Some((_v_token_id, v_token_address)) => {
+            let rows = &rows.gho_rows;
             if rows.is_empty() {
                 Vec::new()
             } else {
@@ -897,29 +941,23 @@ pub async fn acquire_verification_truth(
     })
 }
 
-/// Compare the acquired truth against the rows the connection holds now. Pure:
-/// no RPC, so it runs on the chunk's uncommitted transaction.
-///
-/// # Errors
-///
-/// Returns [`RunError`] when a row the comparison needs does not parse.
-pub fn compare_verification_truth_on_conn(
-    conn: &Connection,
-    market_id: i64,
-    chain_id: i64,
-    block_number: u64,
-    user_addresses: Option<&[Address]>,
+/// Compare the acquired truth against the rows a locked read window loaded.
+/// Pure: no SQL and no RPC, so a caller runs it inside a lock window and never
+/// across an await.
+#[must_use]
+pub fn compare_verification_truth(
+    rows: &VerificationTruthRows,
     truth: &VerificationTruth,
-) -> Result<Vec<VerificationDivergence>, RunError> {
+    block_number: u64,
+) -> Vec<VerificationDivergence> {
     let mut divergences = Vec::new();
 
-    let positions = load_verification_positions(conn, market_id, user_addresses)?;
-    for divergence in compare_position_truth(&positions, &truth.positions, block_number) {
+    for divergence in compare_position_truth(&rows.positions, &truth.positions, block_number) {
         divergences.push(VerificationDivergence::ScaledToken(divergence));
     }
 
-    if let Some(token_address) = stk_aave_discount_token(conn, chain_id)? {
-        for row in &load_stk_aave_rows(conn, market_id, user_addresses)? {
+    if let Some(token_address) = rows.stk_aave_token {
+        for row in &rows.stk_aave_rows {
             let Some(truth_row) = truth
                 .stk_aave
                 .iter()
@@ -940,8 +978,8 @@ pub fn compare_verification_truth_on_conn(
         }
     }
 
-    if let Some((v_token_id, v_token_address)) = gho_discount_target(conn, market_id, chain_id)? {
-        for row in &load_gho_discount_rows(conn, market_id, v_token_id, user_addresses)? {
+    if let Some((_, v_token_address)) = rows.gho_target {
+        for row in &rows.gho_rows {
             let Some(truth_row) = truth
                 .gho_discount
                 .iter()
@@ -962,44 +1000,41 @@ pub fn compare_verification_truth_on_conn(
         }
     }
 
-    Ok(divergences)
+    divergences
 }
-
-/// Run all 4 verification checks (scaled-token collateral + debt, stkAAVE
-/// balance, GHO discount) and return a unified divergence list.
+/// Acquire the scaled-token truth a verification compares, at `block_number`.
 ///
-/// When `user_addresses` is `None`, verifies ALL positions/users in the market
-/// (the post-run `--verify-all` path). When `Some`, verifies only the
-/// specified users (the per-chunk path).
+/// The only half of the check that touches the chain: it takes no connection,
+/// so a caller loads its rows under the guard, drops it here, and compares in a
+/// second locked window.
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] on a DB or RPC failure that prevents verification.
-pub async fn verify_all_positions_on_conn(
-    conn: &Connection,
+/// [`RunError::VerificationEvidence`] when a read carries no word, and
+/// [`RunError::ExactRead`] when the node cannot serve a read at the anchor.
+pub async fn acquire_position_truth_at(
     provider: &AlloyProvider,
-    market_id: i64,
-    chain_id: i64,
     block_number: u64,
-    user_addresses: Option<&[Address]>,
-) -> Result<Vec<VerificationDivergence>, RunError> {
+    positions: &[VerificationPosition],
+) -> Result<Vec<PositionTruth>, RunError> {
     let anchor = resolve_anchor_at(provider, block_number).await?;
-    let truth = acquire_verification_truth(
-        conn,
-        &BlockReads::at(provider, anchor),
-        market_id,
-        chain_id,
-        user_addresses,
-    )
-    .await?;
-    compare_verification_truth_on_conn(
-        conn,
-        market_id,
-        chain_id,
-        block_number,
-        user_addresses,
-        &truth,
-    )
+    acquire_position_truth(&BlockReads::at(provider, anchor), positions).await
+}
+
+/// Acquire every chain fact a market-wide verification compares, at
+/// `block_number`: the connection-free half of the check.
+///
+/// # Errors
+///
+/// [`RunError::VerificationEvidence`] when a read carries no word, and
+/// [`RunError::ExactRead`] when the node cannot serve a read at the anchor.
+pub async fn acquire_verification_truth_at(
+    provider: &AlloyProvider,
+    block_number: u64,
+    rows: &VerificationTruthRows,
+) -> Result<VerificationTruth, RunError> {
+    let anchor = resolve_anchor_at(provider, block_number).await?;
+    acquire_verification_truth(rows, &BlockReads::at(provider, anchor)).await
 }
 
 /// Delete all zero-balance collateral + debt positions for `market_id`.
@@ -1722,9 +1757,9 @@ mod tests {
             ..VerificationTruth::default()
         };
 
+        let rows = load_verification_truth_rows(&conn, 1, 1, None).unwrap();
         let before = degenbot_rpc::provider::rpc_round_trips();
-        let divergences =
-            compare_verification_truth_on_conn(&conn, 1, 1, 100, None, &truth).unwrap();
+        let divergences = compare_verification_truth(&rows, &truth, 100);
         let after = degenbot_rpc::provider::rpc_round_trips();
 
         assert!(
@@ -1759,9 +1794,9 @@ mod tests {
             ..VerificationTruth::default()
         };
 
+        let rows = load_verification_truth_rows(&conn, 1, 1, None).unwrap();
         let before = degenbot_rpc::provider::rpc_round_trips();
-        let divergences =
-            compare_verification_truth_on_conn(&conn, 1, 1, 100, None, &truth).unwrap();
+        let divergences = compare_verification_truth(&rows, &truth, 100);
         let after = degenbot_rpc::provider::rpc_round_trips();
 
         assert_eq!(
@@ -1779,5 +1814,106 @@ mod tests {
         assert_eq!(divergence.position_id, 1);
         assert_eq!(divergence.expected, U256::from(123_456_789_u64));
         assert_eq!(divergence.actual, U256::from(1u64));
+    }
+
+    /// The public verification path holds no guard across a chain read: this
+    /// mirrors the shell's orchestration — one locked window loads the rows,
+    /// the guard is dropped, the acquisition parks on a stalled provider, and
+    /// an unrelated database operation takes the guard at that exact moment.
+    /// Both public acquisitions are covered: the per-chunk position truth and
+    /// the market-wide verification truth.
+    #[test]
+    fn a_stalled_verification_acquisition_does_not_block_the_database() {
+        use crate::updater::test_chain::{ScriptedChain, HEAD_NUMBER};
+        use degenbot_db::DegenbotDb;
+        use std::future::Future;
+        use std::path::Path;
+        use std::task::{Context, Poll, Waker};
+
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, ?1)",
+                [i64::try_from(HEAD_NUMBER).unwrap() - 1],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, ?1), (2, 1, ?2), (3, 1, ?3)",
+                rusqlite::params![
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x31)),
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x32)),
+                    degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x33)),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
+                     borrow_index, borrow_rate) \
+                 VALUES (1, 1, 1, 2, 1, 3, 1, '0', '0', '1', '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_users (id, market_id, address, e_mode, gho_discount, isolation_mode_debt) \
+                 VALUES (1, 1, ?1, 0, 0, '0')",
+                [degenbot_core::address_utils::address_to_checksum_string(&Address::repeat_byte(0x41))],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance, last_index) \
+                 VALUES (1, 1, 1, '1000', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let positions = {
+            let conn = db.lock();
+            load_verification_positions(&conn, 1, None).unwrap()
+        };
+        assert_eq!(
+            positions.len(),
+            1,
+            "the locked window loads the tracked row"
+        );
+        let rows = {
+            let conn = db.lock();
+            load_verification_truth_rows(&conn, 1, 1, None).unwrap()
+        };
+
+        let chain = ScriptedChain::new().stall_calls();
+        let provider = degenbot_core::runtime::get_runtime().block_on(chain.provider());
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let waker = Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            let mut acquired = Box::pin(acquire_position_truth_at(
+                &provider,
+                HEAD_NUMBER,
+                &positions,
+            ));
+            match acquired.as_mut().poll(&mut cx) {
+                Poll::Pending => {}
+                Poll::Ready(outcome) => panic!("the acquisition completed: {outcome:?}"),
+            }
+            assert!(
+                db.try_lock().is_some(),
+                "the position-truth acquisition parked on the chain with no guard held"
+            );
+            drop(acquired);
+            let mut verified =
+                Box::pin(acquire_verification_truth_at(&provider, HEAD_NUMBER, &rows));
+            match verified.as_mut().poll(&mut cx) {
+                Poll::Pending => {}
+                Poll::Ready(outcome) => panic!("the acquisition completed: {outcome:?}"),
+            }
+            assert!(
+                db.try_lock().is_some(),
+                "the verification-truth acquisition parked on the chain with no guard held"
+            );
+        });
     }
 }

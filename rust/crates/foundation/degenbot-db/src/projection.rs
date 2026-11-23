@@ -1109,8 +1109,7 @@ fn read_checkpoint_generations(
          FROM aave_v3_checkpoint_generations cg \
          JOIN aave_v3_generations g ON g.id = cg.generation_id AND g.market_id = cg.market_id \
          WHERE cg.checkpoint_id = ?1 \
-         ORDER BY g.entity, g.activation_kind, g.revision, g.chain_id, g.block_number, \
-                  g.tx_hash, g.log_index",
+         ORDER BY cg.rowid",
     )?;
     let mut rows = statement.query(params![checkpoint_id])?;
     let mut generations = Vec::new();

@@ -594,12 +594,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         &mut self,
         underlying: Address,
     ) -> Result<Option<Address>, ParseError> {
-        let row = self.substrate.lookup_asset_row(
-            self.conn,
-            self.market_id,
-            "underlying",
-            &addr_to_hex(underlying),
-        )?;
+        let row = self
+            .substrate
+            .lookup_asset_row("underlying", &addr_to_hex(underlying))?;
         Ok(row.and_then(|a| parse_address(&a.a_token_address)))
     }
 
@@ -610,12 +607,9 @@ impl<'a> TransactionOperationsParser<'a, '_> {
         &mut self,
         underlying: Address,
     ) -> Result<Option<Address>, ParseError> {
-        let row = self.substrate.lookup_asset_row(
-            self.conn,
-            self.market_id,
-            "underlying",
-            &addr_to_hex(underlying),
-        )?;
+        let row = self
+            .substrate
+            .lookup_asset_row("underlying", &addr_to_hex(underlying))?;
         Ok(row.and_then(|a| parse_address(&a.v_token_address)))
     }
 }
