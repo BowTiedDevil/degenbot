@@ -72,16 +72,14 @@ pub struct ExchangeSpec {
     /// The decode-leaf discriminator (which `decode_*_pool_created_log` the
     /// chunk fn dispatches to). Distinct from the DB's
     /// `ExchangeFamily` (a V3/V4-only SQL-suffix helper); [`PoolFamily`]
-    /// covers V2/AerodromeV2/V3/V4 because Aerodrome V2's `PoolCreated` is
-    /// structurally distinct from the canonical V2 `PairCreated` (different
-    /// topic0 + a `stable` indexed flag).
+    /// covers V2/AerodromeV2/V3/AerodromeV3/V4 because each fork whose creation
+    /// event has its own declaration is its own family — Aerodrome V2's carries
+    /// a `stable` indexed flag, Aerodrome V3's an indexed `tickSpacing`
+    /// where the canonical V3 event indexes its fee tier.
     pub family: PoolFamily,
-    /// The per-exchange resolved `PoolCreated`/`Initialize` topic0. From
-    /// the decoders' constants (NOT re-declared here).
-    /// Note: [`PoolFamily`] alone is NOT enough to resolve the topic —
-    /// `aerodrome_v3` shares the V3 decode structure but has its own topic
-    /// ([`AERODROME_V3_POOL_CREATED_TOPIC`] vs the canonical
-    /// [`V3_POOL_CREATED_TOPIC`]).
+    /// The per-exchange resolved `PoolCreated`/`Initialize` topic0, matching
+    /// [`Self::family`]'s declaration (from the decoders' constants, NOT
+    /// re-declared here).
     pub event_topic: B256,
     /// The V2/V3/V4 fee denominator (`1000` for `uniswap_v2`/`sushiswap_v2`/
     /// `swapbased_v2`, `10000` for `pancakeswap_v2`/`aerodrome_v2`,
@@ -131,10 +129,12 @@ pub enum RpcFeeCall {
     /// V2 pools have symmetric fees). Overrides [`ExchangeSpec::v2_fee_token`]
     /// (which is `None` for `aerodrome_v2`).
     AerodromeV2,
-    /// `aerodrome_v3` — `getSwapFee(address pool) returns (uint24)`. The call
-    /// takes only the pool address (no `stable` arg — Aerodrome V3 pools
-    /// aren't stable/volatile-tagged the way V2 is). The returned `uint24`
-    /// overrides the event's indexed `fee` topic.
+    /// `aerodrome_v3` — `getSwapFee(address pool) returns (uint24)`, read on
+    /// the factory. The call takes only the pool address (no `stable` arg —
+    /// Aerodrome V3 pools aren't stable/volatile-tagged the way V2 is). It is
+    /// the only source of the fee: the CL `PoolCreated` event carries none,
+    /// and the factory encapsulates the fee module (`swapFeeModule`, then the
+    /// `tickSpacingToFee` fallback) that the pool's own `fee()` delegates to.
     AerodromeV3,
 }
 
@@ -188,16 +188,11 @@ fn resolve_static_config(name: &str) -> Option<StaticExchangeConfig> {
         v2_fee_token: None, // V3 fee comes from the event's indexed fee topic
         rpc_fee_call: None,
     };
-    // V3 Aerodrome family — a distinct `PoolCreated` topic0 (its own
-    // signature) but structurally decoded like canonical V3 (token0/token1/
-    // fee in topics, tickSpacing/pool in data) + an RPC fee override.
-    // Note: `family == PoolFamily::V3` here even though the topic differs —
-    // the chunk fn uses `spec.event_topic` (NOT `spec.family.topic0()`) for
-    // the RPC filter, so the per-exchange topic is faithfully carried. The
-    // decode leaf dispatching on `PoolFamily::V3` must additionally accept
-    // `AERODROME_V3_POOL_CREATED_TOPIC` (a chunk-loop concern).
+    // V3 Aerodrome family — its own `PoolCreated` declaration: token0/token1/
+    // tickSpacing in topics, pool address in data, no fee field. The fee is the
+    // factory's `getSwapFee` answer.
     let aerodrome_v3 = StaticExchangeConfig {
-        family: PoolFamily::V3,
+        family: PoolFamily::AerodromeV3,
         event_topic: AERODROME_V3_POOL_CREATED_TOPIC,
         fee_denominator: 1_000_000,
         v2_fee_token: None,
@@ -352,10 +347,10 @@ mod tests {
             resolve_static_config("uniswap_v3").unwrap(),
         );
 
-        // Aerodrome V3 has the SAME family (V3 decode structure) but a
-        // DISTINCT topic0 + an RPC fee override.
+        // Aerodrome V3 is its own family: a DISTINCT topic0 and a
+        // tick-spacing-instead-of-fee-topic declaration, plus an RPC fee read.
         let aerodrome = resolve_static_config("aerodrome_v3").unwrap();
-        assert_eq!(aerodrome.family, PoolFamily::V3);
+        assert_eq!(aerodrome.family, PoolFamily::AerodromeV3);
         assert_eq!(aerodrome.event_topic, AERODROME_V3_POOL_CREATED_TOPIC);
         assert_ne!(aerodrome.event_topic, uniswap.event_topic);
         assert_eq!(aerodrome.rpc_fee_call, Some(RpcFeeCall::AerodromeV3));
@@ -484,9 +479,9 @@ mod tests {
         let specs = load_active_exchange_specs(&db, 1).unwrap();
         assert_eq!(specs.len(), 1);
         let spec = &specs[0];
-        // Family is V3 (same decode structure as canonical V3)...
-        assert_eq!(spec.family, PoolFamily::V3);
-        // ...but the topic0 is the Aerodrome V3 sig, NOT the canonical V3 sig.
+        // The CL declaration is its own family, matching its own topic0.
+        assert_eq!(spec.family, PoolFamily::AerodromeV3);
+        // The topic0 is the Aerodrome V3 sig, NOT the canonical V3 sig.
         assert_eq!(spec.event_topic, AERODROME_V3_POOL_CREATED_TOPIC);
         assert_ne!(spec.event_topic, V3_POOL_CREATED_TOPIC);
         assert_eq!(spec.rpc_fee_call, Some(RpcFeeCall::AerodromeV3));

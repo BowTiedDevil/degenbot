@@ -102,6 +102,7 @@ use degenbot_db::{
     derive_liquidity_delta_from_computed, ComputedLiquidityUpdate, DegenbotDb, LiquidityDelta,
     LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput,
 };
+use degenbot_rpc::abi::ContractRead;
 use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::Connection;
@@ -110,7 +111,7 @@ use crate::verify::{gate_liquidity_map_on_chain, LiquidityDivergence};
 
 use crate::fetch::{
     fetch_pool_created_logs_for_spec, fetch_v3_liquidity_logs_grouped,
-    fetch_v4_liquidity_logs_grouped, DecodedPoolCreated,
+    fetch_v4_liquidity_logs_grouped, resolve_aerodrome_fee, DecodedPoolCreated,
 };
 use crate::spec::{load_active_exchange_specs, ExchangeSpec};
 
@@ -216,19 +217,22 @@ fn progress_percent(initial_start_block: u64, working_end_block: u64, last_block
 
 /// A decoded pool-creation event already mapped to its DB `V*PoolRowInput`
 /// (+ the `exchange_id` it belongs to) — the fruit of the outer loop's
-/// `fetch_pool_created_logs_for_spec` + [`map_pool_creation`] (the latter may
-/// resolve a per-pool RPC fee for Aerodrome V2). The inner writer consumes
-/// these directly so it does no decode or RPC — it just upserts.
+/// `fetch_pool_created_logs_for_spec` + [`map_pool_creation`] (the latter takes
+/// a per-pool RPC fee for an Aerodrome pool — V2's `getFee`, V3's `getSwapFee`).
+/// The inner writer consumes these directly so it does no decode or RPC — it
+/// just upserts.
 #[derive(Debug, Clone)]
 pub enum PoolCreationToWrite {
     /// A V2 pool row (canonical `Uniswap V2` / `PancakeSwap V2` / `SushiSwap V2` /
-    /// `Swapbased V2` — constant fee from the spec's `v2_fee_token`).
+    /// `Swapbased V2` — constant fee from the spec's `v2_fee_token`; the
+    /// `stable`-flag fork `Aerodrome V2` — fee from the factory's `getFee`).
     V2 {
         exchange_id: i64,
         row: V2PoolRowInput,
     },
-    /// A V3 pool row (`Uniswap V3` / `PancakeSwap V3` / `SushiSwap V3` /
-    /// `Aerodrome V3` — fee + `tick_spacing` from the event).
+    /// A V3 pool row (`Uniswap V3` / `PancakeSwap V3` / `SushiSwap V3` —
+    /// fee + `tick_spacing` from the event; `Aerodrome V3` — `tick_spacing`
+    /// from the event, fee from the factory's `getSwapFee`).
     V3 {
         exchange_id: i64,
         row: V3PoolRowInput,
@@ -328,16 +332,15 @@ pub struct ChunkWriteReport {
 /// An error from [`map_pool_creation`] — the pure decode→row-input mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
-    /// An Aerodrome V2 pool whose per-pool `getFee(address,bool)` RPC fee
-    /// wasn't supplied. The outer loop MUST resolve the fee (an on-chain call)
-    /// before mapping; passing `None` for `aerodrome_fee` yields this error so
-    /// no pool is silently written with a fake/zero fee. The outer loop skips
-    /// these pools (reporting via [`ProgressSink`]) until the fee-RPC path is
-    /// wired (a follow-up; canonical V2/V3/V4 + Aerodrome V3 fees come from the
-    /// event or a constant + are NOT affected).
+    /// An Aerodrome pool whose per-pool RPC fee wasn't supplied: `aerodrome_v2`
+    /// answers `getFee(pool, stable)`, `aerodrome_v3` answers `getSwapFee(pool)`,
+    /// and neither creation event carries a fee. Passing `None` for
+    /// `aerodrome_fee` yields this error, so no pool is written with a fake or
+    /// zero fee and none is silently dropped. Canonical V2/V3/V4 fees come from
+    /// the event or the spec's constant and never reach this arm.
     #[error(
-        "Aerodrome V2 pool {pool_address} needs a per-pool getFee RPC resolution \
-         (aerodrome_fee is None); the outer loop must resolve it before mapping"
+        "Aerodrome pool {pool_address} needs a per-pool RPC fee resolution \
+         (aerodrome_fee is None); the caller must resolve it before mapping"
     )]
     AerodromeFeeNeeded {
         /// The pool whose fee couldn't be resolved.
@@ -347,15 +350,14 @@ pub enum MapError {
 
 /// Map a decoded `PoolCreated`/`Initialize` event to its DB `V*PoolRowInput`,
 /// carrying the `exchange_id` context (which [`DecodedPoolCreated`] correctly
-/// avoids — it's decode-pure). Pure (no RPC) EXCEPT the Aerodrome V2 fee,
-/// which the caller supplies via `aerodrome_fee` (resolved by the outer loop's
-/// on-chain `getFee(address, stable)` call — `None` only for non-Aerodrome V2
-/// families, where this arg is ignored).
+/// avoids — it's decode-pure). Pure (no RPC): an Aerodrome pool's fee is the
+/// caller's on-chain answer, supplied through `aerodrome_fee` and ignored by
+/// every non-Aerodrome family.
 ///
 /// # Errors
 ///
-/// Returns [`MapError::AerodromeFeeNeeded`] if the event is an Aerodrome V2
-/// pool + `aerodrome_fee` is `None` (the caller forgot to resolve the fee).
+/// Returns [`MapError::AerodromeFeeNeeded`] if the event is an Aerodrome pool
+/// (V2 or V3) and `aerodrome_fee` is `None` (the caller did not resolve the fee).
 pub fn map_pool_creation(
     spec: &ExchangeSpec,
     event: &DecodedPoolCreated,
@@ -379,8 +381,6 @@ pub fn map_pool_creation(
             })
         }
         DecodedPoolCreated::AerodromeV2(e) => {
-            // Aerodrome V2: per-pool fee from on-chain `getFee(address, stable)`
-            // (NOT a constant + NOT in the event). The outer loop resolves it.
             let fee = aerodrome_fee.ok_or(MapError::AerodromeFeeNeeded {
                 pool_address: e.pool_address,
             })?;
@@ -396,17 +396,27 @@ pub fn map_pool_creation(
                 },
             })
         }
-        DecodedPoolCreated::V3(e) => {
-            // V3 fee + tick_spacing come from the event (applies to Uniswap V3,
-            // PancakeSwap V3, SushiSwap V3, AND Aerodrome V3 — they all reuse
-            // the V3 decode + carry fee/tick_spacing in the event).
+        DecodedPoolCreated::V3(e) => Ok(PoolCreationToWrite::V3 {
+            exchange_id: spec.id,
+            row: V3PoolRowInput {
+                address: e.pool_address,
+                token0_address: e.token0,
+                token1_address: e.token1,
+                fee: i64::from(e.fee),
+                tick_spacing: i64::from(e.tick_spacing),
+            },
+        }),
+        DecodedPoolCreated::AerodromeV3(e) => {
+            let fee = aerodrome_fee.ok_or(MapError::AerodromeFeeNeeded {
+                pool_address: e.pool_address,
+            })?;
             Ok(PoolCreationToWrite::V3 {
                 exchange_id: spec.id,
                 row: V3PoolRowInput {
                     address: e.pool_address,
                     token0_address: e.token0,
                     token1_address: e.token1,
-                    fee: i64::from(e.fee),
+                    fee,
                     tick_spacing: i64::from(e.tick_spacing),
                 },
             })
@@ -1431,7 +1441,12 @@ pub fn run_pool_update_on_db(
         let fetch_started = Instant::now();
         let (pool_creations, v3_liquidity, v4_fetched) = rt.block_on(async {
             tokio::join!(
-                fetch_pool_creations(&fetcher, working_end_block, &chunk_specs_with_start),
+                fetch_pool_creations(
+                    &fetcher,
+                    &provider,
+                    working_end_block,
+                    &chunk_specs_with_start,
+                ),
                 // V3 `Mint`/`Burn` events can't be efficiently RPC-filtered by
                 // pool address, so this is a whole-chain scan over the chunk's
                 // range. The apply step (in `apply_chunk_writes_on_conn`)
@@ -1807,15 +1822,13 @@ pub fn run_pool_update_on_db(
 }
 
 /// Fetch + map the chunk's pool-creation events across all in-scope exchange
-/// specs (per-exchange `fetch_pool_created_logs_for_spec` +
-/// [`map_pool_creation`]). Each spec carries its own per-exchange fetch start
+/// specs (per-exchange `fetch_pool_created_logs_for_spec` then
+/// [`map_pool_creations`]). Each spec carries its own per-exchange fetch start
 /// (see [`in_scope_fetch_start`]) so a divergent-ahead spec does NOT re-fetch
-/// its committed `PoolCreated`/`Initialize` events. Aerodrome V2 pools whose
-/// per-pool `getFee` RPC hasn't been resolved are SKIPPED (the fee-RPC path
-/// is a follow-up; the canonical V2/V3/V4 + Aerodrome V3 paths are NOT
-/// affected).
+/// its committed `PoolCreated`/`Initialize` events.
 async fn fetch_pool_creations(
     fetcher: &LogFetcher,
+    read: &impl ContractRead,
     to_block: u64,
     specs_with_start: &[(ExchangeSpec, u64)],
 ) -> Result<Vec<PoolCreationToWrite>, ProviderError> {
@@ -1823,25 +1836,36 @@ async fn fetch_pool_creations(
     for (spec, from_block) in specs_with_start {
         let decoded =
             fetch_pool_created_logs_for_spec(fetcher, *from_block, to_block, spec).await?;
-        for event in decoded {
-            match map_pool_creation(spec, &event, /* aerodrome_fee */ None) {
-                Ok(row) => out.push(row),
-                Err(MapError::AerodromeFeeNeeded { pool_address }) => {
-                    // Aerodrome V2 fee RPC not yet wired — skip this pool
-                    // (a follow-up task resolves getFee(address, stable)).
-                    // Logged via stderr (the chunk's progress sink doesn't carry
-                    // per-pool warnings; a future sink revision might).
-                    #[expect(clippy::print_stderr)] // deliberate per-pool stderr warning
-                    {
-                        eprintln!(
-                            "degenbot-pool-updater: skipping Aerodrome V2 pool \
-                             {pool_address} (exchange {}): per-pool getFee RPC not wired yet",
-                            spec.name,
-                        );
-                    }
-                }
+        out.extend(map_pool_creations(read, spec, decoded, to_block).await?);
+    }
+    Ok(out)
+}
+
+/// Price and map one exchange's decoded pool-creation events: the per-pool RPC
+/// fee ([`resolve_aerodrome_fee`], Aerodrome only) then [`map_pool_creation`].
+///
+/// Both happen before the chunk's transaction opens, so the `eth_call` never
+/// holds the write lock.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the fee `eth_call`, or
+/// [`ProviderError::DecodingError`] when a decoded event cannot be mapped: a
+/// chunk that cannot price its pools writes no row and drops no pool quietly.
+pub async fn map_pool_creations(
+    read: &impl ContractRead,
+    spec: &ExchangeSpec,
+    decoded: Vec<DecodedPoolCreated>,
+    block: u64,
+) -> Result<Vec<PoolCreationToWrite>, ProviderError> {
+    let mut out = Vec::with_capacity(decoded.len());
+    for event in &decoded {
+        let fee = resolve_aerodrome_fee(read, spec, event, block).await?;
+        out.push(map_pool_creation(spec, event, fee).map_err(|err| {
+            ProviderError::DecodingError {
+                message: err.to_string(),
             }
-        }
+        })?);
     }
     Ok(out)
 }
@@ -1851,10 +1875,12 @@ async fn fetch_pool_creations(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::fetch::decode_pool_created_log;
     use crate::verify::LiquidityDivergence;
     use alloy::primitives::{I256, U256 as U256P};
     use degenbot_db::sql_ledger::LedgerDb;
     use degenbot_db::DegenbotDb;
+    use degenbot_decoders::pool_created_decoder::AERODROME_V3_POOL_CREATED_TOPIC;
     use tempfile::TempDir;
 
     /// An in-memory writeable DB with the head schema (the chunk-writer's
@@ -2672,6 +2698,117 @@ mod tests {
             persisted_marker(&path),
             Some(10),
             "the rolled-back chunk never advanced the stamp",
+        );
+    }
+
+    /// Left-pad an address to a 32-byte word.
+    fn addr_word(addr: Address) -> B256 {
+        let mut word = [0u8; 32];
+        word[12..32].copy_from_slice(addr.as_slice());
+        B256::new(word)
+    }
+
+    /// Sign-extend an `int24` tick spacing into its 32-byte topic word.
+    fn int24_word(tick: i32) -> B256 {
+        B256::from(
+            I256::try_from(i128::from(tick))
+                .unwrap()
+                .to_be_bytes::<32>(),
+        )
+    }
+
+    /// The Aerodrome CL `PoolCreated` log: `token0`/`token1`/`tickSpacing`
+    /// indexed, the new pool address in the single data word - no fee field.
+    fn cl_pool_created_log(
+        factory: Address,
+        token0: Address,
+        token1: Address,
+        tick_spacing: i32,
+        pool: Address,
+    ) -> alloy::rpc::types::Log {
+        let mut data = vec![0u8; 32];
+        data[12..32].copy_from_slice(pool.as_slice());
+        let inner = alloy::primitives::Log::new_unchecked(
+            factory,
+            vec![
+                AERODROME_V3_POOL_CREATED_TOPIC,
+                addr_word(token0),
+                addr_word(token1),
+                int24_word(tick_spacing),
+            ],
+            alloy::primitives::Bytes::from(data),
+        );
+        alloy::rpc::types::Log {
+            inner,
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(0),
+            removed: false,
+        }
+    }
+
+    /// A log fetched on `aerodrome_v3`'s own `PoolCreated` topic decodes under
+    /// the spec's family, maps, and upserts an `aerodrome_v3_pools` row: the
+    /// `tick_spacing` is the event's indexed `tickSpacing` and the fee is the
+    /// per-pool RPC value, because the CL event carries no fee at all.
+    #[test]
+    fn aerodrome_v3_cl_pool_created_log_lands_an_aerodrome_v3_row() {
+        let db = write_db();
+        let chain = 8453;
+        let factory = Address::from([0x5e; 20]);
+        let exchange = db
+            .upsert_exchange(chain, "aerodrome_v3", factory, None)
+            .unwrap();
+        db.set_exchange_active(exchange.id, true).unwrap();
+        let spec = load_active_exchange_specs(&db, chain).unwrap().remove(0);
+
+        let pool = Address::from([0x99; 20]);
+        let log = cl_pool_created_log(
+            factory,
+            Address::from([0x11; 20]),
+            Address::from([0x22; 20]),
+            100,
+            pool,
+        );
+
+        let Some(decoded) = decode_pool_created_log(&log, spec.family) else {
+            panic!("a log fetched on the spec's own PoolCreated topic must decode");
+        };
+        let creation = map_pool_creation(&spec, &decoded, Some(500)).unwrap();
+        let inputs = ChunkInputs {
+            pool_creations: vec![creation],
+            ..Default::default()
+        };
+
+        let mut guard = db.lock();
+        let tx = guard.transaction().unwrap();
+        apply_chunk_writes_on_conn(
+            &tx,
+            chain,
+            std::slice::from_ref(&spec),
+            100,
+            &inputs,
+            &PreVerifiedLiquidity::default(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let (fee_token0, fee_token1, fee_denominator, tick_spacing): (i64, i64, i64, i64) = guard
+            .query_row(
+                "SELECT a.fee_token0, a.fee_token1, a.fee_denominator, a.tick_spacing
+                 FROM aerodrome_v3_pools a JOIN pools p ON p.id = a.pool_id
+                 WHERE p.address = ?1",
+                rusqlite::params![pool.to_checksum(None)],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (fee_token0, fee_token1, fee_denominator, tick_spacing),
+            (500, 500, 1_000_000, 100),
+            "the fee is the RPC answer and the tick spacing is the event's own field",
         );
     }
 

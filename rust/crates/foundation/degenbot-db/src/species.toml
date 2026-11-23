@@ -164,6 +164,12 @@ fee_denominator = 1000000
 #   the shared two-word prefix, so the tail width does not matter.
 # - fee() is a DYNAMIC uint24 (90 at the pinned block, 60 at tip) — never
 #   treat it as static pool metadata.
+# - aerodrome_v3_pools.fee is a POINT-IN-TIME SNAPSHOT (denominator 1e6) of the
+#   factory's getSwapFee(pool) at the chunk block the pool was first seen. The
+#   fee stays mutable afterwards (setCustomFee/bulkUpdateFees, a
+#   DynamicSwapFeeModule pricing per block from baseFee/scalingFactor/feeCap,
+#   or a whole swap-fee-module swap), so a stored fee can be stale; a pool's
+#   separately mutable unstakedFee is not represented in the row at all.
 # - The HEAD storage layout is NOT uniswap v3: storage slot 0 holds the
 #   factory address on-chain. Tick access is verified only through the
 #   ticks(int24)/tickBitmap(int16) FUNCTIONS; raw-storage tick reads are

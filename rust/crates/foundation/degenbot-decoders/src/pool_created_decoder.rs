@@ -78,6 +78,28 @@
 //!         = 2 × 32 bytes = 64 bytes
 //! ```
 //!
+//! # Aerodrome V3 (CL) `PoolCreated`
+//!
+//! ```text
+//! event PoolCreated(
+//!     address indexed token0,
+//!     address indexed token1,
+//!     int24 indexed tickSpacing,
+//!     address pool
+//! )
+//!
+//! topic[0] = 0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2
+//! topic[1] = token0 (indexed address)
+//! topic[2] = token1 (indexed address)
+//! topic[3] = tickSpacing (indexed int24)
+//! data    = abi.encode(address pool)
+//!         = 32 bytes
+//! ```
+//!
+//! The CL factory announces no fee: a CL pool's authoritative fee is the
+//! factory's `getSwapFee(pool)` answer at read time, and it stays mutable
+//! afterwards.
+//!
 //! # V4 `Initialize` (the V4 `PoolCreated`)
 //!
 //! ```text
@@ -113,10 +135,10 @@ use alloy::sol_types::{SolEvent, SolValue};
 use crate::uniswap_tick_range::validate_tick;
 use crate::v4_swap_decoder::V4PoolId;
 
-// Two of the three factory families below emit an event named `PoolCreated`
-// with a different parameter list, so each family's declaration lives in its
-// own module: Alloy derives the topic hash from the declared event name and
-// parameter types, which is exactly what tells the two apart on the wire.
+// Three of the family declarations below name their event `PoolCreated` with a
+// different parameter list, so each family's declaration lives in its own
+// module: Alloy derives the topic hash from the declared event name and
+// parameter types, which is exactly what tells them apart on the wire.
 
 /// The V2 factory's pool-creation event (the canonical Uniswap V2 family sig —
 /// `Uniswap`, `PancakeSwap`, `SushiSwap`, Swapbased V2).
@@ -159,6 +181,19 @@ mod v3_pool_created_event {
     }
 }
 
+/// Aerodrome V3 (CL) factory's pool-creation event — the canonical V3 shape with
+/// the indexed fee tier replaced by the indexed tick spacing.
+mod aerodrome_v3_pool_created_event {
+    alloy::sol! {
+        event PoolCreated(
+            address indexed token0,
+            address indexed token1,
+            int24 indexed tickSpacing,
+            address pool,
+        );
+    }
+}
+
 // ── topic constants ───────────────────────────────────────────────────────
 
 /// Keccak256 of `PairCreated(address,address,address,uint256)` — the
@@ -172,13 +207,12 @@ pub const V2_PAIR_CREATED_TOPIC: B256 =
 pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 =
     b256!("0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e");
 
-/// Keccak256 of Aerodrome V3's `PoolCreated` event signature — a distinct
-/// topic0 from the canonical Uniswap V3 sig ([`V3_POOL_CREATED_TOPIC`]),
-/// though structurally decoded the same way (token0/token1/fee in
-/// topics[1..=3], `tickSpacing`/`pool_address` in non-indexed data — one
-/// updater handles both `uniswap_v3` and `aerodrome_v3`). The decode leaf that accepts this
-/// topic is deferred to the chunk loop — the constant is
-/// surfaced here so `ExchangeSpec.event_topic` can carry it faithfully.
+/// Keccak256 of `PoolCreated(address,address,int24,address)` — the Aerodrome
+/// V3 (CL) factory sig. Distinct from the canonical Uniswap V3 sig
+/// ([`V3_POOL_CREATED_TOPIC`]): the indexed `int24 tickSpacing` sits where the
+/// canonical event indexes its `uint24 fee`, and the pool address is the only
+/// data word. The event carries no fee — a CL pool's fee is the factory's
+/// `getSwapFee(pool)` answer at read time, mutable afterwards.
 pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 =
     b256!("0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2");
 
@@ -240,6 +274,23 @@ pub struct V3PoolCreatedEvent {
     /// The tick spacing (from data word 0 — an int24).
     pub tick_spacing: i32,
     /// The created pool address (from data word 1 — an address).
+    pub pool_address: Address,
+}
+
+/// Decoded Aerodrome V3 (CL) `PoolCreated` event. The pool address is the
+/// single data word; `tick_spacing` rides in topic[3], where the canonical V3
+/// event indexes its fee tier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AerodromeV3PoolCreatedEvent {
+    /// The factory that emitted the event (the log emitter).
+    pub factory_address: Address,
+    /// Token0 (from topic[1]).
+    pub token0: Address,
+    /// Token1 (from topic[2]).
+    pub token1: Address,
+    /// The tick spacing (from topic[3] — an int24).
+    pub tick_spacing: i32,
+    /// The created pool address (from data word 0).
     pub pool_address: Address,
 }
 
@@ -333,6 +384,29 @@ pub fn decode_v3_pool_created_log(log: &Log) -> Option<V3PoolCreatedEvent> {
         // A validated `uint24` fee widens into the event struct's `u32`
         // without a failure path.
         fee: log.data.fee.to::<u32>(),
+        tick_spacing: validate_tick(log.data.tickSpacing)?,
+        pool_address: log.data.pool,
+    })
+}
+
+/// Decode an Aerodrome V3 (CL) `PoolCreated` event.
+///
+/// The declaration binds topic0 to the CL signature, so a canonical V3 log's
+/// indexed `uint24` fee can never arrive as a tick spacing here.
+///
+/// Returns `None` if the log's topics are not exactly the declared four or the
+/// first one doesn't match `AERODROME_V3_POOL_CREATED_TOPIC` (the declaration
+/// binds the topic count, so a surplus topic is a refusal), the data is shorter
+/// than its single address word, the indexed `tickSpacing` is not a
+/// sign-extended `int24`, the pool word is not a canonical `address` slot, or
+/// the tick spacing is outside the Uniswap V3 tick range.
+#[must_use]
+pub fn decode_aerodrome_v3_pool_created_log(log: &Log) -> Option<AerodromeV3PoolCreatedEvent> {
+    let log = aerodrome_v3_pool_created_event::PoolCreated::decode_log_validate(&log.inner).ok()?;
+    Some(AerodromeV3PoolCreatedEvent {
+        factory_address: log.address,
+        token0: log.data.token0,
+        token1: log.data.token1,
         tick_spacing: validate_tick(log.data.tickSpacing)?,
         pool_address: log.data.pool,
     })
@@ -652,6 +726,96 @@ mod tests {
             vec![0u8; 64],
         );
         assert!(decode_v3_pool_created_log(&log).is_none());
+    }
+
+    // ── Aerodrome V3 (CL) PoolCreated ───────────────────────────────────
+
+    /// A CL `PoolCreated` log: `token0`/`token1`/`tickSpacing` indexed, the pool
+    /// address the single data word.
+    fn aerodrome_v3_pool_created_log(tick_spacing: i32, pool: Address, data_len: usize) -> Log {
+        let mut data = vec![0u8; data_len];
+        if data_len >= 32 {
+            data[12..32].copy_from_slice(pool.as_slice());
+        }
+        make_log(
+            Address::from([0x5e; 20]),
+            vec![
+                AERODROME_V3_POOL_CREATED_TOPIC,
+                addr_word(Address::from([0x11; 20])),
+                addr_word(Address::from([0x22; 20])),
+                int24_word(tick_spacing),
+            ],
+            data,
+        )
+    }
+
+    #[test]
+    fn decode_aerodrome_v3_pool_created_reads_the_tick_spacing_topic_and_pool_data() {
+        let pool = Address::from([0x99; 20]);
+        let log = aerodrome_v3_pool_created_log(200, pool, 32);
+
+        let event = decode_aerodrome_v3_pool_created_log(&log).expect("the CL log decodes");
+        assert_eq!(event.factory_address, Address::from([0x5e; 20]));
+        assert_eq!(event.token0, Address::from([0x11; 20]));
+        assert_eq!(event.token1, Address::from([0x22; 20]));
+        assert_eq!(event.tick_spacing, 200);
+        assert_eq!(event.pool_address, pool);
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_decodes_a_negative_tick_spacing() {
+        let log = aerodrome_v3_pool_created_log(-60, Address::from([0x99; 20]), 32);
+        let event = decode_aerodrome_v3_pool_created_log(&log).unwrap();
+        assert_eq!(event.tick_spacing, -60);
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_rejects_truncated_data() {
+        let log = aerodrome_v3_pool_created_log(200, Address::from([0x99; 20]), 16);
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_rejects_a_surplus_topic() {
+        let mut log = aerodrome_v3_pool_created_log(200, Address::from([0x99; 20]), 32);
+        let mut topics = log.topics().to_vec();
+        topics.push(B256::repeat_byte(0x01));
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_rejects_a_non_sign_extended_tick_spacing() {
+        // The zero-extended form of -60 is not a canonical int24 slot; a
+        // fixed-width read would have reported -60 as if the log were sound.
+        let mut log = aerodrome_v3_pool_created_log(-60, Address::from([0x99; 20]), 32);
+        let mut topics = log.topics().to_vec();
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&(-60_i32).to_be_bytes()[1..]);
+        topics[3] = B256::new(word);
+        log.inner =
+            alloy::primitives::Log::new_unchecked(log.address(), topics, log.data().data.clone());
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_rejects_a_dirty_pool_address() {
+        let mut log = aerodrome_v3_pool_created_log(200, Address::from([0x99; 20]), 32);
+        let mut data = log.data().data.to_vec();
+        data[0] = 0x01;
+        log.inner = alloy::primitives::Log::new_unchecked(
+            log.address(),
+            log.topics().to_vec(),
+            Bytes::from(data),
+        );
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_created_rejects_a_tick_spacing_outside_the_protocol_range() {
+        let log = aerodrome_v3_pool_created_log(887_273, Address::from([0x99; 20]), 32);
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
     }
 
     // ── V4 Initialize ───────────────────────────────────────────────────
@@ -1035,6 +1199,21 @@ mod tests {
             vec![0u8; 64],
         );
         assert!(decode_v2_pair_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn aerodrome_v3_topic_not_matched_by_v3_decoder() {
+        // The CL event has the same topic count and word count as the canonical
+        // V3 event: only the declared topic0 tells the fee tier apart from the
+        // tick spacing, so the canonical leaf must refuse the CL topic.
+        let log = aerodrome_v3_pool_created_log(200, Address::from([0x99; 20]), 32);
+        assert!(decode_v3_pool_created_log(&log).is_none());
+    }
+
+    #[test]
+    fn v3_topic_not_matched_by_aerodrome_v3_decoder() {
+        let log = v3_pool_created_log(3000, 60, Address::from([0x99; 20]));
+        assert!(decode_aerodrome_v3_pool_created_log(&log).is_none());
     }
 
     #[test]

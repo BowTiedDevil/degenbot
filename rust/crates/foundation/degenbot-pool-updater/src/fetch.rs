@@ -22,17 +22,20 @@ use alloy::rpc::types::Log;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_db::LiquidityUpdateEvent;
 use degenbot_decoders::pool_created_decoder::{
-    decode_aerodrome_v2_pool_created_log, decode_v2_pair_created_log, decode_v3_pool_created_log,
-    decode_v4_initialize_log, AerodromeV2PoolCreatedEvent, V2PairCreatedEvent, V3PoolCreatedEvent,
-    V4InitializeEvent, AERODROME_V2_POOL_CREATED_TOPIC, V2_PAIR_CREATED_TOPIC,
-    V3_POOL_CREATED_TOPIC, V4_INITIALIZE_TOPIC,
+    decode_aerodrome_v2_pool_created_log, decode_aerodrome_v3_pool_created_log,
+    decode_v2_pair_created_log, decode_v3_pool_created_log, decode_v4_initialize_log,
+    AerodromeV2PoolCreatedEvent, AerodromeV3PoolCreatedEvent, V2PairCreatedEvent,
+    V3PoolCreatedEvent, V4InitializeEvent, AERODROME_V2_POOL_CREATED_TOPIC,
+    AERODROME_V3_POOL_CREATED_TOPIC, V2_PAIR_CREATED_TOPIC, V3_POOL_CREATED_TOPIC,
+    V4_INITIALIZE_TOPIC,
 };
 use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant};
+use degenbot_rpc::abi::{ContractRead, IAerodromeFactory};
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
-use crate::spec::ExchangeSpec;
+use crate::spec::{ExchangeSpec, RpcFeeCall};
 
 /// The Uniswap family a pool-creation event belongs to — drives the topic0
 /// filter + the decode leaf the fetcher dispatches to.
@@ -48,6 +51,9 @@ pub enum PoolFamily {
     AerodromeV2,
     /// Uniswap V3 `PoolCreated`. Shared by `PancakeSwap` V3 + `SushiSwap` V3.
     V3,
+    /// Aerodrome V3 (CL) `PoolCreated` — the canonical V3 topic shape with the
+    /// indexed fee tier replaced by the indexed tick spacing, and no fee field.
+    AerodromeV3,
     /// Uniswap V4 `Initialize` (the V4 `PoolCreated`).
     V4,
 }
@@ -57,11 +63,13 @@ impl PoolFamily {
     ///
     /// The decode station LAGS the taxonomy on structure, not species: a
     /// balance-vector pool has no `PoolCreated`-style creation event here, so
-    /// Curve/Balancer project to `None`. The species fork stays where it is —
-    /// an `AerodromeV2` pair is its own family because its event carries the
-    /// `stable` flag and a distinct topic0, while an Aerodrome V3 pool decodes
-    /// through the shared `V3` structure (its `event_topic` differs per
-    /// exchange, not per family).
+    /// Curve/Balancer project to `None`. Every fork whose creation event has its
+    /// own declaration is its own family: an `AerodromeV2` pair carries a
+    /// `stable` flag, and an Aerodrome V3 (CL) pool carries a tick spacing where
+    /// the canonical V3 event carries its fee tier. `ConcentratedLiquidityVariant`
+    /// does not distinguish the concentrated-liquidity forks, so a CL identity
+    /// projects to `V3` here; an exchange's own resolved family is the authority
+    /// the chunk loop dispatches on.
     #[must_use]
     pub fn from_identity(identity: &Identity) -> Option<Self> {
         match identity {
@@ -86,6 +94,7 @@ impl PoolFamily {
             Self::V2 => V2_PAIR_CREATED_TOPIC,
             Self::AerodromeV2 => AERODROME_V2_POOL_CREATED_TOPIC,
             Self::V3 => V3_POOL_CREATED_TOPIC,
+            Self::AerodromeV3 => AERODROME_V3_POOL_CREATED_TOPIC,
             Self::V4 => V4_INITIALIZE_TOPIC,
         }
     }
@@ -104,6 +113,8 @@ pub enum DecodedPoolCreated {
     AerodromeV2(AerodromeV2PoolCreatedEvent),
     /// V3 `PoolCreated`.
     V3(V3PoolCreatedEvent),
+    /// Aerodrome V3 (CL) `PoolCreated` (no fee in the event).
+    AerodromeV3(AerodromeV3PoolCreatedEvent),
     /// V4 `Initialize`.
     V4(V4InitializeEvent),
 }
@@ -121,6 +132,9 @@ pub fn decode_pool_created_log(log: &Log, family: PoolFamily) -> Option<DecodedP
             decode_aerodrome_v2_pool_created_log(log).map(DecodedPoolCreated::AerodromeV2)
         }
         PoolFamily::V3 => decode_v3_pool_created_log(log).map(DecodedPoolCreated::V3),
+        PoolFamily::AerodromeV3 => {
+            decode_aerodrome_v3_pool_created_log(log).map(DecodedPoolCreated::AerodromeV3)
+        }
         PoolFamily::V4 => decode_v4_initialize_log(log).map(DecodedPoolCreated::V4),
     }
 }
@@ -152,11 +166,10 @@ pub async fn fetch_pool_created_logs(
 }
 
 /// Spec-aware `PoolCreated`/`Initialize` fetch: like
-/// [`fetch_pool_created_logs`] but resolved from an [`ExchangeSpec`] — uses
-/// `spec.event_topic` (NOT `spec.family.topic0()`) so Aerodrome V3 (which
-/// shares the V3 decode structure but has its own
-/// [`AERODROME_V3_POOL_CREATED_TOPIC`]) fetches the correct topic. The chunk
-/// loop (`run_pool_update`) calls this per in-scope exchange.
+/// [`fetch_pool_created_logs`] but resolved from an [`ExchangeSpec`] — the
+/// `eth_getLogs` filter uses `spec.event_topic`, the exchange's own declared
+/// topic0, and each returned log decodes through `spec.family`'s leaf. The
+/// chunk loop (`run_pool_update`) calls this per in-scope exchange.
 ///
 /// # Errors
 ///
@@ -180,6 +193,84 @@ pub async fn fetch_pool_created_logs_for_spec(
         .iter()
         .filter_map(|log| decode_pool_created_log(log, spec.family))
         .collect())
+}
+
+alloy::sol! {
+    /// Aerodrome's CL factory: the authoritative per-pool swap fee.
+    ///
+    /// The factory encapsulates the fee module (a `swapFeeModule` staticcall,
+    /// then the `tickSpacingToFee` fallback), so this one read answers what a CL
+    /// pool's own `fee()` delegates to.
+    interface ICLFactory {
+        function getSwapFee(address pool) external view returns (uint24);
+    }
+}
+
+/// Resolve an Aerodrome pool's fee at `block` from the spec's factory.
+///
+/// Neither Aerodrome creation event carries a fee: `aerodrome_v2` answers
+/// `getFee(pool, stable)` (denominator `10_000`) and `aerodrome_v3` answers
+/// `getSwapFee(pool)` (denominator `1_000_000`). Both answers are a point-in-time
+/// snapshot — a CL fee moves after creation through custom fees, a dynamic
+/// swap-fee module, or a fee-module swap, and a pool's separately mutable
+/// `unstakedFee` is not represented at all.
+///
+/// Returns `Ok(None)` for a spec with no [`RpcFeeCall`] (its fee is a constant
+/// or comes from the event).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the `eth_call`, a
+/// [`ProviderError::DecodingError`] when the answer does not fit the row's
+/// `i64` fee column, or a [`ProviderError::DecodingError`] when the spec's fee
+/// call describes the other Aerodrome family than the decoded event (the fee
+/// would be priced against the wrong pool shape).
+pub async fn resolve_aerodrome_fee(
+    read: &impl ContractRead,
+    spec: &ExchangeSpec,
+    decoded: &DecodedPoolCreated,
+    block: u64,
+) -> ProviderResult<Option<i64>> {
+    let Some(call) = spec.rpc_fee_call else {
+        return Ok(None);
+    };
+    match (call, decoded) {
+        (RpcFeeCall::AerodromeV2, DecodedPoolCreated::AerodromeV2(event)) => {
+            let fee = read
+                .read(
+                    spec.factory,
+                    IAerodromeFactory::getFeeCall {
+                        pool: event.pool_address,
+                        stable: event.stable,
+                    },
+                    Some(block),
+                )
+                .await?;
+            Ok(Some(fee_answer_to_i64(fee.to::<u64>())?))
+        }
+        (RpcFeeCall::AerodromeV3, DecodedPoolCreated::AerodromeV3(event)) => {
+            let fee = read
+                .read(
+                    spec.factory,
+                    ICLFactory::getSwapFeeCall {
+                        pool: event.pool_address,
+                    },
+                    Some(block),
+                )
+                .await?;
+            Ok(Some(fee_answer_to_i64(fee.to::<u64>())?))
+        }
+        (call, decoded) => Err(ProviderError::DecodingError {
+            message: format!("{} ({call:?}) cannot price a {decoded:?} event", spec.name),
+        }),
+    }
+}
+
+/// Narrow an on-chain fee answer into the `i64` the fee columns hold.
+fn fee_answer_to_i64(fee: u64) -> ProviderResult<i64> {
+    i64::try_from(fee).map_err(|_| ProviderError::DecodingError {
+        message: format!("fee answer {fee} does not fit the i64 fee column"),
+    })
 }
 
 /// Decode a V3 `Mint`/`Burn` log into a DB-ready [`LiquidityUpdateEvent`].
@@ -668,7 +759,9 @@ impl LiquidityLogSource for AlloyLiquidityLogSource {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::run::{map_pool_creations, PoolCreationToWrite};
     use alloy::primitives::{Bytes, Log as AlloyLog, I256, U256};
+    use alloy::sol_types::SolCall;
 
     /// Build a minimal `alloy::rpc::types::Log` with the given emitter,
     /// topics, data, block number + log index (the liquidity decoders need
@@ -720,6 +813,10 @@ mod tests {
             AERODROME_V2_POOL_CREATED_TOPIC,
         );
         assert_eq!(PoolFamily::V3.topic0(), V3_POOL_CREATED_TOPIC);
+        assert_eq!(
+            PoolFamily::AerodromeV3.topic0(),
+            AERODROME_V3_POOL_CREATED_TOPIC,
+        );
         assert_eq!(PoolFamily::V4.topic0(), V4_INITIALIZE_TOPIC);
     }
 
@@ -777,6 +874,320 @@ mod tests {
             0,
         );
         assert!(decode_pool_created_log(&log, PoolFamily::V2).is_none());
+    }
+
+    /// The CL `PoolCreated` log: `token0`/`token1`/`tickSpacing` indexed, the
+    /// pool address the single data word.
+    fn aerodrome_v3_log(factory: Address, pool: Address, tick_spacing: i32) -> Log {
+        let mut data = vec![0u8; 32];
+        data[12..32].copy_from_slice(pool.as_slice());
+        make_log(
+            factory,
+            vec![
+                AERODROME_V3_POOL_CREATED_TOPIC,
+                addr_word(Address::from([0x11; 20])),
+                addr_word(Address::from([0x22; 20])),
+                int24_word(tick_spacing),
+            ],
+            data,
+            1_000,
+            0,
+        )
+    }
+
+    #[test]
+    fn decode_pool_created_log_dispatches_aerodrome_v3_tick_spacing() {
+        let factory = Address::from([0x5e; 20]);
+        let pool = Address::from([0x99; 20]);
+        let Some(decoded) = decode_pool_created_log(
+            &aerodrome_v3_log(factory, pool, 200),
+            PoolFamily::AerodromeV3,
+        ) else {
+            panic!("the CL topic decodes through its own family");
+        };
+
+        match decoded {
+            DecodedPoolCreated::AerodromeV3(event) => {
+                assert_eq!(event.factory_address, factory);
+                assert_eq!(event.tick_spacing, 200);
+                assert_eq!(event.pool_address, pool);
+            }
+            other => panic!("expected the Aerodrome V3 variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_canonical_v3_family_refuses_the_aerodrome_v3_topic() {
+        // The two declarations differ only in topic0 (same topic count, same data
+        // word count), so the family IS the discriminator: the canonical leaf
+        // must refuse a CL log instead of reading a tick spacing as a fee tier.
+        let log = aerodrome_v3_log(Address::from([0x5e; 20]), Address::from([0x99; 20]), 200);
+        assert!(decode_pool_created_log(&log, PoolFamily::V3).is_none());
+    }
+
+    // ── the Aerodrome fee read ──────────────────────────────────────────
+
+    /// The `(to, calldata, block)` triples a stubbed transport was asked for.
+    type RecordedCalls = std::sync::Mutex<Vec<(Address, Vec<u8>, Option<u64>)>>;
+
+    /// A calldata-keyed transport double: one canned answer (or canned error)
+    /// plus every `(to, calldata, block)` it was asked for.
+    #[derive(Default)]
+    struct FeeTransport {
+        answer: Option<Result<Vec<u8>, ProviderError>>,
+        calls: RecordedCalls,
+    }
+
+    impl FeeTransport {
+        fn answer(answer: Vec<u8>) -> Self {
+            Self {
+                answer: Some(Ok(answer)),
+                ..Default::default()
+            }
+        }
+
+        fn fail(error: ProviderError) -> Self {
+            Self {
+                answer: Some(Err(error)),
+                ..Default::default()
+            }
+        }
+
+        fn calls(&self) -> Vec<(Address, Vec<u8>, Option<u64>)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ContractRead for FeeTransport {
+        fn call(
+            &self,
+            to: Address,
+            data: Bytes,
+            block: Option<u64>,
+        ) -> impl std::future::Future<Output = ProviderResult<Bytes>> + Send {
+            self.calls.lock().unwrap().push((to, data.to_vec(), block));
+            std::future::ready(match &self.answer {
+                Some(Ok(answer)) => Ok(Bytes::from(answer.clone())),
+                Some(Err(error)) => Err(error.clone()),
+                None => Err(ProviderError::RpcError {
+                    code: -32000,
+                    message: "no canned answer".to_string(),
+                }),
+            })
+        }
+    }
+
+    fn run_block_on<F: std::future::Future>(future: F) -> F::Output {
+        degenbot_core::runtime::get_runtime().block_on(future)
+    }
+
+    /// A `uint24` return word (the `getSwapFee` answer shape).
+    fn uint24_answer(fee: u32) -> Vec<u8> {
+        let mut word = [0u8; 32];
+        word[29..32].copy_from_slice(&fee.to_be_bytes()[1..4]);
+        word.to_vec()
+    }
+
+    fn aerodrome_v3_spec(factory: Address) -> ExchangeSpec {
+        ExchangeSpec {
+            id: 7,
+            chain_id: 8453,
+            name: "aerodrome_v3".to_string(),
+            factory,
+            family: PoolFamily::AerodromeV3,
+            event_topic: AERODROME_V3_POOL_CREATED_TOPIC,
+            fee_denominator: 1_000_000,
+            v2_fee_token: None,
+            rpc_fee_call: Some(RpcFeeCall::AerodromeV3),
+            last_update_block: None,
+        }
+    }
+
+    fn aerodrome_v2_spec(factory: Address) -> ExchangeSpec {
+        ExchangeSpec {
+            id: 9,
+            chain_id: 8453,
+            name: "aerodrome_v2".to_string(),
+            factory,
+            family: PoolFamily::AerodromeV2,
+            event_topic: AERODROME_V2_POOL_CREATED_TOPIC,
+            fee_denominator: 10_000,
+            v2_fee_token: None,
+            rpc_fee_call: Some(RpcFeeCall::AerodromeV2),
+            last_update_block: None,
+        }
+    }
+
+    fn aerodrome_v3_decoded(
+        factory: Address,
+        pool: Address,
+        tick_spacing: i32,
+    ) -> DecodedPoolCreated {
+        DecodedPoolCreated::AerodromeV3(AerodromeV3PoolCreatedEvent {
+            factory_address: factory,
+            token0: Address::from([0x11; 20]),
+            token1: Address::from([0x22; 20]),
+            tick_spacing,
+            pool_address: pool,
+        })
+    }
+
+    fn aerodrome_v2_decoded(factory: Address, pool: Address, stable: bool) -> DecodedPoolCreated {
+        DecodedPoolCreated::AerodromeV2(AerodromeV2PoolCreatedEvent {
+            factory_address: factory,
+            token0: Address::from([0x33; 20]),
+            token1: Address::from([0x44; 20]),
+            stable,
+            pool_address: pool,
+        })
+    }
+
+    #[test]
+    fn aerodrome_v3_pool_creation_fee_comes_from_get_swap_fee_at_the_chunk_block() {
+        let factory = Address::from([0x5e; 20]);
+        let pool = Address::from([0x99; 20]);
+        let transport = FeeTransport::answer(uint24_answer(500));
+
+        let rows = run_block_on(map_pool_creations(
+            &transport,
+            &aerodrome_v3_spec(factory),
+            vec![aerodrome_v3_decoded(factory, pool, 200)],
+            1_000,
+        ))
+        .unwrap();
+
+        match &rows[0] {
+            PoolCreationToWrite::V3 { exchange_id, row } => {
+                assert_eq!(*exchange_id, 7);
+                assert_eq!(row.address, pool);
+                assert_eq!(
+                    row.fee, 500,
+                    "the CL event carries no fee: the RPC answer is the fee",
+                );
+                assert_eq!(
+                    row.tick_spacing, 200,
+                    "the tick spacing is the event's own field",
+                );
+            }
+            other => panic!("expected a V3 row, got {other:?}"),
+        }
+
+        let calls = transport.calls();
+        assert_eq!(calls.len(), 1, "one eth_call per pool per chunk");
+        assert_eq!(calls[0].0, factory, "the read targets the spec's factory");
+        assert_eq!(
+            calls[0].1,
+            ICLFactory::getSwapFeeCall { pool }.abi_encode(),
+            "getSwapFee(address)",
+        );
+        assert_eq!(calls[0].2, Some(1_000), "priced at the chunk block");
+    }
+
+    #[test]
+    fn aerodrome_v2_pool_creation_fee_comes_from_get_fee_with_the_pools_stable_flag() {
+        let factory = Address::from([0xae; 20]);
+        let pool = Address::from([0x77; 20]);
+        let transport = FeeTransport::answer(U256::from(25u64).to_be_bytes::<32>().to_vec());
+
+        let rows = run_block_on(map_pool_creations(
+            &transport,
+            &aerodrome_v2_spec(factory),
+            vec![aerodrome_v2_decoded(factory, pool, true)],
+            42,
+        ))
+        .unwrap();
+
+        match &rows[0] {
+            PoolCreationToWrite::V2 { row, .. } => {
+                assert_eq!(row.fee_token0, 25);
+                assert_eq!(row.fee_token1, 25);
+                assert_eq!(row.stable, Some(true));
+            }
+            other => panic!("expected a V2 row, got {other:?}"),
+        }
+
+        let calls = transport.calls();
+        assert_eq!(
+            calls[0].1,
+            IAerodromeFactory::getFeeCall { pool, stable: true }.abi_encode(),
+            "getFee(address,bool) carries the pool's own stable flag",
+        );
+        assert_eq!(calls[0].2, Some(42), "priced at the chunk block");
+    }
+
+    #[test]
+    fn an_aerodrome_fee_call_failure_is_a_loud_provider_error() {
+        let transport = FeeTransport::fail(ProviderError::RpcError {
+            code: -32000,
+            message: "fee module reverted".to_string(),
+        });
+        let factory = Address::from([0x5e; 20]);
+
+        let error = run_block_on(map_pool_creations(
+            &transport,
+            &aerodrome_v3_spec(factory),
+            vec![aerodrome_v3_decoded(
+                factory,
+                Address::from([0x99; 20]),
+                200,
+            )],
+            1_000,
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ProviderError::RpcError { .. }),
+            "a chunk that cannot price its pools surfaces the transport failure, got {error:?}",
+        );
+    }
+
+    #[test]
+    fn a_fee_call_describing_the_other_aerodrome_family_is_refused_before_the_call() {
+        let factory = Address::from([0x5e; 20]);
+        let transport = FeeTransport::answer(uint24_answer(500));
+
+        let error = run_block_on(map_pool_creations(
+            &transport,
+            &aerodrome_v3_spec(factory),
+            vec![aerodrome_v2_decoded(
+                factory,
+                Address::from([0x77; 20]),
+                false,
+            )],
+            1_000,
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ProviderError::DecodingError { .. }),
+            "the CL fee call must not price a V2 pool, got {error:?}",
+        );
+        assert!(
+            transport.calls().is_empty(),
+            "the refusal happens before any eth_call",
+        );
+    }
+
+    #[test]
+    fn a_non_aerodrome_spec_resolves_no_fee_and_makes_no_call() {
+        let factory = Address::from([0x1f; 20]);
+        let mut spec = aerodrome_v3_spec(factory);
+        spec.name = "uniswap_v3".to_string();
+        spec.family = PoolFamily::V3;
+        spec.event_topic = V3_POOL_CREATED_TOPIC;
+        spec.rpc_fee_call = None;
+        let transport = FeeTransport::answer(uint24_answer(500));
+
+        let fee = run_block_on(resolve_aerodrome_fee(
+            &transport,
+            &spec,
+            &aerodrome_v3_decoded(factory, Address::from([0x99; 20]), 200),
+            1_000,
+        ))
+        .unwrap();
+
+        assert_eq!(fee, None);
+        assert!(transport.calls().is_empty());
     }
 
     // ── decode_v3_liquidity_log (Mint → positive, Burn → negative) ──────
