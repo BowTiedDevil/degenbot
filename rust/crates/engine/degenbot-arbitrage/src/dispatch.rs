@@ -2444,6 +2444,7 @@ mod delta_dispatch_tests {
     use crate::deployment::SimulationDeployment;
     use alloy::primitives::{Bytes, B256};
     use degenbot_rpc::provider::AlloyProvider;
+    use degenbot_simulation::probe_support::scripted_head::anchored;
     use degenbot_simulation::sim::evm2::delta_snapshot::{
         BalHeadDriver, HeadOutcome, HeadReadiness,
     };
@@ -2624,13 +2625,17 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
 
                 // The head edge delivers and starts the preparation against a
                 // GATED endpoint: the fetch is genuinely in flight and only
                 // the test's release ends it.
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                 wait_bal_in_flight(&rec).await;
@@ -2680,13 +2685,17 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
 
                 // The claim is live and its fetch parked on the gate; the
                 // release runs beside the fan-out so the fetch stays the one
                 // background work the fan-out joins.
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                 wait_bal_in_flight(&rec).await;
@@ -2764,18 +2773,16 @@ mod delta_dispatch_tests {
                 let driver = session_driver(&cache, &provider);
                 settle_head(
                     &driver,
-                    ReadAnchor::identified(BLOCK - 2, grandparent),
-                    genesis,
+                    anchored(ReadAnchor::identified(BLOCK - 2, grandparent), genesis),
                 )
                 .await;
                 settle_head(
                     &driver,
-                    ReadAnchor::identified(BLOCK - 1, root),
-                    grandparent,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), grandparent),
                 )
                 .await;
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                 wait_bal_in_flight(&rec).await;
@@ -2815,14 +2822,19 @@ mod delta_dispatch_tests {
                 rt.block_on(async {
                     let cache = delta_cache();
                     let driver = session_driver(&cache, &provider);
-                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                    )
+                    .await;
 
                     // The list this head is preparing cannot be read, and the
                     // fetch is gated: one wait, one real terminal, one
                     // fallback.
                     rec.defer_bal();
                     rec.set_bal_payload(vec![0xff, 0x00]);
-                    let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                    let ticket =
+                        driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                     let head = Arc::clone(&driver);
                     let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                     wait_bal_in_flight(&rec).await;
@@ -2899,14 +2911,18 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
                 let fetches_before = rec.bal_requests();
 
                 // The head edge delivers and claims the preparation; the
                 // fetch is gated so the claim is observably live, and the
                 // cancel side owns its end.
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
                 let prepared = tokio::spawn(async move {
@@ -2970,9 +2986,13 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
                 let fetches_before = rec.bal_requests();
-                let _ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let _ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
 
                 let mut selection = Box::pin(select_dispatch_storage(&provider, &cache, BLOCK));
                 let selection = drive_to_resolution(&mut selection).await;
@@ -3007,10 +3027,14 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
 
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
                 let prepared = tokio::spawn(async move {
@@ -3082,9 +3106,13 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
                 rec.defer_bal();
-                let ticket = driver.deliver(ReadAnchor::identified(BLOCK, child), root);
+                let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, child), root));
                 let head = Arc::clone(&driver);
                 let prepared = tokio::spawn(async move { head.advance(ticket, &[]).await });
                 wait_bal_in_flight(&rec).await;
@@ -3180,8 +3208,16 @@ mod delta_dispatch_tests {
                     let cache = delta_cache();
                     let driver = session_driver(&cache, &provider);
                     // The canonical-head pipeline, two consecutive heads.
-                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
-                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                    )
+                    .await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK, child), root),
+                    )
+                    .await;
                     let bal_before = rec.bal_requests();
                     rec.clear_wire();
                     let selection = select_dispatch_storage(&provider, &cache, BLOCK).await;
@@ -3256,17 +3292,19 @@ mod delta_dispatch_tests {
                 // the second carries it, and the third carries the second.
                 settle_head(
                     &driver,
-                    ReadAnchor::identified(BLOCK - 2, grandparent),
-                    genesis,
+                    anchored(ReadAnchor::identified(BLOCK - 2, grandparent), genesis),
                 )
                 .await;
                 settle_head(
                     &driver,
-                    ReadAnchor::identified(BLOCK - 1, parent),
-                    grandparent,
+                    anchored(ReadAnchor::identified(BLOCK - 1, parent), grandparent),
                 )
                 .await;
-                settle_head(&driver, ReadAnchor::identified(BLOCK, child), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK, child), parent),
+                )
+                .await;
                 let lagging = select_dispatch_storage(&provider, &cache, BLOCK - 1).await;
                 let two_below = select_dispatch_storage(&provider, &cache, BLOCK - 2).await;
                 (lagging, two_below)
@@ -3305,8 +3343,10 @@ mod delta_dispatch_tests {
                 // The session's first head: no installed parent to carry.
                 let outcome = settle_head(
                     &driver,
-                    ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
-                    B256::new([0xa0; 32]),
+                    anchored(
+                        ReadAnchor::identified(BLOCK, B256::new([0xa1; 32])),
+                        B256::new([0xa0; 32]),
+                    ),
                 )
                 .await;
                 assert!(
@@ -3345,8 +3385,16 @@ mod delta_dispatch_tests {
                 rt.block_on(async {
                     let cache = delta_cache();
                     let driver = session_driver(&cache, &provider);
-                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
-                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                    )
+                    .await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK, child), root),
+                    )
+                    .await;
                     let stats_before = driver.stats();
                     let bal_before = rec.bal_requests();
                     let settled = select_dispatch_storage(&provider, &cache, BLOCK).await;
@@ -3408,9 +3456,17 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
                 rec.set_bal_mode(BalMode::Unsupported);
-                settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK, child), root),
+                )
+                .await;
                 let selection = select_dispatch_storage(&provider, &cache, BLOCK).await;
                 (selection, rec.bal_requests(), rec.wire())
             })
@@ -3468,8 +3524,16 @@ mod delta_dispatch_tests {
             rt.block_on(async {
                 let cache = delta_cache();
                 let driver = session_driver(&cache, &provider);
-                settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
-                settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                )
+                .await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK, child), root),
+                )
+                .await;
                 let settled = select_dispatch_storage(&provider, &cache, BLOCK).await;
                 let held = match &settled.storage {
                     FanOutStorage::Delta(hub) => Arc::clone(hub),
@@ -3478,7 +3542,11 @@ mod delta_dispatch_tests {
                 // Same height, different canonical block: the replacement head
                 // arrives on the head edge and supersedes the settled one.
                 rec.serve_head(BLOCK, replacement, root);
-                settle_head(&driver, ReadAnchor::identified(BLOCK, replacement), root).await;
+                settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(BLOCK, replacement), root),
+                )
+                .await;
                 let after = select_dispatch_storage(&provider, &cache, BLOCK).await;
                 (held, after, rec.bal_requests())
             })
@@ -3567,8 +3635,16 @@ mod delta_dispatch_tests {
                     // heads off the fan-out's path; the child carries, so the
                     // ready generation answers and no prefetch batch is dispatched.
                     let driver = session_driver(&warm, &provider);
-                    settle_head(&driver, ReadAnchor::identified(BLOCK - 1, root), parent).await;
-                    settle_head(&driver, ReadAnchor::identified(BLOCK, child), root).await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK - 1, root), parent),
+                    )
+                    .await;
+                    settle_head(
+                        &driver,
+                        anchored(ReadAnchor::identified(BLOCK, child), root),
+                    )
+                    .await;
                     let bal_before = rec.bal_requests();
                     let ready = run(cands, Some(warm));
                     let bal_after = rec.bal_requests();
@@ -3729,7 +3805,7 @@ mod delta_dispatch_tests {
             ),
             "the pipeline and the fan-out share the ONE session driver"
         );
-        let root_ticket = driver.deliver(ReadAnchor::identified(BLOCK - 1, ROOT), PARENT);
+        let root_ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK - 1, ROOT), PARENT));
         assert!(
             matches!(
                 driver.advance(root_ticket, &[]).await,
@@ -3737,7 +3813,7 @@ mod delta_dispatch_tests {
             ),
             "the parent head settled"
         );
-        let child_ticket = driver.deliver(ReadAnchor::identified(BLOCK, CHILD), ROOT);
+        let child_ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, CHILD), ROOT));
         assert!(
             matches!(
                 driver.advance(child_ticket, &[]).await,

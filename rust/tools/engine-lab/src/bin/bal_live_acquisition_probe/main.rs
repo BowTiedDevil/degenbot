@@ -205,13 +205,13 @@ async fn run(derived: Vec<(usize, Vec<(Address, U256)>)>) -> Result<(), String> 
         .await
         .map_err(|error| format!("eth_getBlockByNumber({anchor_block}): {error}"))?
         .ok_or_else(|| format!("no canonical block at {anchor_block}"))?;
-    let (number, hash) = (lineage.number, lineage.hash);
+    let (number, hash) = (lineage.number(), lineage.hash());
     println!("# Live reth BAL acquisition at one fixed historical anchor\n");
     println!("node: {url} (chain id {chain_id})\n");
     println!(
         "anchor: block {number}, hash {hash}, parent {}. Repetitions: {reps} \
          (interleaved). Corpus widths: {counts:?}.\n",
-        lineage.parent_hash
+        lineage.parent_hash()
     );
     let plan = BalPlan::default();
     let mut failures = Vec::new();

@@ -12,7 +12,7 @@ use super::liveness::LoopLiveness;
 use super::Arc;
 // The accepted head's chain fact, poked through `PumpControl` after the block
 // clock and never on its critical path.
-use degenbot_core::canonical_head::CanonicalHead;
+use degenbot_core::canonical_head::ChainAnchor;
 
 /// The live loop's ONE exit door.
 ///
@@ -1091,14 +1091,22 @@ impl BlockPump {
                     // block clock above, fired AFTER it so storage work can
                     // never delay the clock. It carries the identity the alloy
                     // header already had (hash + parent hash), so no RPC is
-                    // spent re-deriving it. An uninstalled sink — the shipped
-                    // posture — makes this a hard no-op.
+                    // spent re-deriving it; the chain id is the session's own.
+                    // An uninstalled sink — the shipped posture — makes this a
+                    // hard no-op. A header the session's chain cannot make an
+                    // exact anchor for (an unconfigured chain id) is an ingress
+                    // refusal: the sink is never poked with a partial identity,
+                    // and the block clock above is untouched either way.
                     if accepted {
-                        self.control.on_canonical_head(&CanonicalHead::new(
-                            number,
-                            hash,
-                            parent_hash,
-                        ));
+                        match ChainAnchor::new(self.bot.chain_id(), number, hash, parent_hash) {
+                            Ok(head) => self.control.on_canonical_head(&head),
+                            Err(error) => op_error!(
+                                domain = pump,
+                                number,
+                                %error,
+                                "accepted header has no exact chain identity; canonical-head sink not poked"
+                            ),
+                        }
                         // The session's ONE head source: the same accepted
                         // header, published into the hub every strategy's head
                         // subscription and the hosted head edge read. Fired on

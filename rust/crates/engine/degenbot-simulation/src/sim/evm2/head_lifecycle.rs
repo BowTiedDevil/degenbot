@@ -93,8 +93,9 @@
 //! 1. own the driver for the session instead of the cache
 //!    ([`BalHeadDriver::new`] / [`BalHeadDriver::with_config`], which fixes the
 //!    compaction threshold and the retention policy);
-//! 2. on every canonical head, [`BalHeadDriver::deliver`] the anchor, the
-//!    header's parent hash, and the relevance set the caller derived — the
+//! 2. on every canonical head, [`BalHeadDriver::deliver`] the head's exact
+//!    [`ChainAnchor`] (number, hash, and the parent hash its lineage is
+//!    verified against) and the relevance set the caller derived — the
 //!    relevance input stays the CALLER's (production derivation is not part of
 //!    this seam);
 //! 3. run [`BalHeadDriver::prepare`] (or the whole [`BalHeadDriver::advance`])
@@ -129,6 +130,8 @@ use super::delta_snapshot::{
 };
 use super::read_hub::{CarryOutcome, CarryRefusal, PreparedBal};
 use crate::sim::storage_memo::ReadAnchor;
+
+use degenbot_core::canonical_head::ChainAnchor;
 // ── The asynchronous canonical-head lifecycle ──────────────────────────────
 //
 // A canonical head arrives from outside (a block subscription, a poller, a
@@ -1131,7 +1134,13 @@ impl BalHeadDriver {
     /// restated as [`HeadReadiness::Ready`] — a redelivery repeats no transition,
     /// so it cannot restate one. Everything else minted a cold generation that
     /// callers at that head read until [`Self::apply`] lands.
-    pub fn deliver(&self, anchor: ReadAnchor, parent_hash: B256) -> HeadTicket {
+    pub fn deliver(&self, head: ChainAnchor) -> HeadTicket {
+        // The delivery seam takes the FULL canonical identity (ADR-105 D1): the
+        // parent hash rides inside the anchor, so a delivery proves the lineage
+        // it is verified against. The lifecycle's own bookkeeping keys the fan-out
+        // fence (number + hash); the parent hash stays its separate linkage claim.
+        let anchor = ReadAnchor::from(head);
+        let parent_hash = head.parent_hash();
         let mut state = self.state.lock();
         let installed = self.cache.anchor();
         let seq = state.deliver(anchor, parent_hash, installed, || {

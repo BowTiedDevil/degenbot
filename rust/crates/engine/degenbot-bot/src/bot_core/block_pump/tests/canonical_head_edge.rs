@@ -11,12 +11,19 @@
 //! the ingestion stream already held).
 
 use super::*;
-use degenbot_core::canonical_head::CanonicalHead;
+use degenbot_core::canonical_head::ChainAnchor;
 
 /// The hash one fixture header carries: distinct per block so an assertion can
 /// prove the poke names the header's OWN identity rather than a re-derivation.
 fn header_hash(number: u64) -> B256 {
     B256::new([u8::try_from(number % 251).unwrap_or(1); 32])
+}
+
+/// The exact head one fixture header carries: the session's chain, the
+/// header's own hash, and its parent's.
+fn head(number: u64) -> ChainAnchor {
+    ChainAnchor::new(1, number, header_hash(number), header_hash(number - 1))
+        .expect("the fixture header carries every identity field")
 }
 
 /// A `newHeads` fixture at `number`, with its parent linked to `number - 1` so
@@ -52,11 +59,7 @@ async fn the_head_edge_fires_once_per_accepted_header_and_delivers_that_exact_an
     let heads = sink.canonical_heads();
     assert_eq!(
         heads,
-        vec![
-            CanonicalHead::new(101, header_hash(101), header_hash(100)),
-            CanonicalHead::new(102, header_hash(102), header_hash(101)),
-            CanonicalHead::new(103, header_hash(103), header_hash(102)),
-        ],
+        vec![head(101), head(102), head(103)],
         "one head fact per ACCEPTED header, each naming its own exact anchor"
     );
     assert_eq!(

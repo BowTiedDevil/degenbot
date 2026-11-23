@@ -60,7 +60,7 @@ pub struct ChainStub {
     bal_json_unsupported: Arc<AtomicBool>,
     bal_null: Arc<AtomicBool>,
     head: Arc<AtomicU64>,
-    lineage: Arc<Mutex<HashMap<u64, B256>>>,
+    lineage: Arc<Mutex<HashMap<u64, (B256, B256)>>>,
     head_unreadable: Arc<AtomicBool>,
     lineage_unreadable: Arc<AtomicBool>,
     down: Arc<AtomicBool>,
@@ -133,9 +133,12 @@ impl ChainStub {
 
     /// Serve the current canonical head: `eth_blockNumber` answers `number`, and
     /// that number's header names `hash` (its parent is the zero hash).
-    pub fn serve_head(&self, number: u64, hash: B256) {
+    pub fn serve_head(&self, number: u64, hash: B256, parent_hash: B256) {
         self.set_head_number(number);
-        self.lineage.lock().unwrap().insert(number, hash);
+        self.lineage
+            .lock()
+            .unwrap()
+            .insert(number, (hash, parent_hash));
     }
 
     /// Report `number` as the head while serving NO header at it — a node whose
@@ -296,8 +299,14 @@ impl ChainStub {
         AlloyProvider::from_provider(Arc::new(root))
     }
 
-    /// Record one dispatched request's identity.
+    /// Record one dispatched request's identity. `eth_chainId` is skipped: the
+    /// chain id is the ENDPOINT's binding fact (read once to name a
+    /// [`ChainAnchor`](degenbot_core::canonical_head::ChainAnchor)), not one of
+    /// the scripted reads the tests' dispatch assertions count.
     fn record(&self, one: &SerializedRequest) {
+        if one.method() == "eth_chainId" {
+            return;
+        }
         self.requests.lock().unwrap().push(format!(
             "{} {}",
             one.method(),
@@ -318,6 +327,12 @@ impl ChainStub {
             self.answer_head()
         } else if req.method() == "eth_getBlockByNumber" {
             self.answer_lineage(req)
+        } else if req.method() == "eth_chainId" {
+            // The lineage read names its ChainAnchor with the endpoint's chain
+            // (ADR-105 D1); the stub is the scripted chain's only endpoint.
+            ResponsePayload::Success(
+                to_raw_value(&Value::String("0x1".to_string())).expect("a quantity serializes"),
+            )
         } else {
             panic!("a scripted read must not issue {}", req.method())
         };
@@ -347,10 +362,10 @@ impl ChainStub {
         let number = u64::from_str_radix(first_param(req).trim_start_matches("0x"), 16)
             .expect("the block number is a hex quantity");
         match self.lineage.lock().unwrap().get(&number) {
-            Some(hash) => ResponsePayload::Success(
+            Some((hash, parent_hash)) => ResponsePayload::Success(
                 to_raw_value(&serde_json::json!({
                     "hash": hash,
-                    "parentHash": B256::ZERO,
+                    "parentHash": parent_hash,
                 }))
                 .expect("a header serializes"),
             ),

@@ -100,6 +100,7 @@ use alloy::primitives::{Address, B256, U256};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::probe_support::head_legs;
 use degenbot_simulation::probe_support::real_coverage;
+use degenbot_simulation::probe_support::scripted_head::anchored;
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadOutcome, HeadReadiness,
 };
@@ -352,7 +353,7 @@ async fn walk_head(
     let anchor = ReadAnchor::identified(number, hash);
 
     let deliver_started = Instant::now();
-    let ticket = driver.deliver(anchor, parent_hash);
+    let ticket = driver.deliver(anchored(anchor, parent_hash));
     let deliver = deliver_started.elapsed();
 
     let cold_view = driver.snapshot(anchor);

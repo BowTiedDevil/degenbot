@@ -24,6 +24,7 @@ use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::{WebSocketConfig, WsConnect};
 use alloy::transports::TransportFut;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::op_warn;
 
@@ -1354,36 +1355,6 @@ mod storage_batch_tests {
     }
 }
 
-/// One canonical block's lineage: the height, the block's own canonical hash,
-/// and the parent hash its header names.
-///
-/// The identity a caller states for an exact head — a number alone cannot see a
-/// same-height reorg, and a hash alone cannot say which block the head links
-/// to. [`AlloyProvider::get_block_lineage_at`] is the one read that answers all
-/// three together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockLineage {
-    /// The block's height.
-    pub number: u64,
-    /// The block's own canonical hash.
-    pub hash: B256,
-    /// The hash of the block this one builds on.
-    pub parent_hash: B256,
-}
-
-impl BlockLineage {
-    /// The lineage of `number`, identified by `hash` and linked to
-    /// `parent_hash`.
-    #[must_use]
-    pub const fn new(number: u64, hash: B256, parent_hash: B256) -> Self {
-        Self {
-            number,
-            hash,
-            parent_hash,
-        }
-    }
-}
-
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -2041,6 +2012,10 @@ impl AlloyProvider {
     /// missing either hash: a caller that cannot state the whole lineage has no
     /// exact head, and guessing one is what this helper exists to prevent.
     ///
+    /// The chain id is a fact about the ENDPOINT, not about the block: a bound
+    /// provider answers from its verified binding (no extra round trip), an
+    /// unbound one reads `eth_chainId` once first.
+    ///
     /// Retry/timeout policy is the provider's own
     /// ([`Self::retry_with_backoff`]): a retryable failure re-issues the read.
     ///
@@ -2050,7 +2025,7 @@ impl AlloyProvider {
     pub async fn get_block_lineage_at(
         &self,
         block_number: u64,
-    ) -> ProviderResult<Option<BlockLineage>> {
+    ) -> ProviderResult<Option<ChainAnchor>> {
         /// The two header fields this read wants out of a block body.
         #[derive(Debug, serde::Deserialize)]
         struct HeaderLineage {
@@ -2059,6 +2034,7 @@ impl AlloyProvider {
             parent_hash: Option<B256>,
         }
 
+        let chain_id = self.get_chain_id().await?;
         self.retry_with_backoff(|| async {
             let header: Option<HeaderLineage> = self
                 .inner
@@ -2073,7 +2049,9 @@ impl AlloyProvider {
             Ok(
                 header.and_then(|header| match (header.hash, header.parent_hash) {
                     (Some(hash), Some(parent_hash)) => {
-                        Some(BlockLineage::new(block_number, hash, parent_hash))
+                        // A zero hash or parent hash states no identity, exactly
+                        // like a missing field: no anchor is invented from it.
+                        ChainAnchor::new(chain_id, block_number, hash, parent_hash).ok()
                     }
                     _ => None,
                 }),
@@ -5117,6 +5095,12 @@ mod block_lineage_tests {
             self.packets.lock().unwrap().clone()
         }
 
+        /// Forget every recorded packet — the boundary between the provider
+        /// setup reads (the chain-id binding) and the read under test.
+        fn forget_packets(&self) {
+            self.packets.lock().unwrap().clear();
+        }
+
         fn provider(&self) -> AlloyProvider {
             let client = ClientBuilder::default().transport(self.clone(), true);
             let root: RootProvider = RootProvider::new(client);
@@ -5137,16 +5121,23 @@ mod block_lineage_tests {
             let stub = self.clone();
             Box::pin(async move {
                 let respond = |req: &SerializedRequest| -> Result<Response, TransportError> {
-                    assert_eq!(
-                        req.method(),
-                        "eth_getBlockByNumber",
-                        "the lineage read issues one header request"
+                    assert!(
+                        matches!(req.method(), "eth_getBlockByNumber" | "eth_chainId"),
+                        "the lineage setup issues no other request"
                     );
                     stub.packets.lock().unwrap().push((
                         req.method().to_string(),
                         req.params()
                             .map_or_else(String::new, |params| params.get().to_string()),
                     ));
+                    if req.method() == "eth_chainId" {
+                        return Ok(Response {
+                            id: req.id().clone(),
+                            payload: ResponsePayload::Success(
+                                to_raw_value(&serde_json::json!("0x1")).unwrap(),
+                            ),
+                        });
+                    }
                     let payload = match stub.answer {
                         Answer::Down => {
                             return Err(TransportError::local_usage_str(
@@ -5194,6 +5185,11 @@ mod block_lineage_tests {
     async fn the_lineage_read_answers_height_hash_and_parent_hash_in_one_packet() {
         let stub = LineageStub::serving(Answer::Header);
         let provider = stub.provider();
+        provider
+            .bind_to_chain(1)
+            .await
+            .expect("the stub serves its chain id");
+        stub.forget_packets();
 
         let lineage = provider
             .get_block_lineage_at(100)
@@ -5202,8 +5198,12 @@ mod block_lineage_tests {
 
         assert_eq!(
             lineage,
-            Some(BlockLineage::new(100, hash(0xa1), hash(0xa0))),
-            "the height the caller asked for, the canonical hash, and the header's parent"
+            Some(
+                ChainAnchor::new(1, 100, hash(0xa1), hash(0xa0))
+                    .expect("the fixture lineage carries every identity field")
+            ),
+            "the height the caller asked for, the canonical hash, and the header's parent, \
+             on the endpoint's chain"
         );
         let packets = stub.packets();
         assert_eq!(packets.len(), 1, "one header read, never one per hash");

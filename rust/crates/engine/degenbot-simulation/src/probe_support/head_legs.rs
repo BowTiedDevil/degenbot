@@ -37,7 +37,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::Address;
 
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadCold, HeadOutcome, HeadReadiness};
 use crate::sim::ReadAnchor;
@@ -46,6 +46,9 @@ use degenbot_rpc::provider::AlloyProvider;
 use super::chain_stub::ChainStub;
 use super::modeled_chain::{bal_bytes, real_block_writes};
 use super::real_coverage::RealCoverage;
+use degenbot_core::canonical_head::ChainAnchor;
+
+use super::scripted_head;
 
 /// The park guard a waiter sample's resolve is bounded by: a wait that never
 /// resolves is a broken lifecycle, not a slow one.
@@ -84,13 +87,12 @@ where
     Ok((head.saturating_sub(fresh - 1)..=head).collect())
 }
 
-/// One head the waiter leg delivers: the exact anchor, and the parent hash the
-/// scripted chain links it with.
+/// One head the waiter leg delivers: the exact canonical anchor the scripted
+/// chain links it with (ADR-105 D1).
 pub struct ScheduledHead {
-    /// The head's exact anchor — the real captured hash at the real height.
-    pub anchor: ReadAnchor,
-    /// The parent hash the transition's lineage is verified against.
-    pub parent_hash: B256,
+    /// The head's exact anchor — the real captured hash at the real height,
+    /// linked to its real parent.
+    pub head: ChainAnchor,
 }
 
 /// The offline chain the waiter leg walks: the chain stub serving the committed
@@ -127,8 +129,7 @@ impl WaiterChain {
             let parent_hash = real.parent_hash(number)?;
             stub.serve_bal_at(hash, bal_bytes(&real_block_writes(first, number, &real)));
             heads.push(ScheduledHead {
-                anchor: ReadAnchor::identified(number, hash),
-                parent_hash,
+                head: scripted_head::head(number, hash, parent_hash),
             });
         }
         Ok(Self { stub, real, heads })
@@ -225,10 +226,11 @@ pub async fn waiter_leg(
 ) -> Result<Vec<WaiterSample>, String> {
     let relevance = chain.relevance();
     let mut samples = Vec::new();
-    for head in chain.heads() {
-        let anchor = head.anchor;
+    for scheduled in chain.heads() {
+        let head = scheduled.head;
+        let anchor = ReadAnchor::from(head);
         chain.stub().defer_bal();
-        let ticket = driver.deliver(anchor, head.parent_hash);
+        let ticket = driver.deliver(head);
 
         // The sample's ONE clock origin. The prepare clock starts inside the
         // advance's first poll below, so starting the wait before that future

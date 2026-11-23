@@ -15,6 +15,7 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use degenbot_simulation::sim::evm2::delta_snapshot::BalHeadDriver;
+use degenbot_simulation::sim::ReadAnchor;
 
 use degenbot_simulation::probe_support::head_legs;
 
@@ -96,7 +97,8 @@ async fn the_waiter_leg_resolves_a_real_wait_over_the_deferred_transport() {
     assert_eq!(samples.len(), 4, "one sample per scripted head");
     for (index, (sample, head)) in samples.iter().zip(chain.heads()).enumerate() {
         assert_eq!(
-            sample.head, head.anchor.number,
+            sample.head,
+            head.head.number(),
             "the sample names the head it delivered"
         );
         // The leg's first head has no installed parent, so its settle is the
@@ -141,11 +143,13 @@ async fn the_waiter_leg_resolves_a_real_wait_over_the_deferred_transport() {
     }
     assert_eq!(
         driver.installed(),
-        chain.heads().last().map(|head| head.anchor),
+        chain.heads().last().map(|head| ReadAnchor::from(head.head)),
         "every scripted head settled: the waits resolved on the settle"
     );
     assert!(
-        driver.completion(chain.heads()[0].anchor).is_none(),
+        driver
+            .completion(ReadAnchor::from(chain.heads()[0].head))
+            .is_none(),
         "a superseded head publishes no current completion: its attempt is gone"
     );
 }

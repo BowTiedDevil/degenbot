@@ -27,7 +27,7 @@
 )]
 
 use alloy::primitives::{B256, U256};
-use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
 use degenbot_simulation::sim::evm2::bal_heads::{ambient_spawn, BalHeadPipeline, NoRelevance};
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadCold, HeadCompletion, HeadOutcome, HeadReadiness,
@@ -45,14 +45,15 @@ use degenbot_simulation::probe_support::scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::{bal_bytes, block_hash, ChainState, Key, StubChain};
-use scripted_head::{address, genesis, identified, SpawnQueue};
+use scripted_head::{address, anchored, genesis, identified, SpawnQueue};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 100;
 
 /// One accepted canonical head.
-fn head(number: u64, hash: B256, parent_hash: B256) -> CanonicalHead {
-    CanonicalHead::new(number, hash, parent_hash)
+fn head(number: u64, hash: B256, parent_hash: B256) -> ChainAnchor {
+    ChainAnchor::new(1, number, hash, parent_hash)
+        .expect("the fixture head carries every identity field")
 }
 
 /// An armed pipeline whose phases the test drains, over ONE session driver.
@@ -64,17 +65,17 @@ fn armed_pipeline(driver: &Arc<BalHeadDriver>, queue: &SpawnQueue) -> Arc<BalHea
 }
 
 /// The readiness the session reports at one exact head.
-fn readiness(driver: &BalHeadDriver, canonical: CanonicalHead) -> HeadReadiness {
+fn readiness(driver: &BalHeadDriver, canonical: ChainAnchor) -> HeadReadiness {
     driver
-        .snapshot(identified(canonical.number, canonical.hash))
+        .snapshot(identified(canonical.number(), canonical.hash()))
         .readiness
 }
 
 /// The report the pipeline's own apply produced for the head it just settled.
-fn settled(driver: &BalHeadDriver, canonical: CanonicalHead) -> Arc<DeltaReport> {
+fn settled(driver: &BalHeadDriver, canonical: ChainAnchor) -> Arc<DeltaReport> {
     assert_eq!(
         driver.delivered(),
-        Some(identified(canonical.number, canonical.hash)),
+        Some(identified(canonical.number(), canonical.hash())),
         "the driver holds the head the pipeline settled"
     );
     driver
@@ -664,7 +665,7 @@ async fn the_chain_survives_the_abandoned_list(
     pipeline: &BalHeadPipeline,
     queue: &SpawnQueue,
     driver: &BalHeadDriver,
-    replacement_head: CanonicalHead,
+    replacement_head: ChainAnchor,
     heir: B256,
     slot: U256,
 ) {
@@ -674,7 +675,7 @@ async fn the_chain_survives_the_abandoned_list(
         CarryOutcome::Carried { carried_values: 0 },
         "the survivor links the generation the abandoned list never replaced"
     );
-    let heir_head = head(HEIGHT + 2, heir, replacement_head.hash);
+    let heir_head = head(HEIGHT + 2, heir, replacement_head.hash());
     pipeline.on_canonical_head(heir_head);
     assert!(queue.run_one().await, "the heir's phase runs");
     assert_eq!(
@@ -805,7 +806,7 @@ async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime(
 
     // The parent generation settles synchronously, so the child's transition is
     // decided by the ambient phase alone.
-    let base_ticket = driver.deliver(identified(HEIGHT, base), genesis());
+    let base_ticket = driver.deliver(anchored(identified(HEIGHT, base), genesis()));
     driver.advance(base_ticket, &[]).await;
     assert_eq!(
         driver.installed(),
@@ -868,7 +869,7 @@ async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime(
         "the settled generation serves the head's own list"
     );
     assert_eq!(
-        driver.deliver(anchor, base),
+        driver.deliver(anchored(anchor, base)),
         ticket,
         "the ambient settle minted no new public delivery"
     );

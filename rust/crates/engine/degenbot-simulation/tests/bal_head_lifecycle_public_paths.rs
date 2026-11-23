@@ -58,7 +58,8 @@ fn the_lifecycle_types_are_one_definition_behind_both_public_paths() {
 /// evidence.
 #[test]
 fn the_reexported_driver_offers_the_whole_public_surface() {
-    use alloy::primitives::{Address, B256};
+    use alloy::primitives::Address;
+    use degenbot_core::canonical_head::ChainAnchor;
     use degenbot_rpc::provider::AlloyProvider;
     use degenbot_simulation::sim::evm2::delta_snapshot::{
         BalHeadDriver, DeltaReport, HeadCold, HeadCompletion, HeadOutcome, HeadReadiness,
@@ -73,7 +74,7 @@ fn the_reexported_driver_offers_the_whole_public_surface() {
         BalHeadDriver::with_config;
     let retention: fn(&BalHeadDriver) -> Retention = BalHeadDriver::retention;
     let max_depth: fn(&BalHeadDriver) -> u32 = BalHeadDriver::max_depth;
-    let deliver: fn(&BalHeadDriver, ReadAnchor, B256) -> HeadTicket = BalHeadDriver::deliver;
+    let deliver: fn(&BalHeadDriver, ChainAnchor) -> HeadTicket = BalHeadDriver::deliver;
     let apply: fn(&BalHeadDriver, HeadTicket, &PreparedBal, &[Address]) -> HeadOutcome =
         BalHeadDriver::apply;
     let apply_members: fn(&BalHeadDriver, HeadTicket, &PreparedBal, &RelevanceSet) -> HeadOutcome =

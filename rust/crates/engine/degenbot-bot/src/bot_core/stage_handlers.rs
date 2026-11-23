@@ -1369,7 +1369,7 @@ mod conformance {
 
         fn notify_block(&self, _block: u64, _metadata: &degenbot_substrate::BlockMetadata) {}
 
-        fn on_canonical_head(&self, _head: &degenbot_core::canonical_head::CanonicalHead) {}
+        fn on_canonical_head(&self, _head: &degenbot_core::canonical_head::ChainAnchor) {}
 
         fn on_pump_ended(&self) {}
     }
@@ -1738,7 +1738,7 @@ mod candidate2_seam_pins {
             PumpControl::notify_block;
         // The accepted-head poke: the chain fact beside the block clock. No
         // default body, so an implementor cannot quietly inherit a no-op.
-        let _: fn(&dyn PumpControl, &degenbot_core::canonical_head::CanonicalHead) =
+        let _: fn(&dyn PumpControl, &degenbot_core::canonical_head::ChainAnchor) =
             PumpControl::on_canonical_head;
         let _: fn(&dyn PumpControl) = PumpControl::on_pump_ended;
     }

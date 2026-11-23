@@ -41,9 +41,9 @@ use alloy::rpc::json_rpc::{
     ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
 };
 use alloy::transports::{TransportError, TransportFut};
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::delta_snapshot::{BalHeadDriver, HeadOutcome};
-use degenbot_simulation::sim::ReadAnchor;
 use serde_json::value::{to_raw_value, RawValue};
 
 /// The height every dispatch fan-out in these corpora anchors at.
@@ -415,6 +415,12 @@ fn success(value: &str) -> ResponsePayload {
 /// Record one dispatched request's wire body — method + serialized params —
 /// in dispatch order.
 fn record_wire(recorder: &DeltaRecorder, req: &SerializedRequest) {
+    // `eth_chainId` is the ENDPOINT's binding fact (read once to name a
+    // `ChainAnchor`), never one of the scripted reads the wire assertions
+    // count.
+    if req.method() == "eth_chainId" {
+        return;
+    }
     recorder.wire.lock().expect("recorder mutex").push(format!(
         "{} {}",
         req.method(),
@@ -537,77 +543,12 @@ impl tower::Service<RequestPacket> for RecordingTransport {
             if is_bal {
                 recorder.bal_in_flight.fetch_sub(1, Ordering::Relaxed);
             }
-            let respond = |req: &SerializedRequest| -> Response {
-                record_wire(&recorder, req);
-                let payload = match req.method() {
-                    "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
-                    "eth_getCode" => success("0x"),
-                    "eth_getStorageAt" => {
-                        let (address, slot) =
-                            storage_key(req).expect("the storage read names its key");
-                        let word = recorder.storage_word(address, slot);
-                        success(&format!("0x{word:064x}"))
-                    }
-                    "eth_getBlockByNumber" => {
-                        recorder.head_reads.fetch_add(1, Ordering::Relaxed);
-                        let number = block_number(req).expect("the lineage read names its block");
-                        let (hash, parent) = recorder.head(number);
-                        let raw: Box<RawValue> = to_raw_value(&serde_json::json!({
-                            "hash": hash,
-                            "parentHash": parent,
-                        }))
-                        .expect("valid JSON object");
-                        ResponsePayload::Success(raw)
-                    }
-                    "debug_getRawBlockAccessList" | "eth_getBlockAccessList" => {
-                        recorder.bal_requests.fetch_add(1, Ordering::Relaxed);
-                        let mode = *recorder.bal.lock().expect("recorder mutex");
-                        // The packet already paid the delay before this response
-                        // was built, so a slow endpoint answers exactly like a
-                        // serving one once it arrives. The scripted node holds
-                        // the raw bytes only, so the official JSON method is a
-                        // method absence here; an unsupported endpoint answers
-                        // that way for BOTH methods.
-                        if mode == BalMode::Unsupported || req.method() == JSON_BAL_METHOD {
-                            return Response {
-                                id: req.id().clone(),
-                                payload: ResponsePayload::Failure(ErrorPayload {
-                                    code: -32_601,
-                                    message: format!("method not found: {}", req.method()).into(),
-                                    data: None,
-                                }),
-                            };
-                        }
-                        let payload = recorder.bal_payload.lock().expect("recorder mutex").clone();
-                        let raw: Box<RawValue> = to_raw_value(&serde_json::Value::String(
-                            alloy::primitives::hex::encode_prefixed(&payload),
-                        ))
-                        .expect("valid JSON value");
-                        ResponsePayload::Success(raw)
-                    }
-                    other => {
-                        recorder.other_requests.fetch_add(1, Ordering::Relaxed);
-                        return Response {
-                            id: req.id().clone(),
-                            payload: ResponsePayload::Failure(ErrorPayload {
-                                code: -32_601,
-                                message: format!("method not found: {other}").into(),
-                                data: None,
-                            }),
-                        };
-                    }
-                };
-                Response {
-                    id: req.id().clone(),
-                    payload,
-                }
-            };
             Ok(match req {
                 RequestPacket::Single(r) => {
                     if r.method() == "eth_getStorageAt" {
                         recorder.storage_singles.fetch_add(1, Ordering::Relaxed);
                     }
-                    ResponsePacket::Single(respond(&r))
+                    ResponsePacket::Single(respond(&recorder, &r))
                 }
                 RequestPacket::Batch(rs) => {
                     if rs.iter().all(|r| r.method() == "eth_getStorageAt") {
@@ -622,21 +563,88 @@ impl tower::Service<RequestPacket> for RecordingTransport {
                             Ordering::Relaxed,
                         );
                     }
-                    ResponsePacket::Batch(rs.iter().map(respond).collect())
+                    ResponsePacket::Batch(rs.iter().map(|r| respond(&recorder, r)).collect())
                 }
             })
         })
     }
 }
 
+/// Answer ONE dispatched request against the recorded chain: the scripted
+/// account, storage, and lineage reads, both BAL representations, and the
+/// endpoint's own `eth_chainId`, which names the chain a resolved anchor
+/// belongs to. Every answer is recorded on the wire first, so the tests'
+/// request-shape assertions see exactly what the transport was asked.
+fn respond(recorder: &DeltaRecorder, req: &SerializedRequest) -> Response {
+    record_wire(recorder, req);
+    let payload = match req.method() {
+        "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
+        "eth_getCode" => success("0x"),
+        "eth_chainId" => success("0x1"),
+        "eth_getStorageAt" => {
+            let (address, slot) = storage_key(req).expect("the storage read names its key");
+            let word = recorder.storage_word(address, slot);
+            success(&format!("0x{word:064x}"))
+        }
+        "eth_getBlockByNumber" => {
+            recorder.head_reads.fetch_add(1, Ordering::Relaxed);
+            let number = block_number(req).expect("the lineage read names its block");
+            let (hash, parent) = recorder.head(number);
+            let raw: Box<RawValue> = to_raw_value(&serde_json::json!({
+                "hash": hash,
+                "parentHash": parent,
+            }))
+            .expect("valid JSON object");
+            ResponsePayload::Success(raw)
+        }
+        "debug_getRawBlockAccessList" | "eth_getBlockAccessList" => {
+            recorder.bal_requests.fetch_add(1, Ordering::Relaxed);
+            let mode = *recorder.bal.lock().expect("recorder mutex");
+            // The packet already paid the delay before this response
+            // was built, so a slow endpoint answers exactly like a
+            // serving one once it arrives. The scripted node holds
+            // the raw bytes only, so the official JSON method is a
+            // method absence here; an unsupported endpoint answers
+            // that way for BOTH methods.
+            if mode == BalMode::Unsupported || req.method() == JSON_BAL_METHOD {
+                return Response {
+                    id: req.id().clone(),
+                    payload: ResponsePayload::Failure(ErrorPayload {
+                        code: -32_601,
+                        message: format!("method not found: {}", req.method()).into(),
+                        data: None,
+                    }),
+                };
+            }
+            let payload = recorder.bal_payload.lock().expect("recorder mutex").clone();
+            let raw: Box<RawValue> = to_raw_value(&serde_json::Value::String(
+                alloy::primitives::hex::encode_prefixed(&payload),
+            ))
+            .expect("valid JSON value");
+            ResponsePayload::Success(raw)
+        }
+        other => {
+            recorder.other_requests.fetch_add(1, Ordering::Relaxed);
+            return Response {
+                id: req.id().clone(),
+                payload: ResponsePayload::Failure(ErrorPayload {
+                    code: -32_601,
+                    message: format!("method not found: {other}").into(),
+                    data: None,
+                }),
+            };
+        }
+    };
+    Response {
+        id: req.id().clone(),
+        payload,
+    }
+}
+
 /// Deliver, prepare and apply ONE head exactly as the canonical-head pipeline
 /// does on the pump's header edge — deliberately on the OTHER side of the
 /// fan-out, which is what makes the selection a query.
-pub async fn settle_head(
-    driver: &Arc<BalHeadDriver>,
-    anchor: ReadAnchor,
-    parent_hash: B256,
-) -> HeadOutcome {
-    let ticket = driver.deliver(anchor, parent_hash);
+pub async fn settle_head(driver: &Arc<BalHeadDriver>, head: ChainAnchor) -> HeadOutcome {
+    let ticket = driver.deliver(head);
     driver.advance(ticket, &[]).await
 }

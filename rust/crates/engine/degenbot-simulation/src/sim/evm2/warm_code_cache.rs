@@ -325,7 +325,7 @@ pub async fn select_dispatch_storage(
             };
         }
     };
-    let anchor = ReadAnchor::identified(lineage.number, lineage.hash);
+    let anchor = ReadAnchor::from(lineage);
 
     // The whole selection: what this exact anchor answers. Every settled,
     // previous-window and terminal-cold view resolves on the wait's first,
@@ -943,7 +943,7 @@ mod tests {
     /// (it holds no driver), and arming itself fetches nothing.
     #[test]
     fn an_unarmed_pipeline_delivers_nothing_and_requests_nothing() {
-        use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+        use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
         let inner =
             WarmCodeCacheInner::shared_with_delta_dispatch(DeltaDispatchConfig::development());
         let provider = forbidden_provider();
@@ -952,11 +952,15 @@ mod tests {
         assert!(!pipeline.is_armed(), "boot constructs, it does not arm");
 
         for number in 100..103u64 {
-            pipeline.on_canonical_head(CanonicalHead::new(
-                number,
-                B256::new([u8::try_from(number % 251).unwrap_or(1); 32]),
-                B256::ZERO,
-            ));
+            pipeline.on_canonical_head(
+                ChainAnchor::new(
+                    1,
+                    number,
+                    B256::new([u8::try_from(number % 251).unwrap_or(1); 32]),
+                    B256::new([u8::try_from((number - 1) % 251).unwrap_or(1); 32]),
+                )
+                .expect("the fixture head carries every identity field"),
+            );
         }
         assert!(
             pipeline.driver().is_none(),

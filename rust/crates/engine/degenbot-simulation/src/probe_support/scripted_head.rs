@@ -37,6 +37,11 @@ use crate::sim::evm2::delta_snapshot::{
 use crate::sim::evm2::read_hub::PreparedBal;
 use crate::sim::ReadAnchor;
 
+use degenbot_core::canonical_head::ChainAnchor;
+
+/// The chain every scripted head belongs to: the fixtures never test \n/// cross-chain identity.
+pub const SCRIPTED_CHAIN: u64 = 1;
+
 /// A hash no scripted chain links to: the parent of a session's first head.
 #[must_use]
 pub fn genesis() -> B256 {
@@ -53,6 +58,26 @@ pub fn address(tag: u8) -> Address {
 #[must_use]
 pub fn identified(number: u64, hash: B256) -> ReadAnchor {
     ReadAnchor::identified(number, hash)
+}
+
+/// One exact scripted head: the full canonical anchor of `number` at `hash`,
+/// linked to `parent_hash` (ADR-105 D1).
+#[must_use]
+pub fn head(number: u64, hash: B256, parent_hash: B256) -> ChainAnchor {
+    ChainAnchor::new(SCRIPTED_CHAIN, number, hash, parent_hash)
+        .expect("a scripted head names its chain, its block, and its parent")
+}
+
+/// The exact head the identified `anchor` names, linked to `parent_hash` — the
+/// fixture bridge from the fan-out's read-fence vocabulary to the delivery
+/// seam's canonical one. A number-only anchor resolves to nothing: it stays an
+/// ingress observation and names no head to deliver.
+#[must_use]
+pub fn anchored(anchor: ReadAnchor, parent_hash: B256) -> ChainAnchor {
+    let hash = anchor
+        .hash
+        .expect("only an identified observation resolves to a chain anchor");
+    head(anchor.number, hash, parent_hash)
 }
 
 /// The settled report of one successful apply.
@@ -86,39 +111,36 @@ pub fn assert_parked<F: Future + Unpin>(future: &mut F) {
 /// [`BalHeadDriver`].
 pub struct ScriptedHead<'a> {
     driver: &'a BalHeadDriver,
-    anchor: ReadAnchor,
+    head: ChainAnchor,
     ticket: HeadTicket,
 }
 
 impl<'a> ScriptedHead<'a> {
-    /// Deliver `anchor` with `parent_hash`, and hold the ticket it minted.
-    pub fn deliver(driver: &'a BalHeadDriver, anchor: ReadAnchor, parent_hash: B256) -> Self {
-        let ticket = driver.deliver(anchor, parent_hash);
+    /// Deliver the exact head `head` names, and hold the ticket it minted.
+    pub fn deliver(driver: &'a BalHeadDriver, head: ChainAnchor) -> Self {
+        let ticket = driver.deliver(head);
         Self {
             driver,
-            anchor,
+            head,
             ticket,
         }
     }
 
-    /// [`Self::deliver`] for a head named by number and hash.
+    /// [`Self::deliver`] for a head named by number, hash, and parent hash.
     pub fn at(driver: &'a BalHeadDriver, number: u64, hash: B256, parent_hash: B256) -> Self {
-        Self::deliver(driver, identified(number, hash), parent_hash)
+        Self::deliver(driver, head(number, hash, parent_hash))
     }
 
-    /// Continue the choreography of an already-delivered ticket.
-    pub fn of(driver: &'a BalHeadDriver, ticket: HeadTicket) -> Self {
-        Self {
-            driver,
-            anchor: ticket.anchor(),
-            ticket,
-        }
+    /// The exact canonical anchor this head was delivered at.
+    #[must_use]
+    pub fn head(&self) -> ChainAnchor {
+        self.head
     }
 
     /// The exact-hash anchor this head was delivered at.
     #[must_use]
     pub fn anchor(&self) -> ReadAnchor {
-        self.anchor
+        ReadAnchor::from(self.head)
     }
 
     /// The delivery ticket a preparation is applied against.
@@ -172,7 +194,7 @@ impl<'a> ScriptedHead<'a> {
     /// The view this head answers with right now.
     #[must_use]
     pub fn view(&self) -> HeadView {
-        self.driver.snapshot(self.anchor)
+        self.driver.snapshot(self.anchor())
     }
 
     /// The readiness this head reports right now.

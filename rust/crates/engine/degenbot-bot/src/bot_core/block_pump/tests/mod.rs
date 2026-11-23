@@ -155,7 +155,7 @@ struct FakeStageEngine {
     drained_at: Mutex<Vec<tokio::time::Instant>>,
     /// Every `on_canonical_head` the pump poked, in arrival order: the
     /// accepted-head edge the head-consumer seam is driven by.
-    canonical_heads: Mutex<Vec<degenbot_core::canonical_head::CanonicalHead>>,
+    canonical_heads: Mutex<Vec<degenbot_core::canonical_head::ChainAnchor>>,
     /// The two header pokes in the order they arrived, so the firing order
     /// (block clock first, head fact second) is observable.
     header_pokes: Mutex<Vec<(&'static str, u64)>>,
@@ -189,7 +189,7 @@ impl FakeStageEngine {
     }
 
     /// The canonical heads the pump poked, in order.
-    fn canonical_heads(&self) -> Vec<degenbot_core::canonical_head::CanonicalHead> {
+    fn canonical_heads(&self) -> Vec<degenbot_core::canonical_head::ChainAnchor> {
         self.canonical_heads.lock().unwrap().clone()
     }
 
@@ -369,12 +369,12 @@ impl crate::bot_core::PumpControl for FakeStageEngine {
         self.notified.lock().unwrap().push((block, *metadata));
         self.header_pokes.lock().unwrap().push(("notify", block));
     }
-    fn on_canonical_head(&self, head: &degenbot_core::canonical_head::CanonicalHead) {
+    fn on_canonical_head(&self, head: &degenbot_core::canonical_head::ChainAnchor) {
         self.canonical_heads.lock().unwrap().push(*head);
         self.header_pokes
             .lock()
             .unwrap()
-            .push(("canonical", head.number));
+            .push(("canonical", head.number()));
     }
     fn on_pump_ended(&self) {
         self.pump_ended

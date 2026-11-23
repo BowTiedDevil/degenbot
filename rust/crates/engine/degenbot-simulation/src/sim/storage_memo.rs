@@ -38,6 +38,7 @@
 //! exactly as a moved height does.
 
 use alloy::primitives::{Address, StorageValue, B256, U256};
+use degenbot_core::canonical_head::ChainAnchor;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -115,12 +116,17 @@ impl StorageMemo {
 /// `number` is the block the RPC fallback tags every read with; `hash` is that
 /// block's canonical identity, the reorg fence. Both must match for a fan-out
 /// to inherit an installed memo: a same-height reorg leaves the number alone
-/// and changes only the hash, so only a hashed key can see it.
+/// and changes only the hash, so only a hashed key can see it. A resolved
+/// [`ChainAnchor`] converts into one directly - the canonical head pipeline's
+/// exact identity is this observation's identified form.
 ///
-/// `hash: None` is the degrade: the caller could not resolve the block's
-/// identity (no ambient runtime, an RPC failure, a caller that never asks), so
-/// the memo retires on the number alone - the pre-fence scope, never a wrong
-/// one.
+/// `hash: None` ([`Self::at`]) is the INGRESS-ONLY form (ADR-105 D1): a
+/// number-only observation - the caller could not resolve the block's identity
+/// (no ambient runtime, an RPC failure, a caller that never asks) - so the
+/// memo retires on the number alone, the pre-fence scope, never a wrong one.
+/// It never claims to be the canonical block: an observation must resolve its
+/// block hash (and, at the canonical boundary, its parent linkage) before it
+/// names a [`ChainAnchor`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadAnchor {
     /// The block number every read held by the memo is pinned to.
@@ -143,6 +149,16 @@ impl ReadAnchor {
             number,
             hash: Some(hash),
         }
+    }
+}
+
+/// A resolved canonical anchor IS the identified observation: the head
+/// pipeline's exact identity fences the memo with the same number and hash it
+/// carries (its chain id and parent linkage are the anchor's own provenance,
+/// not a memo concern).
+impl From<ChainAnchor> for ReadAnchor {
+    fn from(anchor: ChainAnchor) -> Self {
+        Self::identified(anchor.number(), anchor.hash())
     }
 }
 

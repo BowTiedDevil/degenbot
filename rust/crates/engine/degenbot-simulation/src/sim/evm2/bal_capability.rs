@@ -152,7 +152,7 @@ pub async fn probe_bal_capability(
             cause: error.to_string(),
         })?
         .ok_or(BalCapabilityError::UnknownHead { number })?;
-    probe_bal_capability_at(provider, lineage.number, lineage.hash).await
+    probe_bal_capability_at(provider, lineage.number(), lineage.hash()).await
 }
 
 /// Prove capability at ONE named block — the explicit-hash seam, for a caller

@@ -32,6 +32,11 @@ fn head_hash() -> B256 {
     B256::new([0x11; 32])
 }
 
+/// The exact parent hash [`HEAD`]'s scripted lineage links to.
+fn head_parent_hash() -> B256 {
+    B256::new([0x10; 32])
+}
+
 /// A second exact hash — the head one block later, or the hash a later fetch
 /// asks about.
 fn next_hash() -> B256 {
@@ -60,7 +65,7 @@ fn raw_list() -> Vec<u8> {
 /// A stub serving [`HEAD`] and a decodable list at [`head_hash`].
 fn serving_head() -> ChainStub {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     stub.serve_bal_at(head_hash(), raw_list());
     stub
 }
@@ -165,7 +170,7 @@ async fn a_dual_endpoint_node_proves_capability_through_the_raw_method_first() {
 #[tokio::test]
 async fn a_well_formed_empty_raw_list_proves_capability() {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     // One RLP empty list: zero accounts, a complete and valid list.
     stub.serve_bal_at(head_hash(), vec![0xc0]);
 
@@ -190,7 +195,7 @@ async fn a_well_formed_empty_raw_list_proves_capability() {
 #[tokio::test]
 async fn a_well_formed_empty_json_list_proves_capability() {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     stub.set_bal_raw_unsupported(true);
     stub.serve_bal_json_at(head_hash(), serde_json::json!([]));
 
@@ -250,7 +255,7 @@ async fn a_node_serving_neither_method_fails_with_both_methods_and_the_remediati
 #[tokio::test]
 async fn a_real_block_failure_on_the_raw_method_does_not_switch_to_json() {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     // JSON could answer this hash; the raw method answers a real block failure.
     stub.serve_bal_json_at(
         head_hash(),
@@ -438,7 +443,7 @@ async fn a_non_array_json_answer_fails_the_probe() {
 #[tokio::test]
 async fn a_malformed_raw_list_fails_the_probe() {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     stub.serve_bal_at(head_hash(), vec![0xff, 0x00]);
 
     let error = probe_bal_capability(&stub.provider())

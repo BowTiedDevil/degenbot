@@ -25,7 +25,7 @@
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_bot::arb_engine::EngineStages;
-use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
 use degenbot_core::fee::fee_ratio;
 use degenbot_pools::solve::PoolHop;
 use degenbot_pools::RegisterV2PoolParams;
@@ -177,8 +177,9 @@ fn armed_pipeline(
     pipeline
 }
 
-fn head(number: u64, hash: B256, parent_hash: B256) -> CanonicalHead {
-    CanonicalHead::new(number, hash, parent_hash)
+fn head(number: u64, hash: B256, parent_hash: B256) -> ChainAnchor {
+    ChainAnchor::new(1, number, hash, parent_hash)
+        .expect("the fixture head carries every identity field")
 }
 
 fn report_of(driver: &BalHeadDriver) -> Arc<DeltaReport> {
@@ -189,7 +190,7 @@ fn report_of(driver: &BalHeadDriver) -> Arc<DeltaReport> {
 
 /// A head whose list carries `writes`, delivered and drained through the
 /// pipeline's own spawned phase.
-async fn settle(pipeline: &BalHeadPipeline, queue: &SpawnQueue, canonical: CanonicalHead) {
+async fn settle(pipeline: &BalHeadPipeline, queue: &SpawnQueue, canonical: ChainAnchor) {
     pipeline.on_canonical_head(canonical);
     assert!(queue.run_one().await, "the head's phase runs");
 }
@@ -431,7 +432,7 @@ async fn the_set_and_slice_relevance_inputs_produce_an_identical_report() {
         );
         let provider = stub.provider();
         let driver = Arc::new(BalHeadDriver::new(&provider));
-        let head = ScriptedHead::of(&driver, driver.deliver(identified(HEIGHT, hash), genesis()));
+        let head = ScriptedHead::at(&driver, HEIGHT, hash, genesis());
         let outcome = if by_set {
             // The set is built from a REVERSED iterator: membership carries no
             // order, so a set that disagrees with the slice's order must not

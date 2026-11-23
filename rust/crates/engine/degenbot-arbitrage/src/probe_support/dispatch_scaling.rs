@@ -109,6 +109,7 @@ use crate::{
 use degenbot_execution::{CandidateId, DeploymentId, HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_simulation::probe_support::scripted_head::anchored;
 use degenbot_simulation::sim::evm2::delta_snapshot::{BalHeadDriver, HeadOutcome};
 use degenbot_simulation::sim::evm2::warm_code_cache::{
     select_dispatch_storage, DeltaDispatchConfig, WarmCodeCacheInner,
@@ -755,7 +756,7 @@ async fn settle(
     generation: &mut Generation,
 ) -> Result<(), String> {
     let anchor = ReadAnchor::identified(number, hash);
-    let ticket = driver.deliver(anchor, parent);
+    let ticket = driver.deliver(anchored(anchor, parent));
     let started = Instant::now();
     let prepared = driver.prepare(ticket).await;
     let prepare_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -905,8 +906,11 @@ async fn prepare_leg(
             // The head settles COLD — nothing is installed below it, so its
             // lineage cannot carry — and the fan-out falls back with that real
             // terminal reason, exactly as the shipped lane does.
-            let outcome =
-                settle_head(&driver, ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS).await;
+            let outcome = settle_head(
+                &driver,
+                anchored(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS),
+            )
+            .await;
             if !matches!(outcome, HeadOutcome::Settled(_)) {
                 return Err(format!("the failed head did not settle: {outcome:?}"));
             }
@@ -1937,8 +1941,11 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
                 (BLOCK - 2, GRANDPARENT, GENESIS),
                 (BLOCK - 1, PREVIOUS, GRANDPARENT),
             ] {
-                let outcome =
-                    settle_head(&driver, ReadAnchor::identified(number, hash), parent).await;
+                let outcome = settle_head(
+                    &driver,
+                    anchored(ReadAnchor::identified(number, hash), parent),
+                )
+                .await;
                 if !matches!(outcome, HeadOutcome::Settled(_)) {
                     return Err(format!("head {number} did not settle: {outcome:?}"));
                 }
@@ -1952,7 +1959,7 @@ pub fn wait_shapes() -> Result<Vec<WaitShape>, String> {
             if failed {
                 recorder.set_bal_payload(vec![0xff, 0x00]);
             }
-            let ticket = driver.deliver(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS);
+            let ticket = driver.deliver(anchored(ReadAnchor::identified(BLOCK, CURRENT), PREVIOUS));
             let head = Arc::clone(&driver);
             let prepared = tokio::spawn(async move {
                 let started = Instant::now();

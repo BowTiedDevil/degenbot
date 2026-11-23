@@ -19,7 +19,7 @@
 //! split. `notify_block` stays raw `u64`: a `newHeads` tick is a chain fact
 //! forwarded to the delivery-to-Python block clock, not engine epoch work.
 
-use degenbot_core::canonical_head::CanonicalHead;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_substrate::{BlockMetadata, Epoch};
 
 /// The driver-facing control seam: the pokes the pump drives between stage
@@ -63,7 +63,7 @@ pub trait PumpControl: Send + Sync + 'static {
     /// says so, exactly like [`Self::on_pump_ended`]. The shipped consumer
     /// posture is "no sink installed", which the arb engine's answer makes a
     /// hard no-op rather than a branch here.
-    fn on_canonical_head(&self, head: &CanonicalHead);
+    fn on_canonical_head(&self, head: &ChainAnchor);
 
     /// The pump ended (WS stream dead or pump task exited): make the
     /// Python-facing streams END so the bot fails loudly. No default — every

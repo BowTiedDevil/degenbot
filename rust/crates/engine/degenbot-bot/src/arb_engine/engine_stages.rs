@@ -49,7 +49,7 @@ use crate::bot_core::stage_handlers::{
 use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
 use crate::telemetry::BlockLineage;
 use degenbot_core::block_notification::BlockNotification;
-use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
 use degenbot_core::diag;
 use degenbot_core::op_error;
 use degenbot_core::op_warn;
@@ -981,7 +981,7 @@ impl PumpControl for EngineStages {
         // task later publishes (ADR-093 D5).
         self.session_events.send(SessionEvent::Block(notification));
     }
-    fn on_canonical_head(&self, head: &CanonicalHead) {
+    fn on_canonical_head(&self, head: &ChainAnchor) {
         // The chain fact, forwarded to the session's one head consumer. The
         // guard is dropped before the call: a sink is a foreign consumer and
         // must never run under this surface's lock.
@@ -1135,15 +1135,15 @@ mod candidate2_seam_pins {
     #[test]
     fn the_canonical_head_poke_reaches_the_installed_sink_and_no_other() {
         use crate::bot_core::PumpControl;
-        use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+        use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
         use std::sync::Mutex;
 
         #[derive(Default)]
         struct RecordingSink {
-            heads: Mutex<Vec<CanonicalHead>>,
+            heads: Mutex<Vec<ChainAnchor>>,
         }
         impl CanonicalHeadSink for RecordingSink {
-            fn on_canonical_head(&self, head: CanonicalHead) {
+            fn on_canonical_head(&self, head: ChainAnchor) {
                 self.heads
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1155,11 +1155,18 @@ mod candidate2_seam_pins {
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
             Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
         );
-        let head = CanonicalHead::new(
+        // The fixture names every identity field, so the fallible constructor
+        // cannot refuse it; the match keeps the failure loud without an
+        // `expect`/`unwrap` this module's lint denies.
+        let head = match ChainAnchor::new(
+            1,
             21_500_000,
             alloy::primitives::B256::new([0xaa; 32]),
             alloy::primitives::B256::new([0x99; 32]),
-        );
+        ) {
+            Ok(head) => head,
+            Err(error) => unreachable!("the fixture head carries every identity field: {error}"),
+        };
 
         // Uninstalled: the poke is a no-op, not a fallback consumer.
         assert!(stages.canonical_head_sink().is_none());

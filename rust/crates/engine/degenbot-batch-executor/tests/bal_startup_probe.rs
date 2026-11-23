@@ -62,6 +62,11 @@ fn head_hash() -> B256 {
     B256::new([0x11; 32])
 }
 
+/// The exact parent hash [`HEAD`]'s scripted lineage links to.
+fn head_parent_hash() -> B256 {
+    B256::new([0x10; 32])
+}
+
 // ── The executor fixture ─────────────────────────────────────────────────
 
 struct NoopResolver;
@@ -142,7 +147,7 @@ fn on_cache() -> Arc<parking_lot::RwLock<WarmCodeCacheInner>> {
 /// its exact hash.
 fn serving_node() -> ChainStub {
     let stub = ChainStub::serving();
-    stub.serve_head(HEAD, head_hash());
+    stub.serve_head(HEAD, head_hash(), head_parent_hash());
     stub.serve_bal_at(head_hash(), chain_stub::worked_list());
     stub
 }

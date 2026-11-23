@@ -85,14 +85,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::Instrument;
 
-use degenbot_core::canonical_head::{CanonicalHead, CanonicalHeadSink};
+use degenbot_core::canonical_head::{CanonicalHeadSink, ChainAnchor};
 use degenbot_core::{diag, op_span};
 use degenbot_execution::PathInfo;
 
 use crate::sim::evm2::delta_snapshot::{BalHeadDriver, HeadOutcome, HeadTicket, RelevanceSet};
 use crate::sim::evm2::read_hub::CarryOutcome;
 use crate::sim::prefetch::{path_relevance_addresses, PrefetchFacts};
-use crate::sim::ReadAnchor;
 
 /// The session's relevance inputs at one registry revision: the registered
 /// paths, projected, and the deployment facts the derivation reads.
@@ -312,7 +311,7 @@ impl BalHeadPipeline {
     /// fetch — a repeat costs a task, never an RPC. The driver owns both
     /// verdicts; this seam does not second-guess them.
     #[must_use]
-    pub fn deliver_head(&self, head: CanonicalHead) -> Option<HeadTicket> {
+    pub fn deliver_head(&self, head: ChainAnchor) -> Option<HeadTicket> {
         // The guard is released before the delivery: the driver is the only
         // thing this seam needs from the armed state, and a head's delivery must
         // never run under the pipeline's own lock.
@@ -325,19 +324,16 @@ impl BalHeadPipeline {
         // the head's delivery must not derive anything, and a path registered
         // while the list is in flight belongs to this head's seeding.
         let relevance = Arc::clone(&self.relevance.lock());
-        let ticket = driver.deliver(
-            ReadAnchor::identified(head.number, head.hash),
-            head.parent_hash,
-        );
+        let ticket = driver.deliver(head);
         // The head's own span: the prepare and the apply run off the pump's task,
         // so without it the transition's diagnostics would land outside any engine
         // span (ADR-043 §3) and the row would not export as a span event.
         let span = op_span!(
             domain = sim,
             "degenbot.sim.bal_head",
-            anchor = head.number,
-            hash = %head.hash,
-            parent = %head.parent_hash
+            anchor = head.number(),
+            hash = %head.hash(),
+            parent = %head.parent_hash()
         );
         // The spawned phase is spawned even for a repeated delivery: the driver
         // — not this seam — owns "already settled" and "another caller is
@@ -357,7 +353,7 @@ impl BalHeadPipeline {
 }
 
 impl CanonicalHeadSink for BalHeadPipeline {
-    fn on_canonical_head(&self, head: CanonicalHead) {
+    fn on_canonical_head(&self, head: ChainAnchor) {
         let _ = self.deliver_head(head);
     }
 }
@@ -408,7 +404,7 @@ impl std::fmt::Debug for BalHeadPipeline {
 /// fields THIS transition has are present — a transition that moved nothing
 /// writes no row at all, and a superseded or foreign apply has no wall to
 /// report.
-fn head_row(head: CanonicalHead, outcome: &HeadOutcome) -> Option<String> {
+fn head_row(head: ChainAnchor, outcome: &HeadOutcome) -> Option<String> {
     use std::fmt::Write;
 
     let (verdict, report) = match outcome {
@@ -431,7 +427,7 @@ fn head_row(head: CanonicalHead, outcome: &HeadOutcome) -> Option<String> {
     let _ = write!(
         row,
         "bal-head {{\"anchor\":{},\"hash\":\"{:#x}\",\"parent\":\"{:#x}\",\"outcome\":\"{verdict}\"",
-        head.number, head.hash, head.parent_hash
+        head.number(), head.hash(), head.parent_hash()
     );
     if let Some(report) = report {
         match &report.outcome {
@@ -480,7 +476,7 @@ fn head_row(head: CanonicalHead, outcome: &HeadOutcome) -> Option<String> {
 
 /// Emit the head's row (see [`head_row`]) on the `sim` domain at DEBUG — the
 /// level the OFF/ON capture recipe enables.
-fn record_head_outcome(head: CanonicalHead, outcome: &HeadOutcome) {
+fn record_head_outcome(head: ChainAnchor, outcome: &HeadOutcome) {
     if let Some(row) = head_row(head, outcome) {
         diag!(domain = sim, "{}", row);
     }
@@ -499,8 +495,10 @@ mod tests {
     use alloy::primitives::{Address, B256, U256};
     use std::time::Duration;
 
-    const HEAD: CanonicalHead =
-        CanonicalHead::new(26_382_799, B256::new([0xaa; 32]), B256::new([0x99; 32]));
+    fn head() -> ChainAnchor {
+        ChainAnchor::new(1, 26_382_799, B256::new([0xaa; 32]), B256::new([0x99; 32]))
+            .expect("the fixture head carries every identity field")
+    }
 
     /// A report with the walls and write counts a real transition carries.
     fn report(outcome: CarryOutcome) -> Arc<DeltaReport> {
@@ -533,7 +531,7 @@ mod tests {
             "the selection's label collapses four refusals into one"
         );
         let row = head_row(
-            HEAD,
+            head(),
             &HeadOutcome::Settled(report(CarryOutcome::Cold {
                 lineage: Some(CarryRefusal::NotConsecutive),
                 bal: None,
@@ -603,7 +601,7 @@ mod tests {
             ["no-anchor-hash", "rpc", "decode"]
         );
         let row = head_row(
-            HEAD,
+            head(),
             &HeadOutcome::Settled(report(CarryOutcome::Cold {
                 lineage: None,
                 bal: Some(BalSkip::Rpc("unsupported".into())),
@@ -622,7 +620,7 @@ mod tests {
     #[test]
     fn a_carried_head_names_its_chain_and_a_transition_that_moved_nothing_writes_no_row() {
         let row = head_row(
-            HEAD,
+            head(),
             &HeadOutcome::Settled(report(CarryOutcome::Carried { carried_values: 5 })),
         )
         .expect("a settled head leaves a row");
@@ -631,11 +629,11 @@ mod tests {
         assert!(row.contains(r#""carried":5"#), "{row}");
 
         assert!(
-            head_row(HEAD, &HeadOutcome::AlreadySettled).is_none(),
+            head_row(head(), &HeadOutcome::AlreadySettled).is_none(),
             "a repeat delivery moved nothing, so it reports nothing"
         );
         assert!(
-            head_row(HEAD, &HeadOutcome::InFlight).is_none(),
+            head_row(head(), &HeadOutcome::InFlight).is_none(),
             "another caller owns the preparation: nothing moved here"
         );
     }
