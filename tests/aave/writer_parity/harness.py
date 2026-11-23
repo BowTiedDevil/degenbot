@@ -246,6 +246,10 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             return _hex(1)
         if method == "eth_getBlockByNumber":
             return self._header_result(req)
+        if method == "eth_getTransactionReceipt":
+            return self._receipt_result(req)
+        if method == "debug_traceTransaction":
+            return self._trace_result(req)
         if method == "eth_getStorageAt":
             # The fixture market's addresses are not EIP-1967 proxies, so the
             # implementation slot reads as the zero word.
@@ -261,6 +265,56 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             # refusal downstream, never a fabricated block.
             return None
         return terminal_header(number)
+
+    def _receipt_result(self, req: dict[str, Any]) -> dict[str, Any] | None:
+        """One transaction's canned logs as its COMPLETE receipt.
+
+        The driver binds every candidate transaction to its complete receipt
+        (ADR-105 D2), so the mock owes one per transaction its canned logs name.
+        A hash no canned log carries is a transaction the fixture never executed:
+        None is the typed missing-receipt refusal downstream.
+        """
+        params = req.get("params", [])
+        asked = params[0].lower() if params and isinstance(params[0], str) else ""
+        owned = [log for log in self.registry.logs if log["transactionHash"].lower() == asked]
+        if not owned:
+            return None
+        owned.sort(key=lambda log: int(str(log["logIndex"]), 0))
+        first = owned[0]
+        return {
+            "transactionHash": first["transactionHash"],
+            "transactionIndex": first["transactionIndex"],
+            "blockHash": first["blockHash"],
+            "blockNumber": first["blockNumber"],
+            "status": "0x1",
+            "logs": owned,
+        }
+
+    def _trace_result(self, req: dict[str, Any]) -> dict[str, Any] | None:
+        """One transaction's canned logs as a single-root call tree.
+
+        The fixtures carry no sub-call topology, so the honest tracer answer is one
+        frame whose OWN logs are the transaction's logs: the join still proves every
+        receipt log has exactly one owner, and a liquidation transaction gets the
+        call evidence its collateral leg needs (ADR-105 D2).
+        """
+        params = req.get("params", [])
+        asked = params[0].lower() if params and isinstance(params[0], str) else ""
+        owned = sorted(
+            (log for log in self.registry.logs if log["transactionHash"].lower() == asked),
+            key=lambda log: int(str(log["logIndex"]), 0),
+        )
+        if not owned:
+            return None
+        return {
+            "type": "CALL",
+            "to": owned[0]["address"],
+            "logs": [
+                {"address": log["address"], "topics": log["topics"], "data": log["data"]}
+                for log in owned
+            ],
+            "calls": [],
+        }
 
     def _eth_call_result(self, req: dict[str, Any]) -> str:
         # alloy/web3 send `eth_call` params as `[{to, data/input, ...}]`.

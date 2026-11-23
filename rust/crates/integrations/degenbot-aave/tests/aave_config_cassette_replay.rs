@@ -116,14 +116,19 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 60;
 /// (path #2 - the RPC); the SAME user's two later burns read the row the
 /// ops parser created in the first tx (path #1 - the DB cache, no RPC). A
 /// pre-lock fact phase that computed the facts against the committed DB
-/// would re-issue the call for the later txs and push this count to 10.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
+/// would re-issue the call for the later txs and push this count above the pin.
+///
+/// The candidate acquisition (ADR-105 D2) rides on top: the chain binding (1),
+/// one header per candidate block (4 - the span's candidates sit at
+/// 19091050/53/56/57 and none is the terminal), and one complete receipt per
+/// candidate transaction (4).
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 18;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 54826;
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 206_716;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).

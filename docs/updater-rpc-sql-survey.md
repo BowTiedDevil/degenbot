@@ -225,10 +225,14 @@ What the numbers say (first read, to be re-ranked per fix):
   A/D), with apply's per-event SQL only ~0.17 ms measured (150 statements,
   mostly fast; Perf C's N+1 cost is statement COUNT before it is time).
 - **Round-trip shapes are now pinned by gates**: pool 2 (`eth_getLogs`
-  ×2), pool+gate 7 (+5 `eth_call`s), aave 6 (`eth_getLogs` ×6; no
-  config events in this span → no `eth_call`s) — asserted as literals in
-  the replay suites (`EXPECTED_RPC_ROUND_TRIPS`), alongside the statement
-  counts (23/150) and the served-byte totals.
+  ×2), pool+gate 7 (+5 `eth_call`s), aave 19 (1 anchor `eth_chainId` + 1
+  chain binding + 4 candidate-block headers + 6 `eth_getLogs` + 7 complete
+  receipts; no config events in this span → no `eth_call`s, and no
+  `LiquidationCall` → no call trace) — asserted as literals in the replay
+  suites (`EXPECTED_RPC_ROUND_TRIPS`), alongside the statement counts
+  (23/150) and the served-byte totals. The candidate acquisition (ADR-105 D2)
+  is read OUTSIDE the chunk's transaction: it adds round trips and bytes while
+  the SQL surface (statement counts) is unchanged.
 - **The dead-query tail is visible by subtraction**: pool chunk wall 4.0 ms
   vs fetch+hold 1.6 ms — the remainder is loop overhead + the post-commit
   `fetch_exchange` refresh loop (finding 6, Perf F).

@@ -101,20 +101,48 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 52;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
-/// chunk's fetch surface: the recorded getLogs passes (this span dispatches no
-/// config events and no GHO-discount path, so no `eth_call`), plus the terminal
-/// anchor the run resolves before it fetches anything (the endpoint's
-/// `eth_chainId` and the terminal block's header; a pinned run never asks
-/// `eth_blockNumber`). The RPC counter drift gate: an added or removed fetch
-/// pass (batching, a new pass, a re-fetch, an anchor read) changes this and
-/// fails the plain `cargo test` run.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 8;
+/// chunk's acquisition surface. Composition (ADR-105 D2/D5):
+///
+/// - `eth_chainId` 1 (the terminal anchor's endpoint check) + 1 (the binding the
+///   candidate-header reads inherit),
+/// - `eth_getBlockByNumber` 1 (the terminal anchor) + 3 (the span's OTHER
+///   candidate blocks: 26130441/2/4; 26130445 is the terminal anchor already read),
+/// - `eth_getLogs` 6 (this span dispatches no config events and no GHO-discount
+///   path, so no supplemental pass and no `eth_call`),
+/// - `eth_getTransactionReceipt` 7 (one per candidate transaction),
+/// - `debug_traceTransaction` 0 (`EXPECTED_TRACE_REQUESTS`: every candidate here is
+///   receipt-only, so the run pays for no call trace).
+///
+/// The RPC counter drift gate: an added or removed acquisition read (batching, a
+/// new pass, a re-fetch, an anchor read, a trace on a receipt-only corpus)
+/// changes this and fails the plain `cargo test` run.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 19;
+
+/// Independent literal: the candidate transactions the span's filtered
+/// acquisition names - one complete receipt each (ADR-105 D2). Shared by the
+/// round-trip literal above, so a receipt the run stops paying for is a
+/// visible count change rather than a silent savings.
+const EXPECTED_CANDIDATE_TRANSACTIONS: u64 = 7;
+
+/// Independent literal: the block-header reads the run issues for the candidate
+/// transactions' blocks. The terminal anchor is reused for its own height, so
+/// this is the span's four candidate blocks minus the pinned terminal.
+const EXPECTED_BLOCK_HEADER_READS: u64 = 4;
+
+/// Independent literal: the call-trace acquisitions. Zero on this corpus - no
+/// transaction in the span carries a `LiquidationCall`, so every candidate is
+/// receipt-only and issues no trace request.
+const EXPECTED_TRACE_REQUESTS: u64 = 0;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 56439;
+/// Independent literal: the serialized payload bytes those served answers carried
+/// (the recorded `result` members in wire form). The acquisition's answers now
+/// dominate this number: seven complete receipts and four headers are far larger
+/// than the filtered log passes they accompany (ADR-105 D2).
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 203_117;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
@@ -321,6 +349,7 @@ fn committed_cassette() -> Cassette {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
     let cassette = committed_cassette();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -410,6 +439,25 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
     assert_eq!(
         served.response_bytes, EXPECTED_RPC_RESPONSE_BYTES,
         "served response bytes drifted - the corpus's recorded answers changed shape"
+    );
+    // The acquisition shape, per method: one complete receipt per candidate
+    // transaction, one header per candidate block (terminal reused), and NO call
+    // trace on a receipt-only corpus (ADR-105 D2: tracing every transaction is
+    // not required, and a receipt-only operation must not pay for one).
+    assert_eq!(
+        method_served(&served, "eth_getTransactionReceipt"),
+        EXPECTED_CANDIDATE_TRANSACTIONS,
+        "every candidate transaction is receipt-bound before its parse"
+    );
+    assert_eq!(
+        method_served(&served, "eth_getBlockByNumber"),
+        EXPECTED_BLOCK_HEADER_READS,
+        "one header per candidate block, with the terminal anchor reused"
+    );
+    assert_eq!(
+        method_served(&served, "debug_traceTransaction"),
+        EXPECTED_TRACE_REQUESTS,
+        "a receipt-only corpus must issue no trace request"
     );
 
     // Restart no-op: the committed stamp roots the second run's cursor past
@@ -579,12 +627,26 @@ fn recorded_terminal_anchor() -> degenbot_core::canonical_head::ChainAnchor {
         .expect("the capture records the block its span closes on")
 }
 
-/// Run one replayed chunk over a cassette, returning the run's outcome and the
-/// transport's serving stats.
-fn run_recorded(
-    cassette: &Cassette,
-    to_block: Option<u64>,
-) -> (Result<AaveUpdateReport, RunError>, ServedSnapshot) {
+/// The per-method served count the transport reported for `method` (zero when
+/// the run never asked for it).
+fn method_served(served: &ServedSnapshot, method: &str) -> u64 {
+    served
+        .per_method
+        .get(method)
+        .map_or(0, |entry| entry.served)
+}
+
+/// One replayed chunk's outcome, serving stats, and the cursor the run left
+/// behind (the restart-invariant state a refusal must not move).
+struct ReplayedChunk {
+    result: Result<AaveUpdateReport, RunError>,
+    served: ServedSnapshot,
+    last_update_block: Option<i64>,
+}
+
+/// Run one replayed chunk over a cassette and report its outcome, the serving
+/// stats, and the market cursor afterwards.
+fn run_recorded_state(cassette: &Cassette, to_block: Option<u64>) -> ReplayedChunk {
     let transport = CassetteReplayTransport::new(cassette.clone());
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let dir = TempDir::new().unwrap();
@@ -604,7 +666,231 @@ fn run_recorded(
             max_chunks: None,
         },
     );
-    (result, transport.served_snapshot())
+    ReplayedChunk {
+        result,
+        served: transport.served_snapshot(),
+        last_update_block: market_last_update_block(&path, market_id),
+    }
+}
+
+/// Run one replayed chunk over a cassette, returning the run's outcome and the
+/// transport's serving stats.
+fn run_recorded(
+    cassette: &Cassette,
+    to_block: Option<u64>,
+) -> (Result<AaveUpdateReport, RunError>, ServedSnapshot) {
+    let run = run_recorded_state(cassette, to_block);
+    (run.result, run.served)
+}
+
+/// The cassette's candidate transactions, in the ledger's own order: every
+/// transaction a recorded `eth_getLogs` answer carries a log for.
+fn candidate_transactions(cassette: &Cassette) -> Vec<B256> {
+    let mut found: Vec<B256> = Vec::new();
+    for entry in cassette.entries.values() {
+        let CassetteResponse::Success { result } = &entry.response else {
+            continue;
+        };
+        let Some(logs) = result.as_array() else {
+            continue;
+        };
+        for log in logs {
+            if log.get("logIndex").is_none() {
+                continue;
+            }
+            let hash = log["transactionHash"]
+                .as_str()
+                .and_then(|raw| raw.parse::<B256>().ok())
+                .unwrap_or_else(|| panic!("a recorded log names its transaction"));
+            if !found.contains(&hash) {
+                found.push(hash);
+            }
+        }
+    }
+    found
+}
+
+/// The block-wide log indices of `tx`'s FILTERED logs (the acquisition's input),
+/// in the ledger's own order.
+fn filtered_log_indices(cassette: &Cassette, tx: B256) -> Vec<String> {
+    let mut indices = Vec::new();
+    for entry in cassette.entries.values() {
+        let CassetteResponse::Success { result } = &entry.response else {
+            continue;
+        };
+        let Some(logs) = result.as_array() else {
+            continue;
+        };
+        for log in logs {
+            if log["transactionHash"]
+                .as_str()
+                .and_then(|raw| raw.parse::<B256>().ok())
+                != Some(tx)
+            {
+                continue;
+            }
+            if let Some(index) = log["logIndex"].as_str() {
+                indices.push(index.to_string());
+            }
+        }
+    }
+    indices.sort_by_key(|index| index.parse::<u64>().unwrap_or_default());
+    indices.dedup();
+    indices
+}
+
+fn receipt_key(tx: B256) -> String {
+    entry_key("eth_getTransactionReceipt", &json!([format!("{tx}")]))
+}
+
+fn trace_key(tx: B256) -> String {
+    entry_key(
+        "debug_traceTransaction",
+        &json!([
+            format!("{tx}"),
+            { "tracer": "callTracer", "tracerConfig": { "withLog": true } }
+        ]),
+    )
+}
+
+/// The recorded receipt answer of `tx`, or a loud failure: the corpus must
+/// carry one complete receipt per candidate transaction.
+fn recorded_receipt(cassette: &Cassette, tx: B256) -> Value {
+    let entry = cassette
+        .entries
+        .get(&receipt_key(tx))
+        .unwrap_or_else(|| panic!("the corpus records a complete receipt for {tx}"));
+    let CassetteResponse::Success { result } = &entry.response else {
+        panic!("the recorded receipt for {tx} is an answer");
+    };
+    result.clone()
+}
+
+// ── candidate-transaction evidence (ADR-105 D2/D5) ─────────────────────────
+//
+// Filtered acquisition names the chunk's candidate transactions; each one is
+// receipt-bound before its parse, and the binding runs OUTSIDE the chunk's
+// transaction. A receipt the node cannot serve, or one whose content contradicts
+// the filtered logs, refuses the chunk before any write, so the cursor cannot
+// advance on evidence the parse would have read.
+
+#[test]
+fn a_candidate_transaction_without_its_receipt_refuses_before_the_chunk_transaction() {
+    let mut cassette = committed_cassette();
+    let candidates = candidate_transactions(&cassette);
+    assert_eq!(
+        u64::try_from(candidates.len()).unwrap(),
+        EXPECTED_CANDIDATE_TRANSACTIONS,
+        "the corpus names the span's candidate transactions"
+    );
+    let missing = candidates[0];
+    cassette.entries.remove(&receipt_key(missing));
+
+    let run = run_recorded_state(&cassette, Some(SPAN_TO));
+
+    let error = run
+        .result
+        .expect_err("a candidate transaction with no complete receipt cannot be parsed");
+    assert!(
+        matches!(error, RunError::Evidence(_)),
+        "the refusal is the evidence class, got {error:?}"
+    );
+    assert!(
+        run.served.per_method.contains_key("eth_getLogs"),
+        "the chunk was fetched, so the refusal came after acquisition began"
+    );
+    assert_eq!(
+        run.last_update_block,
+        Some(i64::try_from(SPAN_FROM).unwrap() - 1),
+        "no receipt acquisition failure may advance the cursor"
+    );
+
+    // Exact restoration: the refusal wrote nothing, so the intact corpus commits
+    // the same chunk unchanged.
+    let intact = run_recorded_state(&committed_cassette(), Some(SPAN_TO));
+    intact.result.expect("the intact corpus still commits");
+    assert_eq!(
+        intact.last_update_block,
+        Some(i64::try_from(SPAN_TO).unwrap()),
+        "the canonical replay still advances to the span end"
+    );
+}
+
+#[test]
+fn a_foreign_receipt_refuses_before_the_chunk_transaction() {
+    let mut cassette = committed_cassette();
+    let candidates = candidate_transactions(&cassette);
+    let (asked, other) = (candidates[0], candidates[1]);
+    let mut foreign = recorded_receipt(&cassette, other);
+    foreign["transactionHash"] = json!(format!("{asked}"));
+    cassette
+        .entries
+        .insert(receipt_key(asked), recorded_entry(foreign));
+
+    let run = run_recorded_state(&cassette, Some(SPAN_TO));
+
+    let error = run
+        .result
+        .expect_err("another transaction's receipt is not this transaction's evidence");
+    assert!(
+        matches!(error, RunError::Evidence(_)),
+        "a foreign receipt is an evidence refusal, got {error:?}"
+    );
+    assert_eq!(
+        run.last_update_block,
+        Some(i64::try_from(SPAN_FROM).unwrap() - 1),
+        "a foreign receipt may not advance the cursor"
+    );
+}
+
+#[test]
+fn a_mutated_receipt_log_refuses_before_the_chunk_transaction() {
+    let mut cassette = committed_cassette();
+    let candidate = candidate_transactions(&cassette)[0];
+    let filtered = filtered_log_indices(&cassette, candidate);
+    let mut receipt = recorded_receipt(&cassette, candidate);
+    let logs = receipt["logs"]
+        .as_array_mut()
+        .expect("a recorded receipt carries its logs");
+    let position = logs
+        .iter()
+        .position(|log| log["logIndex"].as_str() == Some(filtered[0].as_str()))
+        .expect("the filtered log is a log of the complete receipt");
+    logs[position]["data"] = json!("0xdeadbeef");
+
+    cassette
+        .entries
+        .insert(receipt_key(candidate), recorded_entry(receipt));
+
+    let run = run_recorded_state(&cassette, Some(SPAN_TO));
+
+    let error = run
+        .result
+        .expect_err("a receipt whose log content contradicts the filtered log is not evidence");
+    assert!(
+        matches!(error, RunError::Evidence(_)),
+        "a mutated receipt is an evidence refusal, got {error:?}"
+    );
+    assert_eq!(
+        run.last_update_block,
+        Some(i64::try_from(SPAN_FROM).unwrap() - 1),
+        "mutated evidence may not advance the cursor"
+    );
+}
+
+/// The committed corpus must not carry a trace answer the run never asks for:
+/// on a receipt-only span the evidence is the receipt alone, and a recorded call
+/// tree would be fixture weight no consumer reads (ADR-105 D2).
+#[test]
+fn a_receipt_only_corpus_records_no_trace_answer() {
+    let cassette = committed_cassette();
+
+    for candidate in candidate_transactions(&cassette) {
+        assert!(
+            !cassette.entries.contains_key(&trace_key(candidate)),
+            "the receipt-only span records no call trace for {candidate}"
+        );
+    }
 }
 
 #[test]
@@ -638,8 +924,15 @@ fn tip_and_explicit_runs_resolve_the_same_terminal_anchor() {
             .get("eth_getBlockByNumber")
             .map(|method| method.served)
     };
-    assert_eq!(header_reads(&explicit_served), Some(1));
-    assert_eq!(header_reads(&tip_served), Some(1));
+    assert_eq!(
+        header_reads(&explicit_served),
+        Some(EXPECTED_BLOCK_HEADER_READS)
+    );
+    assert_eq!(
+        header_reads(&tip_served),
+        Some(EXPECTED_BLOCK_HEADER_READS),
+        "the tip arm resolves its terminal header and the candidate blocks' the same way"
+    );
     assert!(
         !explicit_served.per_method.contains_key("eth_blockNumber"),
         "a pinned run never asks the chain for its tip"

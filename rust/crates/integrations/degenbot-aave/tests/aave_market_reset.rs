@@ -25,6 +25,8 @@ use degenbot_rpc::cassette::{
 };
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use rusqlite::params;
+
+mod common;
 use std::sync::atomic::AtomicBool;
 
 const CHAIN_ID: i64 = 1;
@@ -603,6 +605,9 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
         terminal_header(FIXTURE_END_BLOCK),
     );
 
+    let evidence = common::candidate_evidence_entries(&entries, terminal_header);
+    entries.extend(evidence);
+
     CassetteReplayTransport::new(Cassette {
         schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
         chain_id: 1,
@@ -717,10 +722,13 @@ fn a_reset_market_syncs_normally_over_the_fixture_window() {
     // The run's whole request set is served: the ledger IS the cold-boot
     // request surface a reset state issues (the replay drift gate). Two
     // bootstrap-window fetch passes (bootstrap + chunk), the revision call per
-    // proxy id per dispatch phase (the bootstrap's memo and the chunk's), and
-    // the three empty passes + the chain-wide oracle pass.
-    assert_eq!(requests, 12);
-    assert_eq!(served, 12);
+    // proxy id per dispatch phase (the bootstrap's memo and the chunk's), the
+    // three empty passes + the chain-wide oracle pass, and the candidate
+    // acquisition the bootstrap window's own logs force (the chain binding, the
+    // candidate block header, and one complete receipt per candidate
+    // transaction).
+    assert_eq!(requests, 18);
+    assert_eq!(served, 18);
 
     let conn = db.lock();
     let stamp: Option<i64> = conn
@@ -769,9 +777,9 @@ fn a_warm_market_skips_the_bootstrap_and_reaches_the_chunk_fetch() {
          instead of reporting the bootstrap failed; got {result:?}"
     );
     assert_eq!(
-        served, 2,
-        "only the terminal anchor is served: the ledger's single getLogs entry is the \
-         bootstrap filter, which a warm market never issues"
+        served, 3,
+        "only the terminal anchor and the chain binding are served: the ledger's single \
+         getLogs entry is the bootstrap filter, which a warm market never issues"
     );
     assert!(
         requests >= 1,

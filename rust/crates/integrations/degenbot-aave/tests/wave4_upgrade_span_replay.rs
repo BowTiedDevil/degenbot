@@ -155,58 +155,72 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 /// byte-diff consults a golden.
 ///
 /// `served` is the whole surface the run asks: the getLogs passes, the pinned
-/// `eth_calls`, and the terminal anchor's chain-id and header reads (ADR-105 D1 —
-/// a run resolves its terminal block before it fetches anything).
+/// `eth_calls`, the terminal anchor's chain-id and header reads (ADR-105 D1 — a
+/// run resolves its terminal block before it fetches anything), and the candidate
+/// acquisition every chunk now performs (ADR-105 D2): the chain binding, one
+/// header per candidate block, one complete receipt per candidate transaction,
+/// and — in the wide window — one call trace per liquidation transaction.
 struct WindowExpectations {
     name: &'static str,
     chunks: usize,
     served: u64,
     get_logs: u64,
     eth_calls: u64,
+    /// The call-trace acquisitions: one per transaction carrying a
+    /// `LiquidationCall` (ADR-105 D2). Zero on every receipt-only window —
+    /// tracing every transaction is not required, and a receipt-only window that
+    /// paid for a trace would show it here.
+    traces: u64,
 }
 
 const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_pre_upgrade_control",
         chunks: 2,
-        served: 14,
+        served: 21,
         get_logs: 12,
         eth_calls: 0,
+        traces: 0,
     },
     WindowExpectations {
         name: "w4_aave_atoken_upgrade_in_chunk",
         chunks: 2,
-        served: 15,
+        served: 18,
         get_logs: 12,
         eth_calls: 1,
+        traces: 0,
     },
     WindowExpectations {
         name: "w4_aave_upgrade_plus_same_block_config",
         chunks: 2,
-        served: 19,
+        served: 37,
         get_logs: 12,
         eth_calls: 5,
+        traces: 0,
     },
     WindowExpectations {
         name: "w4_aave_multi_upgrade_one_chunk",
         chunks: 2,
-        served: 20,
+        served: 32,
         get_logs: 12,
         eth_calls: 6,
+        traces: 0,
     },
     WindowExpectations {
         name: "w4_aave_gho_deprecation_at_chunk_boundary",
         chunks: 2,
-        served: 21,
+        served: 30,
         get_logs: 12,
         eth_calls: 7,
+        traces: 0,
     },
     WindowExpectations {
         name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
         chunks: 2,
-        served: 21,
+        served: 5111,
         get_logs: 12,
         eth_calls: 7,
+        traces: 3,
     },
 ];
 
@@ -575,6 +589,15 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
             "{}: the pinned eth_call count",
             expect.name
         );
+        assert_eq!(
+            run.served
+                .per_method
+                .get("debug_traceTransaction")
+                .map_or(0, |m| m.served),
+            expect.traces,
+            "{}: traces are acquired only for the transactions whose legs are named by a call",
+            expect.name
+        );
     }
 
     // ── control: no Upgraded in the span, revisions unchanged ────────────
@@ -758,5 +781,59 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     assert_eq!(
         w6_restored.served.served, WINDOWS[5].served,
         "W6: the restored cassette serves exactly the pinned surface"
+    );
+
+    // ── the call-trace evidence a liquidation transaction needs ───────────
+    // A liquidation's collateral leg is named by a CALL, so its receipt alone is
+    // not evidence (ADR-105 D2). Deleting one recorded trace refuses the run at
+    // acquisition — before the chunk's transaction opens — and the run stops
+    // asking for anything else.
+    let trace_key = w6_committed
+        .entries
+        .keys()
+        .find(|key| key.contains("debug_traceTransaction"))
+        .expect("the wide window records one trace per liquidation transaction")
+        .clone();
+    let mut missing_trace = Cassette::from_json_bytes(&w6_bytes).unwrap();
+    missing_trace.entries.remove(&trace_key);
+    let (missing_err, missing_served) = replay_probe_capture(w6, &w6_seed, missing_trace)
+        .err()
+        .unwrap_or_else(|| panic!("W6: a liquidation with no trace cannot be parsed receipt-only"));
+    assert!(
+        missing_err.contains("transaction evidence")
+            && missing_err.contains("debug_traceTransaction"),
+        "W6: the refusal is the evidence class, at the trace read, got {missing_err}"
+    );
+    assert!(
+        missing_served
+            .per_method
+            .get("debug_traceTransaction")
+            .map_or(0, |m| m.served)
+            > 0,
+        "W6: the liquidation's trace was requested, and the corpus lacks it"
+    );
+
+    // A node that cannot serve the tracer is a capability statement, not a
+    // transient fault: the same refusal class, named as unsupported (ADR-105
+    // D11), never retried into working.
+    let mut unsupported_trace = Cassette::from_json_bytes(&w6_bytes).unwrap();
+    let entry = unsupported_trace
+        .entries
+        .get_mut(&trace_key)
+        .expect("the trace entry is present");
+    let response = CassetteResponse::Failure {
+        error: serde_json::json!({
+            "code": -32601,
+            "message": "the method debug_traceTransaction does not exist/is not available",
+        }),
+    };
+    entry.digest = entry_digest(&response);
+    entry.response = response;
+    let (unsupported_err, _) = replay_probe_capture(w6, &w6_seed, unsupported_trace)
+        .err()
+        .unwrap_or_else(|| panic!("W6: a tracer-less endpoint cannot serve a liquidation"));
+    assert!(
+        unsupported_err.contains("is not served by this endpoint"),
+        "W6: the refusal names the endpoint's missing trace capability, got {unsupported_err}"
     );
 }

@@ -92,10 +92,14 @@ const SPAN_TO: u64 = 1002;
 
 /// Independent literals: the chunk's recorded RPC surface per scenario — the
 /// rt-gate shape (six getLogs passes + the scenario's `eth_call`s + the
-/// terminal anchor's chain-id and header reads; ADR-105 D1).
-const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
-const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 10;
-const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
+/// terminal anchor's chain-id and header reads; ADR-105 D1) plus the
+/// candidate-transaction evidence the run now acquires (ADR-105 D2): the chain
+/// binding (1), the candidate blocks' headers (1 — 1002 is the terminal anchor
+/// already read), and one complete receipt per candidate transaction (2). The
+/// scenarios carry no `LiquidationCall`, so neither asks for a call trace.
+const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 13;
+const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 14;
+const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 13;
 
 /// The pinned chain literals (the generator's `ACTOR_PINS` + free literals;
 /// a frame-sequence change fails these loudly at generation time). Each
@@ -628,7 +632,8 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     // Pre-seed the user row — the view a fact phase consulting the COMMITTED
     // DB would hold (the row the chunk's apply has NOT written yet). The
     // discount pre-pass takes the DB-cache path at tx N, the recorded
-    // getDiscountPercent call goes UNSERVED, and the rt gate reads 6, not 7.
+    // getDiscountPercent call goes UNSERVED, and the rt gate reads one less
+    // than the committed shape.
     let s1_probe = replay_probe(
         s1_name,
         &ScenarioSeed::S1,
@@ -637,9 +642,10 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
         None,
     );
     assert_eq!(
-        s1_probe.served.served, 8,
+        s1_probe.served.served,
+        S1_EXPECTED_RPC_ROUND_TRIPS - 1,
         "s1 probe: with the user pre-seeded (the committed-DB view) the recorded \
-         discount call drops — the rt gate (9) is RED under this mutation"
+         discount call drops — the rt gate is RED under this mutation"
     );
     assert_eq!(
         served_eth_calls(&s1_probe.served),
@@ -707,8 +713,8 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     // ── probe 3 (s3 negative): the deprecation premise is load-bearing ───
     // Seed the asset revision AT the deprecation value: the pre-pass takes
     // the V4+ snapshot path, the recorded discount call goes unserved, and
-    // the rt gate reads 6 — the fixture's premise (revision < 4) is what
-    // keeps the option-(a) shape executable.
+    // the rt gate reads one less — the fixture's premise (revision < 4) is
+    // what keeps the option-(a) shape executable.
     let s3_probe = replay_probe(
         s3_name,
         &ScenarioSeed::S3,
@@ -717,7 +723,8 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
         None,
     );
     assert_eq!(
-        s3_probe.served.served, 8,
+        s3_probe.served.served,
+        S3_EXPECTED_RPC_ROUND_TRIPS - 1,
         "s3 probe: at the deprecation revision the recorded discount call drops"
     );
     assert_eq!(

@@ -11,6 +11,7 @@
 
 mod activate;
 mod apply;
+mod evidence;
 mod fetch;
 mod process;
 mod reset;
@@ -24,6 +25,8 @@ pub use apply::{
     apply_aave_chunk_writes_on_conn, apply_chunk_events_on_conn, AaveChunkEvent,
     AaveChunkWriteReport,
 };
+pub use evidence::EvidenceAcquisitionError;
+use evidence::{bind_chunk_evidence, trace_backed_count};
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
 use process::{group_logs_by_tx, guard_terminal_transaction_identity, process_chunk_on_conn};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
@@ -236,6 +239,13 @@ pub enum RunError {
     ConfigDispatch(#[from] ConfigDispatchError),
     #[error("transaction parse error: {0}")]
     ProcessTx(#[from] ProcessTxError),
+    /// A candidate transaction could not be evidence-bound: its block header, its
+    /// complete receipt, or its required call trace is missing, foreign, or
+    /// contradictory. Raised in the FETCH stage — before the chunk's transaction
+    /// opens — so the cursor cannot advance on evidence no parse would accept
+    /// (ADR-105 D2, D11).
+    #[error("transaction evidence: {0}")]
+    Evidence(Box<EvidenceAcquisitionError>),
     #[error("runtime error: {0}")]
     Runtime(#[from] std::io::Error),
     /// A chunk log carried no exact coordinate, or the chunk's log set contradicted
@@ -680,6 +690,11 @@ async fn run_aave_update_driver(
         })
     })?;
     let terminal = resolve_terminal_anchor(&provider, terminal_chain, Some(last_block)).await?;
+    // The terminal anchor just made the endpoint's chain a verified fact, so bind
+    // it once: the candidate-header reads below inherit that binding instead of
+    // asking the node for its chain id again per header (one `eth_chainId` for
+    // the whole run, not one per candidate block).
+    provider.bind_to_chain(terminal_chain).await?;
 
     // Cold-boot bootstrap. On a fresh market `activate` seeds only
     // `POOL_ADDRESS_PROVIDER`; `build_fetch_spec` below hard-errors if `POOL`/
@@ -932,6 +947,39 @@ async fn run_aave_update_driver(
             guard_terminal_transaction_identity(terminal, &tx_groups)?;
         }
 
+        // 1b. Candidate-transaction evidence (ADR-105 D2, D5). Every candidate
+        //     transaction acquires its complete receipt, and — only where a parse
+        //     leg is named by a call (a liquidation's collateral sub-call) — its
+        //     call trace; both are bound to the filtered logs before the parse can
+        //     see either. The reads happen HERE, outside the chunk's transaction:
+        //     a missing, foreign, or contradictory receipt refuses the chunk with
+        //     no write and no cursor movement (ADR-105 D11).
+        let evidence_span = tracing::info_span!(
+            "degenbot.updater.aave.evidence",
+            candidates.n = tracing::field::Empty,
+            traces.n = tracing::field::Empty,
+            rpc.round_trips = tracing::field::Empty,
+        );
+        let evidence_rt_start = degenbot_rpc::provider::rpc_round_trips();
+        let candidates = {
+            let _evidence_guard = evidence_span.enter();
+            bind_chunk_evidence(&provider, terminal_chain, terminal, tx_groups)
+                .await
+                .map_err(|error| RunError::Evidence(Box::new(error)))?
+        };
+        evidence_span.record(
+            "candidates.n",
+            u64::try_from(candidates.len()).unwrap_or(u64::MAX),
+        );
+        evidence_span.record(
+            "traces.n",
+            u64::try_from(trace_backed_count(&candidates)).unwrap_or(u64::MAX),
+        );
+        evidence_span.record(
+            "rpc.round_trips",
+            degenbot_rpc::provider::rpc_round_trips().saturating_sub(evidence_rt_start),
+        );
+
         // 2. The single-transaction chunk write (chunk atomicity). The per-tx
         //    processing (discount pre-pass + config dispatch + parse) borrows
         //    the Transaction's `&Connection` for substrate lookups + writes —
@@ -964,7 +1012,7 @@ async fn run_aave_update_driver(
                 market_id,
                 chain_id,
                 pool_address,
-                &tx_groups,
+                &candidates,
                 working_start,
                 chunk_end,
             )

@@ -13,6 +13,7 @@ use degenbot_db::DegenbotDb;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
+use super::evidence::CandidateTransaction;
 use super::substrate::{candidate_addresses, ChunkSubstrate};
 use super::{AaveChunkEvent, RunError};
 use crate::config_dispatch::{ChunkContext, ChunkSpan};
@@ -29,11 +30,11 @@ use crate::updater::aave_fetch::{ChunkLogFacts, LogIdentityRefusal};
 /// chronological.
 #[derive(Debug)]
 pub(super) struct TxGroup<'a> {
-    tx_hash: [u8; 32],
-    block_number: u64,
+    pub(super) tx_hash: [u8; 32],
+    pub(super) block_number: u64,
     block_hash: B256,
     transaction_index: u64,
-    logs: Vec<&'a Log>,
+    pub(super) logs: Vec<&'a Log>,
 }
 
 impl TxGroup<'_> {
@@ -172,11 +173,19 @@ pub(super) fn guard_terminal_transaction_identity(
 }
 
 /// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
-/// body). Per tx group: re-resolve the GHO vToken revision, run the discount
-/// pre-pass + the config-event dispatch + `process_transaction`, then
+/// body). Per candidate transaction: re-resolve the GHO vToken revision, run the
+/// discount pre-pass + the config-event dispatch + `process_transaction`, then
 /// apply THAT tx's events to `conn` via [`apply_chunk_events_on_conn`] BEFORE
 /// the next tx's reads (per-tx apply — the config-revision + ops-balance
 /// surfaces read fresh per-tx state).
+///
+/// Each candidate arrives with its bound `TransactionEvidence` (ADR-105 D2): the
+/// caller acquired the transaction's complete receipt and, where a parse leg is
+/// named by a call, its trace, and proved both against the filtered logs before
+/// this transaction opened. The parse still reads the FILTERED log view it
+/// always read — complete-receipt ownership is the ownership stage's vocabulary,
+/// not a change to the operation outputs — while the transaction identity it
+/// parses under now comes from that evidence.
 /// The `last_update_block` stamp is the LAST write (end-of-chunk). Held
 /// inside the caller's `Transaction`; on `Err` the caller drops the tx
 /// (rollback).
@@ -191,7 +200,7 @@ pub(super) async fn process_chunk_on_conn(
     market_id: i64,
     chain_id: i64,
     pool_address: Address,
-    tx_groups: &[TxGroup<'_>],
+    candidates: &[CandidateTransaction<'_>],
     chunk_start: u64,
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
@@ -220,12 +229,12 @@ pub(super) async fn process_chunk_on_conn(
     // transactions < N — the overlay guarantees it (see
     // `substrate.rs`'s module doc). An empty chunk skips the prefetch (its
     // only writes are the end-of-chunk cleanup + stamp).
-    let mut substrate = if tx_groups.is_empty() {
+    let mut substrate = if candidates.is_empty() {
         ChunkSubstrate::lazy(chain_id)
     } else {
-        let all_logs: Vec<&Log> = tx_groups
+        let all_logs: Vec<&Log> = candidates
             .iter()
-            .flat_map(|g| g.logs.iter().copied())
+            .flat_map(|candidate| candidate.group.logs.iter().copied())
             .collect();
         let (user_candidates, asset_candidates) = candidate_addresses(&all_logs);
         ChunkSubstrate::prefetch_on_conn(
@@ -266,7 +275,8 @@ pub(super) async fn process_chunk_on_conn(
         &mut substrate,
     );
 
-    for group in tx_groups {
+    for candidate in candidates {
+        let group = &candidate.group;
         let block_number = group.block_number;
         let tx_hashes_refs: Vec<&Log> = group.logs.clone();
         ctx.begin_transaction(block_number);
@@ -327,7 +337,7 @@ pub(super) async fn process_chunk_on_conn(
             dispatch.gho_vtoken_address,
             conn,
             &tx_hashes_refs,
-            group.tx_hash,
+            candidate.evidence.tx().hash().0,
             &discounts,
             ctx.substrate_mut(),
         )

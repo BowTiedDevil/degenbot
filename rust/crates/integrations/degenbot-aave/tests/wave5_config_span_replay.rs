@@ -154,7 +154,9 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 /// The per-span independent literals: the committed cassette's served
 /// round-trip count and the run's committed chunk count. A regression that
 /// changes the RPC surface or the chunk boundaries fails these before the
-/// byte-diff consults a golden.
+/// byte-diff consults a golden. Each span's served count now also carries the
+/// candidate acquisition (ADR-105 D2): the chain binding, one header per
+/// candidate block, and one complete receipt per candidate transaction.
 struct SpanExpectations {
     name: &'static str,
     chunks: usize,
@@ -167,14 +169,14 @@ const SPANS: &[SpanExpectations] = &[
     SpanExpectations {
         name: "w5_aave_pool_data_provider_updated",
         chunks: 1,
-        served: 10,
+        served: 21,
         get_logs: 6,
         eth_calls: 2,
     },
     SpanExpectations {
         name: "w5_aave_address_set_registration",
         chunks: 1,
-        served: 10,
+        served: 16,
         get_logs: 6,
         eth_calls: 2,
     },
@@ -185,7 +187,7 @@ const SPANS: &[SpanExpectations] = &[
         // issues no `getLogs` (the empty token set short-circuits); five
         // `getLogs` passes, the two proxy-creation revision reads, and the
         // terminal anchor's chain-id + header reads.
-        served: 9,
+        served: 14,
         get_logs: 5,
         eth_calls: 2,
     },

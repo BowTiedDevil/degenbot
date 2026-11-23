@@ -20,6 +20,8 @@ use degenbot_rpc::cassette::{
 };
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 
+mod common;
+
 /// The chain the fixture runs on.
 const CHAIN_ID: i64 = 1;
 /// The market name the seed stamps.
@@ -314,6 +316,15 @@ fn two_chunk_rotation_cassette() -> CassetteReplayTransport {
         );
     }
 
+    let evidence = common::candidate_evidence_entries(&entries, |block| {
+        serde_json::json!({
+            "number": block.to_string(),
+            "hash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+            "parentHash": format!("0x{:064x}", block.saturating_sub(1)),
+        })
+    });
+    entries.extend(evidence);
+
     CassetteReplayTransport::new(Cassette {
         schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
         chain_id: 1,
@@ -364,9 +375,10 @@ fn address_set_pool_rotation_fetches_new_pool_logs_next_chunk() {
     // wire surface, including chunk 2's new-address Pool pass.
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 13,
+        snapshot.requests, 16,
         "eleven filters issued, none repeated, plus the terminal anchor's chain-id \
-         and header reads"
+         and header reads and the candidate acquisition (chain binding, block \
+         header, complete receipt)"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),

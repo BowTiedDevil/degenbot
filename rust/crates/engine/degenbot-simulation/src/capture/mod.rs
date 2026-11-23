@@ -134,11 +134,12 @@ impl ScratchChain {
             "eth_getLogs" => self.serve_get_logs(req),
             "eth_call" => self.serve_eth_call(req),
             "eth_getBlockByNumber" => self.serve_get_block_by_number(req),
+            "eth_getTransactionReceipt" => self.serve_get_transaction_receipt(req),
             other => failure_payload(
                 -32601,
                 &format!(
                     "scratch chain serves eth_chainId/eth_blockNumber/eth_getLogs/eth_call/\
-                     eth_getBlockByNumber only, got {other:?}"
+                     eth_getBlockByNumber/eth_getTransactionReceipt only, got {other:?}"
                 ),
             ),
         };
@@ -230,6 +231,50 @@ impl ScratchChain {
             "number": hex_quantity(block),
             "hash": hex_data(block_hash(block).as_slice()),
             "parentHash": hex_data(block_hash(block.saturating_sub(1)).as_slice()),
+        }))
+    }
+
+    /// `eth_getTransactionReceipt`: one executed frame's COMPLETE receipt — every
+    /// log the frame emitted, carrying the same block/tx/log coordinates the
+    /// `eth_getLogs` answers carry, so a filtered log and its receipt are one
+    /// log. A hash the frames never executed has no receipt (`null`), exactly as
+    /// a node answers for a transaction it does not hold.
+    fn serve_get_transaction_receipt(&self, req: &SerializedRequest) -> ResponsePayload {
+        let Some(items) = request_param_array(req) else {
+            return failure_payload(
+                -32602,
+                "eth_getTransactionReceipt params must be one [hash] array",
+            );
+        };
+        let Some(Value::String(raw)) = items.first() else {
+            return failure_payload(
+                -32602,
+                "eth_getTransactionReceipt requires one transaction hash",
+            );
+        };
+        let Ok(asked) = raw.parse::<B256>() else {
+            return failure_payload(
+                -32602,
+                "eth_getTransactionReceipt hash is not a 32-byte value",
+            );
+        };
+        let inner = self.0.lock();
+        let owned: Vec<&ScratchLog> = inner
+            .logs
+            .iter()
+            .filter(|log| tx_hash(log.block, log.tx_index) == asked)
+            .collect();
+        let Some(first) = owned.first() else {
+            return success_payload_value(&Value::Null);
+        };
+        let logs: Vec<Value> = owned.iter().map(|log| inner.rpc_log_json(log)).collect();
+        success_payload_value(&serde_json::json!({
+            "transactionHash": hex_data(asked.as_slice()),
+            "transactionIndex": hex_quantity(first.tx_index),
+            "blockHash": hex_data(block_hash(first.block).as_slice()),
+            "blockNumber": hex_quantity(first.block),
+            "status": "0x1",
+            "logs": logs,
         }))
     }
 

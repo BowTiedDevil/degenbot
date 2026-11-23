@@ -27,6 +27,8 @@ use degenbot_rpc::cassette::{
     CassetteSpan,
 };
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+
+mod common;
 use serde_json::{json, Value};
 
 /// The chain the fixtures run on.
@@ -465,6 +467,14 @@ impl Ledger {
 
     fn into_transport(mut self) -> CassetteReplayTransport {
         self.add_terminal_anchor();
+        let evidence = common::candidate_evidence_entries(&self.entries, |block| {
+            json!({
+                "number": block.to_string(),
+                "hash": SYNTHETIC_BLOCK_HASH,
+                "parentHash": format!("0x{:064x}", block.saturating_sub(1)),
+            })
+        });
+        self.entries.extend(evidence);
         CassetteReplayTransport::new(Cassette {
             schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
             chain_id: 1,
@@ -544,10 +554,11 @@ fn discount_token_replacement_fetches_old_and_new_token_streams() {
     assert_eq!(report.to_block, CHUNK_END);
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 9,
+        snapshot.requests, 12,
         "five main passes + the committed T0 pass + the ONE uncovered \
-         generation (T1) + the terminal anchor's chain-id and header reads — a \
-         committed-token insert would re-request T0"
+         generation (T1) + the terminal anchor's chain-id and header reads \
+         + the candidate acquisition (chain binding, block header, complete \
+         receipt) — a committed-token insert would re-request T0"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),
@@ -587,9 +598,11 @@ fn multiple_discount_token_updates_fetch_every_generation() {
     assert_eq!(report.chunks_committed, 1);
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 10,
+        snapshot.requests, 15,
         "five main passes + the committed T0 pass + the TWO uncovered \
-         generations (T1, T2) + the terminal anchor's chain-id and header reads"
+         generations (T1, T2) + the terminal anchor's chain-id and header reads \
+         + the candidate acquisition (chain binding, block headers, complete \
+         receipts)"
     );
     assert_eq!(
         committed_discount_token(&db).as_deref(),
@@ -637,9 +650,10 @@ fn initial_set_none_to_some_matches_current_behavior() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 8,
+        snapshot.requests, 11,
         "five main passes + the introduced T1 pass + the terminal anchor's \
-         chain-id and header reads — the current wire shape"
+         chain-id and header reads + the candidate acquisition (chain binding, \
+         block header, complete receipt) — the current wire shape"
     );
 }
 
@@ -683,9 +697,11 @@ fn discount_token_replacement_reseeds_balances_from_the_new_ledger() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 10,
+        snapshot.requests, 15,
         "five main passes + committed T0 + the uncovered T1 pass + the T1 \
-         balanceOf backfill call + the terminal anchor's chain-id and header reads"
+         balanceOf backfill call + the terminal anchor's chain-id and header \
+         reads + the candidate acquisition (chain binding, block headers, \
+         complete receipts)"
     );
 }
 
@@ -725,7 +741,7 @@ fn same_tx_rotation_refresh_uses_new_contract() {
          recorded eth_call answers only a T1-targeted balanceOf"
     );
     let snapshot = transport.served_snapshot();
-    assert_eq!(snapshot.requests, 11);
+    assert_eq!(snapshot.requests, 14);
     assert_eq!(
         snapshot.per_method.get("eth_call").map(|m| m.served),
         Some(1),
@@ -765,9 +781,10 @@ fn unchanged_discount_token_preserves_cached_balances_and_wire_shape() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 8,
+        snapshot.requests, 11,
         "five main passes + the committed T0 pass + the terminal anchor's chain-id \
-         and header reads — the supplemental plan is empty (every generation \
-         already covered)"
+         and header reads + the candidate acquisition (chain binding, block \
+         header, complete receipt) — the supplemental plan is empty (every \
+         generation already covered)"
     );
 }
