@@ -10,6 +10,13 @@ Everything a driver needs from the Rust pool-updater machinery:
 - :class:`CancelHandle` — an async cancellation token for ``run_pool_update`` /
   ``run_aave_update``
 
+:func:`run_pool_update` returns the run's report dict. Its ``status`` key is
+``"completed"`` when the run reached ``to_block`` and ``"cancelled"`` when
+``cancel_handle`` stopped it at a chunk boundary — a cooperative cancel is a
+terminal outcome carried by the returned report (``committed_through`` is the
+last durable chunk end, ``0`` when nothing committed), never a raised
+exception.
+
 The re-exports are **direct aliases** of the ``degenbot._ffi`` pyclasses and
 functions — never Python subclasses: the Rust engine constructs and consumes
 these pyclasses directly, so subclassing would break type identity at the FFI

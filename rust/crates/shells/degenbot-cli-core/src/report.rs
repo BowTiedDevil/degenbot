@@ -440,8 +440,17 @@ pub enum PoolReport {
         total_pools_written: usize,
         total_liquidity_applies: usize,
     },
-    /// `pool update` was cooperatively cancelled; committed chunks stay durable.
-    UpdateCancelled { chain_id: i64 },
+    /// `pool update` stopped at a chunk boundary on a cooperative cancel —
+    /// a terminal outcome, not a failure. The committed chunks stay durable and
+    /// the counts are the progress the run reached.
+    UpdateCancelled {
+        chain_id: i64,
+        /// The highest committed chunk end (`0` when nothing committed).
+        committed_through: u64,
+        chunks_committed: usize,
+        total_pools_written: usize,
+        total_liquidity_applies: usize,
+    },
     Verified {
         pool: String,
         family: PoolFamily,
@@ -469,8 +478,23 @@ impl PoolReport {
                  chunks ({total_pools_written} pools written, {total_liquidity_applies} \
                  liquidity applies)."
             )],
-            Self::UpdateCancelled { chain_id } => vec![format!(
-                "Chain {chain_id}: cancelled (committed chunks stay durable)."
+            Self::UpdateCancelled {
+                chain_id,
+                committed_through,
+                chunks_committed,
+                total_pools_written,
+                total_liquidity_applies,
+            } => vec![format!(
+                "Chain {chain_id}: cancelled — {}; committed chunks stay durable.",
+                if *chunks_committed == 0 {
+                    "no chunk committed".to_string()
+                } else {
+                    format!(
+                        "{chunks_committed} chunks committed through block \
+                         {committed_through} ({total_pools_written} pools written, \
+                         {total_liquidity_applies} liquidity applies)"
+                    )
+                }
             )],
             Self::Verified {
                 pool,

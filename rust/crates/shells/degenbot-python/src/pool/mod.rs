@@ -41,14 +41,21 @@ use degenbot_pool_updater::run::{self, NoProgress, RunError, UpdateReport};
 
 /// Build the `UpdateReport` return `dict`.
 ///
-/// Shape: `{"chain_id": int, "from_block": int, "to_block": int,
-/// "chunks_committed": int, "total_pools_written": int,
-/// "total_liquidity_applies": int}`.
+/// Shape: `{"status": str, "chain_id": int, "from_block": int, "to_block": int,
+/// "committed_through": int, "chunks_committed": int,
+/// "total_pools_written": int, "total_liquidity_applies": int}`.
+///
+/// `status` is `RunTerminal::as_str` — `"completed"` or `"cancelled"`. A
+/// cancelled run returns its dict with the progress it committed: a
+/// cooperative cancel is a terminal outcome, so the driver reads `status`
+/// instead of catching an exception.
 fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict>> {
     let dict = PyDict::new(py);
+    dict.set_item("status", r.terminal.as_str())?;
     dict.set_item("chain_id", r.chain_id)?;
     dict.set_item("from_block", r.from_block)?;
     dict.set_item("to_block", r.to_block)?;
+    dict.set_item("committed_through", r.committed_through)?;
     dict.set_item("chunks_committed", r.chunks_committed)?;
     dict.set_item("total_pools_written", r.total_pools_written)?;
     dict.set_item("total_liquidity_applies", r.total_liquidity_applies)?;
@@ -95,15 +102,19 @@ fn update_report_to_dict(py: Python<'_>, r: &UpdateReport) -> PyResult<Py<PyDict
 ///
 /// # Returns
 ///
-/// A `dict` `{chain_id, from_block, to_block, chunks_committed,
-/// total_pools_written, total_liquidity_applies}`.
+/// A `dict` `{status, chain_id, from_block, to_block, committed_through,
+/// chunks_committed, total_pools_written, total_liquidity_applies}`.
+///
+/// `status` is `"completed"` when the run reached `to_block` and
+/// `"cancelled"` when the `cancel` flag was set at a chunk boundary. A
+/// cancelled run RETURNS its dict carrying the committed progress
+/// (`committed_through` is the last durable chunk end, `0` when nothing
+/// committed) — cancellation is a terminal outcome, not an error.
 ///
 /// # Raises
 ///
 /// `ValueError` on a DB or RPC failure (the in-flight chunk is rolled back
 /// before returning; committed chunks stay durable).
-/// `RuntimeError` if cancelled (the `cancel` flag was set; committed chunks
-/// durable, in-flight chunk rolled back).
 ///
 /// # Runtime nesting
 ///
@@ -163,7 +174,7 @@ fn run_pool_update(
                 verify_all_at_completion,
             )
         })
-        .map_err(run_err_to_py)?;
+        .map_err(|err| run_err_to_py(&err))?;
 
     update_report_to_dict(py, &report)
 }
@@ -419,7 +430,7 @@ fn verify_liquidity_map(
                 block_number,
             ))
         })
-        .map_err(run_err_to_py)?;
+        .map_err(|err| run_err_to_py(&err))?;
 
     Ok(divergences_to_dicts(py, &divergences))
 }
@@ -490,17 +501,12 @@ pub use crate::cancel::CancelHandle;
 
 /// Map a [`RunError`] to a Python exception.
 ///
-/// `RunError::Cancelled` becomes `RuntimeError` ("cancelled by cancel flag")
-/// so the driver can distinguish a cooperative cancel from a DB/RPC failure
-/// (commit-or-rollback integrity holds either way). `Db`/`Provider`/`Runtime`
-/// map to `ValueError` (the degenbot convention for operation failures,
-/// mirroring [`crate::db::db_err_to_py`] where `Db` variants already land).
-fn run_err_to_py(err: RunError) -> PyErr {
-    use pyo3::exceptions::{PyRuntimeError, PyValueError};
-    match err {
-        RunError::Cancelled => PyRuntimeError::new_err("run_pool_update cancelled by cancel flag"),
-        other => PyValueError::new_err(other.to_string()),
-    }
+/// Every [`RunError`] is an operation failure and maps to `ValueError` (the
+/// degenbot convention, mirroring [`crate::db::db_err_to_py`] where `Db`
+/// variants already land). A cooperative cancel never reaches this map: the
+/// run RETURNS its report with `status: "cancelled"`.
+fn run_err_to_py(err: &RunError) -> PyErr {
+    pyo3::exceptions::PyValueError::new_err(err.to_string())
 }
 
 /// The `degenbot._ffi.pool` Python submodule (declarative `#[pymodule]`),
@@ -519,6 +525,7 @@ pub mod pool {
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use degenbot_pool_updater::run::RunTerminal;
 
     /// The `PoolId` the V4 verify cases carry.
     const POOL_ID_HEX: &str = "0x0101010101010101010101010101010101010101010101010101010101010101";
@@ -602,7 +609,7 @@ mod tests {
         });
     }
 
-    /// `update_report_to_dict` produces the six-key report dict the `.pyi`
+    /// `update_report_to_dict` produces the eight-key report dict the `.pyi`
     /// contract promises (the `run_pool_update` return shape).
     #[test]
     fn update_report_dict_shape() {
@@ -611,6 +618,8 @@ mod tests {
                 chain_id: 1,
                 from_block: 10,
                 to_block: 99,
+                terminal: RunTerminal::Completed,
+                committed_through: 99,
                 chunks_committed: 3,
                 total_pools_written: 7,
                 total_liquidity_applies: 4,
@@ -618,9 +627,11 @@ mod tests {
             let d = update_report_to_dict(py, &r).unwrap();
             let bound = d.bind(py);
             for k in [
+                "status",
                 "chain_id",
                 "from_block",
                 "to_block",
+                "committed_through",
                 "chunks_committed",
                 "total_pools_written",
                 "total_liquidity_applies",
@@ -635,6 +646,54 @@ mod tests {
                     .extract::<usize>()
                     .unwrap(),
                 3
+            );
+        });
+    }
+
+    /// A cancelled run RETURNS a dict carrying `status: "cancelled"` plus the
+    /// progress it committed — never an exception, because cancellation is a
+    /// terminal outcome.
+    #[test]
+    fn cancelled_report_dict_carries_the_status_and_committed_through() {
+        Python::attach(|py| {
+            let r = UpdateReport {
+                chain_id: 1,
+                from_block: 10,
+                to_block: 99,
+                terminal: RunTerminal::Cancelled,
+                committed_through: 40,
+                chunks_committed: 2,
+                total_pools_written: 5,
+                total_liquidity_applies: 6,
+            };
+            let d = update_report_to_dict(py, &r).unwrap();
+            let bound = d.bind(py);
+            assert_eq!(
+                bound
+                    .get_item("status")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "cancelled"
+            );
+            assert_eq!(
+                bound
+                    .get_item("committed_through")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<u64>()
+                    .unwrap(),
+                40
+            );
+            assert_eq!(
+                bound
+                    .get_item("chunks_committed")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<usize>()
+                    .unwrap(),
+                2
             );
         });
     }

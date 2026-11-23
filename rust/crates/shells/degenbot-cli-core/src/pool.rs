@@ -20,7 +20,9 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256};
 use degenbot_core::runtime::get_runtime;
 use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
-use degenbot_pool_updater::{run_pool_update, verify_liquidity_map_on_chain, NoProgress, RunError};
+use degenbot_pool_updater::{
+    run_pool_update, verify_liquidity_map_on_chain, NoProgress, RunError, RunTerminal, UpdateReport,
+};
 use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 
 use crate::block::{parse_to_block, resolve_to_block};
@@ -195,15 +197,7 @@ fn update(
         Err(cli_err) => return Err(cli_err),
     };
     match run {
-        Ok(report) => Ok(PoolReport::Updated {
-            chain_id: report.chain_id,
-            from_block: report.from_block,
-            to_block: report.to_block,
-            chunks_committed: report.chunks_committed,
-            total_pools_written: report.total_pools_written,
-            total_liquidity_applies: report.total_liquidity_applies,
-        }),
-        Err(RunError::Cancelled) => Ok(PoolReport::UpdateCancelled { chain_id: chain }),
+        Ok(report) => Ok(pool_update_report(report)),
         Err(err) => {
             // Post-failure resume snapshot: the committed per-chunk progress
             // (a chunk-boundary commit advances the exchange cursor), read
@@ -219,6 +213,30 @@ fn update(
                 resume,
             })))
         }
+    }
+}
+
+/// The operator-facing report for a finished run: the core's terminal outcome
+/// picks the arm, so a cooperative cancel renders its committed progress as a
+/// SUCCESS (exit 0 — [`ExitCode::Success`](crate::ExitCode::Success)) rather
+/// than as a failure.
+fn pool_update_report(report: UpdateReport) -> PoolReport {
+    match report.terminal {
+        RunTerminal::Completed => PoolReport::Updated {
+            chain_id: report.chain_id,
+            from_block: report.from_block,
+            to_block: report.to_block,
+            chunks_committed: report.chunks_committed,
+            total_pools_written: report.total_pools_written,
+            total_liquidity_applies: report.total_liquidity_applies,
+        },
+        RunTerminal::Cancelled => PoolReport::UpdateCancelled {
+            chain_id: report.chain_id,
+            committed_through: report.committed_through,
+            chunks_committed: report.chunks_committed,
+            total_pools_written: report.total_pools_written,
+            total_liquidity_applies: report.total_liquidity_applies,
+        },
     }
 }
 

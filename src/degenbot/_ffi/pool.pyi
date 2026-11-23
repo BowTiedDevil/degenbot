@@ -68,15 +68,19 @@ def run_pool_update(
 
     # Returns
 
-    A `dict` `{chain_id, from_block, to_block, chunks_committed,
-    total_pools_written, total_liquidity_applies}`.
+    A `dict` `{status, chain_id, from_block, to_block, committed_through,
+    chunks_committed, total_pools_written, total_liquidity_applies}`.
+
+    `status` is `"completed"` when the run reached `to_block` and
+    `"cancelled"` when the `cancel` flag was set at a chunk boundary. A
+    cancelled run RETURNS its dict carrying the committed progress
+    (`committed_through` is the last durable chunk end, `0` when nothing
+    committed) — cancellation is a terminal outcome, not an error.
 
     # Raises
 
     `ValueError` on a DB or RPC failure (the in-flight chunk is rolled back
     before returning; committed chunks stay durable).
-    `RuntimeError` if cancelled (the `cancel` flag was set; committed chunks
-    durable, in-flight chunk rolled back).
 
     # Runtime nesting
 

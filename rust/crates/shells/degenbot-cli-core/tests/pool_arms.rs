@@ -5,12 +5,14 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use alloy::primitives::Address;
 use degenbot_cli_core::{
-    ensure_supported_registrations, parse_to_block, resolve_to_block, run, BlockTag, CliContext,
-    CliError, Command, ExitCode, PoolCommand, PoolFamily, PromptPlan, Prompter, ToBlockSpec,
+    ensure_supported_registrations, parse_to_block, resolve_to_block, run, run_with_cancel,
+    BlockTag, CancelHandle, CliContext, CliError, Command, CommandReport, ExitCode, PoolCommand,
+    PoolFamily, PoolReport, PromptPlan, Prompter, ToBlockSpec,
 };
 use degenbot_config::MapEnv;
-use degenbot_db::ops;
+use degenbot_db::{ops, DegenbotDb};
 use tempfile::TempDir;
 
 struct NoPrompt {
@@ -165,6 +167,65 @@ fn pool_update_with_no_active_exchanges_is_a_noop_without_rpc() {
         panic!("expected Updated, got {:?}", outcome.report());
     };
     assert_eq!(*chunks_committed, 0);
+}
+
+#[test]
+fn pool_update_cancel_returns_a_cancelled_report_carrying_the_report_counts() {
+    // A pre-cancelled handle stops the run at the first chunk boundary, before
+    // any fetch: the arm renders the cancelled report — the SUCCESS exit code,
+    // distinct from the failure code — carrying the run's counts and the
+    // durable progress it reached.
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    {
+        let (handle, _state) = DegenbotDb::open_for_writes(&db).unwrap();
+        let exchange = handle
+            .upsert_exchange(8453, "uniswap_v3", Address::repeat_byte(0xf1), None)
+            .unwrap();
+        handle.set_exchange_active(exchange.id, true).unwrap();
+    }
+    let e = env_with_rpc();
+    let ctx = CliContext::new(&e).with_database(db.display().to_string());
+    let prompter = NoPrompt::new();
+    let cancel = CancelHandle::new();
+    cancel.cancel();
+    let outcome = run_with_cancel(
+        &Command::Pool(PoolCommand::Update {
+            chunk_size: 10,
+            max_block_range: 10_000,
+            to_block: "100".to_string(),
+            verify_all: false,
+            verify_all_interval: 1_000_000,
+        }),
+        &ctx,
+        &prompter,
+        &cancel,
+    );
+
+    assert_ne!(
+        ExitCode::Success.code(),
+        ExitCode::Failure.code(),
+        "cancellation exits on its own code, not the failure code",
+    );
+    assert_eq!(outcome.exit_code, ExitCode::Success);
+    let Some(CommandReport::Pool(PoolReport::UpdateCancelled {
+        committed_through,
+        chunks_committed,
+        total_pools_written,
+        total_liquidity_applies,
+        ..
+    })) = outcome.report()
+    else {
+        panic!("expected UpdateCancelled, got {:?}", outcome.report());
+    };
+    assert_eq!(*committed_through, 0, "nothing committed before the cancel");
+    assert_eq!(*chunks_committed, 0);
+    assert_eq!(*total_pools_written, 0);
+    assert_eq!(*total_liquidity_applies, 0);
+    assert!(
+        outcome.report().unwrap().render_lines()[0].contains("cancelled"),
+        "the cancelled report renders its terminal outcome",
+    );
 }
 
 #[test]

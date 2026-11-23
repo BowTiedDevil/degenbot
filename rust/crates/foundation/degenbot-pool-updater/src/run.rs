@@ -1069,6 +1069,32 @@ fn verify_precomputed_maps(
 
 // ── the outer chunk loop (RPC-bound; integration-tested) ─────────────────
 
+/// How a run ended.
+///
+/// A cooperative cancel is a TERMINAL OUTCOME of a successful run, not a
+/// failure: the chunks it committed are durable and the report carries them
+/// (`docs/architecture/chunk-atomicity.md`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RunTerminal {
+    /// The run advanced every in-scope exchange to the requested target.
+    #[default]
+    Completed,
+    /// The `cancel` flag was set at a chunk boundary. The committed chunks
+    /// stay durable; no further chunk's writes were started.
+    Cancelled,
+}
+
+impl RunTerminal {
+    /// The wire spelling (`completed` / `cancelled`) the shell seams report.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 /// The final report from a [`run_pool_update`] run.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UpdateReport {
@@ -1076,8 +1102,16 @@ pub struct UpdateReport {
     pub chain_id: i64,
     /// The first block processed (inclusive).
     pub from_block: u64,
-    /// The last block the run advanced every in-scope exchange to.
+    /// The requested target block — the run's upper bound, whether or not the
+    /// run reached it. Durable progress is [`Self::committed_through`].
     pub to_block: u64,
+    /// The terminal outcome. [`RunTerminal::Cancelled`] means the run stopped
+    /// cooperatively at a chunk boundary with its committed work intact.
+    pub terminal: RunTerminal,
+    /// The highest chunk end this run committed, or `0` when no chunk
+    /// committed. Never overstates progress: a cancelled run reports the last
+    /// durable chunk, not [`Self::to_block`].
+    pub committed_through: u64,
     /// Total chunks committed.
     pub chunks_committed: usize,
     /// Total pools written across all chunks.
@@ -1098,11 +1132,6 @@ pub enum RunError {
     /// A tokio runtime build failure.
     #[error("runtime error: {0}")]
     Runtime(#[from] std::io::Error),
-    /// The run was cancelled via the `cancel` flag (cooperative, at a chunk
-    /// boundary). The committed chunks are durable; the in-flight chunk (if
-    /// any) was rolled back before returning.
-    #[error("cancelled by cancel flag at chunk boundary")]
-    Cancelled,
     /// The pre-commit on-chain-truth gate (Full per-pool verification) found
     /// divergences: the chunk's transaction was rolled back + the exchange's
     /// `last_update_block` was NOT advanced (the restart-invariant holds — the
@@ -1172,8 +1201,9 @@ pub enum RunError {
 /// # Errors
 ///
 /// Returns [`RunError`] on a DB/RPC failure (the in-flight chunk is rolled
-/// back before returning — the committed chunks stay durable) or
-/// [`RunError::Cancelled`] if the `cancel` flag was set.
+/// back before returning — the committed chunks stay durable). A `cancel` flag
+/// set at a chunk boundary is NOT an error: the returned report carries
+/// [`RunTerminal::Cancelled`] and the progress the run committed.
 #[expect(clippy::too_many_arguments)]
 pub fn run_pool_update(
     database_path: &Path,
@@ -1353,10 +1383,12 @@ pub fn run_pool_update_on_db(
     // marker moves per RUN is already far past any real contention shape.
     let mut marker_retries = 0usize;
     while working_start_block <= last_block {
-        // Cooperative cancel at the chunk boundary (the most recent committed
-        // chunk is durable; we haven't started the next chunk's writes yet).
+        // Cooperative cancel at the chunk boundary: the most recent committed
+        // chunk is durable and the next chunk's writes have not started, so the
+        // accumulated report is the run's terminal outcome.
         if cancel.load(Ordering::Acquire) {
-            return Err(RunError::Cancelled);
+            report.terminal = RunTerminal::Cancelled;
+            return Ok(report);
         }
 
         let working_end_block = last_block.min(working_start_block + chunk_size - 1);
@@ -1793,6 +1825,7 @@ pub fn run_pool_update_on_db(
             );
         }
         report.chunks_committed += 1;
+        report.committed_through = working_end_block;
         report.total_pools_written += chunk_report.pools_written;
         report.total_liquidity_applies += chunk_report.liquidity_apply_count;
 
@@ -2589,6 +2622,26 @@ mod tests {
         chunk_size: u64,
         progress: Arc<dyn ProgressSink>,
     ) -> Result<UpdateReport, RunError> {
+        drive_with_cancel(
+            path,
+            node,
+            to_block,
+            chunk_size,
+            progress,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    /// [`drive`] over a caller-owned cancel flag — the flag a SIGINT policy
+    /// flips, polled only at chunk boundaries.
+    fn drive_with_cancel(
+        path: &Path,
+        node: &MarkerMoveNode,
+        to_block: u64,
+        chunk_size: u64,
+        progress: Arc<dyn ProgressSink>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<UpdateReport, RunError> {
         let provider = degenbot_core::runtime::get_runtime()
             .block_on(AlloyProvider::new(&node.url, 5))
             .unwrap();
@@ -2599,7 +2652,7 @@ mod tests {
             chunk_size,
             10_000,
             provider,
-            Arc::new(AtomicBool::new(false)),
+            cancel,
             progress,
             None,
             false,
@@ -2838,5 +2891,94 @@ mod tests {
             "the retried chunk re-runs 1..=10 before the cursor advances to 11",
         );
         assert_eq!(persisted_marker(&path), Some(20));
+    }
+
+    /// A cancel raised DURING a chunk's fetch stops the run at the next
+    /// boundary: the interrupt contract's mid-chunk half — the in-flight chunk
+    /// completes atomically first — and the report the run returns is the
+    /// terminal outcome carrying every committed chunk, not a failure that
+    /// discards the counts.
+    #[test]
+    fn cancel_returns_the_partial_report_with_committed_through() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cancel_boundary.db");
+        seed_active_v3(&path);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let node = MarkerMoveNode::spawn({
+            let cancel = Arc::clone(&cancel);
+            Box::new(move |scoped, from_block| {
+                if scoped && from_block == 11 {
+                    cancel.store(true, Ordering::Release);
+                }
+            })
+        });
+        let sink = Arc::new(RecordedChunks::default());
+
+        let report =
+            drive_with_cancel(&path, &node, 30, 10, sink.clone(), Arc::clone(&cancel)).unwrap();
+
+        assert_eq!(
+            report.terminal,
+            RunTerminal::Cancelled,
+            "a boundary cancel is a terminal outcome, not an error",
+        );
+        assert_eq!(
+            report.chunks_committed, 2,
+            "the chunk in flight when the flag rose commits atomically first, and its commit \
+             joins the earlier chunk's in the returned counts",
+        );
+        assert_eq!(
+            report.committed_through, 20,
+            "committed_through names the last durable chunk end",
+        );
+        assert_eq!(
+            report.to_block, 30,
+            "to_block stays the requested target; committed_through carries progress",
+        );
+        assert_eq!(
+            node.creation_fetch_starts(),
+            vec![1, 11],
+            "the cancelled boundary never fetches the next chunk's range",
+        );
+        assert_eq!(persisted_marker(&path), Some(20));
+    }
+
+    /// A cancel raised BEFORE the first chunk commits reports zero durable
+    /// progress and no final-chunk progress: the completion signal (`is_final`)
+    /// rides a committed chunk reaching the target, so a cancelled run's
+    /// consumers see no completion.
+    #[test]
+    fn cancel_before_the_first_chunk_reports_no_committed_progress() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("cancel_immediate.db");
+        seed_active_v3(&path);
+        let node = MarkerMoveNode::spawn(Box::new(|_scoped, _from_block| {}));
+        let sink = Arc::new(RecordedChunks::default());
+
+        let report = drive_with_cancel(
+            &path,
+            &node,
+            20,
+            10,
+            sink.clone(),
+            Arc::new(AtomicBool::new(true)),
+        )
+        .unwrap();
+
+        assert_eq!(report.terminal, RunTerminal::Cancelled);
+        assert_eq!(report.chunks_committed, 0);
+        assert_eq!(
+            report.committed_through, 0,
+            "nothing committed means zero durable progress",
+        );
+        assert!(
+            node.creation_fetch_starts().is_empty(),
+            "a boundary cancel issues no RPC fetch",
+        );
+        assert!(
+            sink.0.lock().unwrap().is_empty(),
+            "no chunk progress is reported, so no completion signal can fire",
+        );
+        assert_eq!(persisted_marker(&path), None);
     }
 }
