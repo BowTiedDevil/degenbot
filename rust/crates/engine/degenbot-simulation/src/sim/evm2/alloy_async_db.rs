@@ -14,15 +14,28 @@
 //! the revm side relies on), and an account with zero balance, zero nonce,
 //! and no code reads as non-existent.
 //!
+//! # The pin is the anchor, not a height
+//!
+//! Every read this adapter issues takes its transport identifier from
+//! [`ReadAnchor::block_id`]: an IDENTIFIED anchor states the block's own
+//! canonical hash (EIP-1898 `{ blockHash, requireCanonical: true }`), so a node
+//! either answers at exactly that block or refuses a read here — it can never
+//! answer a same-height replacement instead. Only an explicit
+//! [`ReadAnchor::unresolved`] (an observation that resolved no header) states
+//! a height, and that form exists for the ingress callers that legitimately
+//! hold no identity (ADR-105 D1/D3). There is no second, height-only read path
+//! in this adapter: the anchor's identifier IS the read.
+//!
 //! The account read is ONE JSON-RPC batch round trip
 //! ([`AlloyProvider::get_account_at`]): `eth_getBalance`,
 //! `eth_getTransactionCount`, and `eth_getCode` at the identical pinned block
 //! tag, answered together. Three serial round trips per cold account miss was
 //! the measured cold-frame cost (the `cold_miss_fanout_probe` model).
 
-use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
+
+use crate::sim::storage_memo::ReadAnchor;
 
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::r#async::AsyncDatabase;
@@ -73,28 +86,35 @@ pub struct AlloyAsyncDb<'p> {
     /// The shared provider (same instance the revm engine's `AlloyDB`
     /// consumes, via the same retry/timeout policy).
     provider: &'p AlloyProvider,
-    /// The block every read pins (the pumped sim block).
-    block: u64,
+    /// The exact block every read pins — the fan-out's solve anchor, never the
+    /// consumer's execution clock.
+    anchor: ReadAnchor,
 }
 
 impl<'p> AlloyAsyncDb<'p> {
-    /// Wrap the provider, pinning reads to `block`.
+    /// Wrap the provider, pinning every read to `anchor`.
     #[must_use]
-    pub fn new(provider: &'p AlloyProvider, block: u64) -> Self {
-        Self { provider, block }
+    pub const fn new(provider: &'p AlloyProvider, anchor: ReadAnchor) -> Self {
+        Self { provider, anchor }
+    }
+
+    /// The exact block this adapter's reads pin.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
     }
 }
 
 impl AsyncDatabase for AlloyAsyncDb<'_> {
     type Error = AlloyAsyncDbError;
 
-    /// Balance + nonce + code at the pinned block, eager-loaded like
+    /// Balance + nonce + code at the pinned anchor, eager-loaded like
     /// `AlloyDB::basic_ref` — one JSON-RPC batch round trip. The all-empty
     /// account reads as non-existent.
     async fn get_account(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         let read = self
             .provider
-            .get_account_at(&address, BlockId::number(self.block))
+            .get_account_at(&address, self.anchor.block_id())
             .await?;
         Ok(account_info_from_read(&read))
     }
@@ -108,11 +128,11 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
         panic!("get_account eager-loads code — get_code_by_hash is never invoked");
     }
 
-    /// One storage slot at the pinned block.
+    /// One storage slot at the pinned anchor.
     async fn get_storage(&mut self, address: Address, key: Word) -> Result<Word, Self::Error> {
         let value = self
             .provider
-            .get_storage_at(&address, key, Some(BlockId::number(self.block)))
+            .get_storage_at(&address, key, Some(self.anchor.block_id()))
             .await?;
         Ok(Word::from_be_bytes(value.0))
     }
@@ -235,7 +255,7 @@ mod tests {
         let stub = ChainStub::serving();
         let provider = stub.provider();
         let address = Address::from([0x11; 20]);
-        let mut db = AlloyAsyncDb::new(&provider, 0x1234);
+        let mut db = AlloyAsyncDb::new(&provider, ReadAnchor::unresolved(0x1234));
 
         let info = db.get_account(address).await.unwrap().unwrap();
         assert_eq!(info.balance, U256::from(1_000_000_000_000_000_000_u64));
@@ -271,9 +291,205 @@ mod tests {
         let stub = ChainStub::empty_account();
         let provider = stub.provider();
         let address = Address::from([0x22; 20]);
-        let mut db = AlloyAsyncDb::new(&provider, 7);
+        let mut db = AlloyAsyncDb::new(&provider, ReadAnchor::unresolved(7));
 
         assert!(db.get_account(address).await.unwrap().is_none());
         assert_eq!(stub.packets().len(), 1);
+    }
+
+    /// The height the pinned chain stub holds.
+    const PINNED_NUMBER: u64 = 0x1234;
+    /// The one slot the pinned stub serves.
+    const SLOT_VALUE: &str = "0x000000000000000000000000000000000000000000000000000000000000002a";
+
+    /// A chain stub that answers ONLY the hash-pinned identifier naming `pin`
+    /// — the node an abandoned or replaced hash cannot reach, and which records
+    /// every request's params so the wire shape is asserted, not assumed.
+    #[derive(Debug, Clone)]
+    struct PinnedChain {
+        pin: B256,
+        requests: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+    }
+
+    impl PinnedChain {
+        fn serving(pin: B256) -> Self {
+            Self {
+                pin,
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn requests(&self) -> Vec<(String, serde_json::Value)> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+
+        /// The param position the read's block identifier occupies: the
+        /// account triple carries `[address, block]`, storage the slot too.
+        fn identifier_index(method: &str) -> usize {
+            if method == "eth_getStorageAt" {
+                2
+            } else {
+                1
+            }
+        }
+
+        /// Whether `params` names this stub's block by hash, canonically.
+        fn names_pin(&self, method: &str, params: &serde_json::Value) -> bool {
+            params
+                .get(Self::identifier_index(method))
+                .is_some_and(|id| {
+                    id.get("blockHash").and_then(serde_json::Value::as_str)
+                        == Some(format!("{}", self.pin).as_str())
+                        && id
+                            .get("requireCanonical")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                })
+        }
+
+        fn answer(&self, req: &SerializedRequest) -> Response {
+            let params: serde_json::Value = req
+                .params()
+                .and_then(|raw| serde_json::from_str(raw.get()).ok())
+                .unwrap_or(serde_json::Value::Null);
+            self.requests
+                .lock()
+                .unwrap()
+                .push((req.method().to_string(), params.clone()));
+            let payload = if self.names_pin(req.method(), &params) {
+                let result = match req.method() {
+                    "eth_getBalance" => json!(BALANCE),
+                    "eth_getTransactionCount" => json!(NONCE),
+                    "eth_getCode" => json!(CODE),
+                    "eth_getStorageAt" => json!(SLOT_VALUE),
+                    other => panic!("a pinned write-free read must not issue {other}"),
+                };
+                ResponsePayload::Success(to_raw_value(&result).unwrap())
+            } else {
+                ResponsePayload::Failure(alloy::rpc::json_rpc::ErrorPayload {
+                    code: -32_000,
+                    message: "no canonical block for that identifier".into(),
+                    data: None,
+                })
+            };
+            Response {
+                id: req.id().clone(),
+                payload,
+            }
+        }
+    }
+
+    impl tower::Service<RequestPacket> for PinnedChain {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                Ok::<ResponsePacket, TransportError>(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(stub.answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(|one| stub.answer(one)).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// An identified anchor pins every read on the wire: the account triple and
+    /// the storage word both name `{ blockHash, requireCanonical: true }` with
+    /// the anchor's own hash, and no request states a height.
+    #[tokio::test]
+    async fn an_identified_anchor_pins_every_read_by_hash() {
+        let head = B256::new([0xa1; 32]);
+        let stub = PinnedChain::serving(head);
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let mut db = AlloyAsyncDb::new(&provider, ReadAnchor::identified(PINNED_NUMBER, head));
+
+        let info = db.get_account(address).await.unwrap().unwrap();
+        assert_eq!(info.nonce, 42);
+        let word = db.get_storage(address, U256::from(0x2au64)).await.unwrap();
+        assert_eq!(word, Word::from(42u64));
+
+        let requests = stub.requests();
+        assert_eq!(
+            requests.len(),
+            4,
+            "one packet per read kind: the three-member account batch plus the slot, got {requests:?}"
+        );
+        for (method, params) in requests {
+            let identifier = &params[PinnedChain::identifier_index(&method)];
+            assert!(
+                identifier.is_object(),
+                "{method} states an EIP-1898 identifier, never a height: {params}"
+            );
+            assert_eq!(
+                identifier
+                    .get("blockHash")
+                    .and_then(serde_json::Value::as_str),
+                Some(format!("{head}").as_str()),
+                "{method} pins the anchor's own hash"
+            );
+            assert_eq!(
+                identifier
+                    .get("requireCanonical")
+                    .and_then(serde_json::Value::as_bool),
+                Some(true),
+                "{method} requires the pinned block to still be canonical"
+            );
+        }
+    }
+
+    /// The red-first same-height replacement: an anchor naming the REPLACED
+    /// block's hash refuses on every read. The stub serves the height only when
+    /// the request pins the hash it holds, so a height-tagged read would be
+    /// answered with the current canonical word — exactly the substitution this
+    /// adapter must never allow.
+    #[tokio::test]
+    async fn a_replaced_same_height_hash_refuses_instead_of_reading_the_height() {
+        let current = B256::new([0xa1; 32]);
+        let replaced = B256::new([0xb1; 32]);
+        let stub = PinnedChain::serving(current);
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let mut db = AlloyAsyncDb::new(&provider, ReadAnchor::identified(PINNED_NUMBER, replaced));
+
+        assert!(
+            db.get_account(address).await.is_err(),
+            "the replaced branch's account read must refuse"
+        );
+        assert!(
+            db.get_storage(address, U256::from(0x2au64)).await.is_err(),
+            "the replaced branch's storage read must refuse"
+        );
+
+        let requests = stub.requests();
+        assert_eq!(
+            requests.len(),
+            4,
+            "every read was issued once, at the abandoned identity, got {requests:?}"
+        );
+        for (method, params) in requests {
+            let identifier = &params[PinnedChain::identifier_index(&method)];
+            assert_eq!(
+                identifier
+                    .get("blockHash")
+                    .and_then(serde_json::Value::as_str),
+                Some(format!("{replaced}").as_str()),
+                "{method} pins the abandoned hash — never the height that holds the replacement"
+            );
+        }
     }
 }

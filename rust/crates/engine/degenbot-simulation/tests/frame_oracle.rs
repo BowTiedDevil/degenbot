@@ -1435,7 +1435,7 @@ macro_rules! live_scratch {
         let mut $handle = Evm2BlockSimHandle::build(
             &alloy_provider,
             $base_fee.max(1),
-            $pin.saturating_sub(1),
+            degenbot_simulation::sim::ReadAnchor::unresolved($pin.saturating_sub(1)),
             $timestamp,
             &override_params,
             &anchor,

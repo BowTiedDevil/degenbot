@@ -40,9 +40,7 @@ use chain_stub::ChainStub;
 use delta_parity::{real_keys, real_parity_blocks, ParityBlock};
 use modeled_chain::{bal_bytes, block_hash, ChainState, Coverage, Key, StubChain};
 use real_coverage::RealCoverage;
-use scripted_head::{
-    address, anchored, assert_parked, genesis, identified, poll_once, settled, ScriptedHead,
-};
+use scripted_head::{address, anchored, assert_parked, genesis, poll_once, settled, ScriptedHead};
 
 /// The anchor height every test advances at, unless the test is about lineage.
 const HEIGHT: u64 = 100;
@@ -130,7 +128,7 @@ async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item(
     // The control: the synchronous advance over a parent generation that settled
     // two words dynamically.
     let control = DeltaSnapshotCache::new(&provider);
-    let control_parent = control.for_anchor(identified(HEIGHT, parent_hash));
+    let control_parent = control.for_anchor(stub.exact(HEIGHT, parent_hash));
     for slot in [1u64, 2] {
         control_parent
             .read_storage(address(0x11), U256::from(slot))
@@ -139,7 +137,7 @@ async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item(
     }
     stub.clear();
     let (control_child, control_report) = control
-        .advance_bal(identified(HEIGHT + 1, child_hash), parent_hash, &relevance)
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &relevance)
         .await;
     assert_eq!(
         stub.bal_requests(),
@@ -153,7 +151,7 @@ async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item(
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
-    let parent_hub = driver.snapshot(identified(HEIGHT, parent_hash)).hub;
+    let parent_hub = driver.snapshot(stub.exact(HEIGHT, parent_hash)).hub;
     for slot in [1u64, 2] {
         parent_hub
             .read_storage(address(0x11), U256::from(slot))
@@ -162,10 +160,10 @@ async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item(
     }
     stub.clear();
 
-    let child_ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let child_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     let prepared = driver.prepare(child_ticket).await;
     assert!(prepared.is_decoded(), "the child list decoded");
-    assert_eq!(prepared.anchor(), identified(HEIGHT + 1, child_hash));
+    assert_eq!(prepared.anchor(), stub.exact(HEIGHT + 1, child_hash));
     assert_eq!(
         stub.bal_requests(),
         1,
@@ -186,11 +184,11 @@ async fn applying_a_prepared_list_matches_the_synchronous_advance_item_for_item(
         "the report attributes the prepared cost"
     );
 
-    let lifecycle_child = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let lifecycle_child = driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub;
     assert_same_snapshot(&control_child, &lifecycle_child);
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 1, child_hash))
+            .snapshot(stub.exact(HEIGHT + 1, child_hash))
             .readiness,
         HeadReadiness::Ready,
         "the settled head is ready"
@@ -215,17 +213,17 @@ async fn a_delivered_head_serves_the_cold_path_until_its_bal_applies() {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(2u64))
         .await
         .expect("the stub answers");
     stub.clear();
 
-    let child_ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let child_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     assert_eq!(stub.bal_requests(), 0, "a delivery fetches nothing");
 
-    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, child_hash));
     assert_eq!(
         view.readiness,
         HeadReadiness::Cold(HeadCold::Unprepared),
@@ -240,7 +238,7 @@ async fn a_delivered_head_serves_the_cold_path_until_its_bal_applies() {
     assert!(
         Arc::ptr_eq(
             &view.hub,
-            &driver.snapshot(identified(HEIGHT + 1, child_hash)).hub
+            &driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub
         ),
         "every caller at the head shares one cold generation"
     );
@@ -253,7 +251,7 @@ async fn a_delivered_head_serves_the_cold_path_until_its_bal_applies() {
 
     let prepared = driver.prepare(child_ticket).await;
     settled(&driver.apply(child_ticket, &prepared, &[]));
-    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, child_hash));
     assert_eq!(view.readiness, HeadReadiness::Ready);
     assert_eq!(
         view.hub.snapshot_value(address(0x11), U256::from(2u64)),
@@ -291,30 +289,30 @@ async fn a_prepared_list_applies_only_to_the_head_it_was_prepared_for() {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
         .expect("the stub answers");
 
-    let child_ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
-    let foreign = PreparedBal::prepare(&provider, identified(HEIGHT + 1, other_hash)).await;
+    let child_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
+    let foreign = PreparedBal::prepare(&provider, stub.exact(HEIGHT + 1, other_hash)).await;
     assert_eq!(
         driver.apply(child_ticket, &foreign, &[]),
         HeadOutcome::Foreign {
-            prepared: identified(HEIGHT + 1, other_hash),
-            head: identified(HEIGHT + 1, child_hash),
+            prepared: stub.exact(HEIGHT + 1, other_hash),
+            head: stub.exact(HEIGHT + 1, child_hash),
         },
         "the foreign list is refused"
     );
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, parent_hash)),
+        Some(stub.exact(HEIGHT, parent_hash)),
         "nothing was installed"
     );
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 1, child_hash))
+            .snapshot(stub.exact(HEIGHT + 1, child_hash))
             .readiness,
         HeadReadiness::Cold(HeadCold::Unprepared),
         "the head is still unprepared"
@@ -330,7 +328,7 @@ async fn a_prepared_list_applies_only_to_the_head_it_was_prepared_for() {
     );
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT + 1, child_hash)),
+        Some(stub.exact(HEIGHT + 1, child_hash)),
         "the head settled with its own list"
     );
 }
@@ -359,29 +357,29 @@ async fn a_late_preparation_for_a_superseded_head_installs_nothing() {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
         .expect("the stub answers");
 
-    let abandoned_ticket = driver.deliver(anchored(identified(HEIGHT + 1, abandoned), parent_hash));
+    let abandoned_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, abandoned), parent_hash));
     let late = driver.prepare(abandoned_ticket).await;
     assert!(late.is_decoded(), "the abandoned list decoded");
 
     // The same-height reorg arrives while the abandoned list is in flight.
     let replacement_ticket =
-        driver.deliver(anchored(identified(HEIGHT + 1, replacement), parent_hash));
+        driver.deliver(anchored(stub.exact(HEIGHT + 1, replacement), parent_hash));
     assert_eq!(
         driver.apply(abandoned_ticket, &late, &[]),
         HeadOutcome::Superseded {
-            head: identified(HEIGHT + 1, replacement),
+            head: stub.exact(HEIGHT + 1, replacement),
         },
         "the late response cannot install into the new head"
     );
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, parent_hash)),
+        Some(stub.exact(HEIGHT, parent_hash)),
         "the abandoned head installed nothing"
     );
 
@@ -391,7 +389,7 @@ async fn a_late_preparation_for_a_superseded_head_installs_nothing() {
         CarryOutcome::Carried { carried_values: 1 },
         "the replacement head carries the installed parent"
     );
-    let view = driver.snapshot(identified(HEIGHT + 1, replacement));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, replacement));
     assert_eq!(view.readiness, HeadReadiness::Ready);
     assert_eq!(
         view.hub.snapshot_value(address(0x33), U256::from(4u64)),
@@ -399,7 +397,7 @@ async fn a_late_preparation_for_a_superseded_head_installs_nothing() {
         "the abandoned branch's write never reached the replacement"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 1, abandoned)).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 1, abandoned)).readiness,
         HeadReadiness::Cold(HeadCold::Superseded),
         "the abandoned head reports that it was superseded"
     );
@@ -429,10 +427,10 @@ async fn a_same_height_reorg_settles_cold_and_the_next_head_carries_only_the_new
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
-    let first_ticket = driver.deliver(anchored(identified(HEIGHT + 1, first), parent_hash));
+    let first_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, first), parent_hash));
     settled(&driver.advance(first_ticket, &[]).await);
     // The abandoned branch settles a value at its own anchor.
-    let first_view = driver.snapshot(identified(HEIGHT + 1, first)).hub;
+    let first_view = driver.snapshot(stub.exact(HEIGHT + 1, first)).hub;
     let abandoned = first_view
         .read_storage(address(0x11), U256::from(2u64))
         .await
@@ -441,7 +439,7 @@ async fn a_same_height_reorg_settles_cold_and_the_next_head_carries_only_the_new
 
     // The reorg replaces the block at the same height: its parent is the
     // installed block's own parent, so the installed anchor is not its parent.
-    let reorg_ticket = driver.deliver(anchored(identified(HEIGHT + 1, reorg), parent_hash));
+    let reorg_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, reorg), parent_hash));
     let report = settled(&driver.advance(reorg_ticket, &[]).await);
     assert_eq!(
         report.outcome,
@@ -452,7 +450,7 @@ async fn a_same_height_reorg_settles_cold_and_the_next_head_carries_only_the_new
         "a same-height reorg never links the head it replaced"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 1, reorg)).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 1, reorg)).readiness,
         HeadReadiness::Cold(HeadCold::Settled {
             lineage: Some(CarryRefusal::NotConsecutive),
             bal: None,
@@ -461,14 +459,14 @@ async fn a_same_height_reorg_settles_cold_and_the_next_head_carries_only_the_new
     );
 
     // The next block links the reorged head and carries only ITS generation.
-    let successor_ticket = driver.deliver(anchored(identified(HEIGHT + 2, successor), reorg));
+    let successor_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 2, successor), reorg));
     let report = settled(&driver.advance(successor_ticket, &[]).await);
     assert_eq!(
         report.outcome,
         CarryOutcome::Carried { carried_values: 0 },
         "the new branch's second block re-establishes the chain"
     );
-    let view = driver.snapshot(identified(HEIGHT + 2, successor));
+    let view = driver.snapshot(stub.exact(HEIGHT + 2, successor));
     assert_eq!(
         view.hub.snapshot_value(address(0x11), U256::from(2u64)),
         None,
@@ -505,7 +503,7 @@ async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_cha
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
@@ -513,7 +511,7 @@ async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_cha
 
     // Two blocks above the installed generation: a gap.
     let skipped_ticket = driver.deliver(anchored(
-        identified(HEIGHT + 2, skipped),
+        stub.exact(HEIGHT + 2, skipped),
         B256::new([0xfe; 32]),
     ));
     let report = settled(&driver.advance(skipped_ticket, &[]).await);
@@ -528,7 +526,7 @@ async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_cha
     // The gap head is cold, and it settles a word of its own.
     stub.serve_at(HEIGHT + 2, address(0x11), U256::from(2u64), 2);
     driver
-        .snapshot(identified(HEIGHT + 2, skipped))
+        .snapshot(stub.exact(HEIGHT + 2, skipped))
         .hub
         .read_storage(address(0x11), U256::from(2u64))
         .await
@@ -536,14 +534,14 @@ async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_cha
 
     // The head above the gap is consecutive to what was installed, so it carries
     // the gap head's own generation — and never the pre-gap head's value.
-    let next_ticket = driver.deliver(anchored(identified(HEIGHT + 3, next), skipped));
+    let next_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 3, next), skipped));
     let report = settled(&driver.advance(next_ticket, &[]).await);
     assert_eq!(
         report.outcome,
         CarryOutcome::Carried { carried_values: 1 },
         "the head above the gap re-establishes the chain"
     );
-    let view = driver.snapshot(identified(HEIGHT + 3, next));
+    let view = driver.snapshot(stub.exact(HEIGHT + 3, next));
     assert_eq!(
         view.hub.snapshot_value(address(0x11), U256::from(2u64)),
         Some(U256::from(2u64)),
@@ -554,7 +552,7 @@ async fn a_gap_settles_cold_and_the_next_consecutive_head_re_establishes_the_cha
         None,
         "the pre-gap head's value never reappears"
     );
-    let after_ticket = driver.deliver(anchored(identified(HEIGHT + 4, after), next));
+    let after_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 4, after), next));
     let report = settled(&driver.advance(after_ticket, &[]).await);
     assert_eq!(
         report.outcome,
@@ -643,13 +641,13 @@ async fn cold_list_case(skip: ColdSkip) {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
         .expect("the stub answers");
 
-    let ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     let prepared = driver.prepare(ticket).await;
     assert!(!prepared.is_decoded(), "the list did not decode");
     let report = settled(&driver.apply(ticket, &prepared, &[]));
@@ -662,7 +660,7 @@ async fn cold_list_case(skip: ColdSkip) {
     else {
         panic!("an unreadable list settles cold: {:?}", report.outcome);
     };
-    let view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, child_hash));
     assert!(
         matches!(
             &view.readiness,
@@ -699,9 +697,9 @@ async fn an_idempotent_delivery_and_advance_repeat_no_bal_work() {
         .settle(&[])
         .await;
     stub.clear();
-    let ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     assert_eq!(
-        driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash)),
+        driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash)),
         ticket,
         "the repeated delivery hands back the same ticket"
     );
@@ -747,18 +745,18 @@ async fn a_settled_head_keeps_answering_after_the_next_head_arrives() {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
         .expect("the stub answers");
-    let child_ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let child_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     settled(&driver.advance(child_ticket, &[]).await);
     stub.clear();
 
     // The next head arrives and is unprepared: the child keeps answering.
-    driver.deliver(anchored(identified(HEIGHT + 2, next_hash), child_hash));
-    let settled_view = driver.snapshot(identified(HEIGHT + 1, child_hash));
+    driver.deliver(anchored(stub.exact(HEIGHT + 2, next_hash), child_hash));
+    let settled_view = driver.snapshot(stub.exact(HEIGHT + 1, child_hash));
     assert_eq!(
         settled_view.readiness,
         HeadReadiness::Ready,
@@ -779,7 +777,7 @@ async fn a_settled_head_keeps_answering_after_the_next_head_arrives() {
         "a carried read costs no fetch after the head moved"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 2, next_hash)).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 2, next_hash)).readiness,
         HeadReadiness::Cold(HeadCold::Unprepared),
         "the new head is cold until its own list applies"
     );
@@ -802,14 +800,14 @@ async fn a_delivery_of_the_installed_head_settles_without_bal_work() {
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
-    let child_ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let child_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     settled(&driver.advance(child_ticket, &[]).await);
     stub.clear();
 
     // A head above the installed one is delivered and abandoned before it
     // settles: the installed block is the head the stream returns to.
-    let _abandoned = driver.deliver(anchored(identified(HEIGHT + 2, other_hash), child_hash));
-    let back = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let _abandoned = driver.deliver(anchored(stub.exact(HEIGHT + 2, other_hash), child_hash));
+    let back = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     assert_eq!(
         driver.stats().already_current,
         1,
@@ -817,7 +815,7 @@ async fn a_delivery_of_the_installed_head_settles_without_bal_work() {
     );
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 1, child_hash))
+            .snapshot(stub.exact(HEIGHT + 1, child_hash))
             .readiness,
         HeadReadiness::Ready,
         "a ready generation keeps answering ready"
@@ -850,7 +848,7 @@ async fn a_redelivered_installed_cold_head_keeps_its_settle_derived_readiness() 
 
     // Two blocks above the installed generation: the lineage cannot carry, so
     // the head installs cold with that refusal as its readiness.
-    let cold_anchor = identified(HEIGHT + 2, cold_hash);
+    let cold_anchor = stub.exact(HEIGHT + 2, cold_hash);
     let cold_ticket = driver.deliver(anchored(cold_anchor, B256::new([0xfe; 32])));
     let report = settled(&driver.advance(cold_ticket, &[]).await);
     assert_eq!(
@@ -876,7 +874,7 @@ async fn a_redelivered_installed_cold_head_keeps_its_settle_derived_readiness() 
     // redelivery names the same anchor with another parent hash, so it is a
     // real delivery — not the idempotent repeat — that answers the installed
     // generation on the spot.
-    let _abandoned = driver.deliver(anchored(identified(HEIGHT + 3, later_hash), cold_hash));
+    let _abandoned = driver.deliver(anchored(stub.exact(HEIGHT + 3, later_hash), cold_hash));
     stub.clear();
     let back = driver.deliver(anchored(cold_anchor, genesis()));
     assert_eq!(driver.stats().repeated, 0, "the redelivery is not a repeat");
@@ -944,7 +942,7 @@ async fn a_cancelled_preparation_releases_the_claim_and_the_head_retries() {
     head.claimed().release();
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, parent_hash)),
+        Some(stub.exact(HEIGHT, parent_hash)),
         "the cancelled preparation installed nothing"
     );
     assert_eq!(
@@ -977,7 +975,7 @@ async fn a_concurrent_advance_joins_the_claimed_preparation_without_a_second_fet
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
-    let ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     stub.clear();
     stub.set_slow(true);
 
@@ -1009,11 +1007,11 @@ async fn concurrent_reads_at_an_unprepared_head_share_one_cold_generation() {
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
-    driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     stub.clear();
 
-    let left = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
-    let right = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let left = driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub;
+    let right = driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub;
     assert!(Arc::ptr_eq(&left, &right), "one generation per head");
     let first = left.read_storage_handle(address(0x11), U256::from(1u64));
     let second = right.read_storage_handle(address(0x11), U256::from(1u64));
@@ -1044,8 +1042,8 @@ async fn a_settle_into_an_unprepared_head_stays_handle_local() {
         .settle(&[])
         .await;
 
-    let ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
-    let held = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
+    let held = driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub;
     let late_settle = held
         .read_storage(address(0x11), U256::from(1u64))
         .await
@@ -1054,7 +1052,7 @@ async fn a_settle_into_an_unprepared_head_stays_handle_local() {
 
     let prepared = driver.prepare(ticket).await;
     settled(&driver.apply(ticket, &prepared, &[]));
-    let settled_hub = driver.snapshot(identified(HEIGHT + 1, child_hash)).hub;
+    let settled_hub = driver.snapshot(stub.exact(HEIGHT + 1, child_hash)).hub;
     assert!(
         !Arc::ptr_eq(&held, &settled_hub),
         "the settled hub replaces it"
@@ -1088,7 +1086,7 @@ async fn the_lifecycle_compacts_on_the_control_threshold() {
     stub.serve_at(HEIGHT, address(0x11), first_slot, 1);
     stub.serve_bal_at(hashes[0], bal_bytes(&[]));
 
-    let base = identified(HEIGHT, hashes[0]);
+    let base = stub.exact(HEIGHT, hashes[0]);
     control
         .for_anchor(base)
         .read_storage(address(0x11), first_slot)
@@ -1113,7 +1111,7 @@ async fn the_lifecycle_compacts_on_the_control_threshold() {
             hashes[step],
             bal_bytes(&[(address(0x11), slot, U256::from(value))]),
         );
-        let anchor = identified(number, hashes[step]);
+        let anchor = stub.exact(number, hashes[step]);
         let parent = hashes[step - 1];
         let (control_hub, control_report) =
             control.advance_bal(anchor, parent, &[address(0x11)]).await;
@@ -1146,7 +1144,7 @@ async fn the_lifecycle_compacts_on_the_control_threshold() {
     assert!(saw_compaction, "a threshold of one must fold every link");
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 4, hashes[4]))
+            .snapshot(stub.exact(HEIGHT + 4, hashes[4]))
             .hub
             .snapshot_value(address(0x11), first_slot),
         Some(U256::from(1u64))
@@ -1173,7 +1171,7 @@ async fn the_lifecycle_applies_the_callers_retention_policy() {
     let control = DeltaSnapshotCache::with_retention(&provider, retention);
     let driver = BalHeadDriver::with_config(&provider, DEFAULT_MAX_DEPTH, retention);
 
-    let control_base = control.for_anchor(identified(HEIGHT, base));
+    let control_base = control.for_anchor(stub.exact(HEIGHT, base));
     assert_eq!(
         control_base
             .read_storage(address(0x11), U256::from(1u64))
@@ -1181,11 +1179,11 @@ async fn the_lifecycle_applies_the_callers_retention_policy() {
             .expect("the stub answers"),
         U256::from(1u64)
     );
-    let base_ticket = driver.deliver(anchored(identified(HEIGHT, base), genesis()));
+    let base_ticket = driver.deliver(anchored(stub.exact(HEIGHT, base), genesis()));
     driver.advance(base_ticket, &[]).await;
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT, base))
+            .snapshot(stub.exact(HEIGHT, base))
             .hub
             .read_storage(address(0x11), U256::from(1u64))
             .await
@@ -1195,12 +1193,12 @@ async fn the_lifecycle_applies_the_callers_retention_policy() {
 
     // One block on, the entry is still inside its idle window on both.
     let control_one = control
-        .advance_bal(identified(HEIGHT + 1, one), base, &[])
+        .advance_bal(stub.exact(HEIGHT + 1, one), base, &[])
         .await
         .0;
-    let one_ticket = driver.deliver(anchored(identified(HEIGHT + 1, one), base));
+    let one_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, one), base));
     settled(&driver.advance(one_ticket, &[]).await);
-    let lifecycle_one = driver.snapshot(identified(HEIGHT + 1, one)).hub;
+    let lifecycle_one = driver.snapshot(stub.exact(HEIGHT + 1, one)).hub;
     assert_eq!(
         control_one.snapshot_value(address(0x11), U256::from(1u64)),
         Some(U256::from(1u64))
@@ -1214,12 +1212,12 @@ async fn the_lifecycle_applies_the_callers_retention_policy() {
     // Two blocks on, the same entry has expired on both, and a read takes the
     // dynamic path and re-settles.
     let control_two = control
-        .advance_bal(identified(HEIGHT + 2, two), one, &[])
+        .advance_bal(stub.exact(HEIGHT + 2, two), one, &[])
         .await
         .0;
-    let two_ticket = driver.deliver(anchored(identified(HEIGHT + 2, two), one));
+    let two_ticket = driver.deliver(anchored(stub.exact(HEIGHT + 2, two), one));
     settled(&driver.advance(two_ticket, &[]).await);
-    let lifecycle_two = driver.snapshot(identified(HEIGHT + 2, two)).hub;
+    let lifecycle_two = driver.snapshot(stub.exact(HEIGHT + 2, two)).hub;
     assert_eq!(
         control_two.snapshot_value(address(0x11), U256::from(1u64)),
         None,
@@ -1281,7 +1279,7 @@ async fn every_generation_of_a_modeled_chain_settles_identically_through_the_lif
     let reads: Vec<Key> = keys.iter().copied().collect();
     let blocks: Vec<ParityBlock> = (first..=last)
         .map(|number| ParityBlock {
-            anchor: identified(number, block_hash(number)),
+            anchor: ReadAnchor::identified(number, block_hash(number)),
             parent_hash: block_hash(number - 1),
             relevance: if number % 2 == 0 {
                 vec![address(0x11), address(0x22)]
@@ -1409,18 +1407,18 @@ async fn the_full_clone_control_agrees_with_the_lifecycle_transition() {
         bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
     );
     let control = ReadHubCache::new(&provider);
-    let _ = control.for_anchor(identified(HEIGHT, parent_hash));
+    let _ = control.for_anchor(stub.exact(HEIGHT, parent_hash));
     let driver = BalHeadDriver::new(&provider);
     ScriptedHead::at(&driver, HEIGHT, parent_hash, genesis())
         .settle(&[])
         .await;
 
-    let ticket = driver.deliver(anchored(identified(HEIGHT + 1, child_hash), parent_hash));
+    let ticket = driver.deliver(anchored(stub.exact(HEIGHT + 1, child_hash), parent_hash));
     let prepared = driver.prepare(ticket).await;
     let report = settled(&driver.apply(ticket, &prepared, &[address(0x11)]));
     let (control_hub, carry) = control
         .advance_bal(
-            identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x11)],
         )
@@ -1429,7 +1427,7 @@ async fn the_full_clone_control_agrees_with_the_lifecycle_transition() {
     assert_eq!(report.writes, carry.writes);
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 1, child_hash))
+            .snapshot(stub.exact(HEIGHT + 1, child_hash))
             .hub
             .snapshot_value(address(0x11), U256::from(1u64)),
         Some(U256::from(5u64))
@@ -1464,31 +1462,31 @@ async fn the_previous_anchor_answers_from_the_generation_that_was_installed_ther
     let driver = BalHeadDriver::new(&provider);
     let relevance = [address(0x11)];
 
-    let base = driver.deliver(anchored(identified(HEIGHT, h0), genesis()));
+    let base = driver.deliver(anchored(stub.exact(HEIGHT, h0), genesis()));
     settled(&driver.advance(base, &relevance).await);
-    let one = driver.deliver(anchored(identified(HEIGHT + 1, h1), h0));
+    let one = driver.deliver(anchored(stub.exact(HEIGHT + 1, h1), h0));
     settled(&driver.advance(one, &relevance).await);
     assert_eq!(
         driver.previous(),
-        Some(identified(HEIGHT, h0)),
+        Some(stub.exact(HEIGHT, h0)),
         "the first link puts the anchor it replaced in the window"
     );
-    let installed_handle = driver.snapshot(identified(HEIGHT + 1, h1)).hub;
+    let installed_handle = driver.snapshot(stub.exact(HEIGHT + 1, h1)).hub;
 
-    let two = driver.deliver(anchored(identified(HEIGHT + 2, h2), h1));
+    let two = driver.deliver(anchored(stub.exact(HEIGHT + 2, h2), h1));
     settled(&driver.advance(two, &relevance).await);
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT + 2, h2)),
+        Some(stub.exact(HEIGHT + 2, h2)),
         "the newest head is installed"
     );
     assert_eq!(
         driver.previous(),
-        Some(identified(HEIGHT + 1, h1)),
+        Some(stub.exact(HEIGHT + 1, h1)),
         "the window holds exactly ONE previous anchor"
     );
 
-    let view = driver.snapshot(identified(HEIGHT + 1, h1));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, h1));
     assert_eq!(
         view.readiness,
         HeadReadiness::Ready,
@@ -1529,7 +1527,7 @@ async fn an_anchor_two_below_the_installed_head_is_cold_and_never_served_from_th
         let slot = U256::from(u64::try_from(step).unwrap_or_default() + 1);
         let value = U256::from(u64::try_from(step).unwrap_or_default() + 100);
         stub.serve_bal_at(*hash, bal_bytes(&[(address(0x11), slot, value)]));
-        heads.push(identified(number, *hash));
+        heads.push(stub.exact(number, *hash));
     }
     let driver = BalHeadDriver::new(&provider);
     for (step, head) in heads.iter().take(4).enumerate() {
@@ -1571,7 +1569,7 @@ async fn an_anchor_two_below_the_installed_head_is_cold_and_never_served_from_th
     let gap_hash = B256::new([0xbf; 32]);
     stub.serve_bal_at(gap_hash, bal_bytes(&[]));
     let gap = driver.deliver(anchored(
-        identified(HEIGHT + 6, gap_hash),
+        stub.exact(HEIGHT + 6, gap_hash),
         B256::new([0xfe; 32]),
     ));
     let report = settled(&driver.advance(gap, &relevance).await);
@@ -1615,7 +1613,7 @@ async fn a_waiter_joins_the_in_flight_preparation_and_resolves_with_the_settled_
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(2u64))
         .await
@@ -1623,7 +1621,7 @@ async fn a_waiter_joins_the_in_flight_preparation_and_resolves_with_the_settled_
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let relevance = [address(0x11)];
     let mut prepare = Box::pin(driver.advance(ticket, &relevance));
@@ -1696,7 +1694,7 @@ async fn several_waiters_share_one_terminal_completion_and_one_fetch() {
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(
@@ -1759,7 +1757,7 @@ async fn dropping_one_waiter_never_strands_the_others_or_cancels_the_preparation
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(prepare
@@ -1810,7 +1808,7 @@ async fn a_settle_between_the_first_look_and_the_registration_resolves_the_wait_
         .settle(&[])
         .await;
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     assert_eq!(
         driver.snapshot(anchor).readiness,
@@ -1843,7 +1841,7 @@ async fn a_waiter_at_a_head_whose_list_cannot_be_read_resolves_with_the_real_col
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(2u64))
         .await
@@ -1851,7 +1849,7 @@ async fn a_waiter_at_a_head_whose_list_cannot_be_read_resolves_with_the_real_col
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(prepare
@@ -1893,7 +1891,7 @@ async fn a_waiter_at_a_lineage_refused_head_resolves_with_the_lineage_reason() {
     stub.serve_bal_at(B256::new([0xbb; 32]), bal_bytes(&[]));
     let driver = BalHeadDriver::new(&provider);
     let parent_ticket = driver.deliver(anchored(
-        identified(HEIGHT, B256::new([0xaa; 32])),
+        stub.exact(HEIGHT, B256::new([0xaa; 32])),
         genesis(),
     ));
     driver.advance(parent_ticket, &[]).await;
@@ -1901,7 +1899,7 @@ async fn a_waiter_at_a_lineage_refused_head_resolves_with_the_lineage_reason() {
     stub.defer_bal();
 
     // Two blocks above the installed generation: the lineage cannot carry.
-    let anchor = identified(HEIGHT + 2, B256::new([0xbb; 32]));
+    let anchor = stub.exact(HEIGHT + 2, B256::new([0xbb; 32]));
     let ticket = driver.deliver(anchored(anchor, B256::new([0xfe; 32])));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(prepare
@@ -1953,7 +1951,7 @@ async fn a_waiter_on_a_superseded_head_resolves_and_never_serves_the_abandoned_b
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, abandoned);
+    let anchor = stub.exact(HEIGHT + 1, abandoned);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let relevance = [address(0x33)];
     let mut prepare = Box::pin(driver.advance(ticket, &relevance));
@@ -1971,7 +1969,7 @@ async fn a_waiter_on_a_superseded_head_resolves_and_never_serves_the_abandoned_b
     // flight, and the abandoned fetch is released into a discarded apply.
     stub.release_bal();
     let replacement_ticket =
-        driver.deliver(anchored(identified(HEIGHT + 1, replacement), parent_hash));
+        driver.deliver(anchored(stub.exact(HEIGHT + 1, replacement), parent_hash));
     let view = tokio::time::timeout(Duration::from_secs(5), waiter)
         .await
         .expect("the supersession wakes the waiter");
@@ -1993,13 +1991,13 @@ async fn a_waiter_on_a_superseded_head_resolves_and_never_serves_the_abandoned_b
     let (outcome, replacement_view) = tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(
             driver.advance(replacement_ticket, &relevance),
-            driver.wait_for_head(identified(HEIGHT + 1, replacement))
+            driver.wait_for_head(stub.exact(HEIGHT + 1, replacement))
         )
     })
     .await
     .expect("the replacement settles");
     assert!(matches!(outcome, HeadOutcome::Settled(_)));
-    let settled_view = driver.snapshot(identified(HEIGHT + 1, replacement));
+    let settled_view = driver.snapshot(stub.exact(HEIGHT + 1, replacement));
     assert_eq!(settled_view.readiness, HeadReadiness::Ready);
     assert_eq!(
         settled_view
@@ -2029,7 +2027,7 @@ async fn a_waiter_across_a_gap_resolves_with_the_actual_current_reason() {
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, skipped);
+    let anchor = stub.exact(HEIGHT + 1, skipped);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(prepare
@@ -2042,7 +2040,7 @@ async fn a_waiter_across_a_gap_resolves_with_the_actual_current_reason() {
     // installed generation.
     stub.release_bal();
     let above_ticket = driver.deliver(anchored(
-        identified(HEIGHT + 2, above),
+        stub.exact(HEIGHT + 2, above),
         B256::new([0xfe; 32]),
     ));
     let view = tokio::time::timeout(Duration::from_secs(5), waiter)
@@ -2082,7 +2080,7 @@ async fn an_abandoned_prepare_claim_wakes_its_waiters_with_the_terminal_abandonm
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut cancelled = Box::pin(driver.advance(ticket, &[]));
     assert!(cancelled
@@ -2149,7 +2147,7 @@ async fn a_waiter_arriving_after_an_abandonment_resolves_immediately() {
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut cancelled = Box::pin(driver.advance(ticket, &[]));
     assert!(cancelled
@@ -2186,7 +2184,7 @@ async fn a_delivered_head_with_no_preparation_owner_resolves_abandoned_without_p
         .await;
     stub.clear();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
 
     // Delivered and never claimed: the terminal answer is immediate.
@@ -2237,7 +2235,7 @@ async fn a_later_explicit_retry_settles_the_head_for_new_callers_only() {
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut cancelled = Box::pin(driver.advance(ticket, &[]));
     assert!(cancelled
@@ -2308,7 +2306,7 @@ async fn an_abandoned_claims_waiter_resolves_abandoned_even_when_the_retry_settl
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(2u64))
         .await
@@ -2316,7 +2314,7 @@ async fn an_abandoned_claims_waiter_resolves_abandoned_even_when_the_retry_settl
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut cancelled = Box::pin(driver.advance(ticket, &[]));
     assert!(
@@ -2400,7 +2398,7 @@ async fn a_repeat_delivery_of_a_live_preparation_reuses_its_claim_attempt_and_wa
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut prepare = Box::pin(driver.advance(ticket, &[]));
     assert!(prepare
@@ -2473,7 +2471,7 @@ async fn a_cancelled_retry_is_terminal_for_its_own_waiters() {
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut first = Box::pin(driver.advance(ticket, &[]));
     assert!(first
@@ -2538,7 +2536,7 @@ async fn an_apply_settles_the_current_attempt_and_never_rewrites_an_earlier_aban
         .settle(&[])
         .await;
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let head = ScriptedHead::at(&driver, HEIGHT + 1, child_hash, parent_hash);
     // The out-of-band list, prepared before the fetch gate arms.
     stub.clear();
@@ -2626,7 +2624,7 @@ async fn a_supersession_of_a_retried_attempt_leaves_the_earlier_abandonment_term
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut first = Box::pin(driver.advance(ticket, &[]));
     assert!(first
@@ -2652,7 +2650,7 @@ async fn a_supersession_of_a_retried_attempt_leaves_the_earlier_abandonment_term
         .is_pending());
 
     // A same-height replacement supersedes the retried head.
-    driver.deliver(anchored(identified(HEIGHT + 1, replacement), parent_hash));
+    driver.deliver(anchored(stub.exact(HEIGHT + 1, replacement), parent_hash));
     let superseded_view = tokio::time::timeout(Duration::from_secs(5), superseded)
         .await
         .expect("the supersession wakes the current attempt's waiter");
@@ -2700,7 +2698,7 @@ async fn a_redelivery_with_a_different_parent_never_rewrites_an_abandoned_attemp
     stub.clear();
     stub.defer_bal();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     let mut cancelled = Box::pin(driver.advance(ticket, &[]));
     assert!(
@@ -2794,7 +2792,7 @@ async fn an_out_of_band_apply_settles_an_abandoned_heads_current_completion() {
         .settle(&[])
         .await;
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let head = ScriptedHead::at(&driver, HEIGHT + 1, child_hash, parent_hash);
     // The out-of-band list, prepared before the fetch gate arms.
     stub.clear();
@@ -2882,14 +2880,14 @@ async fn a_direct_prepare_settles_an_unclaimed_head_without_a_claim_attempt() {
         .settle(&[])
         .await;
     driver
-        .snapshot(identified(HEIGHT, parent_hash))
+        .snapshot(stub.exact(HEIGHT, parent_hash))
         .hub
         .read_storage(address(0x11), U256::from(1u64))
         .await
         .expect("the stub answers");
     stub.clear();
 
-    let anchor = identified(HEIGHT + 1, child_hash);
+    let anchor = stub.exact(HEIGHT + 1, child_hash);
     let ticket = driver.deliver(anchored(anchor, parent_hash));
     assert_eq!(
         driver.completion(anchor),
@@ -2951,26 +2949,26 @@ async fn a_distant_supersession_keeps_only_the_last_abandoned_anchor() {
     }
     let driver = BalHeadDriver::new(&provider);
 
-    let first = driver.deliver(anchored(identified(HEIGHT + 1, hashes[0]), genesis()));
-    let second = driver.deliver(anchored(identified(HEIGHT + 1, hashes[1]), genesis()));
+    let first = driver.deliver(anchored(stub.exact(HEIGHT + 1, hashes[0]), genesis()));
+    let second = driver.deliver(anchored(stub.exact(HEIGHT + 1, hashes[1]), genesis()));
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 1, hashes[0])).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 1, hashes[0])).readiness,
         HeadReadiness::Cold(HeadCold::Superseded),
         "the anchor the latest delivery replaced reports itself"
     );
-    let third = driver.deliver(anchored(identified(HEIGHT + 1, hashes[2]), genesis()));
+    let third = driver.deliver(anchored(stub.exact(HEIGHT + 1, hashes[2]), genesis()));
     assert_eq!(
         driver.stats().superseded,
         2,
         "each replacement of an unsettled head is counted"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 1, hashes[1])).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 1, hashes[1])).readiness,
         HeadReadiness::Cold(HeadCold::Superseded),
         "the newest replacement is the one the history names"
     );
     assert_eq!(
-        driver.snapshot(identified(HEIGHT + 1, hashes[0])).readiness,
+        driver.snapshot(stub.exact(HEIGHT + 1, hashes[0])).readiness,
         HeadReadiness::Cold(HeadCold::Undelivered),
         "the older abandoned anchor is outside the one-slot history"
     );
@@ -2981,14 +2979,14 @@ async fn a_distant_supersession_keeps_only_the_last_abandoned_anchor() {
     assert_eq!(
         driver.apply(first, &abandoned, &[]),
         HeadOutcome::Superseded {
-            head: identified(HEIGHT + 1, hashes[2]),
+            head: stub.exact(HEIGHT + 1, hashes[2]),
         }
     );
     let stale = driver.prepare(second).await;
     assert_eq!(
         driver.apply(second, &stale, &[]),
         HeadOutcome::Superseded {
-            head: identified(HEIGHT + 1, hashes[2]),
+            head: stub.exact(HEIGHT + 1, hashes[2]),
         }
     );
     assert_eq!(driver.stats().discarded, 2, "both refusals are counted");
@@ -2997,7 +2995,7 @@ async fn a_distant_supersession_keeps_only_the_last_abandoned_anchor() {
     settled(&driver.advance(third, &[]).await);
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT + 1, hashes[2])),
+        Some(stub.exact(HEIGHT + 1, hashes[2])),
         "the head the driver holds still settles"
     );
 }
@@ -3017,10 +3015,10 @@ async fn the_previous_window_reports_the_cold_readiness_its_generation_settled_w
     stub.serve_bal_at(heir_hash, bal_bytes(&[]));
     let driver = BalHeadDriver::new(&provider);
 
-    let base = driver.deliver(anchored(identified(HEIGHT, base_hash), genesis()));
+    let base = driver.deliver(anchored(stub.exact(HEIGHT, base_hash), genesis()));
     settled(&driver.advance(base, &[]).await);
 
-    let cold = identified(HEIGHT + 1, cold_hash);
+    let cold = stub.exact(HEIGHT + 1, cold_hash);
     let cold_ticket = driver.deliver(anchored(cold, base_hash));
     let report = settled(&driver.advance(cold_ticket, &[]).await);
     let CarryOutcome::Cold {
@@ -3043,7 +3041,7 @@ async fn the_previous_window_reports_the_cold_readiness_its_generation_settled_w
         "the settled cold head reports its own reason"
     );
 
-    let heir = driver.deliver(anchored(identified(HEIGHT + 2, heir_hash), cold_hash));
+    let heir = driver.deliver(anchored(stub.exact(HEIGHT + 2, heir_hash), cold_hash));
     settled(&driver.advance(heir, &[]).await);
     assert_eq!(
         driver.previous(),
@@ -3081,11 +3079,11 @@ async fn the_lifecycle_counters_count_exactly_the_transitions_it_ran() {
         stub.serve_bal_at(hash, bal_bytes(&[]));
     }
     let driver = BalHeadDriver::new(&provider);
-    let base = identified(HEIGHT, base_hash);
-    let skipped = identified(HEIGHT + 1, skipped_hash);
-    let sibling = identified(HEIGHT + 1, sibling_hash);
-    let heir = identified(HEIGHT + 2, heir_hash);
-    let next = identified(HEIGHT + 3, next_hash);
+    let base = stub.exact(HEIGHT, base_hash);
+    let skipped = stub.exact(HEIGHT + 1, skipped_hash);
+    let sibling = stub.exact(HEIGHT + 1, sibling_hash);
+    let heir = stub.exact(HEIGHT + 2, heir_hash);
+    let next = stub.exact(HEIGHT + 3, next_hash);
 
     // One delivery, one cold view, one settle (the first head is lineage-refused
     // and therefore settles cold), one cold view of that settled generation.
@@ -3319,7 +3317,7 @@ async fn an_unbounded_chain_reports_held_equal_to_live_at_every_head() {
     stub.serve_at(HEIGHT, address(0x11), first_slot, 1);
     stub.serve_bal_at(hashes[0], bal_bytes(&[]));
 
-    let base = identified(HEIGHT, hashes[0]);
+    let base = stub.exact(HEIGHT, hashes[0]);
     let base_ticket = driver.deliver(anchored(base, genesis()));
     let base_report = settled(&driver.advance(base_ticket, &[]).await);
     assert_eq!((base_report.held, base_report.live), (0, 0));
@@ -3340,7 +3338,7 @@ async fn an_unbounded_chain_reports_held_equal_to_live_at_every_head() {
             hashes[step],
             bal_bytes(&[(address(0x11), slot, U256::from(value))]),
         );
-        let anchor = identified(number, hashes[step]);
+        let anchor = stub.exact(number, hashes[step]);
         let ticket = driver.deliver(anchored(anchor, hashes[step - 1]));
         let report = settled(&driver.advance(ticket, &[address(0x11)]).await);
         let view = driver.snapshot(anchor);
@@ -3365,7 +3363,7 @@ async fn an_unbounded_chain_reports_held_equal_to_live_at_every_head() {
 
     // A settle that lands after a child sealed the generation stays in that
     // handle's late map: it is held and served, so both counts agree there too.
-    let sealed = driver.snapshot(identified(HEIGHT + 1, hashes[1])).hub;
+    let sealed = driver.snapshot(stub.exact(HEIGHT + 1, hashes[1])).hub;
     let late_slot = U256::from(77u64);
     stub.serve_at(HEIGHT + 1, address(0x22), late_slot, 5);
     let (held_before, live_before) = (sealed.snapshot_len(), sealed.live_len());
@@ -3405,10 +3403,10 @@ async fn repeated_reads_at_the_installed_head_share_one_handle_and_move_nothing(
         bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
     );
     let driver = BalHeadDriver::new(&provider);
-    let base = identified(HEIGHT, base_hash);
+    let base = stub.exact(HEIGHT, base_hash);
     let base_ticket = driver.deliver(anchored(base, genesis()));
     settled(&driver.advance(base_ticket, &[address(0x11)]).await);
-    let head = identified(HEIGHT + 1, head_hash);
+    let head = stub.exact(HEIGHT + 1, head_hash);
     let ticket = driver.deliver(anchored(head, base_hash));
     settled(&driver.advance(ticket, &[address(0x11)]).await);
     stub.clear();
@@ -3477,15 +3475,15 @@ async fn a_cold_read_at_an_undelivered_anchor_installs_and_evicts_nothing() {
         bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(5u64))]),
     );
     let driver = BalHeadDriver::new(&provider);
-    let base = identified(HEIGHT, base_hash);
+    let base = stub.exact(HEIGHT, base_hash);
     let base_ticket = driver.deliver(anchored(base, genesis()));
     settled(&driver.advance(base_ticket, &[address(0x11)]).await);
-    let head = identified(HEIGHT + 1, head_hash);
+    let head = stub.exact(HEIGHT + 1, head_hash);
     let ticket = driver.deliver(anchored(head, base_hash));
     settled(&driver.advance(ticket, &[address(0x11)]).await);
     let installed_handle = driver.snapshot(head).hub;
 
-    let stranger = identified(HEIGHT + 9, B256::new([0xee; 32]));
+    let stranger = stub.exact(HEIGHT + 9, B256::new([0xee; 32]));
     let view = driver.snapshot(stranger);
     assert_eq!(
         view.readiness,
@@ -3543,9 +3541,9 @@ async fn the_apply_captures_the_parent_handle_it_seals() {
     );
     let driver = BalHeadDriver::new(&provider);
     let relevance = [address(0x11)];
-    let base = identified(HEIGHT, h0);
-    let parent = identified(HEIGHT + 1, h1);
-    let child = identified(HEIGHT + 2, h2);
+    let base = stub.exact(HEIGHT, h0);
+    let parent = stub.exact(HEIGHT + 1, h1);
+    let child = stub.exact(HEIGHT + 2, h2);
 
     let base_ticket = driver.deliver(anchored(base, genesis()));
     settled(&driver.advance(base_ticket, &relevance).await);

@@ -764,7 +764,8 @@ fn run_sync_series_anchored(
             cold: latency_db(snapshot, latency, &counters),
             memo,
         };
-        let warm = WarmCodeCache::with_owner(Arc::clone(session), block, cold);
+        let warm =
+            WarmCodeCache::with_owner(Arc::clone(session), ReadAnchor::unresolved(block), cold);
         let mut evm: Evm<'static, BaseEvmTypes> = policy_evm(CacheDB::new(Db::new(warm)));
         let before = counters.snapshot();
         let started = Instant::now();
@@ -863,7 +864,7 @@ fn run_sync_series_warm_cache(
 ) -> Result<Vec<SyncRun>, String> {
     let counters = Arc::new(Counters::default());
     let cold = latency_db(snapshot, latency, &counters);
-    let warm = WarmCodeCache::with_owner(Arc::clone(inner), block, cold);
+    let warm = WarmCodeCache::with_owner(Arc::clone(inner), ReadAnchor::unresolved(block), cold);
     let mut evm: Evm<'static, BaseEvmTypes> = policy_evm(CacheDB::new(Db::new(warm)));
     let mut runs = Vec::with_capacity(frames.len());
     for frame in frames {
@@ -1507,7 +1508,7 @@ fn main() {
         let _guard = runtime.enter();
         prefetch_paths_into_memo(
             &provider,
-            prefetch_anchor,
+            ReadAnchor::unresolved(prefetch_anchor),
             paths(),
             &harness_layout,
             &facts,
@@ -1657,7 +1658,7 @@ fn main() {
         let _guard = runtime.enter();
         prefetch_paths_into_memo(
             &provider,
-            production_anchor,
+            ReadAnchor::unresolved(production_anchor),
             paths(),
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1762,7 +1763,7 @@ fn main() {
         let _guard = runtime.enter();
         prefetch_paths_into_memo(
             &provider,
-            shadow_anchor,
+            ReadAnchor::unresolved(shadow_anchor),
             paths(),
             &harness_layout,
             &facts,
@@ -1862,7 +1863,7 @@ fn main() {
             hot: &hot,
             hooks: None,
         },
-        learned_anchor,
+        ReadAnchor::unresolved(learned_anchor),
     );
     println!(
         "  the next anchor's plan: {} derived + {} learned = {} slot(s), one batch",
@@ -1884,7 +1885,7 @@ fn main() {
         let _guard = runtime.enter();
         prefetch_paths_into_memo(
             &provider,
-            learned_anchor,
+            ReadAnchor::unresolved(learned_anchor),
             paths(),
             &harness_layout,
             &facts,
@@ -1970,7 +1971,7 @@ fn main() {
             hot: &hot,
             hooks: None,
         },
-        stale_anchor,
+        ReadAnchor::unresolved(stale_anchor),
     );
     assert_eq!(
         stale_plan.learned, learned_plan.learned,
@@ -1984,7 +1985,7 @@ fn main() {
         let _guard = runtime.enter();
         prefetch_paths_into_memo(
             &stale_provider,
-            stale_anchor,
+            ReadAnchor::unresolved(stale_anchor),
             paths(),
             &harness_layout,
             &facts,
@@ -2045,7 +2046,7 @@ fn main() {
             hot: &hot,
             hooks: None,
         },
-        decayed_anchor,
+        ReadAnchor::unresolved(decayed_anchor),
     );
     println!(
         "  decay: at anchor {decayed_anchor} (window {HOT_SLOT_DECAY_BLOCKS} blocks) the learned complement is {} slot(s), the plan {} slot(s)",

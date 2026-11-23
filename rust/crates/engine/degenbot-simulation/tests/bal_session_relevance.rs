@@ -48,7 +48,7 @@ use degenbot_simulation::probe_support::scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::bal_bytes;
-use scripted_head::{address, genesis, identified, settled, ScriptedHead, SpawnQueue};
+use scripted_head::{address, genesis, settled, ScriptedHead, SpawnQueue};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 200;
@@ -245,7 +245,7 @@ async fn relevance_is_the_union_of_the_registered_paths_and_the_settlement_ident
         report.writes_skipped, 1,
         "the identity neither half names stays unknown"
     );
-    let view = driver.snapshot(identified(HEIGHT, hash));
+    let view = driver.snapshot(stub.exact(HEIGHT, hash));
     assert_eq!(
         view.hub.snapshot_value(pool_a, U256::from(1u64)),
         Some(U256::from(11u64)),
@@ -309,7 +309,7 @@ async fn a_path_registered_during_preparation_is_included_when_it_lands_before_t
     );
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT, hash))
+            .snapshot(stub.exact(HEIGHT, hash))
             .hub
             .snapshot_value(pool_a, slot),
         Some(U256::from(44u64)),
@@ -349,7 +349,7 @@ async fn a_path_registered_after_the_apply_seeds_from_the_next_head_and_its_cand
 
     // The candidate's read at that head takes the dynamic path and pays one
     // read: the unseeded identity is answered by the chain, not by the apply.
-    let first_view = driver.snapshot(identified(HEIGHT, first));
+    let first_view = driver.snapshot(stub.exact(HEIGHT, first));
     assert_eq!(
         first_view.hub.snapshot_value(pool_a, slot),
         None,
@@ -397,7 +397,7 @@ async fn a_path_registered_after_the_apply_seeds_from_the_next_head_and_its_cand
     assert_eq!(second_report.writes_skipped, 0, "nothing relevant unknown");
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT + 1, second))
+            .snapshot(stub.exact(HEIGHT + 1, second))
             .hub
             .snapshot_value(pool_a, slot),
         Some(U256::from(66u64)),

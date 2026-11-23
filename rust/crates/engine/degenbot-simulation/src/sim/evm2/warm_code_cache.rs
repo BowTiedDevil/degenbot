@@ -339,19 +339,22 @@ pub async fn select_dispatch_storage(
 }
 
 /// The cross-block persistent inner state — bytecode + account-existence
-/// maps, each entry tagged with its load block for per-entry TTL expiry.
-/// Same ownership shape as the original: held behind `Arc<RwLock<...>>` by
-/// the engine owner, cloned into each per-block wrapper value.
+/// maps, each entry tagged with the read anchor it was loaded at for per-entry
+/// TTL expiry and for the same-height reorg fence. Same ownership shape as the
+/// original: held behind `Arc<RwLock<...>>` by the engine owner, cloned into
+/// each per-block wrapper value.
 pub struct WarmCodeCacheInner {
-    /// `(loaded_block, AccountInfo)` per address. `None` (no-account) IS
+    /// `(loaded_anchor, AccountInfo)` per address. `None` (no-account) IS
     /// cached (existence-negative) — saves the cold read on the
     /// balanceOf-to-fresh-address case.
-    accounts: AddressHashMap<(u64, Option<AccountInfo>)>,
-    /// `(loaded_block, Bytecode)` per `code_hash` (immutable by hash).
-    bytecode: B256HashMap<(u64, Bytecode)>,
-    /// An entry loaded at `loaded_block` is a miss when
-    /// `block - loaded_block > ttl_blocks` (strictly greater — an entry
-    /// loaded THIS block is always fresh).
+    accounts: AddressHashMap<(ReadAnchor, Option<AccountInfo>)>,
+    /// `(loaded_anchor, Bytecode)` per `code_hash` (immutable by hash).
+    bytecode: B256HashMap<(ReadAnchor, Bytecode)>,
+    /// An entry loaded at `loaded` is a miss when the read anchor is more than
+    /// `ttl_blocks` above it (strictly greater — an entry loaded THIS block is
+    /// always fresh), or when both name the SAME height and the entry's block
+    /// hash is not the current anchor's (a same-height replacement, see
+    /// [`Self::is_fresh`]).
     ttl_blocks: u64,
     /// The session's per-anchor storage memo (the MUTABLE row this layer
     /// deliberately never caches cross-block): a block's sim fan-outs share
@@ -522,9 +525,34 @@ impl WarmCodeCacheInner {
         pipeline.arm(driver);
     }
 
-    /// Is an entry loaded at `loaded_block` still fresh at `block`?
-    fn is_fresh(&self, loaded_block: u64, block: u64) -> bool {
-        block.saturating_sub(loaded_block) <= self.ttl_blocks
+    /// Is an entry loaded at `loaded` still fresh at `anchor`?
+    ///
+    /// The entry's AGE is `anchor.number() - loaded.number()`, and a row loaded
+    /// at a LATER height has no age at all: a read that moves backward (a reorg
+    /// rewind, a lagging caller) must never reuse a row it read in the future it
+    /// moved back from, so a negative age is stale rather than clamped to zero.
+    ///
+    /// Within a non-negative age, two questions about the read position: the TTL
+    /// (`age <= ttl_blocks`, so the ordinary block advance reuses immutable
+    /// rows) and the same-height fence. An entry loaded at the SAME height is
+    /// served only when its block identity is the current anchor's too — two
+    /// identified anchors must name the same hash, and two unresolved
+    /// observations at one height (which claim no hash, so neither can contradict
+    /// the other) confirm by the height they both state. Any other pairing at one
+    /// height (an identified entry against an unresolved read, or two different
+    /// hashes) cannot confirm the identity, so it is a miss: a replaced block is
+    /// read from the node, never served the abandoned branch's row.
+    fn is_fresh(&self, loaded: ReadAnchor, anchor: ReadAnchor) -> bool {
+        let Some(age) = anchor.number().checked_sub(loaded.number()) else {
+            return false;
+        };
+        if age > self.ttl_blocks {
+            return false;
+        }
+        if age > 0 {
+            return true;
+        }
+        loaded.hash() == anchor.hash()
     }
 
     /// The storage memo for the read anchor `anchor` — the SAME memo for every
@@ -565,8 +593,9 @@ where
 {
     /// The cross-block persistent maps, shared via the engine owner's arc.
     cache: Arc<RwLock<WarmCodeCacheInner>>,
-    /// The block this cache view is for (drives per-entry TTL expiry).
-    block: u64,
+    /// The exact block this cache view reads at — the fan-out's read anchor,
+    /// which drives both the per-entry TTL and the same-height fence.
+    anchor: ReadAnchor,
     /// The per-block cold-miss fallback.
     db: Db,
 }
@@ -576,10 +605,17 @@ where
     Db: Database,
 {
     /// Build a per-block view over a shared inner cache + a per-block
-    /// fallback (`BotStateDb` over the RPC adapter in the target stack).
+    /// fallback (`BotStateDb` over the RPC adapter in the target stack), every
+    /// entry it loads tagged with `anchor`.
     #[must_use]
-    pub fn with_owner(cache: Arc<RwLock<WarmCodeCacheInner>>, block: u64, db: Db) -> Self {
-        Self { cache, block, db }
+    pub fn with_owner(cache: Arc<RwLock<WarmCodeCacheInner>>, anchor: ReadAnchor, db: Db) -> Self {
+        Self { cache, anchor, db }
+    }
+
+    /// The exact block this view reads at.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
     }
 
     /// The number of cold reads the fallback has served — the parity gate's
@@ -603,8 +639,8 @@ where
     fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
         {
             let guard = self.cache.read();
-            if let Some((loaded_block, info)) = guard.accounts.get(address) {
-                if guard.is_fresh(*loaded_block, self.block) {
+            if let Some((loaded, info)) = guard.accounts.get(address) {
+                if guard.is_fresh(*loaded, self.anchor) {
                     // Lab: the cross-block warm cache served a `CacheDB` miss
                     // (reuse signal — no underlying call happened).
                     sim_metrics::record_basic_warm_hit();
@@ -620,7 +656,7 @@ where
             .is_some_and(|i| i.code_hash != KECCAK256_EMPTY);
         if is_contract {
             let mut guard = self.cache.write();
-            guard.accounts.insert(*address, (self.block, info.clone()));
+            guard.accounts.insert(*address, (self.anchor, info.clone()));
         }
         Ok(info)
     }
@@ -631,8 +667,8 @@ where
     fn get_code_by_hash(&mut self, code_hash: &B256) -> Result<Bytecode, Self::Error> {
         {
             let guard = self.cache.read();
-            if let Some((loaded_block, code)) = guard.bytecode.get(code_hash) {
-                if guard.is_fresh(*loaded_block, self.block) {
+            if let Some((loaded, code)) = guard.bytecode.get(code_hash) {
+                if guard.is_fresh(*loaded, self.anchor) {
                     return Ok(code.clone());
                 }
             }
@@ -643,7 +679,7 @@ where
         let mut guard = self.cache.write();
         guard
             .bytecode
-            .insert(*code_hash, (self.block, code.clone()));
+            .insert(*code_hash, (self.anchor, code.clone()));
         Ok(code)
     }
 
@@ -674,6 +710,12 @@ mod tests {
     const CONTRACT: Address = Address::new([0xaa; 20]);
     const EOA: Address = Address::new([0xee; 20]);
 
+    /// A number-only read observation — the ingress anchor a caller that
+    /// resolved no header holds.
+    fn unresolved(number: u64) -> ReadAnchor {
+        ReadAnchor::unresolved(number)
+    }
+
     fn contract_info() -> AccountInfo {
         AccountInfo::default()
             .with_balance(U256::from(1u64))
@@ -684,6 +726,7 @@ mod tests {
     struct CountingDb {
         account: Option<AccountInfo>,
         account_calls: Cell<u64>,
+        code_calls: Cell<u64>,
         storage_calls: Cell<u64>,
     }
 
@@ -692,6 +735,7 @@ mod tests {
             Self {
                 account,
                 account_calls: Cell::new(0),
+                code_calls: Cell::new(0),
                 storage_calls: Cell::new(0),
             }
         }
@@ -704,6 +748,7 @@ mod tests {
             Ok(self.account.clone())
         }
         fn get_code_by_hash(&mut self, _code_hash: &B256) -> Result<Bytecode, Self::Error> {
+            self.code_calls.set(self.code_calls.get() + 1);
             Ok(Bytecode::default())
         }
         fn get_storage(&mut self, _address: &Address, _key: &Word) -> Result<Word, Self::Error> {
@@ -718,14 +763,20 @@ mod tests {
     #[test]
     fn contract_account_is_cached_across_wrappers() {
         let inner = WarmCodeCacheInner::shared_default();
-        let mut first =
-            WarmCodeCache::with_owner(inner.clone(), 100, CountingDb::new(Some(contract_info())));
+        let mut first = WarmCodeCache::with_owner(
+            inner.clone(),
+            unresolved(100),
+            CountingDb::new(Some(contract_info())),
+        );
         let info = first.get_account(&CONTRACT).unwrap();
         assert!(info.is_some());
         assert_eq!(first.inner().account_calls.get(), 1, "cold miss forwarded");
 
-        let mut second =
-            WarmCodeCache::with_owner(inner, 101, CountingDb::new(Some(contract_info())));
+        let mut second = WarmCodeCache::with_owner(
+            inner,
+            unresolved(101),
+            CountingDb::new(Some(contract_info())),
+        );
         let info = second.get_account(&CONTRACT).unwrap();
         assert!(info.is_some());
         assert_eq!(
@@ -738,10 +789,11 @@ mod tests {
     #[test]
     fn eoa_account_is_never_cached() {
         let inner = WarmCodeCacheInner::shared_default();
-        let mut first = WarmCodeCache::with_owner(inner.clone(), 100, CountingDb::new(None));
+        let mut first =
+            WarmCodeCache::with_owner(inner.clone(), unresolved(100), CountingDb::new(None));
         assert!(first.get_account(&EOA).unwrap().is_none());
 
-        let mut second = WarmCodeCache::with_owner(inner, 100, CountingDb::new(None));
+        let mut second = WarmCodeCache::with_owner(inner, unresolved(100), CountingDb::new(None));
         assert!(second.get_account(&EOA).unwrap().is_none());
         assert_eq!(
             second.inner().account_calls.get(),
@@ -753,7 +805,7 @@ mod tests {
     #[test]
     fn storage_always_forwards() {
         let inner = WarmCodeCacheInner::shared_default();
-        let mut cache = WarmCodeCache::with_owner(inner, 100, CountingDb::new(None));
+        let mut cache = WarmCodeCache::with_owner(inner, unresolved(100), CountingDb::new(None));
         for _ in 0..3 {
             cache.get_storage(&CONTRACT, &Word::from(8u64)).unwrap();
         }
@@ -1030,12 +1082,18 @@ mod tests {
     #[test]
     fn stale_entry_refreshes_past_the_ttl() {
         let inner = WarmCodeCacheInner::shared_with_ttl(10);
-        let mut first =
-            WarmCodeCache::with_owner(inner.clone(), 100, CountingDb::new(Some(contract_info())));
+        let mut first = WarmCodeCache::with_owner(
+            inner.clone(),
+            unresolved(100),
+            CountingDb::new(Some(contract_info())),
+        );
         first.get_account(&CONTRACT).unwrap();
 
-        let mut fresh =
-            WarmCodeCache::with_owner(inner.clone(), 110, CountingDb::new(Some(contract_info())));
+        let mut fresh = WarmCodeCache::with_owner(
+            inner.clone(),
+            unresolved(110),
+            CountingDb::new(Some(contract_info())),
+        );
         fresh.get_account(&CONTRACT).unwrap();
         assert_eq!(
             fresh.inner().account_calls.get(),
@@ -1043,13 +1101,167 @@ mod tests {
             "at the TTL boundary the entry is fresh"
         );
 
-        let mut stale =
-            WarmCodeCache::with_owner(inner, 111, CountingDb::new(Some(contract_info())));
+        let mut stale = WarmCodeCache::with_owner(
+            inner,
+            unresolved(111),
+            CountingDb::new(Some(contract_info())),
+        );
         stale.get_account(&CONTRACT).unwrap();
         assert_eq!(
             stale.inner().account_calls.get(),
             1,
             "past the TTL the entry re-fetches"
+        );
+    }
+
+    /// The red-first backward move: a row loaded at N + 1 is a FUTURE row at N,
+    /// and a rewound or lagging read must forward to the fallback rather than
+    /// reuse it. The age is a signed quantity — clamped to zero it would serve
+    /// the future row on every rewind.
+    #[test]
+    fn a_backward_move_never_serves_a_row_loaded_at_a_later_height() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let mut ahead = WarmCodeCache::with_owner(
+            inner.clone(),
+            unresolved(101),
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(ahead.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            ahead.inner().account_calls.get(),
+            1,
+            "the ahead read fetched"
+        );
+
+        let mut rewound = WarmCodeCache::with_owner(
+            inner,
+            unresolved(100),
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(rewound.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            rewound.inner().account_calls.get(),
+            1,
+            "a row loaded in the future the read moved back from is stale"
+        );
+    }
+
+    /// The same backward move at exact anchors: the future row's identity can
+    /// never confirm against an earlier anchor, and the read takes the fallback.
+    #[test]
+    fn an_identified_backward_move_never_serves_a_future_row() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let mut ahead = WarmCodeCache::with_owner(
+            inner.clone(),
+            ReadAnchor::identified(101, B256::new([0xa2; 32])),
+            CountingDb::new(Some(contract_info())),
+        );
+        ahead.get_account(&CONTRACT).unwrap();
+
+        let mut rewound = WarmCodeCache::with_owner(
+            inner,
+            ReadAnchor::identified(100, B256::new([0xa1; 32])),
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(rewound.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            rewound.inner().account_calls.get(),
+            1,
+            "the identified future row is stale at the earlier anchor"
+        );
+    }
+
+    /// The bytecode map carries the same fence as the account map: an immutable
+    /// code row loaded in the future is still not this read's row.
+    #[test]
+    fn a_backward_move_never_serves_bytecode_loaded_at_a_later_height() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let code_hash = B256::new([0xc0; 32]);
+        let mut ahead =
+            WarmCodeCache::with_owner(inner.clone(), unresolved(101), CountingDb::new(None));
+        ahead.get_code_by_hash(&code_hash).unwrap();
+        assert_eq!(ahead.inner().code_calls.get(), 1);
+
+        let mut rewound = WarmCodeCache::with_owner(inner, unresolved(100), CountingDb::new(None));
+        rewound.get_code_by_hash(&code_hash).unwrap();
+        assert_eq!(
+            rewound.inner().code_calls.get(),
+            1,
+            "future bytecode forwards after a backward move"
+        );
+    }
+
+    /// The red-first same-height replacement on the cross-block layer: a row
+    /// loaded at the abandoned block N is never served to a read pinned at the
+    /// replacement block N. The identity is the whole anchor, so the two
+    /// branches are two cache positions even though the height did not move —
+    /// while the ordinary block advance still reuses the row.
+    #[test]
+    fn a_same_height_replacement_is_never_served_the_abandoned_rows() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let abandoned = ReadAnchor::identified(100, B256::new([0xa1; 32]));
+        let replacement = ReadAnchor::identified(100, B256::new([0xb1; 32]));
+        let advanced = ReadAnchor::identified(101, B256::new([0xa2; 32]));
+
+        let mut first = WarmCodeCache::with_owner(
+            inner.clone(),
+            abandoned,
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(first.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            first.inner().account_calls.get(),
+            1,
+            "the cold read forwarded"
+        );
+
+        let mut replaced = WarmCodeCache::with_owner(
+            inner.clone(),
+            replacement,
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(replaced.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            replaced.inner().account_calls.get(),
+            1,
+            "the replacement block reads its own copy, never the abandoned row"
+        );
+
+        let mut next =
+            WarmCodeCache::with_owner(inner, advanced, CountingDb::new(Some(contract_info())));
+        assert!(next.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            next.inner().account_calls.get(),
+            0,
+            "the replacement row is fresh at the block above it"
+        );
+    }
+
+    /// An identified row cannot confirm against a number-only read at the same
+    /// height: the observation states no hash, so the layer re-reads rather
+    /// than assume the two name one block.
+    #[test]
+    fn an_identified_row_does_not_serve_a_number_only_read_at_its_height() {
+        let inner = WarmCodeCacheInner::shared_default();
+        let identified = ReadAnchor::identified(100, B256::new([0xa1; 32]));
+
+        let mut first = WarmCodeCache::with_owner(
+            inner.clone(),
+            identified,
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(first.get_account(&CONTRACT).unwrap().is_some());
+
+        let mut unresolved_read = WarmCodeCache::with_owner(
+            inner,
+            unresolved(100),
+            CountingDb::new(Some(contract_info())),
+        );
+        assert!(unresolved_read.get_account(&CONTRACT).unwrap().is_some());
+        assert_eq!(
+            unresolved_read.inner().account_calls.get(),
+            1,
+            "a number-only read at the same height forwards"
         );
     }
 }

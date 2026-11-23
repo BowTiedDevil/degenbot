@@ -73,6 +73,7 @@ use degenbot_simulation::sim::evm2::v4_black_box::{
     V4QuoterConfig, V4_POOL_MANAGER, V4_QUOTER,
 };
 use degenbot_simulation::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 
 // ─────────────────────────────────────────────────────────────────────────
 // The anchor + the census
@@ -213,7 +214,7 @@ async fn parity_census_black_box_v4_legs() {
     );
 
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, PIN))
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, ReadAnchor::unresolved(PIN)))
         .expect("a multi-threaded runtime is ambient");
     let cold_path = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
     let ext: ParityExt<'_> = CacheDB::new(Db::new(cold_path));

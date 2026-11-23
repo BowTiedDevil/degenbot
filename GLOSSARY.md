@@ -1570,6 +1570,10 @@ _Avoid_: block number as exact chain identity; "block lineage" for chain-parent 
 A chain-state read whose transport selector names the exact block hash and requires canonical membership. A hash-aware cache key without the same transport pin is not an Exact read.
 _Avoid_: height-addressed reads described as exact because their cache carries a hash.
 
+**Read anchor**:
+The block one simulation read position is pinned to, in one of two observed forms: identified (height plus the block's canonical hash, which every read requests by EIP-1898) or unresolved (height alone, an ingress observation that resolved no header). A memo, hub, prefetch batch, and warm-cache entry are all scoped to the whole anchor, so a replacement block at the same height is a different read position and never inherits the abandoned block's values.
+_Avoid_: calling a height a read anchor; an identified anchor whose reads still state a height.
+
 **Event-sourced chain state**:
 Deterministic protocol projections derived from validated canonical chain facts and replayable deltas. It does not imply full state snapshots per block or a generic event-sourcing framework.
 _Avoid_: equating event sourcing with cloned state or a storage framework.

@@ -68,8 +68,8 @@ fn other_slot() -> Word {
 }
 
 /// Install the scenario cache's first generation: cold, at `HEIGHT`.
-fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
-    cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
+fn start(stub: &ChainStub, cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
+    cache.for_anchor(stub.exact(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying no writes, so the retention clock
@@ -78,7 +78,7 @@ async fn advance(cache: &DeltaSnapshotCache, stub: &ChainStub, step: u8) -> Arc<
     stub.serve_bal_at(hash(step), modeled_chain::bal_bytes(&[]));
     let (hub, _) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + u64::from(step), hash(step)),
+            stub.exact(HEIGHT + u64::from(step), hash(step)),
             hash(step - 1),
             &[],
         )
@@ -219,7 +219,7 @@ async fn a_delta_view_hit_answers_from_the_generation_with_no_fallback_read() {
     let provider = stub.provider();
     stub.serve_at(HEIGHT, POOL, slot(), 7);
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(POOL, slot()).await.unwrap(),
         U256::from(7u64),
@@ -248,7 +248,7 @@ async fn a_delta_view_miss_settles_the_fallback_word_into_its_generation() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     let mut db =
         BotStateDb::new(&NO_SIM_ANCHOR, CountingDb::serving(42)).with_storage_view(hub.clone());
 
@@ -277,7 +277,7 @@ async fn a_legacy_memo_view_and_a_delta_view_answer_a_zero_word_alike() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     let memo = Arc::new(StorageMemo::new());
 
     let mut legacy =
@@ -317,7 +317,7 @@ async fn a_view_read_refreshes_recency_so_the_unread_entry_expires_first() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let first = start(&cache);
+    let first = start(&stub, &cache);
 
     // Both identities settle at HEIGHT through the view's put, so both are
     // stamped as used at block 100.
@@ -379,7 +379,7 @@ async fn an_expired_entry_is_a_fallback_miss_and_never_serves_the_stale_word() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(1));
-    let first = start(&cache);
+    let first = start(&stub, &cache);
 
     let mut settling =
         BotStateDb::new(&NO_SIM_ANCHOR, CountingDb::serving(5)).with_storage_view(first);
@@ -424,7 +424,7 @@ async fn a_settle_through_a_sealed_generation_stays_handle_local() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let parent = start(&cache);
+    let parent = start(&stub, &cache);
     let child = advance(&cache, &stub, 1).await;
 
     let mut late =
@@ -487,7 +487,7 @@ async fn a_fallback_error_propagates_unchanged_and_settles_nothing() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     let mut delta = BotStateDb::new(&NO_SIM_ANCHOR, FallbackDown).with_storage_view(hub.clone());
     let error = delta.get_storage(&POOL, &slot()).unwrap_err();
     assert_eq!(error.to_string(), "the fallback is down");
@@ -509,7 +509,7 @@ async fn a_forwarded_read_observes_and_a_view_hit_observes_nothing() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     let tally = DivergenceTallyHandle::new();
 
     let mut db = BotStateDb::new(&anchor, CountingDb::serving(42))
@@ -575,7 +575,7 @@ async fn both_real_fixtures_answer_every_written_identity_cold_through_the_view(
             // A COLD generation at this exact anchor: the view carries nothing,
             // so every read is the wrapper's fallback to take.
             let hub = cache.for_anchor(anchor);
-            let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, number))
+            let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, anchor))
                 .expect("a multi-threaded runtime is ambient");
             let (fallback, forwarded) = CountingChain::wrapping(blocking);
             let mut db = BotStateDb::new(&NO_SIM_ANCHOR, fallback).with_storage_view(hub.clone());

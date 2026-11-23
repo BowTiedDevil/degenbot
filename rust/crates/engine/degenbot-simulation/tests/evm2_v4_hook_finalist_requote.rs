@@ -64,6 +64,7 @@ use degenbot_simulation::sim::evm2::v4_black_box::{
     leg_state_slots, V4BlackBoxQuoter, V4Leg, V4_POOL_MANAGER,
 };
 use degenbot_simulation::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_substrate::{BotState, PoolTickCoverage, RegisterV4PoolParams, TickInfo};
 
 /// The archived block every read pins (the H1 census anchor).
@@ -216,7 +217,7 @@ async fn finalist_requote_stages_the_chain_figure() {
 
     // The anchor-pinned scratch the tier quotes over (the production shape).
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, PIN))
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, ReadAnchor::unresolved(PIN)))
         .expect("a multi-threaded runtime is ambient");
     let cold_path = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
     let ext: TierExt<'_> = CacheDB::new(Db::new(cold_path));

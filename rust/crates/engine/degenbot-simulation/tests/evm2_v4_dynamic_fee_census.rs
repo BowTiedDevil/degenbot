@@ -131,6 +131,7 @@ use degenbot_simulation::sim::evm2::v4_black_box::{
     V4_QUOTE_MAX_FEE_PER_GAS, V4_QUOTE_MAX_PRIORITY_FEE_PER_GAS,
 };
 use degenbot_simulation::sim::frame_replay::{FrameRpcCounter, ReplayableTx, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::RunVerdict;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -350,8 +351,9 @@ impl<'p> Anchor<'p> {
             base_fee_next: base_fee,
         };
         let counter = Arc::new(FrameRpcCounter::default());
-        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, number))
-            .expect("a multi-threaded runtime is ambient");
+        let blocking =
+            BlockingAsyncDb::new(AlloyAsyncDb::new(provider, ReadAnchor::unresolved(number)))
+                .expect("a multi-threaded runtime is ambient");
         let ext = CacheDB::new(Db::new(Evm2CountingFrameDb::new(
             blocking,
             Arc::clone(&counter),

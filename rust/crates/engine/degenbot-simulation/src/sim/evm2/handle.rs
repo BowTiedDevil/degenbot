@@ -38,6 +38,7 @@ use super::storage_view::StorageView;
 use super::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 use crate::sim::divergence_probe::DivergenceTallyHandle;
 use crate::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
+use crate::sim::storage_memo::ReadAnchor;
 use crate::sim::SimulationOverrideParams;
 
 /// The production engine spec (see the module doc).
@@ -66,7 +67,13 @@ pub struct Evm2BlockSimHandle<'a> {
     /// revm handle's same retention contract).
     provider: &'a AlloyProvider,
     base_fee_next: u128,
-    current_block: u64,
+    /// The exact block this handle's EVM reads at — the work item's solve
+    /// anchor. Every chain read of the layered DB (the cold-miss fallback, the
+    /// warm cache's freshness, the scratch stack) is pinned to it, so a block
+    /// replaced at the same height is a different read position, not the same
+    /// one. The block env's `number` and the scratch frame's next height are
+    /// number facts derived from it ([`ReadAnchor::number`]).
+    anchor: ReadAnchor,
     block_timestamp: u64,
     oracle: &'a dyn SimAnchorOracle,
     warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
@@ -98,7 +105,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
     pub fn build(
         provider: &'a AlloyProvider,
         base_fee_next: u128,
-        current_block: u64,
+        anchor: ReadAnchor,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
         oracle: &'a dyn SimAnchorOracle,
@@ -117,7 +124,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
         Self::build_with_view(
             provider,
             base_fee_next,
-            current_block,
+            anchor,
             block_timestamp,
             override_params,
             oracle,
@@ -138,7 +145,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
     pub fn build_with_view(
         provider: &'a AlloyProvider,
         base_fee_next: u128,
-        current_block: u64,
+        anchor: ReadAnchor,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
         oracle: &'a dyn SimAnchorOracle,
@@ -154,7 +161,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
             Self::build_inner(
                 provider,
                 base_fee_next,
-                current_block,
+                anchor,
                 block_timestamp,
                 override_params,
                 oracle,
@@ -174,7 +181,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
     fn build_inner(
         provider: &'a AlloyProvider,
         base_fee_next: u128,
-        current_block: u64,
+        anchor: ReadAnchor,
         block_timestamp: u64,
         override_params: &SimulationOverrideParams,
         oracle: &'a dyn SimAnchorOracle,
@@ -184,13 +191,14 @@ impl<'a> Evm2BlockSimHandle<'a> {
         divergence_tally: Option<&DivergenceTallyHandle>,
         jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Option<Self> {
-        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, current_block))?;
+        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, anchor))?;
         let bot_state_db = BotStateDb::new(oracle, blocking)
             .with_storage_view_opt(storage_view.as_ref())
             .with_divergence_probe(verify_divergence)
             .with_divergence_tally_opt(divergence_tally);
         let warm_code_cache =
-            WarmCodeCache::with_owner(Arc::clone(warm_cache), current_block, bot_state_db);
+            WarmCodeCache::with_owner(Arc::clone(warm_cache), anchor, bot_state_db);
+        let current_block = anchor.number();
         let mut cache_db = CacheDB::new(Db::new(warm_code_cache));
         // The same per-block-invariant overrides as the revm handle (owner
         // funding, executor code injection, warmup slots).
@@ -217,7 +225,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
             block_env,
             provider,
             base_fee_next,
-            current_block,
+            anchor,
             block_timestamp,
             oracle,
             jit,
@@ -227,6 +235,12 @@ impl<'a> Evm2BlockSimHandle<'a> {
             divergence_tally: divergence_tally.cloned(),
             scratch: None,
         })
+    }
+
+    /// The exact block this handle reads at.
+    #[must_use]
+    pub const fn anchor(&self) -> ReadAnchor {
+        self.anchor
     }
 
     /// Open an [`Evm2SimSession`] over this block's shared EVM — the
@@ -256,33 +270,32 @@ impl<'a> Evm2BlockSimHandle<'a> {
     pub fn scratch_evm(&mut self) -> Option<&mut Evm2ScratchEvm<Evm2ScratchDb<'a>>> {
         if self.scratch.is_none() {
             let counter = Arc::new(FrameRpcCounter::default());
-            self.scratch =
-                BlockingAsyncDb::new(AlloyAsyncDb::new(self.provider, self.current_block)).map(
-                    |blocking| {
-                        let bot_state_db = BotStateDb::new(self.oracle, blocking)
-                            .with_storage_view_opt(self.storage_view.as_ref())
-                            .with_divergence_probe(self.verify_divergence)
-                            .with_divergence_tally_opt(self.divergence_tally.as_ref());
-                        let counted_cold_path =
-                            Evm2CountingFrameDb::new(bot_state_db, Arc::clone(&counter));
-                        let warm_code_cache = WarmCodeCache::with_owner(
-                            Arc::clone(&self.warm_cache),
-                            self.current_block,
-                            counted_cold_path,
-                        );
-                        let ext = CacheDB::new(Db::new(warm_code_cache));
-                        Evm2ScratchEvm::with_counter(
-                            ext,
-                            ScratchBlock {
-                                number: self.current_block.saturating_add(1),
-                                timestamp: self.block_timestamp,
-                                base_fee_next: self.base_fee_next,
-                            },
-                            counter,
-                        )
-                        .with_jit(self.jit.clone())
-                    },
-                );
+            self.scratch = BlockingAsyncDb::new(AlloyAsyncDb::new(self.provider, self.anchor)).map(
+                |blocking| {
+                    let bot_state_db = BotStateDb::new(self.oracle, blocking)
+                        .with_storage_view_opt(self.storage_view.as_ref())
+                        .with_divergence_probe(self.verify_divergence)
+                        .with_divergence_tally_opt(self.divergence_tally.as_ref());
+                    let counted_cold_path =
+                        Evm2CountingFrameDb::new(bot_state_db, Arc::clone(&counter));
+                    let warm_code_cache = WarmCodeCache::with_owner(
+                        Arc::clone(&self.warm_cache),
+                        self.anchor,
+                        counted_cold_path,
+                    );
+                    let ext = CacheDB::new(Db::new(warm_code_cache));
+                    Evm2ScratchEvm::with_counter(
+                        ext,
+                        ScratchBlock {
+                            number: self.anchor.number().saturating_add(1),
+                            timestamp: self.block_timestamp,
+                            base_fee_next: self.base_fee_next,
+                        },
+                        counter,
+                    )
+                    .with_jit(self.jit.clone())
+                },
+            );
         }
         self.scratch.as_mut()
     }

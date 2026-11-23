@@ -69,6 +69,7 @@ use degenbot_simulation::sim::frame_replay::ScratchBlock;
 use degenbot_simulation::sim::prefetch::{
     prefetch_paths_into_memo, FamilySlotLayout, LearnedSets, PrefetchFacts,
 };
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::{HotSlotStore, StorageMemo};
 use degenbot_substrate::NO_SIM_ANCHOR;
 
@@ -202,14 +203,16 @@ fn scratch<'a>(
     warm: &Arc<parking_lot::RwLock<WarmCodeCacheInner>>,
     reads: Arc<Mutex<Vec<(Address, U256)>>>,
 ) -> Evm2ScratchEvm<ScratchExt<'a>> {
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, anchor))
-        .expect("a multi-threaded runtime is ambient");
+    let blocking =
+        BlockingAsyncDb::new(AlloyAsyncDb::new(provider, ReadAnchor::unresolved(anchor)))
+            .expect("a multi-threaded runtime is ambient");
     let counting = CountingDb {
         inner: blocking,
         reads,
     };
     let memo_db = BotStateDb::new(&NO_SIM_ANCHOR, counting).with_storage_memo(memo);
-    let warm_cache = WarmCodeCache::with_owner(Arc::clone(warm), anchor, memo_db);
+    let warm_cache =
+        WarmCodeCache::with_owner(Arc::clone(warm), ReadAnchor::unresolved(anchor), memo_db);
     Evm2ScratchEvm::new(CacheDB::new(Db::new(warm_cache)), *block)
 }
 
@@ -425,7 +428,7 @@ async fn hook_slots_warm_the_second_quote() {
         let next_memo = Arc::new(StorageMemo::new());
         let report = prefetch_paths_into_memo(
             &provider,
-            NEXT,
+            ReadAnchor::unresolved(NEXT),
             std::slice::from_ref(&path),
             &FamilySlotLayout::PRODUCTION,
             &facts,

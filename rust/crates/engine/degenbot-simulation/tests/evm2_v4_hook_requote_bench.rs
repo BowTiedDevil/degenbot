@@ -86,6 +86,7 @@ use degenbot_simulation::sim::evm2::v4_black_box::{
 };
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 use degenbot_simulation::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::StorageMemo;
 
 /// The archived block every read pins (the H1 census anchor).
@@ -265,10 +266,14 @@ fn quote_leg_shipped(
     runner: Option<FrameInterpreterRunner>,
 ) -> (Option<U256>, u64) {
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, anchor.block))
-        .expect("a multi-threaded runtime is ambient on the blocking pool");
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+        provider,
+        ReadAnchor::unresolved(anchor.block),
+    ))
+    .expect("a multi-threaded runtime is ambient on the blocking pool");
     let cold = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
-    let warm_db = WarmCodeCache::with_owner(Arc::clone(warm), anchor.block, cold);
+    let warm_db =
+        WarmCodeCache::with_owner(Arc::clone(warm), ReadAnchor::unresolved(anchor.block), cold);
     let ext: TierExt<'_> = CacheDB::new(Db::new(warm_db));
     let mut scratch =
         Evm2ScratchEvm::with_counter(ext, scratch_block(anchor), Arc::clone(&counter))
@@ -295,11 +300,18 @@ fn quote_leg_shipped_memo(
     runner: Option<FrameInterpreterRunner>,
 ) -> (Option<U256>, u64) {
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, anchor.block))
-        .expect("a multi-threaded runtime is ambient on the blocking pool");
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+        provider,
+        ReadAnchor::unresolved(anchor.block),
+    ))
+    .expect("a multi-threaded runtime is ambient on the blocking pool");
     let cold = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
     let memoized = MemoizedStorage::new(cold, Arc::clone(memo));
-    let warm_db = WarmCodeCache::with_owner(Arc::clone(warm), anchor.block, memoized);
+    let warm_db = WarmCodeCache::with_owner(
+        Arc::clone(warm),
+        ReadAnchor::unresolved(anchor.block),
+        memoized,
+    );
     let mut ext: MemoExt<'_> = CacheDB::new(Db::new(warm_db));
     // The production seam seeds the quote frame's null caller (see
     // `quote_leg_at_anchor`): an immutable row that must not cost an RPC.
@@ -368,10 +380,14 @@ fn setup_pools(
     anchor: Anchor,
 ) -> (Vec<Pool>, usize) {
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking =
-        BlockingAsyncDb::new(AlloyAsyncDb::new(provider, anchor.block)).expect("runtime");
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+        provider,
+        ReadAnchor::unresolved(anchor.block),
+    ))
+    .expect("runtime");
     let cold = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
-    let warm_db = WarmCodeCache::with_owner(Arc::clone(warm), anchor.block, cold);
+    let warm_db =
+        WarmCodeCache::with_owner(Arc::clone(warm), ReadAnchor::unresolved(anchor.block), cold);
     let ext: TierExt<'_> = CacheDB::new(Db::new(warm_db));
     let mut setup = Evm2ScratchEvm::with_counter(ext, scratch_block(anchor), Arc::clone(&counter));
 
@@ -482,10 +498,17 @@ fn burst_per_anchor_scratch(
     rt.block_on(async move {
         tokio::task::spawn_blocking(move || {
             let counter = Arc::new(FrameRpcCounter::default());
-            let blocking =
-                BlockingAsyncDb::new(AlloyAsyncDb::new(&provider, anchor.block)).expect("runtime");
+            let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+                &provider,
+                ReadAnchor::unresolved(anchor.block),
+            ))
+            .expect("runtime");
             let cold = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
-            let warm_db = WarmCodeCache::with_owner(Arc::clone(&warm), anchor.block, cold);
+            let warm_db = WarmCodeCache::with_owner(
+                Arc::clone(&warm),
+                ReadAnchor::unresolved(anchor.block),
+                cold,
+            );
             let ext: TierExt<'_> = CacheDB::new(Db::new(warm_db));
             let mut scratch =
                 Evm2ScratchEvm::with_counter(ext, scratch_block(anchor), Arc::clone(&counter))

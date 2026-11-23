@@ -1071,7 +1071,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
     let mut handle = BlockSimHandle::build(
         &alloy_provider,
         base_fee_next.max(1),
-        pin,
+        degenbot_simulation::sim::ReadAnchor::unresolved(pin),
         block.header.timestamp,
         &override_params,
         &anchor,
@@ -1216,7 +1216,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
     let mut handle = BlockSimHandle::build(
         &alloy_provider,
         u128::from(block.header.base_fee_per_gas.unwrap_or(0)).max(1),
-        pin.saturating_sub(1),
+        degenbot_simulation::sim::ReadAnchor::unresolved(pin.saturating_sub(1)),
         block.header.timestamp,
         &override_params,
         &anchor,

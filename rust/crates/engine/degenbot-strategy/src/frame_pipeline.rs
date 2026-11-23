@@ -88,6 +88,7 @@ use degenbot_simulation::sim::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
     V4PoolDescriptor, V4PoolSet,
 };
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::{RunVerdict, SimulationOverrideParams};
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
@@ -548,9 +549,9 @@ impl FrameArtifacts {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Build the per-block frame-replay handle pinning `head` under the boot-owned
-/// execution deployment: the scratch
-/// stack reads `BlockId::Number(head)` and its frames run in the NEXT
-/// block's env. State overrides are the ZERO set — a foreign frame must
+/// execution deployment: the scratch stack reads the head's own exact anchor
+/// (the hash of the header this fetch already returned, so no second identity
+/// read is paid) and its frames run in the NEXT block's env. State overrides are the ZERO set — a foreign frame must
 /// execute against chain state, not the strategy's simulated funding.
 /// `oracle` is the sim DB's membership/observation view — the boot
 /// [`RouteRegistry`](degenbot_substrate::RouteRegistry) (the driver
@@ -587,7 +588,7 @@ pub async fn build_block_handle<'a>(
     Evm2BlockSimHandle::build(
         provider,
         base_fee.saturating_mul(12) / 10,
-        head,
+        ReadAnchor::identified(head, block.header.hash),
         timestamp,
         &override_params,
         oracle,

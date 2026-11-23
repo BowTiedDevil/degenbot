@@ -107,6 +107,7 @@ use degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb;
 use degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb;
 use degenbot_simulation::sim::evm2::frame_replay::{Evm2CountingFrameDb, Evm2ScratchEvm};
 use degenbot_simulation::sim::frame_replay::{FrameRpcCounter, ReplayableTx, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::RunVerdict;
 use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -685,7 +686,7 @@ fn make_scratch(
     block: ScratchBlock,
 ) -> Option<(Evm2ScratchEvm<BenchExt<'_>>, Arc<FrameRpcCounter>)> {
     let counter = Arc::new(FrameRpcCounter::default());
-    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, PIN))?;
+    let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, ReadAnchor::unresolved(PIN)))?;
     let cold_path = Evm2CountingFrameDb::new(blocking, Arc::clone(&counter));
     let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(cold_path));
     Some((

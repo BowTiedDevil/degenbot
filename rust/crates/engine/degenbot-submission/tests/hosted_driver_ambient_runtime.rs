@@ -58,7 +58,10 @@ fn offline_provider() -> AlloyProvider {
 #[tokio::test]
 async fn current_thread_runtime_captures_no_blocking_db() {
     let provider = offline_provider();
-    let db = AlloyAsyncDb::new(&provider, READ_BLOCK);
+    let db = AlloyAsyncDb::new(
+        &provider,
+        degenbot_simulation::sim::ReadAnchor::unresolved(READ_BLOCK),
+    );
     assert!(
         BlockingAsyncDb::new(db).is_none(),
         "a current-thread runtime must not yield a blocking cold-miss adapter"
@@ -82,7 +85,10 @@ async fn hosted_driver_builds_the_blocking_db() {
         Box::pin(async move {
             // The exact `Evm2BlockSimHandle::build_inner` construction contract.
             let provider = offline_provider();
-            let db = AlloyAsyncDb::new(&provider, READ_BLOCK);
+            let db = AlloyAsyncDb::new(
+                &provider,
+                degenbot_simulation::sim::ReadAnchor::unresolved(READ_BLOCK),
+            );
             // The layer-read contract: the adapter's reads block on the
             // captured handle, which must be reachable via `block_in_place`
             // from the driver's runtime context.

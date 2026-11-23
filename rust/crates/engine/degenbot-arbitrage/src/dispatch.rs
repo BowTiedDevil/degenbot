@@ -1002,7 +1002,7 @@ fn simulate_leaf(
                         } else {
                             Some(degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
                         ctx.block.provider,
-                        sim_block,
+                        read_anchor,
                         candidates.iter().map(|c| &c.path_info),
                         &degenbot_simulation::sim::prefetch::FamilySlotLayout::PRODUCTION,
                         // The deployment declares its own settlement identities (the
@@ -1067,7 +1067,7 @@ fn simulate_leaf(
                     match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build_with_view(
                         ctx.block.provider,
                         ctx.block.base_fee_next,
-                        sim_block,
+                        read_anchor,
                         ctx.block.block_timestamp,
                         &override_params,
                         &anchor,

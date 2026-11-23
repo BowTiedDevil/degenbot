@@ -47,6 +47,45 @@ fn address(tag: u8) -> Address {
     Address::new([tag; 20])
 }
 
+/// The scripted chain refuses a pin it cannot identify. An unregistered hash is
+/// a NODE-level failure, never the stub's default word, so a read at an
+/// abandoned or unknown block cannot be answered from whatever this stub holds
+/// at some height; a registered exact pin and an unresolved height read still
+/// answer exactly as before.
+#[tokio::test]
+async fn an_unregistered_pin_is_refused_and_registered_identities_still_answer() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let slot = U256::from(1u64);
+    stub.serve_at(HEIGHT, address(0x11), slot, 7);
+    let cache = DeltaSnapshotCache::new(&provider);
+
+    let known = cache.for_anchor(stub.exact(HEIGHT, B256::new([0xa1; 32])));
+    assert_eq!(
+        known.read_storage(address(0x11), slot).await.unwrap(),
+        U256::from(7u64),
+        "a registered exact pin resolves to its height's word"
+    );
+
+    let unresolved = cache.for_anchor(ReadAnchor::unresolved(HEIGHT));
+    assert_eq!(
+        unresolved.read_storage(address(0x11), slot).await.unwrap(),
+        U256::from(7u64),
+        "an unresolved height read is unchanged"
+    );
+
+    let unknown = cache.for_anchor(ReadAnchor::identified(HEIGHT, B256::new([0xee; 32])));
+    assert!(
+        unknown.read_storage(address(0x11), slot).await.is_err(),
+        "an unidentifiable hash must be refused, never answered with a default word"
+    );
+    assert_eq!(
+        unknown.snapshot_len(),
+        0,
+        "nothing settled for the refused identity"
+    );
+}
+
 /// The delta child resolves its own final writes before ancestors, carries the
 /// parent's settled words through the chain, and settles its own dynamic
 /// reads — while the parent stays immutable and the child's own map holds
@@ -66,7 +105,7 @@ async fn delta_child_resolves_its_own_writes_before_ancestors_and_keeps_parents_
     );
     let cache = DeltaSnapshotCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64)).await;
     let y = parent.read_storage(address(0x11), U256::from(2u64)).await;
     assert_eq!(x.unwrap(), U256::from(1u64));
@@ -75,7 +114,7 @@ async fn delta_child_resolves_its_own_writes_before_ancestors_and_keeps_parents_
 
     let (child, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x11)],
         )
@@ -157,14 +196,14 @@ async fn final_write_relevance_matches_the_carry_policy() {
         ]),
     );
     let cache = DeltaSnapshotCache::new(&provider);
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64)).await;
     x.unwrap();
     stub.clear();
 
     let (child, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x22)],
         )
@@ -217,27 +256,19 @@ async fn same_anchor_advance_is_idempotent_and_repeats_no_bal_work() {
         bal_bytes(&[(address(0x11), U256::from(1u64), U256::from(3u64))]),
     );
     let cache = DeltaSnapshotCache::new(&provider);
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64)).await;
     x.unwrap();
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert_eq!(report.outcome, CarryOutcome::Carried { carried_values: 1 });
     assert_eq!(stub.bal_requests(), 1, "one BAL fetch");
 
     let (again, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert!(
         Arc::ptr_eq(&child, &again),
@@ -253,7 +284,7 @@ async fn same_anchor_advance_is_idempotent_and_repeats_no_bal_work() {
         "the idempotent call repeated no BAL work"
     );
     assert_eq!(child.snapshot_len(), 1, "the snapshot is unchanged");
-    let via_for_anchor = cache.for_anchor(ReadAnchor::identified(HEIGHT + 1, child_hash));
+    let via_for_anchor = cache.for_anchor(stub.exact(HEIGHT + 1, child_hash));
     assert!(Arc::ptr_eq(&child, &via_for_anchor));
     let x = child.read_storage(address(0x11), U256::from(1u64)).await;
     assert_eq!(x.unwrap(), U256::from(3u64));
@@ -275,17 +306,13 @@ async fn parent_and_child_stay_independent_after_the_transition() {
     stub.serve_bal_at(child_hash, bal_bytes(&[]));
     let cache = DeltaSnapshotCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64)).await;
     x.unwrap();
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert_eq!(report.outcome, CarryOutcome::Carried { carried_values: 1 });
 
@@ -317,7 +344,7 @@ async fn parent_and_child_stay_independent_after_the_transition() {
     );
 
     // A replaced generation's values never travel either.
-    let replacement = cache.for_anchor(ReadAnchor::identified(HEIGHT + 2, B256::new([0xcc; 32])));
+    let replacement = cache.for_anchor(stub.exact(HEIGHT + 2, B256::new([0xcc; 32])));
     assert_eq!(replacement.snapshot_len(), 0, "the replacement starts cold");
     assert_eq!(
         child.delta_len(),
@@ -512,8 +539,8 @@ async fn cold_chain_case(skip: ColdSkip) {
     let delta = DeltaSnapshotCache::new(&provider);
 
     // A settles x, y, z on both representations.
-    let control_a = control.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
-    let delta_a = delta.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
+    let control_a = control.for_anchor(stub.exact(HEIGHT, hashes[0]));
+    let delta_a = delta.for_anchor(stub.exact(HEIGHT, hashes[0]));
     for slot in [1u64, 2, 9] {
         assert_dual_read(&control_a, &delta_a, address(0x11), U256::from(slot)).await;
     }
@@ -521,18 +548,10 @@ async fn cold_chain_case(skip: ColdSkip) {
 
     // B's list is unreadable: cold on both, and only B's own settles live there.
     let (control_b, control_report) = control
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, hashes[1]),
-            hashes[0],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, hashes[1]), hashes[0], &[])
         .await;
     let (delta_b, delta_report) = delta
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, hashes[1]),
-            hashes[0],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, hashes[1]), hashes[0], &[])
         .await;
     stub.set_bal_unsupported(false);
     stub.set_bal_null(false);
@@ -549,18 +568,10 @@ async fn cold_chain_case(skip: ColdSkip) {
 
     // C carries ONLY what B settled (x and y): z never resurrects A's 3.
     let (control_c, control_report) = control
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 2, hashes[2]),
-            hashes[1],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 2, hashes[2]), hashes[1], &[])
         .await;
     let (delta_c, delta_report) = delta
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 2, hashes[2]),
-            hashes[1],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 2, hashes[2]), hashes[1], &[])
         .await;
     assert_reports_match(&control_report, &delta_report);
     assert_eq!(
@@ -609,8 +620,8 @@ async fn a_zero_write_list_advances_and_keeps_every_value_on_both_representation
     stub.serve_bal_at(child_hash, bal_bytes(&[]));
     let control = ReadHubCache::new(&provider);
     let delta = DeltaSnapshotCache::new(&provider);
-    let control_parent = control.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
-    let delta_parent = delta.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let control_parent = control.for_anchor(stub.exact(HEIGHT, parent_hash));
+    let delta_parent = delta.for_anchor(stub.exact(HEIGHT, parent_hash));
     assert_dual_read(
         &control_parent,
         &delta_parent,
@@ -621,18 +632,10 @@ async fn a_zero_write_list_advances_and_keeps_every_value_on_both_representation
     stub.clear();
 
     let (control_child, control_report) = control
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     let (delta_child, delta_report) = delta
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert_reports_match(&control_report, &delta_report);
     assert_eq!(
@@ -731,8 +734,8 @@ async fn refused_lineage_starts_cold_children_on_both_representations() {
     // The numbers line up; the supplied parent hash does not.
     assert_refused_link(
         &stub,
-        ReadAnchor::identified(HEIGHT, parent_hash),
-        ReadAnchor::identified(HEIGHT + 1, child_hash),
+        stub.exact(HEIGHT, parent_hash),
+        stub.exact(HEIGHT + 1, child_hash),
         B256::new([0xcc; 32]),
         CarryRefusal::ParentHashMismatch,
     )
@@ -740,8 +743,8 @@ async fn refused_lineage_starts_cold_children_on_both_representations() {
     // A gap: the child stands two blocks above the installed parent.
     assert_refused_link(
         &stub,
-        ReadAnchor::identified(HEIGHT, parent_hash),
-        ReadAnchor::identified(HEIGHT + 2, B256::new([0xee; 32])),
+        stub.exact(HEIGHT, parent_hash),
+        stub.exact(HEIGHT + 2, B256::new([0xee; 32])),
         parent_hash,
         CarryRefusal::NotConsecutive,
     )
@@ -750,7 +753,7 @@ async fn refused_lineage_starts_cold_children_on_both_representations() {
     assert_refused_link(
         &stub,
         ReadAnchor::unresolved(HEIGHT),
-        ReadAnchor::identified(HEIGHT + 1, B256::new([0xdd; 32])),
+        stub.exact(HEIGHT + 1, B256::new([0xdd; 32])),
         parent_hash,
         CarryRefusal::ParentHashUnknown,
     )
@@ -759,8 +762,8 @@ async fn refused_lineage_starts_cold_children_on_both_representations() {
     // the child still names the abandoned block.
     assert_refused_link(
         &stub,
-        ReadAnchor::identified(HEIGHT, B256::new([0xf1; 32])),
-        ReadAnchor::identified(HEIGHT + 1, B256::new([0xf2; 32])),
+        stub.exact(HEIGHT, B256::new([0xf1; 32])),
+        stub.exact(HEIGHT + 1, B256::new([0xf2; 32])),
         parent_hash,
         CarryRefusal::ParentHashMismatch,
     )
@@ -780,8 +783,8 @@ async fn compaction_case(max_depth: u32) {
 
     // Generation 0 settles x; every later generation writes one fresh slot.
     stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
-    let mut control_head = control.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
-    let mut delta_head = delta.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
+    let mut control_head = control.for_anchor(stub.exact(HEIGHT, hashes[0]));
+    let mut delta_head = delta.for_anchor(stub.exact(HEIGHT, hashes[0]));
     assert_dual_read(&control_head, &delta_head, address(0x11), U256::from(1u64)).await;
     let first_reader = Arc::clone(&delta_head);
     let mut saw_compaction = false;
@@ -795,7 +798,7 @@ async fn compaction_case(max_depth: u32) {
             hashes[index],
             bal_bytes(&[(address(0x11), slot, U256::from(value))]),
         );
-        let anchor = ReadAnchor::identified(HEIGHT + step, hashes[index]);
+        let anchor = stub.exact(HEIGHT + step, hashes[index]);
         let (next_control, control_report) = control
             .advance_bal(anchor, hashes[index - 1], &[address(0x11)])
             .await;
@@ -872,7 +875,7 @@ async fn the_installed_generation_read_clones_the_handle_and_installs_nothing() 
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_at(HEIGHT, address(0x11), U256::from(1u64), 1);
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let cache = DeltaSnapshotCache::new(&provider);
 
     assert!(
@@ -907,7 +910,7 @@ async fn the_installed_generation_read_clones_the_handle_and_installs_nothing() 
 
     // An anchor the cache does not hold answers None and touches nothing: the
     // installed generation keeps its anchor, its handle and its values.
-    let other = ReadAnchor::identified(HEIGHT + 1, B256::new([0xbb; 32]));
+    let other = stub.exact(HEIGHT + 1, B256::new([0xbb; 32]));
     assert!(
         cache.installed_hub(other).is_none(),
         "an anchor the cache does not hold is not installed by being read"

@@ -33,6 +33,7 @@ use degenbot_simulation::sim::evm2::delta_snapshot::{
     BalHeadDriver, DeltaReport, HeadCold, HeadCompletion, HeadOutcome, HeadReadiness,
 };
 use degenbot_simulation::sim::evm2::read_hub::{CarryOutcome, CarryRefusal, PreparedBal};
+use degenbot_simulation::sim::ReadAnchor;
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -45,7 +46,7 @@ use degenbot_simulation::probe_support::scripted_head;
 
 use chain_stub::ChainStub;
 use modeled_chain::{bal_bytes, block_hash, ChainState, Key, StubChain};
-use scripted_head::{address, anchored, genesis, identified, SpawnQueue};
+use scripted_head::{address, anchored, genesis, SpawnQueue};
 
 /// The height every test advances from, unless the test is about lineage.
 const HEIGHT: u64 = 100;
@@ -67,7 +68,7 @@ fn armed_pipeline(driver: &Arc<BalHeadDriver>, queue: &SpawnQueue) -> Arc<BalHea
 /// The readiness the session reports at one exact head.
 fn readiness(driver: &BalHeadDriver, canonical: ChainAnchor) -> HeadReadiness {
     driver
-        .snapshot(identified(canonical.number(), canonical.hash()))
+        .snapshot(ReadAnchor::identified(canonical.number(), canonical.hash()))
         .readiness
 }
 
@@ -75,7 +76,7 @@ fn readiness(driver: &BalHeadDriver, canonical: ChainAnchor) -> HeadReadiness {
 fn settled(driver: &BalHeadDriver, canonical: ChainAnchor) -> Arc<DeltaReport> {
     assert_eq!(
         driver.delivered(),
-        Some(identified(canonical.number(), canonical.hash())),
+        Some(ReadAnchor::identified(canonical.number(), canonical.hash())),
         "the driver holds the head the pipeline settled"
     );
     driver
@@ -160,7 +161,7 @@ async fn a_skipped_head_settles_cold_and_the_next_consecutive_head_carries() {
     );
 
     // The gap head's generation settles one word of its own.
-    let gap_view = driver.snapshot(identified(HEIGHT + 2, skipped)).hub;
+    let gap_view = driver.snapshot(stub.exact(HEIGHT + 2, skipped)).hub;
     assert_eq!(
         gap_view
             .read_storage(address(0x11), U256::from(2u64))
@@ -186,7 +187,7 @@ async fn a_skipped_head_settles_cold_and_the_next_consecutive_head_carries() {
         "the re-established head is ready"
     );
     let members = stub.storage_members();
-    let view = driver.snapshot(identified(HEIGHT + 3, consecutive));
+    let view = driver.snapshot(stub.exact(HEIGHT + 3, consecutive));
     assert_eq!(
         view.hub.snapshot_value(address(0x11), U256::from(2u64)),
         Some(U256::from(6u64)),
@@ -218,6 +219,11 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
     let replacement = B256::new([0xc2; 32]);
     let reorged = B256::new([0xc3; 32]);
     let successor = B256::new([0xc4; 32]);
+    stub.pin(HEIGHT, base);
+    stub.pin(HEIGHT + 1, abandoned);
+    stub.pin(HEIGHT + 1, replacement);
+    stub.pin(HEIGHT + 1, reorged);
+    stub.pin(HEIGHT + 2, successor);
     // The abandoned branch would have written a word the replacement never
     // mentions: if either branch leaked, that value would be reachable.
     let slot = U256::from(4u64);
@@ -240,7 +246,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
     assert!(queue.run_one().await);
     // The base generation settles the word the abandoned branch would overwrite.
     driver
-        .snapshot(identified(HEIGHT, base))
+        .snapshot(stub.exact(HEIGHT, base))
         .hub
         .read_storage(address(0x33), slot)
         .await
@@ -272,7 +278,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
         HeadReadiness::Cold(HeadCold::Superseded),
         "the abandoned head reports that it was superseded"
     );
-    let abandoned_view = driver.snapshot(identified(HEIGHT + 1, abandoned));
+    let abandoned_view = driver.snapshot(stub.exact(HEIGHT + 1, abandoned));
     assert_eq!(
         abandoned_view.hub.snapshot_len(),
         0,
@@ -284,7 +290,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
     assert!(queue.run_one().await, "the abandoned head's phase runs");
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "a superseded phase installs nothing"
     );
     assert!(queue.run_one().await, "the replacement's phase runs");
@@ -293,7 +299,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
         CarryOutcome::Carried { carried_values: 1 },
         "the survivor carries the generation it actually links"
     );
-    let survivor_view = driver.snapshot(identified(HEIGHT + 1, replacement));
+    let survivor_view = driver.snapshot(stub.exact(HEIGHT + 1, replacement));
     assert_eq!(
         survivor_view.readiness,
         HeadReadiness::Ready,
@@ -306,7 +312,7 @@ async fn a_same_height_reorg_supersedes_and_the_new_branch_starts_cold() {
     );
     assert_eq!(
         driver.previous(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "the linked transition puts the base in the read window"
     );
 
@@ -345,7 +351,7 @@ async fn reorg_over_an_installed_branch_starts_cold(
         },
         "a same-height reorg never links the head it replaced"
     );
-    let reorged_view = driver.snapshot(identified(HEIGHT + 1, reorged));
+    let reorged_view = driver.snapshot(ReadAnchor::identified(HEIGHT + 1, reorged));
     assert_eq!(
         reorged_view.readiness,
         HeadReadiness::Cold(HeadCold::Settled {
@@ -382,7 +388,7 @@ async fn reorg_over_an_installed_branch_starts_cold(
         CarryOutcome::Carried { carried_values: 1 },
         "the new branch's second block re-establishes the chain"
     );
-    let successor_view = driver.snapshot(identified(HEIGHT + 2, successor));
+    let successor_view = driver.snapshot(ReadAnchor::identified(HEIGHT + 2, successor));
     assert_eq!(
         successor_view.readiness,
         HeadReadiness::Ready,
@@ -441,7 +447,7 @@ async fn every_consecutive_head_of_a_modeled_stream_carries_after_the_cold_start
         );
         assert!(queue.run_one().await, "head {number}'s phase runs");
         let report = settled(&driver, canonical);
-        let view = driver.snapshot(identified(number, block_hash(number)));
+        let view = driver.snapshot(ReadAnchor::identified(number, block_hash(number)));
         if number == first {
             assert_eq!(
                 report.outcome,
@@ -517,7 +523,7 @@ async fn a_head_delivered_with_no_candidate_ever_running_is_still_prepared() {
     assert!(queue.run_one().await);
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT, base))
+            .snapshot(stub.exact(HEIGHT, base))
             .hub
             .read_storage(address(0x11), slot)
             .await
@@ -559,7 +565,7 @@ async fn a_head_delivered_with_no_candidate_ever_running_is_still_prepared() {
     assert_eq!(readiness(&driver, child_head), HeadReadiness::Ready);
 
     let members = stub.storage_members();
-    let view = driver.snapshot(identified(HEIGHT + 1, child));
+    let view = driver.snapshot(stub.exact(HEIGHT + 1, child));
     assert_eq!(
         view.hub.snapshot_value(address(0x11), slot),
         Some(U256::from(5u64)),
@@ -584,6 +590,10 @@ async fn a_prepared_list_that_lands_after_supersede_installs_nothing_and_the_cha
     let replacement = B256::new([0xe2; 32]);
     let heir = B256::new([0xe3; 32]);
     let slot = U256::from(4u64);
+    stub.pin(HEIGHT, base);
+    stub.pin(HEIGHT + 1, abandoned);
+    stub.pin(HEIGHT + 1, replacement);
+    stub.pin(HEIGHT + 2, heir);
     stub.serve_bal_at(base, bal_bytes(&[]));
     stub.serve_bal_at(
         abandoned,
@@ -602,7 +612,7 @@ async fn a_prepared_list_that_lands_after_supersede_installs_nothing_and_the_cha
     assert!(queue.run_one().await);
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "the session has its parent generation"
     );
     stub.clear();
@@ -639,7 +649,7 @@ async fn a_prepared_list_that_lands_after_supersede_installs_nothing_and_the_cha
     );
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "the late list installed nothing"
     );
     assert_eq!(
@@ -683,7 +693,7 @@ async fn the_chain_survives_the_abandoned_list(
         CarryOutcome::Carried { carried_values: 0 },
         "the chain survives the abandoned list"
     );
-    let view = driver.snapshot(identified(HEIGHT + 2, heir));
+    let view = driver.snapshot(ReadAnchor::identified(HEIGHT + 2, heir));
     assert_eq!(
         view.readiness,
         HeadReadiness::Ready,
@@ -729,11 +739,11 @@ async fn a_released_spawned_phase_still_leaves_its_head_appliable_out_of_band() 
     assert!(queue.run_one().await);
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "the session has its parent generation"
     );
 
-    let anchor = identified(HEIGHT + 1, child);
+    let anchor = stub.exact(HEIGHT + 1, child);
     let child_head = head(HEIGHT + 1, child, base);
     let ticket = pipeline
         .deliver_head(child_head)
@@ -806,11 +816,11 @@ async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime(
 
     // The parent generation settles synchronously, so the child's transition is
     // decided by the ambient phase alone.
-    let base_ticket = driver.deliver(anchored(identified(HEIGHT, base), genesis()));
+    let base_ticket = driver.deliver(anchored(stub.exact(HEIGHT, base), genesis()));
     driver.advance(base_ticket, &[]).await;
     assert_eq!(
         driver.installed(),
-        Some(identified(HEIGHT, base)),
+        Some(stub.exact(HEIGHT, base)),
         "the parent generation is installed"
     );
     // The parent serves the word dynamically, so the child's list WRITES it:
@@ -818,7 +828,7 @@ async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime(
     // ambient phase apply with [`NoRelevance`].
     assert_eq!(
         driver
-            .snapshot(identified(HEIGHT, base))
+            .snapshot(stub.exact(HEIGHT, base))
             .hub
             .read_storage(address(0x11), slot)
             .await
@@ -828,7 +838,7 @@ async fn the_production_spawner_settles_a_delivered_head_on_the_ambient_runtime(
     );
     stub.clear();
 
-    let anchor = identified(HEIGHT + 1, child);
+    let anchor = stub.exact(HEIGHT + 1, child);
     let child_head = head(HEIGHT + 1, child, base);
     let ticket = pipeline
         .deliver_head(child_head)

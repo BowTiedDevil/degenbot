@@ -272,6 +272,10 @@ pub fn bal_bytes(writes: &[(Address, U256, U256)]) -> Vec<u8> {
 pub struct ChainState {
     values: HashMap<(Key, u64), U256>,
     bals: HashMap<B256, Vec<u8>>,
+    /// The height each modeled block hash names — the resolution a
+    /// hash-pinned read needs, and the refusal an unknown (replaced) hash
+    /// gets.
+    numbers: HashMap<B256, u64>,
 }
 
 impl ChainState {
@@ -290,6 +294,7 @@ impl ChainState {
         }
         let mut values = HashMap::new();
         let mut bals = HashMap::new();
+        let mut numbers = HashMap::new();
         let mut current: HashMap<Key, U256> = keys
             .iter()
             .map(|&key @ (address, slot)| {
@@ -304,9 +309,15 @@ impl ChainState {
             for (&key, &value) in &current {
                 values.insert((key, number), value);
             }
-            bals.insert(block_hash(number), bal_bytes(&writes));
+            let hash = block_hash(number);
+            bals.insert(hash, bal_bytes(&writes));
+            numbers.insert(hash, number);
         }
-        Ok(Self { values, bals })
+        Ok(Self {
+            values,
+            bals,
+            numbers,
+        })
     }
 
     /// The value the modeled chain serves for one identity at one block.
@@ -319,6 +330,12 @@ impl ChainState {
     #[must_use]
     pub fn bal_at(&self, hash: B256) -> Option<&[u8]> {
         self.bals.get(&hash).map(Vec::as_slice)
+    }
+
+    /// The height the modeled block `hash` names, when this chain holds it.
+    #[must_use]
+    pub fn number_of(&self, hash: B256) -> Option<u64> {
+        self.numbers.get(&hash).copied()
     }
 
     /// Build the COVERAGE-COMPARISON chain over `keys` for `first..=last`: one
@@ -346,6 +363,7 @@ impl ChainState {
         }
         let mut values = HashMap::new();
         let mut bals = HashMap::new();
+        let mut numbers = HashMap::new();
         for number in first..=last {
             let writes = match coverage {
                 Coverage::Synthetic => shared_block_writes(first, number, keys, real),
@@ -360,8 +378,13 @@ impl ChainState {
             }
             let hash = coverage.hash(real, number)?;
             bals.insert(hash, bal_bytes(&writes));
+            numbers.insert(hash, number);
         }
-        Ok(Self { values, bals })
+        Ok(Self {
+            values,
+            bals,
+            numbers,
+        })
     }
 }
 
@@ -383,6 +406,35 @@ impl StubChain {
         let client = ClientBuilder::default().transport(self.clone(), true);
         let root: RootProvider = RootProvider::new(client);
         AlloyProvider::from_provider(Arc::new(root))
+    }
+
+    /// The height a storage member's block identifier names: the height
+    /// quantity of an unresolved observation, or the height this chain holds
+    /// for an EIP-1898 pin. A pin at a hash the chain does not hold (an
+    /// abandoned or replaced block) refuses — a modeled node never re-reads the
+    /// height in its place.
+    fn pinned_height(&self, identifier: Option<&Value>) -> Result<u64, String> {
+        match identifier {
+            Some(Value::String(tag)) => u64::from_str_radix(tag.trim_start_matches("0x"), 16)
+                .map_err(|error| format!("member block {tag}: {error}")),
+            Some(identifier) => {
+                if identifier.get("requireCanonical").and_then(Value::as_bool) != Some(true) {
+                    return Err(format!(
+                        "a pinned read requires a canonical block: {identifier}"
+                    ));
+                }
+                let hash: B256 = identifier
+                    .get("blockHash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("member identity names no hash: {identifier}"))?
+                    .parse()
+                    .map_err(|error| format!("member hash: {error}"))?;
+                self.chain
+                    .number_of(hash)
+                    .ok_or_else(|| format!("the modeled chain holds no block {hash}"))
+            }
+            None => Err("the pinned block is the third param".to_string()),
+        }
     }
 
     fn answer(&self, request: &SerializedRequest) -> Response {
@@ -451,12 +503,7 @@ impl StubChain {
                     .ok_or("the slot is the second param")?
                     .parse::<U256>()
                     .map_err(|error| format!("member slot: {error}"))?;
-                let block = params
-                    .get(2)
-                    .and_then(Value::as_str)
-                    .ok_or("the pinned block is the third param")?;
-                let block = u64::from_str_radix(block.trim_start_matches("0x"), 16)
-                    .map_err(|error| format!("member block {block}: {error}"))?;
+                let block = self.pinned_height(params.get(2))?;
                 let mut word = self
                     .chain
                     .value_at(address, slot, block)

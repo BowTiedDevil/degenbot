@@ -13,10 +13,14 @@
 //! # The anchor pins every value
 //!
 //! A hub is minted for one [`ReadAnchor`] and reads the provider's batch
-//! primitives at that anchor's block number, with the anchor's block hash as the
-//! identity fence: [`ReadHubCache::for_anchor`] hands every caller at an anchor the same
-//! hub and mints a fresh one the moment the anchor moves — a same-height reorg
-//! included, exactly as
+//! primitives at that anchor's own transport identifier
+//! ([`ReadAnchor::block_id`]): an identified anchor states its block hash
+//! (EIP-1898 `{ blockHash, requireCanonical: true }`), so the node either answers
+//! at exactly that block or refuses a member — a same-height replacement can
+//! never be served in the abandoned block's place — while an explicit
+//! unresolved anchor states its height. [`ReadHubCache::for_anchor`] hands every
+//! caller at an anchor the same hub and mints a fresh one the moment the anchor
+//! moves — a same-height reorg included, exactly as
 //! [`StorageMemoCache`](crate::sim::storage_memo::StorageMemoCache) retires its
 //! memo. A value memoized in one hub is therefore unreachable from any other
 //! anchor's hub; there is no cross-anchor map that can go stale.
@@ -175,7 +179,6 @@
 //! anchor over: a snapshot transition seam with no dispatch. Block hashes are
 //! per-chain facts and are never hub reads.
 
-use alloy::eips::BlockId;
 use alloy::primitives::{Address, StorageValue, B256, U256};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
@@ -657,7 +660,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_storage_batch_results_at(keys, BlockId::number(self.anchor.number()))
+            .get_storage_batch_results_at(keys, self.anchor.block_id())
             .await
     }
 
@@ -670,7 +673,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_accounts_batch_at(addresses, BlockId::number(self.anchor.number()))
+            .get_accounts_batch_at(addresses, self.anchor.block_id())
             .await
     }
 

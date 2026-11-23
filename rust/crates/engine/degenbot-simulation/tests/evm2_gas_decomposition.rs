@@ -128,6 +128,7 @@ use degenbot_simulation::sim::evm2::v4_black_box::{
     V4_POOL_MANAGER,
 };
 use degenbot_simulation::sim::frame_replay::{ReplayableTx, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::RunVerdict;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -593,8 +594,11 @@ fn huge_balance() -> U256 {
 
 impl<'p> Chain<'p> {
     fn new(provider: &'p AlloyProvider, block: ScratchBlock, nonce: u64) -> Self {
-        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, block.number - 1))
-            .expect("multi-threaded runtime is ambient");
+        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+            provider,
+            ReadAnchor::unresolved(block.number - 1),
+        ))
+        .expect("multi-threaded runtime is ambient");
         let mut ext = CacheDB::new(Db::new(blocking));
         ext.insert_account_info(&SENDER, AccountInfo::default().with_balance(huge_balance()));
         ext.insert_account_info(

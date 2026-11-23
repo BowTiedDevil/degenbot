@@ -101,6 +101,7 @@ use degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb;
 use degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb;
 use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
 use degenbot_simulation::sim::frame_replay::{ReplayableTx, ScratchBlock};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_simulation::sim::RunVerdict;
 use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -1013,8 +1014,11 @@ struct Chain<'p> {
 
 impl<'p> Chain<'p> {
     fn new(provider: &'p AlloyProvider, block: ScratchBlock, nonce: u64) -> Self {
-        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, block.number - 1))
-            .expect("multi-threaded runtime is ambient");
+        let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(
+            provider,
+            ReadAnchor::unresolved(block.number - 1),
+        ))
+        .expect("multi-threaded runtime is ambient");
         let mut ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(blocking));
         // The frame sender pays gas; in a scratch that accounting is noise, so
         // fund it rather than depend on a live balance at the anchor.

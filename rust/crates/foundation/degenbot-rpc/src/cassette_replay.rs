@@ -28,7 +28,31 @@
 //! an exact read is served from this ledger too: a pin the capture does not
 //! carry is a missing fixture, never a node without the capability. Methods
 //! outside the served surface keep the offline "method not found" contract;
-//! anything the ledger carries replays even outside the served set.
+//! anything the ledger carries replays even outside the served set. The surface
+//! is the read methods the account and storage lanes issue —
+//! `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getBalance`, and
+//! `eth_getTransactionCount` — because an account triple is ONE batch whose
+//! three members must answer or the whole hydration is a fixture problem.
+//!
+//! # Hash-pinned reads resolve through the recorded headers
+//!
+//! A capture recorded before a hash-pinned reader existed carries the same read
+//! at its HEIGHT, and the exact key therefore misses. The ledger's own recorded
+//! `eth_getBlockByNumber` answers are the header evidence that bridges the two:
+//! a read whose identifier is `{ blockHash, requireCanonical: true }` resolves
+//! that hash to the height a recorded header names for it, and the height-keyed
+//! entry answers — the SAME read position, proven by the recorded header rather
+//! than assumed from the height alone.
+//!
+//! The bridge refuses rather than guesses. A hash no recorded header names is a
+//! fixture gap (missing evidence, never a capability verdict); a pin that does
+//! not require canonicality names a non-canonical branch, which height evidence
+//! cannot identify; and recorded headers that contradict each other — one hash
+//! at two heights, or one height holding two hashes — are a refusal, because a
+//! replaced block's read can never be answered from the replacement's. Only the
+//! five read methods take the bridge — the account triple's three members
+//! included, so a pinned hydration resolves as one batch — and every other
+//! method keeps its own key, so a filter or a header request is never rewritten.
 //!
 //! Wrap as a real [`AlloyProvider`] via
 //! [`CassetteReplayTransport::as_alloy_provider`] and run `LogFetcher` (or
@@ -36,9 +60,10 @@
 //! `tests/fixtures/cassettes/`.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use alloy::primitives::B256;
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::json_rpc::{
@@ -57,12 +82,14 @@ use crate::provider::AlloyProvider;
 /// these is a fixture gap; a miss anywhere else is "method not found" (the
 /// ledger is authoritative for anything it actually carries).
 ///
-/// The four read methods are here because a hash-pinned exact read is served
-/// from this ledger: a capture that does not carry the pin is a MISSING
-/// FIXTURE, and reporting it as `-32601` would let the exact-read classifier
-/// read a harness gap as a node without the capability (ADR-105 D11 keeps
-/// "no evidence recorded" and "no capability" apart).
-const SERVED_METHODS: [&str; 8] = [
+/// The five read methods are here because a hash-pinned exact read is served
+/// from this ledger — the account triple's three members included, since a
+/// hydration whose nonce answered "method not found" would be a half-served
+/// read: a capture that does not carry the pin is a MISSING FIXTURE, and
+/// reporting it as `-32601` would let the exact-read classifier read a harness
+/// gap as a node without the capability (ADR-105 D11 keeps "no evidence
+/// recorded" and "no capability" apart).
+const SERVED_METHODS: [&str; 9] = [
     "eth_getLogs",
     "eth_getBlockByNumber",
     "eth_chainId",
@@ -71,7 +98,22 @@ const SERVED_METHODS: [&str; 8] = [
     "eth_getCode",
     "eth_getStorageAt",
     "eth_getBalance",
+    "eth_getTransactionCount",
 ];
+
+/// The methods whose hash-pinned request the recorded header evidence can
+/// resolve to a height-keyed entry. Every other method keeps its own key.
+const PINNED_READ_METHODS: [&str; 5] = [
+    "eth_call",
+    "eth_getCode",
+    "eth_getStorageAt",
+    "eth_getBalance",
+    "eth_getTransactionCount",
+];
+
+/// The method whose recorded answers ARE the header evidence a pin resolves
+/// through.
+const HEADER_METHOD: &str = "eth_getBlockByNumber";
 
 /// The replay half of a golden capture: answers JSON-RPC requests from a
 /// committed [`Cassette`]'s ledger — the sibling of
@@ -81,6 +123,7 @@ const SERVED_METHODS: [&str; 8] = [
 pub struct CassetteReplayTransport {
     cassette: Arc<Cassette>,
     served: Arc<ServedTrace>,
+    headers: Arc<OnceLock<Arc<HeaderIndex>>>,
 }
 
 impl CassetteReplayTransport {
@@ -90,7 +133,14 @@ impl CassetteReplayTransport {
         Self {
             cassette: Arc::new(cassette),
             served: Arc::new(ServedTrace::default()),
+            headers: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// The header evidence this ledger carries, indexed once on first use.
+    fn header_index(&self) -> &HeaderIndex {
+        self.headers
+            .get_or_init(|| Arc::new(HeaderIndex::of(&self.cassette)))
     }
 
     /// The serving stats accumulated since construction - every JSON-RPC
@@ -134,13 +184,23 @@ impl CassetteReplayTransport {
         // the ledger entry exactly as recorded.
         self.served.record_request(method);
         let key = entry_key(method, &params);
-        let Some(entry) = self.lookup(method, &params, &key) else {
-            return Err(if SERVED_METHODS.contains(&method) {
-                fixture_gap(&key)
-            } else {
-                method_not_found(method)
-            });
+        let (entry, resolved) = match self.lookup(method, &params, &key) {
+            Some(entry) => (entry, false),
+            None => match self.lookup_by_header_hash(method, &params) {
+                Ok(Some(entry)) => (entry, true),
+                Ok(None) => {
+                    return Err(if SERVED_METHODS.contains(&method) {
+                        fixture_gap(&key)
+                    } else {
+                        method_not_found(method)
+                    });
+                }
+                Err(payload) => return Err(payload),
+            },
         };
+        if resolved {
+            self.served.record_hash_resolved(method);
+        }
         match &entry.response {
             CassetteResponse::Success { result } => {
                 let wire = if method == "eth_getLogs" {
@@ -156,6 +216,48 @@ impl CassetteReplayTransport {
                 Err(failure_payload(error))
             }
         }
+    }
+
+    /// The height-keyed entry a hash-pinned read resolves to through the
+    /// ledger's own recorded headers (see the module docs): the pin must require
+    /// canonicality, the hash must be one a recorded header names, and the
+    /// recorded evidence must not contradict itself about either half of the
+    /// identity. `Ok(None)` is "this request is not a pin this bridge serves".
+    fn lookup_by_header_hash(
+        &self,
+        method: &str,
+        params: &Value,
+    ) -> Result<Option<&CassetteEntry>, ErrorPayload> {
+        if !PINNED_READ_METHODS.contains(&method) {
+            return Ok(None);
+        }
+        let Some((position, hash)) = pinned_identifier(params) else {
+            return Ok(None);
+        };
+        if !params[position]
+            .get("requireCanonical")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(contradictory_identity(&format!(
+                "{method} names {hash} without requiring canonicality; a height-keyed entry cannot stand in for a non-canonical branch"
+            )));
+        }
+        let headers = self.header_index();
+        let Some(number) = headers.number_of(hash) else {
+            return Err(missing_header_evidence(method, hash));
+        };
+        if headers.contradicts_hash(hash) || headers.contradicts_height(number) {
+            return Err(contradictory_identity(&format!(
+                "the recorded headers disagree about block {number} / {hash}"
+            )));
+        }
+        let mut height_request = params.clone();
+        height_request[position] = Value::String(format!("0x{number:x}"));
+        Ok(self
+            .cassette
+            .entries
+            .get(&entry_key(method, &height_request)))
     }
 
     /// Ledger lookup: the exact canonical key first, then — for `eth_getLogs`
@@ -192,6 +294,103 @@ impl CassetteReplayTransport {
     }
 }
 
+/// The recorded header evidence a hash-pinned read resolves through: every
+/// exact `(number, hash)` pair the ledger's `eth_getBlockByNumber` answers
+/// name, plus the pairs that CONTRADICT (one hash at two heights, or one height
+/// holding two hashes) so a contradictory ledger refuses instead of picking a
+/// branch.
+#[derive(Debug, Default)]
+struct HeaderIndex {
+    numbers: HashMap<B256, u64>,
+    hashes: HashMap<u64, B256>,
+    conflicting_hashes: HashSet<B256>,
+    conflicting_heights: HashSet<u64>,
+}
+
+impl HeaderIndex {
+    /// Index every recorded header the ledger carries.
+    fn of(cassette: &Cassette) -> Self {
+        let mut index = Self::default();
+        for (key, entry) in &cassette.entries {
+            let Ok(request) = serde_json::from_str::<Value>(key) else {
+                continue;
+            };
+            if request.get(0).and_then(Value::as_str) != Some(HEADER_METHOD) {
+                continue;
+            }
+            if let Some((number, hash)) = recorded_header(entry) {
+                index.record(number, hash);
+            }
+        }
+        index
+    }
+
+    fn record(&mut self, number: u64, hash: B256) {
+        if let Some(previous) = self.numbers.insert(hash, number) {
+            if previous != number {
+                self.conflicting_hashes.insert(hash);
+                self.conflicting_heights.insert(previous);
+                self.conflicting_heights.insert(number);
+            }
+        }
+        if let Some(previous) = self.hashes.insert(number, hash) {
+            if previous != hash {
+                self.conflicting_heights.insert(number);
+                self.conflicting_hashes.insert(previous);
+                self.conflicting_hashes.insert(hash);
+            }
+        }
+    }
+
+    fn number_of(&self, hash: B256) -> Option<u64> {
+        self.numbers.get(&hash).copied()
+    }
+
+    fn contradicts_hash(&self, hash: B256) -> bool {
+        self.conflicting_hashes.contains(&hash)
+    }
+
+    fn contradicts_height(&self, number: u64) -> bool {
+        self.conflicting_heights.contains(&number)
+    }
+}
+
+/// One recorded header's identity, when the ledger entry is a served header.
+fn recorded_header(entry: &CassetteEntry) -> Option<(u64, B256)> {
+    let CassetteResponse::Success { result } = &entry.response else {
+        return None;
+    };
+    let number = recorded_quantity(result.get("number")?)?;
+    let hash = result.get("hash")?.as_str()?.parse().ok()?;
+    Some((number, hash))
+}
+
+/// A recorded quantity: the canonical form stores u64 hex quantities as
+/// decimal strings, and a hand-written fixture may carry either form.
+fn recorded_quantity(value: &Value) -> Option<u64> {
+    match value {
+        Value::String(text) => text
+            .parse()
+            .ok()
+            .or_else(|| u64::from_str_radix(text.trim_start_matches("0x"), 16).ok()),
+        Value::Number(number) => number.as_u64(),
+        _ => None,
+    }
+}
+
+/// The EIP-1898 identifier a request states, and where in its params it sits.
+fn pinned_identifier(params: &Value) -> Option<(usize, B256)> {
+    params
+        .as_array()?
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(position, param): (usize, &Value)| {
+            let hash = param.get("blockHash")?.as_str()?.parse().ok()?;
+            Some((position, hash))
+        })
+}
+
 /// Per-method serving stats: how many ledger entries the transport answered
 /// for one JSON-RPC method and how many wire bytes those answers carried.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -201,6 +400,9 @@ pub struct MethodServed {
     /// Serialized payload bytes of the served answers (result or error
     /// member, wire form - not the JSON-RPC envelope).
     pub response_bytes: u64,
+    /// Of [`Self::served`], how many were hash-pinned reads resolved to their
+    /// height-keyed entry through the recorded header evidence.
+    pub hash_resolved: u64,
 }
 
 /// The serving stats a [`CassetteReplayTransport`] accumulates while it
@@ -222,6 +424,8 @@ struct ServedTraceInner {
     served: u64,
     /// Sum of the served answers' serialized payload bytes.
     response_bytes: u64,
+    /// Hash-pinned reads resolved through the recorded header evidence.
+    hash_resolved: u64,
     per_method: BTreeMap<String, MethodServed>,
 }
 
@@ -230,6 +434,14 @@ impl ServedTrace {
         if let Ok(mut inner) = self.inner.lock() {
             inner.requests = inner.requests.saturating_add(1);
             inner.per_method.entry(method.to_string()).or_default();
+        }
+    }
+
+    fn record_hash_resolved(&self, method: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.hash_resolved = inner.hash_resolved.saturating_add(1);
+            let entry = inner.per_method.entry(method.to_string()).or_default();
+            entry.hash_resolved = entry.hash_resolved.saturating_add(1);
         }
     }
 
@@ -251,6 +463,7 @@ impl ServedTrace {
             requests: inner.requests,
             served: inner.served,
             response_bytes: inner.response_bytes,
+            hash_resolved: inner.hash_resolved,
             per_method: inner.per_method.clone(),
         }
     }
@@ -273,6 +486,11 @@ pub struct ServedSnapshot {
     /// `result`/`error` member in wire form; the JSON-RPC envelope is not
     /// counted). The response-bytes measure the perf program tracks.
     pub response_bytes: u64,
+    /// Of [`Self::served`], how many were hash-pinned reads answered from the
+    /// height-keyed entry their recorded header names — the fixture-migration
+    /// signal, so a replay corpus records how much of its read surface still
+    /// needs re-recording at the exact hash.
+    pub hash_resolved: u64,
     /// The per-method breakdown, methods in sorted order.
     pub per_method: BTreeMap<String, MethodServed>,
 }
@@ -432,6 +650,22 @@ fn fixture_gap(key: &str) -> ErrorPayload {
     ))
 }
 
+/// A hash-pinned read the ledger has no header evidence for: missing evidence,
+/// never a missing capability (ADR-105 D11 keeps the two apart).
+fn missing_header_evidence(method: &str, hash: B256) -> ErrorPayload {
+    internal_err(format!(
+        "cassette: fixture gap: {method} pins block {hash}, and no recorded header names that          block — the pinned read has no height-keyed evidence"
+    ))
+}
+
+/// Recorded evidence that disagrees with itself about a block's identity: a
+/// refusal, never a branch picked for the caller.
+fn contradictory_identity(detail: &str) -> ErrorPayload {
+    internal_err(format!(
+        "cassette: contradictory recorded header identity: {detail}"
+    ))
+}
+
 fn method_not_found(method: &str) -> ErrorPayload {
     ErrorPayload {
         code: -32601,
@@ -457,11 +691,12 @@ mod tests {
         CassetteSpan, CASSETTE_SCHEMA_V1,
     };
     use crate::provider::{LogFetcher, LogFilter};
-    use alloy::primitives::{Address, Bytes, B256};
+    use alloy::primitives::{Address, Bytes, B256, U256};
     use degenbot_core::canonical_head::ChainAnchor;
     use degenbot_core::errors::ProviderError;
     use serde_json::json;
     use std::collections::BTreeMap;
+    use std::str::FromStr;
 
     // ── corpus seam: the committed cassettes replay through LogFetcher ────
 
@@ -1115,6 +1350,310 @@ mod tests {
         let served = transport.served_snapshot();
         assert_eq!(served.served, 0, "nothing was served");
         assert_eq!(served.requests, 1, "no number-only retry exists");
+    }
+
+    // ── hash-pinned reads over recorded header evidence ──────────────────
+
+    /// The slot a resolved replay serves.
+    const RESOLVED_SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
+    /// The word recorded at the height-keyed entry.
+    const RECORDED_WORD: &str =
+        "0x000000000000000000000000000000000000000000000000000000000000002a";
+
+    /// A header recorded at `number` naming `hash` (the recorder's canonical
+    /// form: the height is a decimal string).
+    fn recorded_header_entry(number: u64, hash: B256, full: bool) -> (String, CassetteEntry) {
+        (
+            entry_key(
+                "eth_getBlockByNumber",
+                &json!([format!("0x{number:x}"), full]),
+            ),
+            success_entry(json!({
+                "number": format!("{number}"),
+                "hash": format!("{hash}"),
+            })),
+        )
+    }
+
+    /// The height-keyed storage read a pre-exact-reader capture carries.
+    fn height_keyed_storage_entry(
+        number: u64,
+        address: Address,
+        word: &str,
+    ) -> (String, CassetteEntry) {
+        (
+            entry_key(
+                "eth_getStorageAt",
+                &json!([
+                    format!("{address}"),
+                    format!("{RESOLVED_SLOT}"),
+                    format!("0x{number:x}")
+                ]),
+            ),
+            success_entry(json!(word)),
+        )
+    }
+
+    /// The one read position these cases share.
+    const PINNED_NUMBER: u64 = 100;
+    const PINNED_HASH: B256 = B256::new([0xa1; 32]);
+
+    fn pinned_params(address: Address, hash: B256, canonical: bool) -> Value {
+        let mut pin = json!({ "blockHash": format!("{hash}") });
+        if canonical {
+            pin["requireCanonical"] = json!(true);
+        }
+        json!([format!("{address}"), format!("{RESOLVED_SLOT}"), pin])
+    }
+
+    /// The recorded-header bridge: a read pinned at a hash the ledger's own
+    /// header names resolves to that header's height, and the height-keyed entry
+    /// answers — the same read position, proven by the recorded evidence. The
+    /// request is answered ONCE (never retried as a height request) and the
+    /// serving stats name the resolution.
+    #[tokio::test]
+    async fn a_hash_pinned_read_resolves_through_its_recorded_header() {
+        let address = Address::repeat_byte(0x11);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                height_keyed_storage_entry(PINNED_NUMBER, address, RECORDED_WORD),
+            ],
+        ));
+
+        let answer = transport
+            .as_alloy_provider()
+            .make_request(
+                "eth_getStorageAt",
+                pinned_params(address, PINNED_HASH, true),
+            )
+            .await
+            .expect("the recorded header resolves the pin");
+
+        assert_eq!(answer, json!(RECORDED_WORD));
+        let served = transport.served_snapshot();
+        assert_eq!(served.served, 1, "one entry served the read");
+        assert_eq!(
+            served.hash_resolved, 1,
+            "the serving stats name the header resolution"
+        );
+        assert_eq!(
+            served.per_method["eth_getStorageAt"].hash_resolved, 1,
+            "the per-method split names it too"
+        );
+        assert_eq!(
+            served.requests, 1,
+            "the pin is answered once, never re-issued as a height read"
+        );
+    }
+
+    /// The same bridge through the typed client: `BlockId::Hash` with
+    /// `requireCanonical` is the wire shape the production exact read issues, so
+    /// the resolution is proven on the request construction the engine uses, not
+    /// only on a hand-written param array.
+    #[tokio::test]
+    async fn the_typed_canonical_pin_resolves_through_the_recorded_header() {
+        let address = Address::repeat_byte(0x11);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                height_keyed_storage_entry(PINNED_NUMBER, address, RECORDED_WORD),
+            ],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let word = provider
+            .get_storage_at(
+                &address,
+                RESOLVED_SLOT,
+                Some(alloy::eips::BlockId::Hash(
+                    alloy::eips::RpcBlockHash::from_hash(PINNED_HASH, Some(true)),
+                )),
+            )
+            .await
+            .expect("the typed canonical pin resolves");
+
+        assert_eq!(word, B256::from_str(RECORDED_WORD).expect("a word"));
+        assert_eq!(transport.served_snapshot().hash_resolved, 1);
+    }
+
+    /// The account triple resolves as ONE batch through the same bridge: a
+    /// pinned `eth_getBalance` / `eth_getTransactionCount` / `eth_getCode`
+    /// group answers every member at the recorded height, so a pinned account
+    /// hydration is served exactly as a height-keyed one would be. All three
+    /// members resolve — the nonce included, which is why it is a served and
+    /// bridged method rather than a fixture gap in the middle of a hydration.
+    #[tokio::test]
+    async fn an_account_triple_replays_at_its_pinned_hash() {
+        let address = Address::repeat_byte(0x11);
+        let height = json!([format!("{address}"), format!("0x{PINNED_NUMBER:x}")]);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                (
+                    entry_key("eth_getBalance", &height),
+                    success_entry(json!("1000000000000000000")),
+                ),
+                (
+                    entry_key("eth_getTransactionCount", &height),
+                    success_entry(json!("42")),
+                ),
+                (
+                    entry_key("eth_getCode", &height),
+                    success_entry(json!("0x60016001")),
+                ),
+            ],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let row = provider
+            .get_account_at(
+                &address,
+                alloy::eips::BlockId::Hash(alloy::eips::RpcBlockHash::from_hash(
+                    PINNED_HASH,
+                    Some(true),
+                )),
+            )
+            .await
+            .expect("the pinned account triple resolves through the recorded header");
+
+        assert_eq!(row.balance, U256::from(1_000_000_000_000_000_000u64));
+        assert_eq!(row.nonce, 42);
+        assert_eq!(row.code, Bytes::from_static(&[0x60, 0x01, 0x60, 0x01]));
+        let served = transport.served_snapshot();
+        assert_eq!(served.served, 3, "one answer per batch member");
+        assert_eq!(
+            served.hash_resolved, 3,
+            "the whole triple resolved, the nonce included"
+        );
+        assert_eq!(
+            served.per_method["eth_getTransactionCount"].hash_resolved, 1,
+            "the nonce member is a first-class bridged read"
+        );
+    }
+
+    /// A pin at a hash no recorded header names is a FIXTURE GAP: missing
+    /// evidence, never a missing capability and never a served height.
+    #[tokio::test]
+    async fn a_pin_at_an_unrecorded_hash_is_a_fixture_gap() {
+        let address = Address::repeat_byte(0x11);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                height_keyed_storage_entry(PINNED_NUMBER, address, RECORDED_WORD),
+            ],
+        ));
+        let abandoned = B256::new([0xb1; 32]);
+
+        let error = transport
+            .as_alloy_provider()
+            .make_request("eth_getStorageAt", pinned_params(address, abandoned, true))
+            .await
+            .expect_err("nothing recorded names this block");
+
+        match &error {
+            ProviderError::RpcError { code, message } => {
+                assert_eq!(*code, -32_603, "a fixture gap, not a capability verdict");
+                assert!(message.contains("fixture gap"), "got {message}");
+                assert!(
+                    message.contains(&format!("{abandoned}")),
+                    "the gap names the pinned block, got {message}"
+                );
+            }
+            other => panic!("expected a fixture-gap RPC error, got {other:?}"),
+        }
+        let served = transport.served_snapshot();
+        assert_eq!(served.served, 0, "nothing was served");
+        assert_eq!(served.hash_resolved, 0);
+        assert_eq!(served.requests, 1, "no height-only retry exists");
+    }
+
+    /// The red-first same-height replacement: a ledger whose recorded headers
+    /// disagree — one height holding the abandoned block's hash in one answer and
+    /// the replacement's in another — refuses. The height-keyed read is never
+    /// served on the strength of a height whose identity the evidence cannot
+    /// settle.
+    #[tokio::test]
+    async fn contradictory_recorded_headers_refuse_a_same_height_replacement() {
+        let address = Address::repeat_byte(0x11);
+        let replacement = B256::new([0xb1; 32]);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                recorded_header_entry(PINNED_NUMBER, replacement, true),
+                height_keyed_storage_entry(PINNED_NUMBER, address, RECORDED_WORD),
+            ],
+        ));
+
+        for pin in [PINNED_HASH, replacement] {
+            let error = transport
+                .as_alloy_provider()
+                .make_request("eth_getStorageAt", pinned_params(address, pin, true))
+                .await
+                .expect_err("a contradicted identity cannot serve a height's word");
+            match &error {
+                ProviderError::RpcError { code, message } => {
+                    assert_eq!(*code, -32_603);
+                    assert!(
+                        message.contains("contradictory recorded header identity"),
+                        "the refusal names the contradiction, got {message}"
+                    );
+                }
+                other => panic!("expected a contradiction refusal, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            transport.served_snapshot().served,
+            0,
+            "no branch is picked for the caller"
+        );
+    }
+
+    /// A pin that does not require canonicality names a NON-canonical branch,
+    /// which height evidence cannot identify: the bridge refuses instead of
+    /// serving the canonical height's entry.
+    #[tokio::test]
+    async fn a_non_canonical_pin_refuses_the_height_bridge() {
+        let address = Address::repeat_byte(0x11);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (PINNED_NUMBER, PINNED_NUMBER),
+            vec![
+                chain_entry(),
+                recorded_header_entry(PINNED_NUMBER, PINNED_HASH, false),
+                height_keyed_storage_entry(PINNED_NUMBER, address, RECORDED_WORD),
+            ],
+        ));
+
+        let error = transport
+            .as_alloy_provider()
+            .make_request(
+                "eth_getStorageAt",
+                pinned_params(address, PINNED_HASH, false),
+            )
+            .await
+            .expect_err("a non-canonical pin names no height-provable position");
+
+        match &error {
+            ProviderError::RpcError { code, message } => {
+                assert_eq!(*code, -32_603);
+                assert!(
+                    message.contains("non-canonical"),
+                    "the refusal says why, got {message}"
+                );
+            }
+            other => panic!("expected a non-canonical refusal, got {other:?}"),
+        }
+        assert_eq!(transport.served_snapshot().served, 0);
     }
 
     // ── wire-form restoration (the re-hex contract) ──────────────────────

@@ -17,12 +17,16 @@
 //!
 //! # Where the values come from (the node, never the engine)
 //!
-//! Every prefetch read pins the SAME anchor the RPC fallback pins
-//! (`dispatch`'s `sim_block`), and seeds the memo the fallback itself feeds. A
-//! seeded entry is therefore indistinguishable from one the fallback learned:
-//! the node's full word at the anchor, no engine-projection masking. That is
-//! the whole reason this lane reads the node — an engine-carried word has its
-//! untracked bits zeroed, and serving it reverts.
+//! Every prefetch read pins the SAME anchor the RPC fallback pins (dispatch's
+//! solve [`ReadAnchor`]), takes its transport identifier from
+//! [`ReadAnchor::block_id`] — a hash-pinned EIP-1898 read for an identified
+//! anchor, an explicit height only for an unresolved one — and seeds the memo
+//! the fallback itself feeds. A seeded entry is therefore indistinguishable
+//! from one the fallback learned: the node's full word at the anchor, no
+//! engine-projection masking. That is the whole reason this lane reads the
+//! node — an engine-carried word has its untracked bits zeroed, and serving it
+//! reverts. The batch's members are the serial reads' own params, so the
+//! prewarm and the fallback fetch one answer shape.
 //!
 //! # Coverage, and what it deliberately does not cover
 //!
@@ -87,7 +91,6 @@
 use std::future::Future;
 
 use crate::sim::evm2::hook_slots::HookSlotStore;
-use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::diag;
 use degenbot_execution::{HopInfo, PathInfo};
@@ -100,7 +103,7 @@ use degenbot_rpc::provider::AlloyProvider;
 
 use super::hot_slots::HotSlotStore;
 use super::state_override::SettlementWarmup;
-use super::storage_memo::StorageMemo;
+use super::storage_memo::{ReadAnchor, StorageMemo};
 
 /// The most slots one prefetch batch may carry. A batch is ONE round trip, so
 /// this is a transport-payload bound, not a latency bound: the widest fan-out
@@ -534,14 +537,16 @@ pub fn path_hook_slots<'a>(
 ///
 /// `anchor` is the block the learned set's decay is measured against — the
 /// same anchor the reads pin, so a slot a capture touched at the previous
-/// anchor is still hot and one that drifted out is not.
+/// anchor is still hot and one that drifted out is not. The decay is a number
+/// fact ([`ReadAnchor::number`]): the hot set carries IDENTITIES, never values,
+/// so no identity fence applies to it.
 #[must_use]
 pub fn prewarm_plan<'a>(
     paths: impl IntoIterator<Item = &'a PathInfo>,
     layout: &FamilySlotLayout,
     facts: &PrefetchFacts,
     learned_sets: LearnedSets<'_>,
-    anchor: u64,
+    anchor: ReadAnchor,
 ) -> PrewarmPlan {
     let paths: Vec<&PathInfo> = paths.into_iter().collect();
     let mut slots = path_prefetch_slots(paths.iter().copied(), layout, facts);
@@ -549,7 +554,7 @@ pub fn prewarm_plan<'a>(
     let mut seen: std::collections::HashSet<(Address, U256)> = slots.iter().copied().collect();
     let mut learned = 0usize;
     for entry in learned_sets.hot.slots_for(
-        anchor,
+        anchor.number(),
         path_prefetch_addresses(paths.iter().copied(), facts),
     ) {
         if slots.len() >= MAX_PREFETCH_SLOTS {
@@ -594,7 +599,7 @@ pub fn prewarm_plan<'a>(
 /// Failure degrades: see [`PrefetchSkip`].
 pub fn prefetch_paths_into_memo<'a>(
     provider: &AlloyProvider,
-    anchor: u64,
+    anchor: ReadAnchor,
     paths: impl IntoIterator<Item = &'a PathInfo>,
     layout: &FamilySlotLayout,
     facts: &PrefetchFacts,
@@ -612,7 +617,7 @@ pub fn prefetch_paths_into_memo<'a>(
 }
 
 /// Seed `memo` with the node's values for `slots` at `anchor`, in ONE JSON-RPC
-/// batch round trip.
+/// batch round trip pinned to the anchor's own identifier.
 ///
 /// The prefetch's core: dedup + drop what the memo already holds, read the rest
 /// as one batch, seed every answer. Never fails — a skipped or failed read
@@ -620,7 +625,7 @@ pub fn prefetch_paths_into_memo<'a>(
 /// beyond whatever it already held.
 pub fn prefetch_into_memo(
     provider: &AlloyProvider,
-    anchor: u64,
+    anchor: ReadAnchor,
     slots: &[(Address, U256)],
     memo: &StorageMemo,
 ) -> PrefetchReport {
@@ -647,8 +652,7 @@ pub fn prefetch_into_memo(
             skipped: None,
         };
     }
-    let Some(read) =
-        block_on_ambient(provider.get_storage_batch_at(&wanted, BlockId::number(anchor)))
+    let Some(read) = block_on_ambient(provider.get_storage_batch_at(&wanted, anchor.block_id()))
     else {
         return PrefetchReport {
             derived,
@@ -678,7 +682,7 @@ pub fn prefetch_into_memo(
         Err(error) => {
             diag!(
                 domain = sim,
-                anchor,
+                anchor = anchor.number(),
                 slots = wanted.len(),
                 "storage prefetch degraded: {error}"
             );
@@ -796,6 +800,12 @@ mod tests {
 
     fn path(hops: Vec<HopInfo>) -> PathInfo {
         PathInfo::new(hops)
+    }
+
+    /// The number-only read observation these stub chains serve: their wire
+    /// shape is a height tag, which is exactly what an unresolved anchor names.
+    fn at(number: u64) -> ReadAnchor {
+        ReadAnchor::unresolved(number)
     }
 
     // ── the derivation ───────────────────────────────────────────────────
@@ -1004,11 +1014,16 @@ mod tests {
         }
     }
 
-    /// The block tag a member pinned (`eth_getStorageAt`'s third param).
+    /// The block identifier a member pinned (`eth_getStorageAt`'s third param),
+    /// in wire form: a height quantity for an unresolved anchor, the EIP-1898
+    /// object for an identified one.
     fn block_tag(req: &SerializedRequest) -> String {
         let params: serde_json::Value =
             serde_json::from_str(req.params().expect("params").get()).expect("params JSON");
-        params[2].as_str().unwrap_or_default().to_string()
+        match &params[2] {
+            serde_json::Value::String(tag) => tag.clone(),
+            identifier => identifier.to_string(),
+        }
     }
 
     fn answer(req: &SerializedRequest) -> Response {
@@ -1130,7 +1145,7 @@ mod tests {
 
         let report = prefetch_paths_into_memo(
             &provider,
-            anchor,
+            at(anchor),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &executor_facts(),
@@ -1197,7 +1212,7 @@ mod tests {
         let hot = HotSlotStore::new();
         let first = prefetch_paths_into_memo(
             &provider,
-            7,
+            at(7),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1210,7 +1225,7 @@ mod tests {
         assert_eq!(first.seeded, first.derived);
         let second = prefetch_paths_into_memo(
             &provider,
-            7,
+            at(7),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1248,7 +1263,7 @@ mod tests {
 
         let report = prefetch_paths_into_memo(
             &provider,
-            7,
+            at(7),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1281,11 +1296,75 @@ mod tests {
         let stub = ChainStub::new();
         let provider = stub.provider();
         let memo = StorageMemo::new();
-        let report = prefetch_into_memo(&provider, 7, &[(POOL_1, U256::from(8u64))], &memo);
+        let report = prefetch_into_memo(&provider, at(7), &[(POOL_1, U256::from(8u64))], &memo);
         assert_eq!(report.skipped, Some(PrefetchSkip::NoRuntime));
         assert_eq!(report.seeded, 0);
         assert_eq!(memo.stats(), (0, 0));
         assert!(stub.packets().is_empty(), "no runtime, no dispatch");
+    }
+
+    /// The identified anchor's ONE batch pins every member by hash:
+    /// `{ blockHash, requireCanonical: true }` with the anchor's own hash, the
+    /// identifier the cold fallback issues, so a prewarmed word and the read the
+    /// fallback would have made are one answer at one identity. A replacement
+    /// block at the same height is a different pin and mints a memo no prefetch
+    /// of the abandoned block ever seeded.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_identified_anchor_pins_every_member_and_a_replacement_mints_a_memo() {
+        let stub = ChainStub::new();
+        let provider = stub.provider();
+        let cache = StorageMemoCache::new();
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let facts = executor_facts();
+        let abandoned_hash = B256::new([0xa1; 32]);
+        let head = ReadAnchor::identified(100, abandoned_hash);
+        let memo = cache.for_anchor(head);
+        let slots = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
+
+        let report = prefetch_paths_into_memo(
+            &provider,
+            head,
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
+            &memo,
+        );
+        assert_eq!(report.seeded, report.requested);
+        assert_eq!(stub.packets(), vec![report.requested], "ONE batch");
+        for tag in stub.anchors() {
+            let identifier: serde_json::Value =
+                serde_json::from_str(&tag).expect("a hash-pinned identifier is a JSON object");
+            assert_eq!(
+                identifier
+                    .get("blockHash")
+                    .and_then(serde_json::Value::as_str),
+                Some(format!("{abandoned_hash}").as_str()),
+                "every member pins the anchor's own hash, got {tag}"
+            );
+            assert_eq!(
+                identifier
+                    .get("requireCanonical")
+                    .and_then(serde_json::Value::as_bool),
+                Some(true),
+                "the pin requires the block to still be canonical, got {tag}"
+            );
+        }
+
+        let replacement = cache.for_anchor(ReadAnchor::identified(100, B256::new([0xb1; 32])));
+        assert!(
+            !std::sync::Arc::ptr_eq(&memo, &replacement),
+            "a replacement block is a different anchor, so a different memo"
+        );
+        assert!(
+            slots
+                .iter()
+                .all(|(address, slot)| !replacement.holds(*address, *slot)),
+            "no prefetched word of the abandoned block is reachable from the replacement"
+        );
     }
 
     /// A prefetch at anchor N never serves a fan-out at N+1: the cache retires
@@ -1303,7 +1382,7 @@ mod tests {
         let seeded = cache.for_anchor(ReadAnchor::unresolved(100));
         let report = prefetch_paths_into_memo(
             &provider,
-            100,
+            at(100),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1471,7 +1550,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            100,
+            at(100),
         );
         assert_eq!(plan.learned, 0);
         assert_eq!(plan.slots.len(), plan.derived);
@@ -1493,7 +1572,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            100,
+            at(100),
         );
         assert_eq!(plan.learned, 0);
         assert_eq!(
@@ -1519,7 +1598,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            touched_at + HOT_SLOT_DECAY_BLOCKS - 1,
+            at(touched_at + HOT_SLOT_DECAY_BLOCKS - 1),
         );
         assert_eq!(hot_plan.learned, 1);
         let decayed_plan = prewarm_plan(
@@ -1530,7 +1609,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            touched_at + HOT_SLOT_DECAY_BLOCKS,
+            at(touched_at + HOT_SLOT_DECAY_BLOCKS),
         );
         assert_eq!(
             decayed_plan.learned, 0,
@@ -1573,7 +1652,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            anchor,
+            at(anchor),
         );
         assert_eq!(plan.derived, derived.len());
         assert_eq!(plan.learned, 2, "the learned complement is the two words");
@@ -1586,7 +1665,7 @@ mod tests {
 
         let report = prefetch_paths_into_memo(
             &provider,
-            anchor,
+            at(anchor),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1666,7 +1745,7 @@ mod tests {
                 hot: &hot,
                 hooks: None,
             },
-            anchor,
+            at(anchor),
         );
         assert_eq!(
             plan.learned, 1,
@@ -1674,7 +1753,7 @@ mod tests {
         );
         let report = prefetch_paths_into_memo(
             &provider,
-            anchor,
+            at(anchor),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1737,7 +1816,7 @@ mod tests {
                 hot: &HotSlotStore::new(),
                 hooks: Some(&hooks),
             },
-            anchor,
+            at(anchor),
         );
         assert_eq!(plan.derived, derived.len());
         assert_eq!(plan.learned, 0, "the hot set holds nothing");
@@ -1755,7 +1834,7 @@ mod tests {
 
         let report = prefetch_paths_into_memo(
             &provider,
-            anchor,
+            at(anchor),
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
@@ -1800,7 +1879,7 @@ mod tests {
                 hot: &HotSlotStore::new(),
                 hooks: Some(&hooks),
             },
-            100,
+            at(100),
         );
         assert_eq!(plan.hook, 1);
         assert_eq!(
@@ -1830,7 +1909,7 @@ mod tests {
                 hot: &HotSlotStore::new(),
                 hooks: Some(&hooks),
             },
-            100,
+            at(100),
         );
         assert_eq!(unlearned.hook, 0);
         assert_eq!(unlearned.slots, derived);
@@ -1844,7 +1923,7 @@ mod tests {
                 hot: &HotSlotStore::new(),
                 hooks: None,
             },
-            100,
+            at(100),
         );
         assert_eq!(no_store.hook, 0);
         assert_eq!(no_store.slots, derived);

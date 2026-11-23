@@ -1315,8 +1315,9 @@ async fn drive(
     } = boot;
     shared.begin_running();
     // The per-block replay handle: rebuilt whenever the observed head
-    // advances (the scratch stack pins `BlockId::Number(head)` and frames
-    // run in the NEXT block's env). The sim DB's membership view is the boot
+    // advances (the scratch stack pins the head's own exact anchor — the hash
+    // of the header the rebuild reads — and frames run in the NEXT block's env).
+    // The sim DB's membership view is the boot
     // registry (or a state-less no-op when the discovery lane is shut); the
     // driver carries no engine state, so the divergence observer is inert.
     // The shared warm cache carries the cross-block bytecode/account caches

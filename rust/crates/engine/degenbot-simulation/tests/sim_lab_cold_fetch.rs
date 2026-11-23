@@ -34,6 +34,7 @@ use degenbot_simulation::sim::evm2::bot_state_db::BotStateDb;
 use degenbot_simulation::sim::evm2::session::Evm2SimSession;
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 use degenbot_simulation::sim::sim_metrics::{self, SimLabSnapshot};
+use degenbot_simulation::sim::ReadAnchor;
 use degenbot_substrate::NO_SIM_ANCHOR;
 use parking_lot::RwLock;
 
@@ -125,7 +126,11 @@ type LabStack = CacheDB<Db<WarmCodeCache<BotStateDb<'static, MockCold>>>>;
 
 fn stack(inner: &Arc<RwLock<WarmCodeCacheInner>>, block: u64, cold: MockCold) -> LabStack {
     let bot_state_db = BotStateDb::new(&NO_SIM_ANCHOR, cold);
-    let warm = WarmCodeCache::with_owner(Arc::clone(inner), block, bot_state_db);
+    let warm = WarmCodeCache::with_owner(
+        Arc::clone(inner),
+        ReadAnchor::unresolved(block),
+        bot_state_db,
+    );
     CacheDB::new(Db::new(warm))
 }
 

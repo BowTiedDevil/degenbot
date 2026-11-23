@@ -59,8 +59,8 @@ fn hash(step: u8) -> B256 {
 }
 
 /// Install the scenario chain's first generation: cold, at `HEIGHT`.
-fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
-    cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
+fn start(stub: &ChainStub, cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
+    cache.for_anchor(stub.exact(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying `writes`.
@@ -73,7 +73,7 @@ async fn advance(
     stub.serve_bal_at(hash(step), modeled_chain::bal_bytes(writes));
     let (hub, _) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + u64::from(step), hash(step)),
+            stub.exact(HEIGHT + u64::from(step), hash(step)),
             hash(step - 1),
             &[],
         )
@@ -98,7 +98,7 @@ async fn a_chain_hit_resolves_from_the_generation_and_dispatches_no_read() {
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 7);
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(7u64),
@@ -121,7 +121,7 @@ async fn a_miss_drains_as_a_batch_member_and_settles_into_its_generation() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let read = hub.read_storage_handle(x().0, x().1);
     assert_eq!(read.origin(), ReadOrigin::Hub, "an unknown identity misses");
@@ -159,7 +159,7 @@ async fn duplicate_misses_coalesce_onto_one_dispatched_member() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let first = hub.read_storage_handle(x().0, x().1);
     let second = hub.read_storage_handle(x().0, x().1);
@@ -188,7 +188,7 @@ async fn a_planted_duplicate_read_of_one_identity_dispatches_exactly_one_member(
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let reads: Vec<_> = (0..16)
         .map(|_| hub.read_storage_handle(x().0, x().1))
@@ -217,7 +217,7 @@ async fn a_duplicate_registered_while_a_round_is_in_flight_joins_that_single_fli
     let provider = stub.provider();
     stub.set_slow(true);
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let first = hub.read_storage_handle(x().0, x().1);
     let mut drain = Box::pin(hub.drain_round());
@@ -252,7 +252,7 @@ async fn distinct_misses_drain_in_one_storage_batch() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let reads: Vec<_> = (0..5u64)
         .map(|slot| hub.read_storage_handle(address(0x22), U256::from(slot)))
@@ -276,7 +276,7 @@ async fn a_refused_member_fails_only_its_own_read_and_settles_nothing() {
     let provider = stub.provider();
     stub.refuse_at(HEIGHT, x().0, x().1);
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let refused = hub.read_storage_handle(x().0, x().1);
     let answered = hub.read_storage_handle(y().0, y().1);
@@ -319,7 +319,7 @@ async fn an_abandoned_round_settles_nothing_and_the_read_retries_normally() {
     let provider = stub.provider();
     stub.set_hold(true);
     let cache = DeltaSnapshotCache::new(&provider);
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
 
     let abandoned = hub.read_storage_handle(x().0, x().1);
     {
@@ -357,7 +357,7 @@ async fn a_settle_that_lands_after_an_advance_stays_handle_local() {
     stub.serve_at(HEIGHT, y().0, y().1, 5);
     stub.serve_at(HEIGHT + 1, y().0, y().1, 9);
     let cache = DeltaSnapshotCache::new(&provider);
-    let parent = start(&cache);
+    let parent = start(&stub, &cache);
 
     let late = parent.read_storage_handle(y().0, y().1);
     assert_eq!(late.origin(), ReadOrigin::Hub);
@@ -410,7 +410,7 @@ async fn an_expired_re_read_takes_the_round_path_and_settles_a_fresh_window() {
     stub.serve_at(HEIGHT, x().0, x().1, 3);
     stub.serve_at(HEIGHT + 3, x().0, x().1, 8);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(3u64)

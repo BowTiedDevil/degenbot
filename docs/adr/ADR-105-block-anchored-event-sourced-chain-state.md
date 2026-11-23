@@ -344,6 +344,79 @@ construction per operation and `BlockReads` builds no read params of its own.
   `degenbot-rpc` boundary, so the generated `degenbot/_ffi` stubs are unchanged
   and their drift gate stays green.
 
+### Simulation reads pinned by anchor (2026-11-23)
+
+The fan-out's simulation stack now takes its read position from the solve
+anchor end to end, so the value caches and the wire carry ONE identity.
+
+- `Evm2BlockSimHandle::build` / `build_with_view` take a `ReadAnchor` in
+  place of the block number. The block env's `number` and the scratch frame's
+  next height are derived from it (`ReadAnchor::number`), so a height is never
+  the read identity again. `AlloyAsyncDb::new` and
+  `WarmCodeCache::with_owner` take the same anchor, and every read it issues
+  passes through `ReadAnchor::block_id()`: an identified anchor states
+  `{ blockHash, requireCanonical: true }` (`eth_getStorageAt`,
+  `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode`, and the
+  single- and multi-account batches), an unresolved anchor states its height.
+- `ReadHub::drain_round` issues both batch kinds at `block_id()` — the hub's
+  single-flight, coalescing, member counts, per-member failure attribution, and
+  retry budget are unchanged; only the identifier's construction moved.
+- `prefetch_paths_into_memo` / `prefetch_into_memo` / `prewarm_plan` take the
+  anchor. The prewarm's ONE batch pins the same identifier the fallback issues,
+  and the capture-learned decay is measured on `number()` because the hot-slot
+  store carries identities, never values.
+- `WarmCodeCache` entries are tagged with the anchor they loaded at. Freshness
+  is the AGE (`anchor.number() - loaded.number()`) against the TTL, plus a
+  same-height fence: at one height the entry is served only when its identity
+  matches the read anchor's (equal hash for two identified observations,
+  height-only for two unresolved ones). A NEGATIVE age is stale by construction,
+  so a read that moves backward never reuses a row it read in the future it
+  moved back from; a replacement block at the same height is likewise a cold
+  position — it reads the node, never the abandoned branch's row — while the
+  ordinary forward advance keeps the cross-block reuse the layer exists for.
+- Dispatch threads the work item's solve anchor into the prefetch batch and the
+  handle build (the delta/head generation already keyed on it), so the BAL
+  selection, the memo, the hub, and the wire all name one block. The block
+  environment, the scratch frame's `number + 1`, telemetry, and the solver's
+  promotion stay number facts, unchanged.
+- Callers that hold no resolved header pass `ReadAnchor::unresolved`: the
+  Python inline-sim request (`InlineSimRequest` is number-only, so no
+  fabricated hash is minted), the dry-run frame pipeline's live fork handles,
+  and the live-RPC lab/bench harnesses that pin a height they never resolved.
+  Those paths keep their previous wire behavior exactly. The scripted chain
+  stubs the delta/retention suites drive honour the same rule on their side: a
+  pin at a hash no recorded header or registration names is a hard RPC failure,
+  so a stub's default word can never stand in for a block it cannot identify.
+- Replay evidence gained the bridge this needs. `CassetteReplayTransport`
+  indexes the ledger's own recorded `eth_getBlockByNumber` answers by hash, so a
+  hash-pinned read that misses its exact key resolves to the height a recorded
+  header names and is answered by that height's entry — the same read position,
+  proven rather than assumed. A hash no recorded header names is a fixture gap
+  (missing evidence, not a missing capability), a pin that does not require
+  canonicality is refused (height evidence cannot identify a non-canonical
+  branch), and recorded headers that contradict each other — one hash at two
+  heights, or one height holding two hashes — are refused rather than resolved.
+  `ServedSnapshot::hash_resolved` counts how much of a replayed read surface
+  still depends on the bridge, which is the signal for re-recording a fixture at
+  the exact hash. Only the five read methods take the bridge —
+  `eth_getStorageAt`, `eth_getBalance`, `eth_getTransactionCount`,
+  `eth_getCode`, and `eth_call` — because an account hydration is ONE batch of
+  balance, nonce, and code whose members must answer together (the nonce is a
+  served and bridged method, never a method-not-found in the middle of a
+  hydration); every other method keeps its own key.
+- Cassette provenance is unchanged: the committed corpus in
+  `tests/fixtures/cassettes/` was not re-recorded for this change. Its read
+  surface is the Aave updater's already hash-pinned reads (recorded as such) and
+  log/header requests; no committed cassette carries a simulation read pinned by
+  height, so no recorded entry became wrong or redundant. Structural comparison
+  before/after: identical entry count, method histogram, and byte digest per
+  file (the corpus drift gate `verify_cassette_bytes` still passes); semantic
+  comparison: every replayed scenario's answers are unchanged, and the new
+  replay cases prove a hash pin resolves to the recorded height's answer.
+- Deliberate non-claims: `BLOCKHASH` ancestry (a `get_block_hash` read still
+  resolves its number against the current canonical chain) and the replay-surface
+  expectation consolidation remain separate work.
+
 # Appendix A — Type inventory and admitted ambiguity at scoping
 
 _Scoping snapshot, recorded before the cutover. The rows below state what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._

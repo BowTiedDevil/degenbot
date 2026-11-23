@@ -92,6 +92,9 @@ struct ChainStub {
     /// Per-`(height, account, slot)` storage answers — anything unlisted
     /// answers [`SERVED`].
     values: Arc<Mutex<ChainValues>>,
+    /// The height each registered block hash names, so a hash-pinned member
+    /// resolves to its own block's truth.
+    hashes: Arc<Mutex<HashMap<B256, u64>>>,
 }
 
 impl ChainStub {
@@ -110,6 +113,68 @@ impl ChainStub {
             bal_eth_only: Arc::new(AtomicBool::new(false)),
             bal_null: Arc::new(AtomicBool::new(false)),
             values: Arc::new(Mutex::new(HashMap::new())),
+            hashes: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// The exact anchor `height` names at `hash`, registered so the read hub's
+    /// hash-pinned members resolve to that height's truth.
+    fn exact(&self, height: u64, hash: B256) -> ReadAnchor {
+        self.hashes.lock().unwrap().insert(hash, height);
+        ReadAnchor::identified(height, hash)
+    }
+
+    /// Whether `method` is one of the hub's read members (a single account
+    /// read, a storage read, or one member of their batches).
+    fn is_read(method: &str) -> bool {
+        matches!(
+            method,
+            "eth_getStorageAt" | "eth_getBalance" | "eth_getTransactionCount" | "eth_getCode"
+        )
+    }
+
+    /// The param position a read member's block identifier occupies: the account
+    /// reads state `[address, block]`, storage adds the slot.
+    fn identifier_index(method: &str) -> usize {
+        if method == "eth_getStorageAt" {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// The height a member's block identifier names: a height quantity for the
+    /// unresolved form, or the height this stub registered for the EIP-1898 pin.
+    /// The pin must require canonicality — every hub read states it — and a hash
+    /// the stub never registered is a HARD refusal: its default word is never a
+    /// stand-in for a block it cannot identify.
+    fn member_height(&self, req: &SerializedRequest, position: usize) -> Result<u64, String> {
+        let params: Value =
+            serde_json::from_str(req.params().expect("a member carries params").get())
+                .expect("member params are JSON");
+        match params.get(position) {
+            Some(Value::String(tag)) => u64::from_str_radix(tag.trim_start_matches("0x"), 16)
+                .map_err(|error| format!("block tag {tag}: {error}")),
+            Some(identifier) => {
+                if identifier.get("requireCanonical").and_then(Value::as_bool) != Some(true) {
+                    return Err(format!(
+                        "a pinned read requires a canonical block: {identifier}"
+                    ));
+                }
+                let hash: B256 = identifier
+                    .get("blockHash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("the pin names no block hash: {identifier}"))?
+                    .parse()
+                    .map_err(|error| format!("pinned hash: {error}"))?;
+                self.hashes
+                    .lock()
+                    .unwrap()
+                    .get(&hash)
+                    .copied()
+                    .ok_or_else(|| format!("the scripted chain holds no block at {hash}"))
+            }
+            None => Err("the member carries no block identifier".to_string()),
         }
     }
 
@@ -241,6 +306,23 @@ impl ChainStub {
                 }),
             };
         }
+        let read_height = if Self::is_read(req.method()) {
+            match self.member_height(req, Self::identifier_index(req.method())) {
+                Ok(height) => Some(height),
+                Err(message) => {
+                    return Response {
+                        id: req.id().clone(),
+                        payload: ResponsePayload::Failure(ErrorPayload {
+                            code: -32_000,
+                            message: Cow::Owned(message),
+                            data: None,
+                        }),
+                    };
+                }
+            }
+        } else {
+            None
+        };
         let result =
             if self.empty_accounts.load(Ordering::Relaxed) && req.method() != "eth_getStorageAt" {
                 match req.method() {
@@ -251,13 +333,15 @@ impl ChainStub {
             } else {
                 match req.method() {
                     "eth_getStorageAt" => {
-                        let (address, slot, height) = Self::storage_params(req);
-                        let value = self
-                            .values
-                            .lock()
-                            .unwrap()
-                            .get(&(height, address, slot))
-                            .copied()
+                        let (address, slot) = Self::storage_params(req);
+                        let value = read_height
+                            .and_then(|height| {
+                                self.values
+                                    .lock()
+                                    .unwrap()
+                                    .get(&(height, address, slot))
+                                    .copied()
+                            })
                             .unwrap_or(SERVED);
                         serde_json::json!(format!("{value:#x}"))
                     }
@@ -330,8 +414,8 @@ impl ChainStub {
         }
     }
 
-    /// A storage member's `(address, slot, height)` in wire form.
-    fn storage_params(req: &SerializedRequest) -> (Address, U256, u64) {
+    /// A storage member's `(address, slot)` in wire form.
+    fn storage_params(req: &SerializedRequest) -> (Address, U256) {
         let params: Value =
             serde_json::from_str(req.params().expect("a member carries params").get())
                 .expect("member params are JSON");
@@ -347,16 +431,7 @@ impl ChainStub {
             .expect("the slot is the second param")
             .parse()
             .expect("the member slot parses");
-        let height = params
-            .get(2)
-            .and_then(Value::as_str)
-            .expect("the block tag is the third param")
-            .trim_start_matches("0x");
-        (
-            address,
-            slot,
-            u64::from_str_radix(height, 16).expect("the block tag is hex"),
-        )
+        (address, slot)
     }
 
     /// The one block identity a BAL request carries.
@@ -928,7 +1003,7 @@ async fn one_anchor_shares_one_hub() {
     let provider = stub.provider();
     let cache = ReadHubCache::new(&provider);
     assert_eq!(cache.anchor(), None, "no anchor installed yet");
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
 
     let first = cache.for_anchor(anchor);
     let word = first.read_storage(address(0x11), slot());
@@ -966,8 +1041,8 @@ async fn a_same_height_reorg_never_serves_the_abandoned_block() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     let cache = ReadHubCache::new(&provider);
-    let abandoned = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
-    let replacement = ReadAnchor::identified(HEIGHT, B256::new([0xbb; 32]));
+    let abandoned = stub.exact(HEIGHT, B256::new([0xaa; 32]));
+    let replacement = stub.exact(HEIGHT, B256::new([0xbb; 32]));
 
     let pre_reorg = cache.for_anchor(abandoned);
     let stale = pre_reorg.read_storage(address(0x11), slot());
@@ -1002,6 +1077,152 @@ async fn a_same_height_reorg_never_serves_the_abandoned_block() {
     assert_eq!(cache.anchor(), Some(replacement));
 }
 
+/// The identity is on the wire, not only in the cache key: an identified
+/// hub's batch members state `{ blockHash, requireCanonical: true }` with the
+/// anchor's own hash — the EIP-1898 pin the cold fallback issues, so the node
+/// either answers at exactly that block or refuses the member — and a
+/// replacement block at the same height dispatches its OWN pin. No member ever
+/// states a height here, which is what makes a same-height substitution
+/// unservable rather than merely unlikely.
+#[tokio::test]
+async fn an_identified_hub_pins_every_member_and_a_replacement_dispatches_its_own_pin() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let cache = ReadHubCache::new(&provider);
+    let abandoned_hash = B256::new([0xaa; 32]);
+    let replacement_hash = B256::new([0xbb; 32]);
+    let abandoned = stub.exact(HEIGHT, abandoned_hash);
+    let replacement = stub.exact(HEIGHT, replacement_hash);
+
+    let pre_reorg = cache.for_anchor(abandoned);
+    let stale = pre_reorg.read_storage(address(0x11), slot());
+    pre_reorg.drain_round().await;
+    stale.await.unwrap();
+    assert_members_pin(&stub, abandoned_hash);
+
+    stub.clear();
+    let post_reorg = cache.for_anchor(replacement);
+    let fresh = post_reorg.read_storage(address(0x11), slot());
+    post_reorg.drain_round().await;
+    fresh.await.unwrap();
+    assert_members_pin(&stub, replacement_hash);
+}
+
+/// Every read member the stub received — storage or account — states the
+/// EIP-1898 identifier for `hash`, and no member states a height word instead.
+fn assert_members_pin(stub: &ChainStub, hash: B256) {
+    let packets = stub.packets();
+    assert!(
+        !packets.is_empty(),
+        "the read dispatched at least one member"
+    );
+    for (method, raw) in packets.into_iter().flatten() {
+        assert!(
+            ChainStub::is_read(&method),
+            "only read members are inspected, got {method}"
+        );
+        let params: Value = serde_json::from_str(&raw).expect("member params are JSON");
+        let identifier = &params[ChainStub::identifier_index(&method)];
+        assert!(
+            identifier.is_object(),
+            "the {method} member states an EIP-1898 identifier, never a height: {params}"
+        );
+        assert_eq!(
+            identifier.get("blockHash").and_then(Value::as_str),
+            Some(format!("{hash}").as_str()),
+            "the {method} member pins the anchor's own hash: {params}"
+        );
+        assert_eq!(
+            identifier.get("requireCanonical").and_then(Value::as_bool),
+            Some(true),
+            "the {method} member requires the pinned block to still be canonical: {params}"
+        );
+    }
+}
+
+/// The account batch is pinned exactly as storage is: the identified hub's
+/// account triple is ONE packet of three members, every member naming the
+/// anchor's own hash, and the batch counts are unchanged (one packet, three
+/// members).
+#[tokio::test]
+async fn an_identified_hub_pins_the_account_triple_too() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let cache = ReadHubCache::new(&provider);
+    let hash = B256::new([0xaa; 32]);
+
+    let hub = cache.for_anchor(stub.exact(HEIGHT, hash));
+    let first = hub.read_account(address(0x21));
+    let report = hub.drain_round().await;
+    first.await.expect("the pinned account read answers");
+
+    assert_eq!(
+        report.account_members, 1,
+        "one account address, got {report:?}"
+    );
+    assert_eq!(
+        report.account_rpc_members(),
+        3,
+        "the batch counts are unchanged: balance, nonce, and code per address"
+    );
+    assert_eq!(stub.packets().len(), 1, "ONE account round trip");
+    assert_eq!(
+        stub.members(),
+        3,
+        "three batch members, got {:?}",
+        stub.packets()
+    );
+    assert_members_pin(&stub, hash);
+}
+
+/// An unknown identified read is a HARD refusal: nothing registered the pin, so
+/// neither the storage member nor the account members may be answered with the
+/// stub's default word — a fixture that cannot identify a block must fail the
+/// read, exactly as a node would.
+#[tokio::test]
+async fn an_unregistered_pin_refuses_instead_of_receiving_the_default_word() {
+    let stub = ChainStub::serving();
+    let provider = stub.provider();
+    let cache = ReadHubCache::new(&provider);
+    let unknown = ReadAnchor::identified(HEIGHT, B256::new([0x77; 32]));
+
+    let hub = cache.for_anchor(unknown);
+    let storage = hub.read_storage(address(0x11), slot());
+    let account = hub.read_account(address(0x21));
+    let report = hub.drain_round().await;
+
+    assert!(
+        storage.await.is_err(),
+        "an unidentifiable hash cannot serve a storage word"
+    );
+    assert!(
+        account.await.is_err(),
+        "an unidentifiable hash cannot serve an account row"
+    );
+    assert_eq!(
+        report.storage_members, 1,
+        "the storage member was dispatched and refused, got {report:?}"
+    );
+    assert_eq!(
+        report.account_members, 1,
+        "the account triple was dispatched as one address and refused, got {report:?}"
+    );
+    assert_eq!(
+        report.account_member_errors, 1,
+        "the refused address fails only its own requester, got {report:?}"
+    );
+    assert_eq!(
+        report.storage_member_errors, 1,
+        "the refused slot fails only its own requester, got {report:?}"
+    );
+    assert_eq!(
+        hub.memoized_slots(),
+        0,
+        "a refused identity never joins the anchor memo"
+    );
+    assert_eq!(stub.packets().len(), 2, "one packet per read kind");
+}
+
 /// An all-empty account row is memoized at its anchor too — the hub's memo is
 /// anchor-scoped, so it is not the cross-block warm cache's EOA refusal, and a
 /// moved anchor reads the row again.
@@ -1012,7 +1233,7 @@ async fn an_empty_account_row_is_memoized_only_at_its_anchor() {
     let cache = ReadHubCache::new(&provider);
     stub.serve_empty_accounts(true);
 
-    let hub = cache.for_anchor(ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32])));
+    let hub = cache.for_anchor(stub.exact(HEIGHT, B256::new([0xaa; 32])));
     let first = hub.read_account(address(0x21));
     hub.drain_round().await;
     let row = first.await.unwrap();
@@ -1166,7 +1387,7 @@ async fn carry_forward_serves_parent_values_and_child_writes_without_storage_rpc
     stub.serve_bal_at(child_hash, bal_writes_x3());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64));
     let y = parent.read_storage(address(0x11), U256::from(2u64));
     parent.drain_round().await;
@@ -1183,11 +1404,7 @@ async fn carry_forward_serves_parent_values_and_child_writes_without_storage_rpc
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
 
     assert_eq!(
@@ -1248,7 +1465,7 @@ async fn carry_forward_final_writes_and_zero_deletions_overwrite_parent_values()
     stub.serve_bal_at(child_hash, bal_writes_zero_and_final());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64));
     let y = parent.read_storage(address(0x11), U256::from(2u64));
     parent.drain_round().await;
@@ -1257,11 +1474,7 @@ async fn carry_forward_final_writes_and_zero_deletions_overwrite_parent_values()
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
 
     assert_eq!(
@@ -1316,7 +1529,7 @@ async fn carry_forward_isolates_parent_and_child_and_strands_nothing() {
     stub.serve_bal_at(child_hash, bal_writes_z5());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     // x settles; v is still in flight when the chain moves; w queues behind it.
     let x_settled = parent.read_storage(address(0x11), U256::from(1u64));
     parent.drain_round().await;
@@ -1335,7 +1548,7 @@ async fn carry_forward_isolates_parent_and_child_and_strands_nothing() {
 
     let (child, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x11)],
         )
@@ -1414,7 +1627,7 @@ async fn carry_forward_never_clones_accounts() {
     stub.serve_bal_at(child_hash, bal_writes_x3());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let account = parent.read_account(address(0x21));
     let word = parent.read_storage(address(0x11), U256::from(1u64));
     parent.drain_round().await;
@@ -1424,11 +1637,7 @@ async fn carry_forward_never_clones_accounts() {
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert_eq!(
         report.outcome,
@@ -1495,7 +1704,7 @@ async fn a_child_bal_failure_returns_a_cold_child_that_never_serves_parent_value
         stub.set_down(false);
         stub.serve_bal(worked_bal());
         let cache = ReadHubCache::new(&provider);
-        let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+        let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
         let x = parent.read_storage(address(0x11), U256::from(1u64));
         parent.drain_round().await;
         assert_eq!(x.await.unwrap(), StorageValue::from(1u64), "{name}");
@@ -1508,11 +1717,7 @@ async fn a_child_bal_failure_returns_a_cold_child_that_never_serves_parent_value
             _ => stub.serve_bal(vec![0xff, 0x00]),
         }
         let (child, report) = cache
-            .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
-                parent_hash,
-                &[],
-            )
+            .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
             .await;
 
         let (lineage, bal) = match &report.outcome {
@@ -1646,15 +1851,11 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
 
     // A wrong parent hash (the numbers line up; the hash does not).
     {
-        let (cache, parent_hub) = settled_parent(
-            &stub,
-            &provider,
-            ReadAnchor::identified(HEIGHT, parent_hash),
-        )
-        .await;
+        let (cache, parent_hub) =
+            settled_parent(&stub, &provider, stub.exact(HEIGHT, parent_hash)).await;
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
+                stub.exact(HEIGHT + 1, child_hash),
                 B256::new([0xcc; 32]),
                 &[address(0x11)],
             )
@@ -1683,13 +1884,9 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
     // A same-height reorg: the installed anchor is the REPLACEMENT block, and
     // the child still names the abandoned block as its parent.
     {
-        let (cache, _abandoned) = settled_parent(
-            &stub,
-            &provider,
-            ReadAnchor::identified(HEIGHT, parent_hash),
-        )
-        .await;
-        let replacement = cache.for_anchor(ReadAnchor::identified(HEIGHT, B256::new([0xdd; 32])));
+        let (cache, _abandoned) =
+            settled_parent(&stub, &provider, stub.exact(HEIGHT, parent_hash)).await;
+        let replacement = cache.for_anchor(stub.exact(HEIGHT, B256::new([0xdd; 32])));
         assert_eq!(
             replacement.memoized_slots(),
             0,
@@ -1698,7 +1895,7 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
         stub.clear();
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
+                stub.exact(HEIGHT + 1, child_hash),
                 parent_hash,
                 &[address(0x11)],
             )
@@ -1718,16 +1915,12 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
     // A nonconsecutive number — a gap (and, checked below, a child at the
     // parent's own height) is a refused link even with a matching hash.
     {
-        let (cache, _parent) = settled_parent(
-            &stub,
-            &provider,
-            ReadAnchor::identified(HEIGHT, parent_hash),
-        )
-        .await;
+        let (cache, _parent) =
+            settled_parent(&stub, &provider, stub.exact(HEIGHT, parent_hash)).await;
         stub.serve_bal_at(B256::new([0xee; 32]), bal_empty());
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 2, B256::new([0xee; 32])),
+                stub.exact(HEIGHT + 2, B256::new([0xee; 32])),
                 B256::new([0xbb; 32]),
                 &[address(0x11)],
             )
@@ -1746,16 +1939,12 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
 
     // A child at the parent's OWN height is nonconsecutive too.
     {
-        let (cache, _parent) = settled_parent(
-            &stub,
-            &provider,
-            ReadAnchor::identified(HEIGHT, parent_hash),
-        )
-        .await;
+        let (cache, _parent) =
+            settled_parent(&stub, &provider, stub.exact(HEIGHT, parent_hash)).await;
         stub.serve_bal_at(B256::new([0x99; 32]), bal_empty());
         let (at_same_height, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT, B256::new([0x99; 32])),
+                stub.exact(HEIGHT, B256::new([0x99; 32])),
                 parent_hash,
                 &[address(0x11)],
             )
@@ -1782,7 +1971,7 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
             settled_parent(&stub, &provider, ReadAnchor::unresolved(HEIGHT)).await;
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
+                stub.exact(HEIGHT + 1, child_hash),
                 parent_hash,
                 &[address(0x11)],
             )
@@ -1803,12 +1992,8 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
     // read the list at, so the BAL stage steps aside and NOTHING is cloned — a
     // matched link is never carried without the child's list.
     {
-        let (cache, _parent) = settled_parent(
-            &stub,
-            &provider,
-            ReadAnchor::identified(HEIGHT, parent_hash),
-        )
-        .await;
+        let (cache, _parent) =
+            settled_parent(&stub, &provider, stub.exact(HEIGHT, parent_hash)).await;
         let (child, report) = cache
             .advance_bal(
                 ReadAnchor::unresolved(HEIGHT + 1),
@@ -1836,7 +2021,7 @@ async fn refused_links_start_a_cold_child_and_request_the_child_hash_bal() {
         stub.clear();
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
+                stub.exact(HEIGHT + 1, child_hash),
                 parent_hash,
                 &[address(0x11)],
             )
@@ -1899,7 +2084,7 @@ async fn a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values(
     let cache = ReadHubCache::new(&provider);
 
     // A settles x=1, y=2.
-    let hub_a = cache.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
+    let hub_a = cache.for_anchor(stub.exact(HEIGHT, hashes[0]));
     let x = hub_a.read_storage(address(0x11), U256::from(1u64));
     let y = hub_a.read_storage(address(0x11), U256::from(2u64));
     hub_a.drain_round().await;
@@ -1910,7 +2095,7 @@ async fn a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values(
     // B: x rewritten to 5; y unchanged and still carried.
     let (hub_b, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, hashes[1]),
+            stub.exact(HEIGHT + 1, hashes[1]),
             hashes[0],
             &[address(0x11)],
         )
@@ -1937,7 +2122,7 @@ async fn a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values(
     // C: z written to 9; x and y follow the latest successful state (B's).
     let (hub_c, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 2, hashes[2]),
+            stub.exact(HEIGHT + 2, hashes[2]),
             hashes[1],
             &[address(0x11)],
         )
@@ -1965,11 +2150,7 @@ async fn a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values(
 
     // D is COLD — block 103 rewrote everything but its list is unreadable.
     let (hub_d, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 3, hashes[3]),
-            hashes[2],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 3, hashes[3]), hashes[2], &[])
         .await;
     assert!(
         matches!(
@@ -1998,11 +2179,7 @@ async fn a_cold_generation_breaks_the_chain_and_cannot_resurrect_earlier_values(
     // E carries ONLY what D settled: x and z follow D's state, and y — read at
     // A, B, C but never at D — is fetched again rather than resurrected.
     let (hub_e, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 4, hashes[4]),
-            hashes[3],
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 4, hashes[4]), hashes[3], &[])
         .await;
     assert_eq!(
         report.outcome,
@@ -2042,18 +2219,14 @@ async fn same_anchor_advance_is_idempotent_and_repeats_no_bal_work() {
     let child_hash = B256::new([0xbb; 32]);
     stub.serve_bal_at(child_hash, bal_writes_x3());
     let cache = ReadHubCache::new(&provider);
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64));
     parent.drain_round().await;
     assert_eq!(x.await.unwrap(), served_value());
     stub.clear();
 
     let (child, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert_eq!(
         report.outcome,
@@ -2063,11 +2236,7 @@ async fn same_anchor_advance_is_idempotent_and_repeats_no_bal_work() {
     assert_eq!(stub.bal_requests(), 1, "one BAL fetch");
 
     let (again, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
-            parent_hash,
-            &[],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, child_hash), parent_hash, &[])
         .await;
     assert!(
         Arc::ptr_eq(&child, &again),
@@ -2088,7 +2257,7 @@ async fn same_anchor_advance_is_idempotent_and_repeats_no_bal_work() {
         1,
         "the snapshot is unchanged (the one word, overwritten by its final write)"
     );
-    let via_for_anchor = cache.for_anchor(ReadAnchor::identified(HEIGHT + 1, child_hash));
+    let via_for_anchor = cache.for_anchor(stub.exact(HEIGHT + 1, child_hash));
     assert!(
         Arc::ptr_eq(&child, &via_for_anchor),
         "for_anchor agrees on the installed anchor"
@@ -2127,7 +2296,7 @@ async fn carry_forward_matches_an_independent_cold_hub_across_blocks() {
     let slots = [1u64, 2, 3, 4].map(U256::from);
 
     // The chain's first block settles everything it reads.
-    let hub_a = cache.for_anchor(ReadAnchor::identified(HEIGHT, hashes[0]));
+    let hub_a = cache.for_anchor(stub.exact(HEIGHT, hashes[0]));
     let first: Vec<_> = slots
         .iter()
         .map(|slot| hub_a.read_storage(address(0x11), *slot))
@@ -2138,7 +2307,7 @@ async fn carry_forward_matches_an_independent_cold_hub_across_blocks() {
     }
 
     for (offset, height) in [(1usize, HEIGHT + 1), (2, HEIGHT + 2)] {
-        let anchor = ReadAnchor::identified(height, hashes[offset]);
+        let anchor = stub.exact(height, hashes[offset]);
         let (hub, report) = cache.advance_bal(anchor, hashes[offset - 1], &[]).await;
         assert!(
             matches!(report.outcome, CarryOutcome::Carried { .. }),
@@ -2197,7 +2366,7 @@ async fn carry_forward_clones_the_parent_its_lineage_check_validated() {
     stub.serve_bal_at(child_hash, bal_empty());
     let cache = ReadHubCache::new(&provider);
 
-    let stale = cache.for_anchor(ReadAnchor::identified(HEIGHT - 1, stale_hash));
+    let stale = cache.for_anchor(stub.exact(HEIGHT - 1, stale_hash));
     let x = stale.read_storage(address(0x11), U256::from(1u64));
     stale.drain_round().await;
     assert_eq!(x.await.unwrap(), StorageValue::from(1u64));
@@ -2205,11 +2374,8 @@ async fn carry_forward_clones_the_parent_its_lineage_check_validated() {
 
     // The advance parks inside the child's list fetch ...
     stub.park_bal();
-    let mut advance = Box::pin(cache.advance_bal(
-        ReadAnchor::identified(HEIGHT + 1, child_hash),
-        real_hash,
-        &[],
-    ));
+    let mut advance =
+        Box::pin(cache.advance_bal(stub.exact(HEIGHT + 1, child_hash), real_hash, &[]));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(advance.as_mut().poll(&mut cx).is_pending());
     assert!(
@@ -2219,7 +2385,7 @@ async fn carry_forward_clones_the_parent_its_lineage_check_validated() {
     assert_eq!(stub.bal_requests(), 1, "the fetch reached the chain");
 
     // ... and while it is, the chain's REAL parent installs and settles y.
-    let real = cache.for_anchor(ReadAnchor::identified(HEIGHT, real_hash));
+    let real = cache.for_anchor(stub.exact(HEIGHT, real_hash));
     let y = real.read_storage(address(0x11), U256::from(2u64));
     real.drain_round().await;
     assert_eq!(y.await.unwrap(), StorageValue::from(2u64));
@@ -2264,7 +2430,7 @@ async fn carry_forward_overwrites_known_keys_regardless_of_relevance() {
     stub.serve_bal_at(child_hash, bal_writes_x5());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64));
     parent.drain_round().await;
     assert_eq!(x.await.unwrap(), StorageValue::from(1u64));
@@ -2274,7 +2440,7 @@ async fn carry_forward_overwrites_known_keys_regardless_of_relevance() {
     // take the update anyway.
     let (child, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x22)],
         )
@@ -2314,7 +2480,7 @@ async fn carry_forward_leaves_irrelevant_unknown_writes_for_dynamic_fallback() {
     // Once linked, once cold: the new-write rule is the same.
     for cold in [false, true] {
         let cache = ReadHubCache::new(&provider);
-        let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+        let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
         let x = parent.read_storage(address(0x11), U256::from(1u64));
         parent.drain_round().await;
         assert_eq!(x.await.unwrap(), StorageValue::from(1u64));
@@ -2327,7 +2493,7 @@ async fn carry_forward_leaves_irrelevant_unknown_writes_for_dynamic_fallback() {
         };
         let (child, report) = cache
             .advance_bal(
-                ReadAnchor::identified(HEIGHT + 1, child_hash),
+                stub.exact(HEIGHT + 1, child_hash),
                 supplied,
                 &[address(0x22)],
             )
@@ -2392,7 +2558,7 @@ async fn carry_forward_seeds_relevant_unknown_writes_as_immediate_hits() {
     stub.serve_bal_at(child_hash, bal_writes_z5());
     let cache = ReadHubCache::new(&provider);
 
-    let parent = cache.for_anchor(ReadAnchor::identified(HEIGHT, parent_hash));
+    let parent = cache.for_anchor(stub.exact(HEIGHT, parent_hash));
     let x = parent.read_storage(address(0x11), U256::from(1u64));
     parent.drain_round().await;
     assert_eq!(x.await.unwrap(), StorageValue::from(1u64));
@@ -2400,7 +2566,7 @@ async fn carry_forward_seeds_relevant_unknown_writes_as_immediate_hits() {
 
     let (child, report) = cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, child_hash),
+            stub.exact(HEIGHT + 1, child_hash),
             parent_hash,
             &[address(0x11)],
         )
@@ -2448,7 +2614,7 @@ async fn worked_bal_seeds_final_write_values_and_one_batch_for_read_only_slots()
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     let report = hub.prefetch_bal(&BalPlan::default()).await;
     stub.clear();
@@ -2525,7 +2691,7 @@ async fn an_eth_only_node_seeds_the_same_values_from_the_official_json_list() {
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
     stub.set_bal_eth_only(true);
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
 
     let report = hub.prefetch_bal(&BalPlan::default()).await;
@@ -2599,8 +2765,7 @@ async fn an_eth_only_node_prepares_the_same_final_writes() {
     stub.serve_bal_at(child_hash, bal_writes_x3());
     stub.set_bal_eth_only(true);
 
-    let prepared =
-        PreparedBal::prepare(&provider, ReadAnchor::identified(HEIGHT + 1, child_hash)).await;
+    let prepared = PreparedBal::prepare(&provider, stub.exact(HEIGHT + 1, child_hash)).await;
     assert!(
         prepared.is_decoded(),
         "the official JSON list decoded: {:?}",
@@ -2632,7 +2797,7 @@ async fn a_malformed_json_list_seeds_nothing_and_the_plain_path_works() {
     // bytes fail to decode, so the stub's JSON counterpart is malformed too.
     stub.serve_bal(vec![0xff, 0x00]);
     stub.set_bal_eth_only(true);
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
 
     let report = hub.prefetch_bal(&BalPlan::default()).await;
@@ -2666,7 +2831,7 @@ async fn bal_stage_skips_unsupported_method_and_transport_error_and_reads_still_
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
     stub.set_bal_unsupported(true);
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     let report = hub.prefetch_bal(&BalPlan::default()).await;
     assert!(matches!(report.skip, Some(BalSkip::Rpc(_))), "{report:?}");
@@ -2695,7 +2860,7 @@ async fn bal_stage_skips_unsupported_method_and_transport_error_and_reads_still_
 async fn malformed_bal_bytes_seed_nothing_and_the_plain_path_works() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     stub.serve_bal(worked_bal_with_trailing_junk());
     let report = hub.prefetch_bal(&BalPlan::default()).await;
@@ -2737,7 +2902,7 @@ async fn filtered_and_capped_bal_entries_fall_back_to_the_dynamic_path() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     let filtered = BalPlan {
         addresses: Some(vec![address(0x22)]),
@@ -2823,7 +2988,7 @@ async fn bal_seeding_is_exact_hash_anchored_and_never_crosses_anchors() {
     );
     assert_eq!(unanchored.memoized_slots(), 0);
     let cache = ReadHubCache::new(&provider);
-    let abandoned = cache.for_anchor(ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32])));
+    let abandoned = cache.for_anchor(stub.exact(HEIGHT, B256::new([0xaa; 32])));
     let report = abandoned.prefetch_bal(&BalPlan::default()).await;
     assert!(report.skip.is_none(), "{report:?}");
     assert_eq!(report.seeded.writes_seeded, 2, "{report:?}");
@@ -2838,7 +3003,7 @@ async fn bal_seeding_is_exact_hash_anchored_and_never_crosses_anchors() {
     );
     let on_abandoned = abandoned.read_storage(address(0x11), U256::from(1u64));
     assert_eq!(on_abandoned.await.unwrap(), StorageValue::from(42u64));
-    let replacement = cache.for_anchor(ReadAnchor::identified(HEIGHT, B256::new([0xbb; 32])));
+    let replacement = cache.for_anchor(stub.exact(HEIGHT, B256::new([0xbb; 32])));
     assert!(
         !Arc::ptr_eq(&abandoned, &replacement),
         "same height, different hash"
@@ -2869,7 +3034,7 @@ async fn bal_seeding_settles_a_queued_read_without_stranding_its_waiter() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     let queued = hub.read_storage(address(0x11), U256::from(1u64));
     let report = hub.prefetch_bal(&BalPlan::default()).await;
@@ -2903,7 +3068,7 @@ async fn bal_seeding_never_disturbs_an_in_flight_round() {
     let stub = ChainStub::serving();
     let provider = stub.provider();
     stub.serve_bal(worked_bal());
-    let anchor = ReadAnchor::identified(HEIGHT, B256::new([0xaa; 32]));
+    let anchor = stub.exact(HEIGHT, B256::new([0xaa; 32]));
     let hub = ReadHub::new(&provider, anchor);
     stub.park();
     let in_flight = hub.read_storage(address(0x11), U256::from(1u64));

@@ -26,6 +26,7 @@ use serde_json::Value;
 // the BAL decode (`degenbot_simulation` re-exports it): a shared fixture that
 // pinned its own copy would let the two drift apart.
 use crate::alloy_eip7928::bal::{Bal, DecodedBal};
+use crate::sim::storage_memo::ReadAnchor;
 
 use degenbot_rpc::provider::AlloyProvider;
 
@@ -61,6 +62,10 @@ pub struct ChainStub {
     bal_null: Arc<AtomicBool>,
     head: Arc<AtomicU64>,
     lineage: Arc<Mutex<HashMap<u64, (B256, B256)>>>,
+    /// The height each exact block hash names — the resolution a hash-pinned
+    /// storage read needs. A pin at a hash no scripted header and no
+    /// [`Self::exact`] registration names refuses.
+    pins: Arc<Mutex<HashMap<B256, u64>>>,
     head_unreadable: Arc<AtomicBool>,
     lineage_unreadable: Arc<AtomicBool>,
     down: Arc<AtomicBool>,
@@ -88,6 +93,7 @@ impl Default for ChainStub {
             bal_null: Arc::default(),
             head: Arc::default(),
             lineage: Arc::default(),
+            pins: Arc::default(),
             head_unreadable: Arc::default(),
             lineage_unreadable: Arc::default(),
             down: Arc::default(),
@@ -342,6 +348,57 @@ impl ChainStub {
         }
     }
 
+    /// Register `hash` as the block at `number` — the test's own statement of
+    /// the chain's lineage, whose minting site knows both halves while the wire
+    /// pin carries only one.
+    pub fn pin(&self, number: u64, hash: B256) {
+        self.pins.lock().unwrap().insert(hash, number);
+    }
+
+    /// The exact anchor `number` names at `hash`, registered so a hash-pinned
+    /// read resolves to that block's scripted truth.
+    #[must_use]
+    pub fn exact(&self, number: u64, hash: B256) -> ReadAnchor {
+        self.pin(number, hash);
+        ReadAnchor::identified(number, hash)
+    }
+
+    /// The height a storage member's block identifier names: the quantity an
+    /// unresolved observation states, or the height this scripted chain holds
+    /// for an EIP-1898 pin. A pin at a hash the chain does not hold — an
+    /// abandoned or replaced block — is a HARD refusal, so the stub's default
+    /// word can never stand in for a block it never scripted.
+    fn pinned_height(&self, req: &SerializedRequest) -> Result<u64, ResponsePayload> {
+        let params: Value =
+            serde_json::from_str(req.params().expect("a member carries params").get())
+                .expect("member params are JSON");
+        match params.get(2) {
+            Some(Value::String(tag)) => Ok(u64::from_str_radix(tag.trim_start_matches("0x"), 16)
+                .expect("the block tag is hex")),
+            Some(identifier) => {
+                if identifier.get("requireCanonical").and_then(Value::as_bool) != Some(true) {
+                    return Err(rpc_failure("a pinned read requires a canonical block"));
+                }
+                let hash: B256 = identifier
+                    .get("blockHash")
+                    .and_then(Value::as_str)
+                    .expect("the pin names a block hash")
+                    .parse()
+                    .expect("the pinned hash parses");
+                if let Some(number) = self.pins.lock().unwrap().get(&hash).copied() {
+                    return Ok(number);
+                }
+                self.lineage
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find_map(|(number, (held, _))| (*held == hash).then_some(*number))
+                    .ok_or_else(|| rpc_failure("the scripted chain holds no block at that hash"))
+            }
+            None => Err(rpc_failure("the member carries no block identifier")),
+        }
+    }
+
     /// The head number a probe reads: the stub's scripted canonical height.
     fn answer_head(&self) -> ResponsePayload {
         if self.head_unreadable.load(Ordering::Relaxed) {
@@ -433,9 +490,10 @@ impl ChainStub {
             .parse()
             .expect("the address is the first param");
         let slot: U256 = param(req, 1).parse().expect("the slot is the second param");
-        let height = param(req, 2);
-        let height =
-            u64::from_str_radix(height.trim_start_matches("0x"), 16).expect("the block tag is hex");
+        let height = match self.pinned_height(req) {
+            Ok(height) => height,
+            Err(refusal) => return refusal,
+        };
         if self
             .refused
             .lock()

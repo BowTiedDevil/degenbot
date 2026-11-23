@@ -624,10 +624,14 @@ impl InlineSimulator for InlineSimHook {
                                 );
                             }
                         };
+                        // The request carries no resolved header identity (its block env
+                        // is number-only), so the reads state that height explicitly —
+                        // the ingress form, never a fabricated hash. A dispatch fan-out
+                        // arrives with its solve anchor instead and pins by hash.
                         if let Some(mut handle) = degenbot_simulation::Evm2BlockSimHandle::build(
                             &provider,
                             base_fee_next,
-                            req.sim_block,
+                            degenbot_simulation::sim::ReadAnchor::unresolved(req.sim_block),
                             req.block_timestamp,
                             &overrides,
                             &anchor,
@@ -779,7 +783,10 @@ fn quote_leg_at_anchor(
 ) -> HookedLegAnswer {
     let counter = Arc::new(degenbot_simulation::sim::frame_replay::FrameRpcCounter::default());
     let Some(blocking) = degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb::new(
-        degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb::new(provider, anchor.block),
+        degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb::new(
+            provider,
+            degenbot_simulation::sim::ReadAnchor::unresolved(anchor.block),
+        ),
     ) else {
         // No runtime to drive the anchor's DB on this thread: no tier answer
         // (never a pool fact).
@@ -800,7 +807,7 @@ fn quote_leg_at_anchor(
     );
     let warm = degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCache::with_owner(
         Arc::clone(warm_cache),
-        anchor.block,
+        degenbot_simulation::sim::ReadAnchor::unresolved(anchor.block),
         memoized,
     );
     let mut ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));

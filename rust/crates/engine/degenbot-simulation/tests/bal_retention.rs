@@ -52,8 +52,8 @@ fn hash(step: u8) -> B256 {
 }
 
 /// Install the scenario chain's first generation: cold, at `HEIGHT`.
-fn start(cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
-    cache.for_anchor(ReadAnchor::identified(HEIGHT, hash(0)))
+fn start(stub: &ChainStub, cache: &DeltaSnapshotCache) -> Arc<DeltaHub> {
+    cache.for_anchor(stub.exact(HEIGHT, hash(0)))
 }
 
 /// Advance one linked generation carrying `writes`: the child's list is served
@@ -69,7 +69,7 @@ async fn advance(
     stub.serve_bal_at(hash(step), bal_bytes(writes));
     cache
         .advance_bal(
-            ReadAnchor::identified(HEIGHT + u64::from(step), hash(step)),
+            stub.exact(HEIGHT + u64::from(step), hash(step)),
             hash(step - 1),
             relevance,
         )
@@ -90,7 +90,7 @@ async fn a_candidate_read_refreshes_recency_and_keeps_the_entry_past_its_origina
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(1u64),
@@ -153,7 +153,7 @@ async fn a_snapshot_lookup_does_not_refresh_recency_only_a_candidate_read_does()
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     hub.read_storage(x().0, x().1).await.unwrap();
 
     // Lookups at 101 and 102 answer but do not refresh.
@@ -178,7 +178,7 @@ async fn a_bal_overwrite_does_not_refresh_recency_so_a_written_entry_still_expir
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(1u64)
@@ -223,7 +223,7 @@ async fn a_bal_only_entry_expires_after_its_idle_window_unless_a_candidate_read_
     let account = address(0x22);
     let (y, z) = ((account, U256::from(9u64)), (account, U256::from(10u64)));
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let _ = start(&cache);
+    let _ = start(&stub, &cache);
 
     // Both identities seed at 101 because their address is relevant — births,
     // not uses.
@@ -285,7 +285,7 @@ async fn a_write_overwrites_a_served_key_regardless_of_relevance_and_re_seeds_an
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let other = address(0x33);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     hub.read_storage(x().0, x().1).await.unwrap();
 
     // Served (age 1 and 2): the writes land even though x's address is
@@ -374,7 +374,7 @@ async fn an_expired_entry_is_invisible_through_ancestors_and_the_old_reader_keep
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     stub.serve_at(HEIGHT + 3, x().0, x().1, 5);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let first = start(&cache);
+    let first = start(&stub, &cache);
     first.read_storage(x().0, x().1).await.unwrap();
     stub.clear();
 
@@ -420,7 +420,7 @@ async fn a_re_read_of_an_expired_entry_falls_back_dynamically_and_settles_a_fres
     stub.serve_at(HEIGHT + 3, x().0, x().1, 5);
     stub.serve_at(HEIGHT + 7, x().0, x().1, 9);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(1u64)
@@ -483,7 +483,7 @@ async fn idle_entries_expire_across_many_generations_at_their_own_schedules() {
     stub.serve_at(HEIGHT, a.0, a.1, 1);
     stub.serve_at(HEIGHT + 2, c.0, c.1, 7);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(3));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(hub.read_storage(a.0, a.1).await.unwrap(), U256::from(1u64));
     assert_eq!(hub.live_len(), 1);
 
@@ -532,7 +532,7 @@ async fn compaction_preserves_recency_for_survivors_and_drops_expired_values_and
     stub.serve_at(HEIGHT + 2, address(0x11), U256::from(2u64), 7);
     let cache =
         DeltaSnapshotCache::with_max_depth_and_retention(&provider, 2, Retention::IdleBlocks(2));
-    let first = start(&cache);
+    let first = start(&stub, &cache);
     first.read_storage(x().0, x().1).await.unwrap();
     let y = (address(0x11), U256::from(2u64));
     let _ = advance(&cache, &stub, 1, &[], &[]).await;
@@ -603,7 +603,7 @@ async fn cold_case(skip: Option<ColdSkip>) {
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(8));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     hub.read_storage(x().0, x().1).await.unwrap();
     stub.clear();
 
@@ -620,11 +620,7 @@ async fn cold_case(skip: Option<ColdSkip>) {
         hash(0)
     };
     let (hub, report) = cache
-        .advance_bal(
-            ReadAnchor::identified(HEIGHT + 1, hash(1)),
-            parent_hash,
-            &[x().0],
-        )
+        .advance_bal(stub.exact(HEIGHT + 1, hash(1)), parent_hash, &[x().0])
         .await;
     if skip.is_none() {
         assert_eq!(
@@ -689,7 +685,7 @@ async fn a_zero_write_list_carries_live_entries_and_retires_idle_ones() {
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     hub.read_storage(x().0, x().1).await.unwrap();
     stub.clear();
 
@@ -716,7 +712,7 @@ async fn a_same_anchor_retention_advance_is_idempotent_and_refreshes_no_recency(
     let provider = stub.provider();
     stub.serve_at(HEIGHT, x().0, x().1, 1);
     let cache = DeltaSnapshotCache::with_retention(&provider, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     hub.read_storage(x().0, x().1).await.unwrap();
     stub.clear();
 
@@ -724,7 +720,7 @@ async fn a_same_anchor_retention_advance_is_idempotent_and_refreshes_no_recency(
     assert_eq!(report.outcome, CarryOutcome::Carried { carried_values: 1 });
     assert_eq!(stub.bal_requests(), 1, "one BAL fetch");
     let (again, report) = cache
-        .advance_bal(ReadAnchor::identified(HEIGHT + 1, hash(1)), hash(0), &[])
+        .advance_bal(stub.exact(HEIGHT + 1, hash(1)), hash(0), &[])
         .await;
     assert!(
         Arc::ptr_eq(&hub, &again),
@@ -736,7 +732,7 @@ async fn a_same_anchor_retention_advance_is_idempotent_and_refreshes_no_recency(
         1,
         "the idempotent call repeated no BAL work"
     );
-    let via_for_anchor = cache.for_anchor(ReadAnchor::identified(HEIGHT + 1, hash(1)));
+    let via_for_anchor = cache.for_anchor(stub.exact(HEIGHT + 1, hash(1)));
     assert!(Arc::ptr_eq(&hub, &via_for_anchor));
 
     // The repeat moved no clock: x (used at 100) expires at 103 as before.
@@ -875,7 +871,7 @@ async fn an_identity_re_settled_after_expiry_is_still_counted_when_the_fold_drop
     stub.serve_at(HEIGHT + 3, x().0, x().1, 5);
     let cache =
         DeltaSnapshotCache::with_max_depth_and_retention(&provider, 2, Retention::IdleBlocks(2));
-    let hub = start(&cache);
+    let hub = start(&stub, &cache);
     assert_eq!(
         hub.read_storage(x().0, x().1).await.unwrap(),
         U256::from(1u64)
