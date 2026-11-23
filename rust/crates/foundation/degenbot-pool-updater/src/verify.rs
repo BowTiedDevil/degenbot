@@ -144,6 +144,10 @@ fn derive_bitmaps(
     tick_spacing: i32,
 ) -> HashMap<i32, U256> {
     let mut bitmaps: HashMap<i32, U256> = HashMap::new();
+    // Spacing outside this range is invalid: zero panics `div_euclid` here,
+    // and the verifier's `validate_map_domains` rejects any such spacing
+    // loudly, so the guard leaves that error path reachable instead of a
+    // panic. No bitmaps are derived for an invalid spacing.
     if (1..=32_767).contains(&tick_spacing) {
         for &tick in tick_data.keys() {
             let compressed = tick.div_euclid(tick_spacing);
@@ -228,107 +232,9 @@ pub(crate) fn gate_liquidity_map_on_chain(
     })
 }
 
-/// Context for market-wide committed-map verification.
-pub struct FullVerifyCtx<'a> {
-    /// HTTP provider used for on-chain reads.
-    pub provider: &'a AlloyProvider,
-    /// Runtime used by the synchronous updater boundary.
-    pub rt: &'static tokio::runtime::Runtime,
-    /// Block at which committed maps are compared.
-    pub block_number: u64,
-    /// Chain containing V3 pools.
-    pub chain_id: i64,
-    /// Chain key used to resolve V4 manager rows.
-    pub pool_manager_chain: i64,
-}
-
-/// Verify every committed V3 and V4 map in the transaction's DB view.
-///
-/// The first divergent pool becomes the caller's rollback signal. The shared
-/// verifier owns only map facts; this function preserves updater-specific
-/// transaction and `last_update_block` policy.
-///
-/// # Errors
-///
-/// Returns database, provider, or caller-specific verification errors.
-pub fn verify_all_pools_committed_on_conn(
-    conn: &rusqlite::Connection,
-    ctx: &FullVerifyCtx<'_>,
-) -> Result<(), RunError> {
-    let v3_addresses = DegenbotDb::fetch_v3_pool_addresses_on_conn(conn, ctx.chain_id)?;
-    for addr in &v3_addresses {
-        let addr_str = addr.to_checksum(None);
-        let Some(state) =
-            DegenbotDb::fetch_v3_pool_update_state_on_conn(conn, ctx.chain_id, &addr_str)?
-        else {
-            continue;
-        };
-        let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
-            conn,
-            state.pool_id,
-            state.snapshot_block(),
-        )?;
-        let computed = ComputedLiquidityUpdate {
-            pool_id: state.pool_id,
-            tick_spacing: state.tick_spacing,
-            tick_data,
-            last_event: None,
-        };
-        gate_liquidity_map_on_chain(
-            ctx.rt,
-            ctx.provider,
-            &addr_str,
-            LiquidityMapTarget::V3(*addr),
-            &computed,
-            ctx.block_number,
-        )?;
-    }
-
-    let v4_hashes = DegenbotDb::fetch_v4_pool_hashes_on_conn(conn, ctx.chain_id)?;
-    for (pool_hash, manager) in &v4_hashes {
-        let Some(state) = DegenbotDb::fetch_v4_pool_update_state_on_conn(
-            conn,
-            pool_hash,
-            ctx.pool_manager_chain,
-        )?
-        else {
-            continue;
-        };
-        let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
-            conn,
-            state.pool_id,
-            state.snapshot_block(),
-        )?;
-        let computed = ComputedLiquidityUpdate {
-            pool_id: state.pool_id,
-            tick_spacing: state.tick_spacing,
-            tick_data,
-            last_event: None,
-        };
-        let pool_id =
-            B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash)).map_err(|e| {
-                RunError::Provider(ProviderError::DecodingError {
-                    message: format!("v4 full-verify: bad pool_hash {pool_hash:?}: {e}"),
-                })
-            })?;
-        gate_liquidity_map_on_chain(
-            ctx.rt,
-            ctx.provider,
-            pool_hash,
-            LiquidityMapTarget::V4 {
-                pool_manager: *manager,
-                pool_id,
-            },
-            &computed,
-            ctx.block_number,
-        )?;
-    }
-    Ok(())
-}
-
 /// Context for the pre-transaction market-wide gate (Perf A): everything the
 /// hoisted full verify needs, bundled so the hoist adds no new wide fn
-/// signatures (mirrors [`FullVerifyCtx`]).
+/// signatures.
 pub struct PreCommitFullVerifyCtx<'a> {
     /// The run's DB handle (committed maps are read under a short guard).
     pub db: &'a DegenbotDb,
@@ -451,8 +357,8 @@ fn collect_pre_commit_checks(
     Ok((v3_checks, v4_checks))
 }
 
-/// The pre-transaction variant of [`verify_all_pools_committed_on_conn`]
-/// (Perf A): the market-wide gate's RPC runs with NO lock held. The verified
+/// The market-wide full-verify gate (Perf A): it runs before the chunk's
+/// transaction opens, so its RPC runs with NO lock held. The verified
 /// state is the committed DB maps (read under a short-lived guard on the
 /// plain connection - a WAL reader takes no write lock) OVERLAID with the
 /// read pass's planned maps for this chunk's touched pools, plus the
@@ -465,7 +371,10 @@ fn collect_pre_commit_checks(
 ///
 /// # Errors
 ///
-/// Same conditions as [`verify_all_pools_committed_on_conn`].
+/// [`RunError::Db`] when a committed map read fails, [`RunError::Provider`]
+/// when an on-chain read or decode fails (including a chunk-new V4 pool with
+/// no `PoolManager` address), and [`RunError::Verification`] carrying the
+/// named divergences when a pool's verified map differs from chain truth.
 pub fn verify_all_pools_pre_commit(ctx: &PreCommitFullVerifyCtx<'_>) -> Result<(), RunError> {
     let (v3_checks, v4_checks) = collect_pre_commit_checks(ctx)?;
     for (addr_str, addr, computed) in &v3_checks {

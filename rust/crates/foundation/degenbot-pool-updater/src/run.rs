@@ -717,11 +717,10 @@ fn upsert_pool_creations_on_conn(
         )?;
         report.pools_written += rows.len();
     }
-    for (exchange_id, (kind, fee_denominator, rows)) in v4_by_exchange {
+    for (exchange_id, (_, _, rows)) in v4_by_exchange {
         // V4 upserts `uniswap_v4_pools` keyed by the manager address (the
-        // spec's `factory` is the PoolManager). The kind is always
-        // `uniswap_v4`; `fee_denominator` is `1_000_000`.
-        let _ = (kind, fee_denominator);
+        // spec's `factory`), so the collected kind and denominator go unread:
+        // V4 is `uniswap_v4` only, at the protocol's `1_000_000` denominator.
         DegenbotDb::upsert_v4_pools_on_conn(
             conn,
             chain_id,
@@ -1287,11 +1286,11 @@ pub fn run_pool_update_on_db(
     // from within any tokio runtime context.
     let rt = degenbot_core::runtime::get_runtime();
     // ONE transport for the whole chunk loop: the injected provider serves
-    // the fetches AND the pre-commit verification gate (VerifyCtx /
-    // FullVerifyCtx), so its connection tasks live exactly as long as the
-    // run. The core never builds a transport (ADR-068 D5) — the caller owns
-    // the construction (live from its rpc_url, or a cassette replay transport
-    // for an offline run).
+    // the fetches AND both pre-commit verification gates (the per-chunk map
+    // gate and `PreCommitFullVerifyCtx`), so its connection tasks live
+    // exactly as long as the run. The core never builds a transport (ADR-068
+    // D5) — the caller owns the construction (live from its rpc_url, or a
+    // cassette replay transport for an offline run).
     let provider = Arc::new(provider);
     // The RPC request width is the `max_block_range` clamp, NOT the commit
     // chunk: a chunk wider than the clamp is fetched as several

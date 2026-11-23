@@ -2,12 +2,13 @@
 //!
 //! The chunk loop is provider-INJECTED (ADR-068 D5): the core never builds a
 //! transport — the caller constructs ONE [`AlloyProvider`] and the whole run
-//! (every chunk's fetches + the pre-commit verification gate `VerifyCtx` /
-//! `FullVerifyCtx`) is driven over that one injected handle. A per-chunk or
-//! per-verification transport was the resource churn that intermittently
-//! surfaced as alloy's `TransportErrorKind::BackendGone` ("backend connection
-//! task has stopped"); injection makes that shape structurally impossible —
-//! the core has no construction site left to get wrong.
+//! (every chunk's fetches + both pre-commit verification gates: the
+//! per-chunk map gate and `PreCommitFullVerifyCtx`) is driven over that one
+//! injected handle. A per-chunk or per-verification transport was the
+//! resource churn that intermittently surfaced as alloy's
+//! `TransportErrorKind::BackendGone` ("backend connection task has
+//! stopped"); injection makes that shape structurally impossible — the
+//! core has no construction site left to get wrong.
 //!
 //! The run is driven end-to-end against a minimal local JSON-RPC stub
 //! (answers `eth_getLogs` with an empty list; every other method is a
