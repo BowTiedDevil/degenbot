@@ -1,23 +1,40 @@
-//! The transactional Aave V3 chunk-write apply core + its atomicity tests.
+//! The transactional Aave V3 chunk-write apply cores + their atomicity tests.
 //!
 //! See the crate-level docs for the chunk-atomicity invariant this file enforces.
+//!
+//! # Two write vocabularies, one transaction
+//!
+//! - [`apply_canonical_deltas_on_conn`] persists the operation family:
+//!   [`CanonicalDelta`]s, each stating its exact chain position and the
+//!   generation its reduction consumed. It performs no acquisition and no
+//!   identity resolution.
+//! - [`apply_chunk_events_on_conn`] persists the configuration family. This is
+//!   the **ONE legacy configuration seam** (ADR-105 D4): the configuration
+//!   resolver still reads chain state while it runs, and its events still carry
+//!   pre-resolved ids rather than positions. The configuration/generation
+//!   interleaving task retires this seam by moving the resolver onto the
+//!   projection; until then it is the only place `AaveChunkEvent` is written.
 
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U256};
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 #[cfg(test)]
 use rusqlite::params;
 use rusqlite::Connection;
 
 use super::substrate::ChunkSubstrate;
+#[cfg(test)]
+use crate::projection::PositionSubject;
+use crate::projection::{CanonicalDelta, DeltaEffect};
 
-/// One pre-decoded Aave V3 event for the chunk apply loop.
+/// One pre-decoded Aave V3 **configuration** event: the legacy configuration
+/// vocabulary (ADR-105 D4's temporary seam; the operation family states
+/// [`CanonicalDelta`]s instead).
 ///
 /// Each variant carries the resolved ids/fields the matching
 /// `DegenbotDb::apply_*_on_conn` fn consumes — the RPC fetch + decode + the
 /// `get_or_create_user` / `get_asset_by_token_type` resolution happen in the
-/// `run_aave_update` orchestrator, which
-/// constructs this enum. This core does NO RPC, NO ABI decode, NO
-/// address→id resolution.
+/// chunk's configuration dispatch, which constructs this enum. This core does
+/// NO RPC, NO ABI decode, NO address→id resolution.
 ///
 /// # The event→fn dispatch map
 ///
@@ -130,63 +147,6 @@ pub enum AaveChunkEvent {
         /// should fire; `None` for a regular reserve.
         gho_link_token_id: Option<i64>,
     },
-    /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event. Carries
-    /// the PRE-COMPUTED signed `balance_delta` (the
-    /// orchestrator/parser ran `ScaledTokenProcessor::process_collateral_mint`
-    /// / `ScaledTokenProcessor::process_debt_mint` BEFORE constructing this
-    /// variant — the apply core is pure substrate, no processor calls). The apply dispatch just forwards the
-    /// delta to [`DegenbotDb::apply_scaled_token_mint_on_conn`].
-    ScaledTokenMint {
-        /// Which position table (collateral for aToken / debt for vToken).
-        position: degenbot_db::ScaledTokenPosition,
-        /// The pre-resolved position row id (the orchestrator called
-        /// `get_or_create_collateral_position_on_conn` /
-        /// `get_or_create_debt_position_on_conn`).
-        position_id: i64,
-        /// The pre-computed signed delta (positive for true mint, negative
-        /// for the interest-exceeds-value edge case).
-        balance_delta: alloy::primitives::I256,
-        /// The event's index (the apply fn reconciles `last_index` to it via
-        /// max-with-prev).
-        new_index: alloy::primitives::U256,
-    },
-    /// `ScaledTokenBurn(from, to, value)` — aToken/vToken Burn event.
-    /// Carries the PRE-COMPUTED signed `balance_delta` (always negative — the
-    /// processor's `process_collateral_burn` / `process_debt_burn` returned
-    /// it).
-    ScaledTokenBurn {
-        position: degenbot_db::ScaledTokenPosition,
-        position_id: i64,
-        balance_delta: alloy::primitives::I256,
-        new_index: alloy::primitives::U256,
-    },
-    /// GHO discount-refresh signal. Emitted by
-    /// `build_gho_chunk_event` ALONGSIDE the `ScaledTokenMint`/`ScaledTokenBurn`
-    /// when the GHO processor's `should_refresh_discount` is set (V1-V3 — the
-    /// discount mechanism is active). NOT applied synchronously — the chunk
-    /// loop's async POST-APPLY pass consumes it: `get_or_init_stk_aave_balance`
-    /// (`balanceOf` `eth_call` at `block - 1` if `aave_v3_users.stk_aave_balance` is
-    /// None) + `_refresh_discount_rate` (`debt_balance = ray_mul(scaled,
-    /// index)` + `calculate_gho_discount_rate` → write
-    /// `aave_v3_users.gho_discount`). `apply_chunk_events_on_conn` is a no-op for
-    /// this variant (it carries no synchronously-applicable state).
-    GhoRefreshDiscount {
-        /// The GHO debt position (`aave_v3_debt_positions.id`) whose
-        /// `balance`/`last_index` were just updated — the refresh reads the
-        /// POST-APPLY values from `conn`.
-        position_id: i64,
-    },
-    /// `BalanceTransfer(from, to, value)` — aToken transfer between users
-    /// Carries the resolved `from_position_id` + `to_position_id`
-    /// (both collateral — `BalanceTransfer` is aToken-only) + the scaled
-    /// amount + the transfer's index. The apply fn debits `from`, credits
-    /// `to`, + reconciles both positions' `last_index`.
-    ScaledTokenTransfer {
-        from_position_id: i64,
-        to_position_id: Option<i64>,
-        scaled_amount: alloy::primitives::U256,
-        transfer_index: alloy::primitives::U256,
-    },
     // ── GHO + stkAAVE + Rewards events ─────────────
     /// GHO `DiscountPercentUpdated(user, oldPercent, newPercent)` — sets the
     /// user's `gho_discount` (an `i64` percentage; the Aave protocol caps at
@@ -250,20 +210,6 @@ pub enum AaveChunkEvent {
         reward_token_id: i64,
         claimer_id: i64,
         claimed_amount: alloy::primitives::U256,
-    },
-    /// The bad-debt liquidation reset (`DEFICIT_CREATED` path). The
-    /// contract burns the ENTIRE remaining debt (not just `debtToCover`) when
-    /// a `DeficitCreated` event accompanies a `LiquidationCall` — the
-    /// protocol writes off the bad debt. Sets the debt position's `balance` to
-    /// 0 + advances `last_index` (max-with-prev): the bad-debt arm zeroes the
-    /// balance but never rewinds the index, so a later burn cannot
-    /// double-count the written-off amount.
-    DebtPositionReset {
-        /// The debt position row id (`aave_v3_debt_positions.id`).
-        position_id: i64,
-        /// The event's index (the apply fn reconciles `last_index` to it via
-        /// max-with-prev).
-        new_index: alloy::primitives::U256,
     },
     // ── config events ─────────────────────────────────────────
     /// `Upgraded(implementation)` — emitted by an aToken or vToken proxy. The
@@ -355,7 +301,33 @@ pub enum AaveChunkEvent {
     },
 }
 
-/// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
+/// Per-effect apply counts for a chunk's canonical deltas.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CanonicalDeltaWriteReport {
+    /// Signed scaled-balance movements (aToken/vToken Mint and Burn).
+    pub scaled_balance: usize,
+    /// aToken balance movements between two positions.
+    pub scaled_transfer: usize,
+    /// Bad-debt write-offs.
+    pub debt_position_reset: usize,
+    /// GHO discount-refresh signals (no synchronous write of their own).
+    pub gho_refresh_discount: usize,
+}
+
+impl CanonicalDeltaWriteReport {
+    /// Every delta this report counted.
+    #[must_use]
+    pub const fn deltas(&self) -> usize {
+        self.scaled_balance
+            + self.scaled_transfer
+            + self.debt_position_reset
+            + self.gho_refresh_discount
+    }
+}
+
+/// Per-event-type apply counts for a chunk's configuration events (mirrors
+/// `ChunkWriteReport`). The operation family's counts travel in
+/// [`CanonicalDeltaWriteReport`].
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AaveChunkWriteReport {
     pub collateral_configuration_changed: usize,
@@ -369,17 +341,10 @@ pub struct AaveChunkWriteReport {
     /// the two direct-write Pool events.
     pub reserve_data_updated: usize,
     pub reserve_initialized: usize,
-    /// The three `ScaledToken` (aToken/vToken) events.
-    pub scaled_token_mint: usize,
-    pub scaled_token_burn: usize,
-    pub scaled_token_transfer: usize,
     /// The GHO + stkAAVE + Rewards events.
     pub gho_discount_percent_updated: usize,
     pub gho_discount_rate_strategy_updated: usize,
     pub gho_discount_token_updated: usize,
-    /// The GHO discount-refresh signals (the async post-apply pass consumes
-    /// them (`balanceOf` + recompute `gho_discount`).
-    pub gho_refresh_discount: usize,
     /// stkAAVE `Transfer(from, to, value)` — the canonical balance-mutation
     /// channel: covers the zero-leg arms + the neither-zero case.
     /// `Staked`/`Redeem` semantic events never mutate balances.
@@ -387,8 +352,6 @@ pub struct AaveChunkWriteReport {
     /// No-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
     pub rewards_claimed: usize,
-    /// The bad-debt liquidation reset count (`DebtPositionReset`).
-    pub debt_position_reset: usize,
     /// The config events.
     pub upgraded: usize,
     pub contract_revision_updated: usize,
@@ -396,6 +359,8 @@ pub struct AaveChunkWriteReport {
     pub contract_inserted: usize,
     /// The `AddressSet` address-change arm (replace-in-place).
     pub contract_address_changed: usize,
+    /// The operation family's per-effect counts for this chunk.
+    pub canonical: CanonicalDeltaWriteReport,
     /// Zero-balance collateral + debt rows deleted by the end-of-chunk
     /// cleanup (`delete_zero_balance_positions_on_conn`).
     pub zero_balances_cleared: usize,
@@ -406,28 +371,28 @@ pub struct AaveChunkWriteReport {
     pub stamped_block: Option<u64>,
 }
 
-/// Dispatch each pre-decoded Aave V3 event to its `DegenbotDb::apply_*_on_conn`
-/// writer under the caller's `Transaction` (borrowed as a `&Connection`),
-/// accumulating a per-type count. Does NOT stamp `last_update_block` — the
-/// caller owns the stamp (per-tx apply in `process_chunk_on_conn`, or the
-/// batched [`apply_aave_chunk_writes_on_conn`]).
+/// **THE LEGACY CONFIGURATION SEAM** (ADR-105 D4): dispatch each pre-decoded
+/// configuration event to its `DegenbotDb::apply_*_on_conn` writer under the
+/// caller's `Transaction` (borrowed as a `&Connection`), accumulating a
+/// per-type count.
+///
+/// The configuration resolver still reads chain state while it runs and hands
+/// its events over as pre-resolved ids; the configuration/generation
+/// interleaving task moves that resolver onto the projection view and retires
+/// this entrypoint. Nothing new may be added to this vocabulary.
 ///
 /// `substrate` is the chunk-level cache: the per-event substrate
 /// reads ride its prefetch + write-overlay, and EVERY cache-visible write
 /// lands an overlay update here — the asset re-binds (`ReserveInitialized`),
-/// the revision bumps (`Upgraded`), the position state writes (the scaled
-/// token applies + the bad-debt reset), the contract revisions, the GHO-row
+/// the revision bumps (`Upgraded`), the contract revisions, the GHO-row
 /// dirty marks, and the deferred `ReserveDataUpdated` buffer. See
 /// [`crate::updater::run::substrate`] for the read-your-own-writes
 /// contract the overlay enforces.
 ///
-/// Written per-tx: the apply loop writes each tx's events to `conn` BEFORE
-/// the next tx's
-/// dispatch/parse reads — the two staleness surfaces close (the prior tx's
-/// `Upgraded` revision + scaled-token balances are visible via
-/// read-your-own-writes within the `SQLite` txn). The `ScaledTokenProcessor`
-/// is stateless (its balances come from
-/// `process_transaction`'s `conn` lookups), so per-tx apply is the only seam.
+/// Written per-tx: the chunk loop writes each tx's configuration events to
+/// `conn` BEFORE that tx's parse reads — the two staleness surfaces close
+/// (the prior tx's `Upgraded` revision is visible via read-your-own-writes
+/// within the `SQLite` txn).
 ///
 /// Pure, synchronous, transactional. NONE of: RPC, ABI decode, `pyo3`,
 /// `database_path`, `open_for_writes`.
@@ -597,134 +562,6 @@ pub fn apply_chunk_events_on_conn(
                 }
                 report.reserve_initialized += 1;
             }
-            AaveChunkEvent::ScaledTokenMint {
-                position,
-                position_id,
-                balance_delta,
-                new_index,
-            } => {
-                // The apply's read comes from the chunk substrate (the
-                // overlay's state — byte-exact with the SQL probe), the math
-                // + write ride the shared substrate body, and the written
-                // state lands back in the overlay (the next read — this tx's
-                // next event or the next tx's parse — is a map hit).
-                let (current_balance, current_index) =
-                    substrate.position_state_for_apply(conn, *position, *position_id)?;
-                let (new_balance, new_last_index) =
-                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
-                        conn,
-                        *position,
-                        *position_id,
-                        current_balance,
-                        current_index,
-                        *balance_delta,
-                        *new_index,
-                    )?;
-                substrate.record_position_write(
-                    *position,
-                    *position_id,
-                    new_balance,
-                    new_last_index,
-                );
-                report.scaled_token_mint += 1;
-            }
-            AaveChunkEvent::ScaledTokenBurn {
-                position,
-                position_id,
-                balance_delta,
-                new_index,
-            } => {
-                // Mirror of the mint arm (see its comment): overlay-read →
-                // shared compute+write → overlay-record.
-                let (current_balance, current_index) =
-                    substrate.position_state_for_apply(conn, *position, *position_id)?;
-                let (new_balance, new_last_index) =
-                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
-                        conn,
-                        *position,
-                        *position_id,
-                        current_balance,
-                        current_index,
-                        *balance_delta,
-                        *new_index,
-                    )?;
-                substrate.record_position_write(
-                    *position,
-                    *position_id,
-                    new_balance,
-                    new_last_index,
-                );
-                report.scaled_token_burn += 1;
-            }
-            // No synchronous apply — the chunk loop's async
-            // post-apply pass consumes this (balanceOf + recompute
-            // gho_discount). Counted in `report.gho_refresh_discount` so the
-            // apply loop's exhaustiveness stays explicit.
-            AaveChunkEvent::GhoRefreshDiscount { .. } => {
-                report.gho_refresh_discount += 1;
-            }
-            AaveChunkEvent::ScaledTokenTransfer {
-                from_position_id,
-                to_position_id,
-                scaled_amount,
-                transfer_index,
-            } => {
-                // The transfer fn's two legs, with each leg's CURRENT state
-                // supplied by the chunk substrate + recorded back (the exact
-                // deltas the substrate fn computes: debit the sender
-                // (negative; `I256::MIN` saturation), credit the recipient
-                // (positive; `I256::MAX` saturation) — the recipient leg
-                // SKIPPED for the ZERO_ADDRESS leg (`None`, the 0x0
-                // collateral-row guard). Both legs are collateral (BalanceTransfer is
-                // aToken-only).
-                let (from_balance, from_index) = substrate.position_state_for_apply(
-                    conn,
-                    ScaledTokenPosition::Collateral,
-                    *from_position_id,
-                )?;
-                let (from_new_balance, from_new_last_index) =
-                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
-                        conn,
-                        ScaledTokenPosition::Collateral,
-                        *from_position_id,
-                        from_balance,
-                        from_index,
-                        -alloy::primitives::I256::try_from(*scaled_amount)
-                            .unwrap_or(alloy::primitives::I256::MIN),
-                        *transfer_index,
-                    )?;
-                substrate.record_position_write(
-                    ScaledTokenPosition::Collateral,
-                    *from_position_id,
-                    from_new_balance,
-                    from_new_last_index,
-                );
-                if let Some(to_position_id) = to_position_id {
-                    let (to_balance, to_index) = substrate.position_state_for_apply(
-                        conn,
-                        ScaledTokenPosition::Collateral,
-                        *to_position_id,
-                    )?;
-                    let (to_new_balance, to_new_last_index) =
-                        DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
-                            conn,
-                            ScaledTokenPosition::Collateral,
-                            *to_position_id,
-                            to_balance,
-                            to_index,
-                            alloy::primitives::I256::try_from(*scaled_amount)
-                                .unwrap_or(alloy::primitives::I256::MAX),
-                            *transfer_index,
-                        )?;
-                    substrate.record_position_write(
-                        ScaledTokenPosition::Collateral,
-                        *to_position_id,
-                        to_new_balance,
-                        to_new_last_index,
-                    );
-                }
-                report.scaled_token_transfer += 1;
-            }
             AaveChunkEvent::GhoDiscountPercentUpdated {
                 user_id,
                 new_discount_percent,
@@ -792,29 +629,6 @@ pub fn apply_chunk_events_on_conn(
                     *claimed_amount,
                 )?;
                 report.rewards_claimed += 1;
-            }
-            AaveChunkEvent::DebtPositionReset {
-                position_id,
-                new_index,
-            } => {
-                // The reset's read (its max-with-prev seed) comes from the
-                // chunk substrate; the compute+write rides the shared
-                // substrate body; the written state lands back in the overlay.
-                let (_, current_index) =
-                    substrate.debt_position_state_for_reset(conn, *position_id)?;
-                let new_last_index = DegenbotDb::reset_debt_position_to_zero_with_current_on_conn(
-                    conn,
-                    *position_id,
-                    current_index,
-                    *new_index,
-                )?;
-                substrate.record_position_write(
-                    ScaledTokenPosition::Debt,
-                    *position_id,
-                    alloy::primitives::U256::ZERO,
-                    new_last_index,
-                );
-                report.debt_position_reset += 1;
             }
             // ── config events ─────────────────────────────────
             AaveChunkEvent::Upgraded {
@@ -931,13 +745,145 @@ pub fn apply_chunk_events_on_conn(
     Ok(report)
 }
 
+/// Persist a chunk's ordered canonical deltas (ADR-105 D4, D7).
+///
+/// This is the mapping from delta meaning to Aave rows: each effect writes
+/// through the `_with_current_on_conn` primitive that the chunk substrate has
+/// always used, with the caller-supplied preceding state standing in for the
+/// SELECT the primitive would otherwise issue. No transport, no decode, no
+/// identity resolution — the deltas already name their settled position rows.
+///
+/// The written state lands back in the substrate overlay, so a read of a
+/// position this chunk just moved (the legacy configuration seam's, or the next
+/// transaction's) sees exactly what the SQL probe would return.
+///
+/// # Errors
+///
+/// Returns [`degenbot_db::DbError`] on any apply failure; the caller drops the
+/// transaction (rollback) on `Err`.
+#[expect(clippy::too_many_lines)] // one mapping arm per effect, deliberately flat
+pub fn apply_canonical_deltas_on_conn(
+    conn: &Connection,
+    deltas: &[CanonicalDelta],
+    substrate: &mut ChunkSubstrate,
+) -> Result<CanonicalDeltaWriteReport, degenbot_db::DbError> {
+    let mut report = CanonicalDeltaWriteReport::default();
+    for delta in deltas {
+        match delta.effect() {
+            DeltaEffect::ScaledBalance {
+                subject,
+                balance_delta,
+                index,
+            } => {
+                let (current_balance, current_index) = substrate.position_state_for_apply(
+                    conn,
+                    subject.position,
+                    subject.position_id,
+                )?;
+                let (new_balance, new_last_index) =
+                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                        conn,
+                        subject.position,
+                        subject.position_id,
+                        current_balance,
+                        current_index,
+                        *balance_delta,
+                        *index,
+                    )?;
+                substrate.record_position_write(
+                    subject.position,
+                    subject.position_id,
+                    new_balance,
+                    new_last_index,
+                );
+                report.scaled_balance += 1;
+            }
+            DeltaEffect::ScaledTransfer {
+                from,
+                to,
+                scaled_amount,
+                index,
+            } => {
+                let (from_balance, from_index) = substrate.position_state_for_apply(
+                    conn,
+                    ScaledTokenPosition::Collateral,
+                    from.position_id,
+                )?;
+                let (from_new_balance, from_new_last_index) =
+                    DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                        conn,
+                        ScaledTokenPosition::Collateral,
+                        from.position_id,
+                        from_balance,
+                        from_index,
+                        -I256::try_from(*scaled_amount).unwrap_or(I256::MIN),
+                        *index,
+                    )?;
+                substrate.record_position_write(
+                    ScaledTokenPosition::Collateral,
+                    from.position_id,
+                    from_new_balance,
+                    from_new_last_index,
+                );
+                if let Some(to) = to {
+                    let (to_balance, to_index) = substrate.position_state_for_apply(
+                        conn,
+                        ScaledTokenPosition::Collateral,
+                        to.position_id,
+                    )?;
+                    let (to_new_balance, to_new_last_index) =
+                        DegenbotDb::apply_scaled_token_balance_delta_with_current_on_conn(
+                            conn,
+                            ScaledTokenPosition::Collateral,
+                            to.position_id,
+                            to_balance,
+                            to_index,
+                            I256::try_from(*scaled_amount).unwrap_or(I256::MAX),
+                            *index,
+                        )?;
+                    substrate.record_position_write(
+                        ScaledTokenPosition::Collateral,
+                        to.position_id,
+                        to_new_balance,
+                        to_new_last_index,
+                    );
+                }
+                report.scaled_transfer += 1;
+            }
+            DeltaEffect::DebtPositionReset { position_id, index } => {
+                let (_, current_index) =
+                    substrate.debt_position_state_for_reset(conn, *position_id)?;
+                let new_last_index = DegenbotDb::reset_debt_position_to_zero_with_current_on_conn(
+                    conn,
+                    *position_id,
+                    current_index,
+                    *index,
+                )?;
+                substrate.record_position_write(
+                    ScaledTokenPosition::Debt,
+                    *position_id,
+                    U256::ZERO,
+                    new_last_index,
+                );
+                report.debt_position_reset += 1;
+            }
+            DeltaEffect::GhoRefreshDiscount { position_id: _ } => {
+                report.gho_refresh_discount += 1;
+            }
+        }
+    }
+    Ok(report)
+}
+
 /// Apply a chunk's worth of pre-decoded Aave V3 events under the caller's
 /// `Transaction` (borrowed as a `&Connection`), then stamp
 /// `aave_v3_markets.last_update_block = chunk_end_block` as the LAST write.
 ///
-/// Thin wrapper over [`apply_chunk_events_on_conn`] (the per-event dispatch)
-/// that then stamps the block. Kept as the public batched-apply entrypoint so
-/// that the existing chunk-atomicity tests stay GREEN.
+/// Thin wrapper over the two apply cores — [`apply_chunk_events_on_conn`] for
+/// the configuration family and [`apply_canonical_deltas_on_conn`] for the
+/// operation family — that then stamps the block. Kept as the batched-apply
+/// entrypoint so the chunk-atomicity tests drive the same order the chunk loop
+/// uses (configuration first, then the transaction's deltas).
 ///
 /// # The chunk-atomicity invariant
 ///
@@ -955,6 +901,7 @@ pub fn apply_aave_chunk_writes_on_conn(
     conn: &Connection,
     market_id: i64,
     events: &[AaveChunkEvent],
+    deltas: &[CanonicalDelta],
     chunk_end_block: u64,
 ) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
     // The batched entrypoint runs WITHOUT the per-tx substrate prefetch (the
@@ -964,6 +911,7 @@ pub fn apply_aave_chunk_writes_on_conn(
     // `chain_id` is never read here (this entrypoint issues no GHO re-resolve).
     let mut substrate = ChunkSubstrate::lazy(0);
     let mut report = apply_chunk_events_on_conn(conn, market_id, events, &mut substrate)?;
+    report.canonical = apply_canonical_deltas_on_conn(conn, deltas, &mut substrate)?;
 
     // Flush the deferred `ReserveDataUpdated` writes (one sorted
     // multi-row UPDATE) BEFORE the cleanup + the stamp — the stamp stays the
@@ -993,6 +941,29 @@ pub fn apply_aave_chunk_writes_on_conn(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// A canonical delta at a fixed fixture position (block 100, transaction
+    /// index 0) whose block-wide log index orders a sequence strictly forward.
+    fn delta_at(log_index: u64, effect: DeltaEffect) -> CanonicalDelta {
+        let anchor = degenbot_core::canonical_head::ChainAnchor::new(
+            1,
+            100,
+            alloy::primitives::B256::repeat_byte(0x11),
+            alloy::primitives::B256::repeat_byte(0x22),
+        )
+        .unwrap();
+        let tx = degenbot_core::canonical_head::TxRef::new(
+            anchor,
+            alloy::primitives::B256::repeat_byte(0x33),
+            0,
+        )
+        .unwrap();
+        CanonicalDelta::new(
+            degenbot_core::canonical_head::LogRef::new(tx, log_index),
+            None,
+            effect,
+        )
+    }
 
     /// A fresh in-memory **write-capable** DB seeded with a single market
     /// (id 1, `last_update_block = NULL`) — the FK parent every Aave row
@@ -1060,7 +1031,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.collateral_configuration_changed, 1);
             assert_eq!(report.stamped_block, Some(1_000));
             tx.commit().unwrap();
@@ -1151,7 +1122,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], 2_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &[], 2_000).unwrap();
             assert_eq!(report.stamped_block, Some(2_000));
             tx.commit().unwrap();
         }
@@ -1247,7 +1218,7 @@ mod tests {
             // FK enforcement must be set OUTSIDE a transaction (SQLite quirk).
             guard.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 200);
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 200);
             assert!(result.is_err(), "the FK violation must surface as Err");
             drop(tx); // ← rollback (the `?` already returned).
             result.err()
@@ -1289,7 +1260,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 500).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 500).unwrap();
             assert_eq!(report.stamped_block, Some(500));
             tx.commit().unwrap();
         }
@@ -1321,7 +1292,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.user_e_mode_set, 1);
             tx.commit().unwrap();
         }
@@ -1403,7 +1374,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 2_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 2_000).unwrap();
             assert_eq!(report.reserve_data_updated, 1);
             tx.commit().unwrap();
         }
@@ -1450,7 +1421,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 5_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 5_000).unwrap();
             assert_eq!(report.reserve_initialized, 1);
             tx.commit().unwrap();
         }
@@ -1506,7 +1477,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 6_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 6_000).unwrap();
             assert_eq!(report.reserve_initialized, 1);
             tx.commit().unwrap();
         }
@@ -1606,7 +1577,7 @@ mod tests {
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 200);
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 200);
             assert!(result.is_err(), "the MissingRow must surface as Err");
             drop(tx); // ← rollback.
             result.err()
@@ -1701,18 +1672,23 @@ mod tests {
         let db = fresh_db();
         seed_collateral_position_with_balance(&db, 1, "0", None);
 
-        // A pre-computed mint delta of +3 RAY (the processor returned this).
-        let events = vec![AaveChunkEvent::ScaledTokenMint {
-            position: ScaledTokenPosition::Collateral,
-            position_id: 1,
-            balance_delta: I256::try_from(U256::from(3u8) * RAY).unwrap(),
-            new_index: RAY,
-        }];
+        // A pre-computed mint delta of +3 RAY (the reducer returned this).
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledBalance {
+                subject: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 1,
+                },
+                balance_delta: I256::try_from(U256::from(3u8) * RAY).unwrap(),
+                index: RAY,
+            },
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 9_000).unwrap();
-            assert_eq!(report.scaled_token_mint, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 9_000).unwrap();
+            assert_eq!(report.canonical.scaled_balance, 1);
             tx.commit().unwrap();
         }
 
@@ -1741,17 +1717,22 @@ mod tests {
             Some(&RAY.to_string()),
         );
 
-        let events = vec![AaveChunkEvent::ScaledTokenBurn {
-            position: ScaledTokenPosition::Collateral,
-            position_id: 1,
-            balance_delta: -I256::try_from(U256::from(3u8) * RAY).unwrap(),
-            new_index: RAY,
-        }];
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledBalance {
+                subject: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 1,
+                },
+                balance_delta: -I256::try_from(U256::from(3u8) * RAY).unwrap(),
+                index: RAY,
+            },
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 10_000).unwrap();
-            assert_eq!(report.scaled_token_burn, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 10_000).unwrap();
+            assert_eq!(report.canonical.scaled_balance, 1);
             tx.commit().unwrap();
         }
 
@@ -1795,17 +1776,26 @@ mod tests {
             .unwrap();
         }
 
-        let events = vec![AaveChunkEvent::ScaledTokenTransfer {
-            from_position_id: 1,
-            to_position_id: Some(2),
-            scaled_amount: U256::from(2u8) * RAY,
-            transfer_index: RAY,
-        }];
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledTransfer {
+                from: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 1,
+                },
+                to: Some(PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 2,
+                }),
+                scaled_amount: U256::from(2u8) * RAY,
+                index: RAY,
+            },
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 11_000).unwrap();
-            assert_eq!(report.scaled_token_transfer, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 11_000).unwrap();
+            assert_eq!(report.canonical.scaled_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -1856,17 +1846,23 @@ mod tests {
         // The dispatch path passes `to_position_id: None` when
         // `to_addr == ZERO_ADDRESS` — the apply path must skip the recipient
         // write entirely (no INSERT into aave_v3_collateral_positions).
-        let events = vec![AaveChunkEvent::ScaledTokenTransfer {
-            from_position_id: 1,
-            to_position_id: None,
-            scaled_amount: U256::from(2u8) * RAY,
-            transfer_index: RAY,
-        }];
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledTransfer {
+                from: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 1,
+                },
+                to: None,
+                scaled_amount: U256::from(2u8) * RAY,
+                index: RAY,
+            },
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 11_000).unwrap();
-            assert_eq!(report.scaled_token_transfer, 1);
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 11_000).unwrap();
+            assert_eq!(report.canonical.scaled_transfer, 1);
             tx.commit().unwrap();
         }
 
@@ -1911,16 +1907,21 @@ mod tests {
             Some(&(U256::from(3u8) * RAY).to_string()),
         );
 
-        let events = vec![AaveChunkEvent::ScaledTokenMint {
-            position: ScaledTokenPosition::Collateral,
-            position_id: 1,
-            balance_delta: I256::try_from(RAY).unwrap(),
-            new_index: RAY, // LOWER than the position's existing 3*RAY.
-        }];
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledBalance {
+                subject: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 1,
+                },
+                balance_delta: I256::try_from(RAY).unwrap(),
+                index: RAY, // LOWER than the position's existing 3*RAY.
+            },
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            apply_aave_chunk_writes_on_conn(&tx, 1, &events, 12_000).unwrap();
+            apply_aave_chunk_writes_on_conn(&tx, 1, &[], &deltas, 12_000).unwrap();
             tx.commit().unwrap();
         }
 
@@ -1941,29 +1942,32 @@ mod tests {
         seed_collateral_position_with_balance(&db, 1, "0", None);
 
         // (a) valid ReserveInitialized (creates an asset row at underlying=999)
-        //     + (b) invalid ScaledTokenMint on position_id=999.
-        let events = vec![
-            AaveChunkEvent::ReserveInitialized {
-                market_id: 1,
-                underlying_asset_id: 999,
-                a_token_id: 2,
-                a_token_revision: 1,
-                v_token_id: 3,
-                v_token_revision: 1,
-                price_source: None,
-                gho_link_token_id: None,
-            },
-            AaveChunkEvent::ScaledTokenMint {
-                position: ScaledTokenPosition::Collateral,
-                position_id: 999, // no such row → MissingRow
+        //     + (b) invalid ScaledBalance on position_id=999.
+        let events = vec![AaveChunkEvent::ReserveInitialized {
+            market_id: 1,
+            underlying_asset_id: 999,
+            a_token_id: 2,
+            a_token_revision: 1,
+            v_token_id: 3,
+            v_token_revision: 1,
+            price_source: None,
+            gho_link_token_id: None,
+        }];
+        let deltas = vec![delta_at(
+            5,
+            DeltaEffect::ScaledBalance {
+                subject: PositionSubject {
+                    position: ScaledTokenPosition::Collateral,
+                    position_id: 999, // no such row → MissingRow
+                },
                 balance_delta: I256::try_from(RAY).unwrap(),
-                new_index: RAY,
+                index: RAY,
             },
-        ];
+        )];
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 13_000);
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &deltas, 13_000);
             assert!(result.is_err(), "missing-position chunk must fail");
             // Don't commit — the dropped tx rolls back.
         }
@@ -2078,7 +2082,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.gho_discount_percent_updated, 1);
             tx.commit().unwrap();
         }
@@ -2100,7 +2104,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.gho_discount_rate_strategy_updated, 1);
             tx.commit().unwrap();
         }
@@ -2122,7 +2126,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.gho_discount_token_updated, 1);
             tx.commit().unwrap();
         }
@@ -2165,7 +2169,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 17_859_255).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 17_859_255).unwrap();
             assert_eq!(report.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
@@ -2195,7 +2199,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
@@ -2221,7 +2225,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 5_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 5_000).unwrap();
             assert_eq!(
                 report.stk_aave_transfer, 1,
                 "the event still counts — no mutation only"
@@ -2262,7 +2266,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000).unwrap();
             assert_eq!(report.stk_aave_transfer, 1);
             tx.commit().unwrap();
         }
@@ -2296,7 +2300,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000);
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 1_000);
             assert!(
                 result.is_err(),
                 "transfer from-leg underflow must error (mirrors Redeem)"
@@ -2335,7 +2339,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 7_777).unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 7_777).unwrap();
             assert_eq!(report.rewards_claimed, 1, "counter incremented");
             tx.commit().unwrap();
         }
@@ -2371,7 +2375,7 @@ mod tests {
         {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
-            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 9_000);
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, &[], 9_000);
             assert!(result.is_err(), "missing-user chunk must fail");
         }
 

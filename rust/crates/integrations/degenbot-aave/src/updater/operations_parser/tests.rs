@@ -2486,18 +2486,32 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     //
     // An already-SCALED `op.minted_to_treasury_amount` makes dispatch's ray_div
     // produce the DOUBLE-conv result = buggy_double_conv_scaled.
-    let mut events: Vec<crate::run::AaveChunkEvent> = Vec::new();
+    let anchor = degenbot_core::canonical_head::ChainAnchor::new(
+        1,
+        100,
+        alloy::primitives::B256::repeat_byte(0x11),
+        alloy::primitives::B256::repeat_byte(0x22),
+    )
+    .unwrap();
+    let tx = degenbot_core::canonical_head::TxRef::new(
+        anchor,
+        alloy::primitives::B256::repeat_byte(0x33),
+        0,
+    )
+    .unwrap();
+    let mut view = crate::projection::ProjectionView::new();
+    let mut out = crate::transaction_processor::DeltaSink::new(tx, &mut view);
     crate::transaction_processor::dispatch_mint_to_treasury(
         &op,
         1, // market_id
         &conn,
-        &mut events,
+        &mut out,
         &mut ChunkSubstrate::lazy(1),
     )
     .unwrap();
-    assert_eq!(events.len(), 1);
-    match &events[0] {
-        crate::run::AaveChunkEvent::ScaledTokenMint { balance_delta, .. } => {
+    assert_eq!(out.deltas().len(), 1);
+    match out.deltas()[0].effect() {
+        crate::projection::DeltaEffect::ScaledBalance { balance_delta, .. } => {
             assert_eq!(
                 *balance_delta,
                 alloy::primitives::I256::try_from(python_gold_scaled).unwrap(),
@@ -2508,7 +2522,7 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
                 python_gold_scaled - buggy_double_conv_scaled,
             );
         }
-        other => panic!("expected AaveChunkEvent::ScaledTokenMint, got {other:?}"),
+        other => panic!("expected a scaled-balance delta, got {other:?}"),
     }
 }
 

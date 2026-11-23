@@ -29,7 +29,7 @@ pub struct DebtPositionRefreshContext {
 /// Which position table a `ScaledToken` event applies to (mirrors the
 /// `CollateralMintEvent`/`DebtMintEvent` dispatch in the Python `_process_
 /// scaled_token_operation`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ScaledTokenPosition {
     /// `aave_v3_collateral_positions` (aToken Mint/Burn/BalanceTransfer).
     Collateral,

@@ -38,7 +38,12 @@
 //! label is machine-gated here, and seeding the deprecation revision
 //! collapses the RPC shape (the revival probe).
 
-#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr,
+    clippy::panic
+)]
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -161,6 +166,28 @@ struct ReserveSeed {
     a_token: &'static str,
     v_token: String,
     gho_link: bool,
+}
+
+/// Regenerate-and-diff (ADR-068 D4): with `REGENERATE_SQL_GOLDENS=1` the gate
+/// writes the golden instead of comparing — the pipeline that writes the
+/// artifact is the same one the gate runs, so a stale comparison is theater.
+fn regen_requested() -> bool {
+    std::env::var("REGENERATE_SQL_GOLDENS").is_ok_and(|v| v != "0")
+}
+
+fn check_or_regen(name: &str, kind: &str, produced: &str, golden_path: &str) {
+    if regen_requested() {
+        std::fs::write(golden_path, produced).expect("write the regenerated golden");
+        eprintln!("regenerated {name} {kind} at {golden_path}");
+    } else {
+        let committed = std::fs::read_to_string(golden_path)
+            .unwrap_or_else(|e| panic!("{name}: committed {kind} golden must exist: {e}"));
+        assert_eq!(
+            produced, committed,
+            "{name}: {kind} drift — regenerate with REGENERATE_SQL_GOLDENS=1 only if the \
+             chunk loop's SQL surface legitimately changed"
+        );
+    }
 }
 
 /// The scenario under replay: the seeded pool + reserve assets.
@@ -361,24 +388,17 @@ fn replay_and_gate(name: &str, seed: &ScenarioSeed) -> ReplayRun {
     );
 
     let records = ledger.records().expect("the capture session is armed");
-    let ledger_json = ledger_golden_json(&records);
-    let committed_ledger = std::fs::read_to_string(ledger_golden_path(name))
-        .unwrap_or_else(|e| panic!("{name}: committed ledger golden must exist: {e}"));
-    assert_eq!(
-        ledger_json, committed_ledger,
-        "{name}: statement-ledger drift — regenerate with REGENERATE_SQL_GOLDENS=1 \
-         only if the chunk loop's SQL surface legitimately changed"
+    check_or_regen(
+        name,
+        "statement-ledger",
+        &ledger_golden_json(&records),
+        &ledger_golden_path(name),
     );
 
     let conn = ledger.db().lock();
     let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump the touched tables");
     drop(conn);
-    let committed_dump = std::fs::read_to_string(dump_golden_path(name))
-        .unwrap_or_else(|e| panic!("{name}: committed dump golden must exist: {e}"));
-    assert_eq!(
-        dump_json, committed_dump,
-        "{name}: DB-dump drift — the end state diverges from the committed golden"
-    );
+    check_or_regen(name, "DB-dump", &dump_json, &dump_golden_path(name));
 
     let db_path = dir.keep().join("golden.db");
     ReplayRun {

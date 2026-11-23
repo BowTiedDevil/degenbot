@@ -31,7 +31,7 @@
 //!   the SQL probe would have returned.
 //! - **position balances** — every scaled-token apply records the new
 //!   `(balance, last_index)` it just wrote; the next read (the per-tx GHO
-//!   running-state miss, the next apply's read-modify-write) is served from
+//!   the next apply's read-modify-write) is served from
 //!   the overlay, not from a stale prefetch.
 //! - **the GHO row** — every write touching `aave_gho_tokens` (the
 //!   `ReserveInitialized` GHO link, the discount-config applies, the
@@ -778,21 +778,17 @@ impl ChunkSubstrate {
         Ok(id)
     }
 
-    /// The `lookup_position_balance_index_on_conn` cache shell (the parser's
-    /// GHO running-state seed read). Missing row → the substrate's
-    /// `MissingRow` (same message).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::MissingRow`] when the position has no row, or
-    /// [`DbError`] on a probe/decode failure.
-    pub(crate) fn lookup_position_balance_index(
-        &mut self,
-        conn: &Connection,
+    /// The cache's KNOWN state for a position — a prefetched row or a write
+    /// this chunk recorded — without probing the database. The projection view
+    /// seeds from this read.
+    pub(crate) fn known_position_state(
+        &self,
         position: ScaledTokenPosition,
         position_id: i64,
-    ) -> Result<PositionState, DbError> {
-        self.position_state_inner(conn, position, position_id, PositionRead::Lookup)
+    ) -> Option<PositionState> {
+        self.position_state
+            .get(&(PositionTable::from(position), position_id))
+            .copied()
     }
 
     /// The scaled-token apply's read-modify-write seed read. Missing row →
@@ -835,7 +831,7 @@ impl ChunkSubstrate {
 
     /// Record the state a scaled-token apply just WROTE (the overlay's
     /// read-your-own-writes backbone: the next read — the next apply's
-    /// seed, the GHO running-state seed — is a map hit carrying exactly what
+    /// seed, the next read — is a map hit carrying exactly what
     /// the SQL probe would return).
     pub(crate) fn record_position_write(
         &mut self,
@@ -1038,9 +1034,6 @@ impl ChunkSubstrate {
             .optional()?;
         let Some((balance_str, last_index_str)) = row else {
             return Err(match read {
-                PositionRead::Lookup => {
-                    DbError::MissingRow(format!("{} id={position_id}", table.table()))
-                }
                 PositionRead::Apply => DbError::MissingRow(format!(
                     "{} id={position_id} (ScaledToken apply target)",
                     table.table()
@@ -1071,8 +1064,6 @@ impl ChunkSubstrate {
 /// the cache shells for).
 #[derive(Copy, Clone)]
 enum PositionRead {
-    /// `lookup_position_balance_index_on_conn` (the parser's GHO seed).
-    Lookup,
     /// The scaled-token apply body's read.
     Apply,
     /// The bad-debt reset's read (`reset_debt_position_to_zero_on_conn`).

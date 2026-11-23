@@ -1,6 +1,7 @@
-//! The per-tx apply dispatch glue — the bridge from parsed `Operation`s to
-//! substrate [`AaveChunkEvent`] variants the orchestrator batches +
-//! `apply_aave_chunk_writes_on_conn` stamps.
+//! The per-tx reduction glue — the bridge from parsed `Operation`s to
+//! [`CanonicalDelta`]s, each reduced against the chunk's [`ProjectionView`] and
+//! applied to it before the next operation reads (ADR-105 D4). Persistence is
+//! [`crate::run::apply_canonical_deltas_on_conn`].
 //!
 //! # One rounding precedence
 //!
@@ -16,7 +17,7 @@
 //!
 //! # Dispatch surface
 //!
-//! Every parsed `Operation` kind has an apply path: the 5 standard pool-event
+//! Every parsed `Operation` kind has a reduction path: the 5 standard pool-event
 //! operations (Supply/Withdraw/Borrow/Repay/RepayWithAtokens), the standalone
 //! `BalanceTransfer`, the InterestAccrual/InterestOnly paths, the liquidation
 //! apply (`OperationType::Liquidation`/`GhoLiquidation`, sized by the
@@ -44,13 +45,18 @@ use crate::processors::{
     ProcessorError, ScaledTokenEventData, ScaledTokenProcessor,
 };
 use crate::ray_div;
-use crate::run::AaveChunkEvent;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
+use degenbot_core::canonical_head::{LogRef, TxRef};
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 use rusqlite::Connection;
 
 use super::evidence::TransactionEvidence;
+use super::projection::{
+    reduce_debt_reset, reduce_gho_refresh, reduce_scaled_balance, reduce_scaled_transfer,
+    CanonicalDelta, DeltaEffect, GenerationEntity, GenerationRef, PositionState, PositionSubject,
+    ProjectionError, ProjectionView,
+};
 use super::run::substrate::ChunkSubstrate;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -74,6 +80,9 @@ pub enum ProcessTxError {
     /// A ray-math failure from the enrichment's `ray_div`.
     #[error("ray-math error: {0}")]
     RayMath(#[from] crate::WadRayError),
+    /// A projection refusal: a delta the view cannot reduce or advance.
+    #[error("projection error: {0}")]
+    Projection(#[from] ProjectionError),
     /// An internal-shape violation: an `Operation` missing a field the parser
     /// guarantees, or a `ScaledTokenEventType` reaching a dispatch arm its
     /// caller already excluded. No feature path returns it.
@@ -81,11 +90,151 @@ pub enum ProcessTxError {
     Deferred(String),
 }
 
+/// The generation a reserve leg was resolved under (ADR-105 D6): the stable
+/// logical key is the asset's leg, the generation is the revision whose rounding
+/// row computed the movement.
+fn scaled_token_generation(
+    asset_id: i64,
+    position: ScaledTokenPosition,
+    revision: u32,
+) -> GenerationRef {
+    GenerationRef::new(
+        GenerationEntity::ScaledToken { asset_id, position },
+        revision,
+    )
+}
+
+/// One resolved scaled-token event, before it becomes a positioned delta: its
+/// effect, the generation its arithmetic was defined under, and the block-wide
+/// log index it was emitted at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedDelta {
+    pub(crate) effect: DeltaEffect,
+    pub(crate) generation: GenerationRef,
+    pub(crate) log_index: u64,
+}
+
+/// The resolve → reduce → apply interleave for one transaction (ADR-105 D4).
+///
+/// Resolution seeds the view with the preceding state a reduction needs (a
+/// relational read, taken outside the write transaction). Reduction is the pure
+/// step in `projection::reduce`. The resulting delta is applied to the view
+/// immediately, so a later operation in the same transaction reads the state the
+/// earlier one established — the bad-debt write-off followed by a GHO discount
+/// computation is the load-bearing case.
+pub(crate) struct DeltaSink<'a> {
+    tx: TxRef,
+    view: &'a mut ProjectionView,
+    deltas: Vec<CanonicalDelta>,
+}
+
+impl<'a> DeltaSink<'a> {
+    pub(crate) fn new(tx: TxRef, view: &'a mut ProjectionView) -> Self {
+        Self {
+            tx,
+            view,
+            deltas: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn view(&self) -> &ProjectionView {
+        self.view
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deltas(&self) -> &[CanonicalDelta] {
+        &self.deltas
+    }
+
+    pub(crate) fn into_deltas(self) -> Vec<CanonicalDelta> {
+        self.deltas
+    }
+
+    /// The preceding state a reduction reads: the view's advanced state when it
+    /// holds one, else the resolved substrate state (which seeds the view).
+    pub(crate) fn position_facts(
+        &mut self,
+        substrate: &mut ChunkSubstrate,
+        conn: &Connection,
+        subject: PositionSubject,
+    ) -> Result<PositionState, ProcessTxError> {
+        if let Some(state) = self.view.position_state(subject) {
+            return Ok(state);
+        }
+        let state = match substrate.known_position_state(subject.position, subject.position_id) {
+            Some(state) => state,
+            None => {
+                substrate.position_state_for_apply(conn, subject.position, subject.position_id)?
+            }
+        };
+        self.view.seed_position(subject, state);
+        Ok(state)
+    }
+
+    /// Emit one resolved delta: resolve its preceding state, reduce it, apply it
+    /// to the view, and record it for persistence — in that order, at this
+    /// event's exact position.
+    pub(crate) fn emit(
+        &mut self,
+        substrate: &mut ChunkSubstrate,
+        conn: &Connection,
+        resolved: ResolvedDelta,
+    ) -> Result<(), ProcessTxError> {
+        let ResolvedDelta {
+            effect,
+            generation,
+            log_index,
+        } = resolved;
+        let source = LogRef::new(self.tx, log_index);
+        for subject in effect.subjects() {
+            self.position_facts(substrate, conn, subject)?;
+        }
+        self.view.observe_generation(generation);
+        let delta = match effect {
+            DeltaEffect::ScaledBalance {
+                subject,
+                balance_delta,
+                index,
+            } => {
+                reduce_scaled_balance(self.view, subject, balance_delta, index, source, generation)?
+            }
+            DeltaEffect::ScaledTransfer {
+                from,
+                to,
+                scaled_amount,
+                index,
+            } => reduce_scaled_transfer(
+                self.view,
+                from,
+                to,
+                scaled_amount,
+                index,
+                source,
+                generation,
+            )?,
+            DeltaEffect::DebtPositionReset { position_id, index } => {
+                reduce_debt_reset(self.view, position_id, index, source, generation)?
+            }
+            DeltaEffect::GhoRefreshDiscount { position_id } => {
+                reduce_gho_refresh(self.view, position_id, source, generation)?
+            }
+        };
+        self.view.apply(&delta)?;
+        self.deltas.push(delta);
+        Ok(())
+    }
+}
+
 /// The per-tx entry point the orchestrator calls: parses the tx logs into
-/// `Operation`s + dispatches each Operation's constituent scaled-token events to
-/// [`AaveChunkEvent`] variants (the enricher + processor pipeline). Returns
-/// the accumulated events for the orchestrator to batch + stamp via
-/// `apply_aave_chunk_writes_on_conn`.
+/// `Operation`s + reduces each Operation's constituent scaled-token events into
+/// [`CanonicalDelta`]s (the enricher → reducer pipeline). Returns the
+/// transaction's ordered deltas for the orchestrator to persist via
+/// [`crate::run::apply_canonical_deltas_on_conn`].
+///
+/// `view` is the chunk's forward-only projection read position: every delta is
+/// applied to it as it is reduced, so a later operation in this transaction reads
+/// the state an earlier one established (ADR-105 D4).
 ///
 /// The `conn` is the caller's chunk `Transaction`'s borrowed `&Connection`
 /// (every substrate lookup goes through it — the chunk-atomicity invariant).
@@ -117,7 +266,8 @@ pub fn process_transaction(
     evidence: &TransactionEvidence,
     discounts: &HashMap<Address, U256>,
     substrate: &mut ChunkSubstrate,
-) -> Result<Vec<AaveChunkEvent>, ProcessTxError> {
+    view: &mut ProjectionView,
+) -> Result<Vec<CanonicalDelta>, ProcessTxError> {
     let mut parser = TransactionOperationsParser::new(
         market_id,
         chain_id,
@@ -148,14 +298,11 @@ pub fn process_transaction(
     let mut sorted_ops: Vec<&Operation> = parsed.operations.iter().collect();
     sorted_ops.sort_by_key(|op| operation_sort_key(op));
 
-    // The per-tx running-state map for GHO debt positions: every event in one
-    // tx threads the running balance/index instead of re-reading the pre-tx
-    // snapshot. Per-tx scope (the run-loop's
-    // `apply_chunk_events_on_conn` flushes the events Vec right after this
-    // fn returns, so the next tx's reads are fresh).
-    let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
-
-    let mut events: Vec<AaveChunkEvent> = Vec::new();
+    // The transaction's resolve → reduce → apply sink. Every event's preceding
+    // state comes from the view (seeded once from the relational substrate,
+    // advanced by each delta), so an event explicitly at a later position reads
+    // what the earlier one established — never a pre-transaction snapshot.
+    let mut out = DeltaSink::new(*evidence.tx(), view);
     for op in &sorted_ops {
         dispatch_operation(
             op,
@@ -164,12 +311,11 @@ pub fn process_transaction(
             gho_vtoken_address,
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             substrate,
         )?;
     }
-    Ok(events)
+    Ok(out.into_deltas())
 }
 
 /// The per-Operation sort key (mirror of `_get_operation_sort_key`). Operations
@@ -283,8 +429,8 @@ fn build_liquidation_patterns(
     ctx
 }
 
-/// Dispatch a single Operation's scaled-token events → [`AaveChunkEvent`]
-/// variants — the per-event-type dispatch loop.
+/// Dispatch a single Operation's scaled-token events → [`CanonicalDelta`]s —
+/// the per-event-type dispatch loop.
 #[expect(clippy::too_many_arguments)]
 fn dispatch_operation(
     op: &Operation,
@@ -293,8 +439,7 @@ fn dispatch_operation(
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     match op.operation_type {
@@ -302,11 +447,9 @@ fn dispatch_operation(
         | OperationType::Withdraw
         | OperationType::Borrow
         | OperationType::Repay
-        | OperationType::RepayWithAtokens => {
-            dispatch_standard(op, market_id, conn, events, substrate)
-        }
+        | OperationType::RepayWithAtokens => dispatch_standard(op, market_id, conn, out, substrate),
         OperationType::BalanceTransfer => {
-            dispatch_balance_transfer(op, market_id, conn, events, substrate)
+            dispatch_balance_transfer(op, market_id, conn, out, substrate)
         }
         // Standalone interest accrual (amount == balance_increase). Delta = 0
         // (only the index updates — the apply fn reconciles `last_index`).
@@ -318,28 +461,19 @@ fn dispatch_operation(
             conn,
             gho_vtoken_address,
             gho_ctx,
-            events,
-            gho_running_state,
+            out,
             substrate,
         ),
-        OperationType::Liquidation => dispatch_liquidation(
-            op,
-            market_id,
-            conn,
-            gho_ctx,
-            liq_patterns,
-            events,
-            gho_running_state,
-            substrate,
-        ),
+        OperationType::Liquidation => {
+            dispatch_liquidation(op, market_id, conn, gho_ctx, liq_patterns, out, substrate)
+        }
         OperationType::GhoLiquidation => dispatch_gho_liquidation(
             op,
             market_id,
             conn,
             gho_vtoken_address,
             gho_ctx,
-            events,
-            gho_running_state,
+            out,
             substrate,
         ),
         OperationType::GhoBorrow | OperationType::GhoRepay | OperationType::GhoFlashLoan => {
@@ -349,16 +483,15 @@ fn dispatch_operation(
                 conn,
                 gho_vtoken_address,
                 gho_ctx,
-                events,
-                gho_running_state,
+                out,
                 substrate,
             )
         }
         OperationType::DeficitCoverage => {
-            dispatch_deficit_coverage(op, market_id, conn, events, substrate)
+            dispatch_deficit_coverage(op, market_id, conn, out, substrate)
         }
         OperationType::MintToTreasury => {
-            dispatch_mint_to_treasury(op, market_id, conn, events, substrate)
+            dispatch_mint_to_treasury(op, market_id, conn, out, substrate)
         }
         OperationType::StkAaveTransfer => {
             // Pre-processed by the orchestrator (the stkAAVE transfers run
@@ -383,7 +516,7 @@ fn dispatch_standard(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    events: &mut Vec<AaveChunkEvent>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -400,9 +533,8 @@ fn dispatch_standard(
         // resolves to word 0; the liquidation path, handled in
         // `dispatch_liquidation`, resolves per event type).
         let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
-        let chunk_event =
-            build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-        events.push(chunk_event);
+        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
+        out.emit(substrate, conn, resolved)?;
     }
     Ok(())
 }
@@ -478,7 +610,7 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
     }
 }
 
-/// Build an [`AaveChunkEvent`] from a single scaled-token event (the
+/// Reduce a single scaled-token event into a resolved delta (the
 /// Mint-exceeds → Burn edge + the standard Mint/Burn/Transfer paths). The
 /// `raw_amount` is the Pool event's amount (the enricher's `raw_amount`);
 /// the `scaled_amount` is computed as `ray_div(raw_amount, index,
@@ -492,7 +624,7 @@ fn build_scaled_event_chunk_event(
     market_id: i64,
     conn: &Connection,
     substrate: &mut ChunkSubstrate,
-) -> Result<AaveChunkEvent, ProcessTxError> {
+) -> Result<ResolvedDelta, ProcessTxError> {
     // Resolve the emitter's AssetRow (id + revisions + sibling addresses).
     let token_addr_str = addr_to_hex(ev.token_address);
     let token_type = match ev.event_type {
@@ -552,6 +684,22 @@ fn build_scaled_event_chunk_event(
         )
     } else {
         (ScaledTokenPosition::Debt, ScaledTokenProcessor::debt())
+    };
+    // The generation the movement's rounding row belongs to (ADR-105 D6): the
+    // reserve leg's own revision, resolved from the asset row the event's
+    // emitter classified.
+    let generation = scaled_token_generation(
+        asset.id,
+        position,
+        if token_type == "a_token" {
+            asset.a_token_revision
+        } else {
+            asset.v_token_revision
+        },
+    );
+    let subject = |position_id| PositionSubject {
+        position,
+        position_id,
     };
 
     match ev.event_type {
@@ -626,11 +774,14 @@ fn build_scaled_event_chunk_event(
                     &asset.underlying_token_address,
                     substrate,
                 )?;
-                Ok(AaveChunkEvent::ScaledTokenBurn {
-                    position,
-                    position_id,
-                    balance_delta: result.balance_delta,
-                    new_index: result.new_index,
+                Ok(ResolvedDelta {
+                    effect: DeltaEffect::ScaledBalance {
+                        subject: subject(position_id),
+                        balance_delta: result.balance_delta,
+                        index: result.new_index,
+                    },
+                    generation,
+                    log_index: ev.log_index,
                 })
             } else if is_collateral_interest_exceeds_edge {
                 // Treat the Mint as a Burn, sized by the Pool word through the
@@ -661,11 +812,14 @@ fn build_scaled_event_chunk_event(
                     &asset.underlying_token_address,
                     substrate,
                 )?;
-                Ok(AaveChunkEvent::ScaledTokenBurn {
-                    position,
-                    position_id,
-                    balance_delta: result.balance_delta,
-                    new_index: result.new_index,
+                Ok(ResolvedDelta {
+                    effect: DeltaEffect::ScaledBalance {
+                        subject: subject(position_id),
+                        balance_delta: result.balance_delta,
+                        index: result.new_index,
+                    },
+                    generation,
+                    log_index: ev.log_index,
                 })
             } else {
                 // Standard mint path: aToken → `process_collateral_mint`,
@@ -703,11 +857,14 @@ fn build_scaled_event_chunk_event(
                     &asset.underlying_token_address,
                     substrate,
                 )?;
-                Ok(AaveChunkEvent::ScaledTokenMint {
-                    position,
-                    position_id,
-                    balance_delta: result.balance_delta,
-                    new_index: result.new_index,
+                Ok(ResolvedDelta {
+                    effect: DeltaEffect::ScaledBalance {
+                        subject: subject(position_id),
+                        balance_delta: result.balance_delta,
+                        index: result.new_index,
+                    },
+                    generation,
+                    log_index: ev.log_index,
                 })
             }
         }
@@ -752,11 +909,14 @@ fn build_scaled_event_chunk_event(
                 &asset.underlying_token_address,
                 substrate,
             )?;
-            Ok(AaveChunkEvent::ScaledTokenBurn {
-                position,
-                position_id,
-                balance_delta: result.balance_delta,
-                new_index: result.new_index,
+            Ok(ResolvedDelta {
+                effect: DeltaEffect::ScaledBalance {
+                    subject: subject(position_id),
+                    balance_delta: result.balance_delta,
+                    index: result.new_index,
+                },
+                generation,
+                log_index: ev.log_index,
             })
         }
         ScaledTokenEventType::CollateralTransfer
@@ -795,11 +955,15 @@ fn build_scaled_event_chunk_event(
                     substrate,
                 )?)
             };
-            Ok(AaveChunkEvent::ScaledTokenTransfer {
-                from_position_id,
-                to_position_id,
-                scaled_amount: ev.amount,
-                transfer_index: index,
+            Ok(ResolvedDelta {
+                effect: DeltaEffect::ScaledTransfer {
+                    from: subject(from_position_id),
+                    to: to_position_id.map(subject),
+                    scaled_amount: ev.amount,
+                    index,
+                },
+                generation,
+                log_index: ev.log_index,
             })
         }
         _ => Err(ProcessTxError::Deferred(format!(
@@ -822,7 +986,7 @@ fn dispatch_balance_transfer(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    events: &mut Vec<AaveChunkEvent>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
@@ -850,44 +1014,41 @@ fn dispatch_balance_transfer(
             Some((_, idx)) => idx,
             None => ev.index.unwrap_or_default(),
         };
-        let chunk_event =
+        let resolved =
             build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn, substrate)?;
-        let chunk_event =
-            override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
-        events.push(chunk_event);
+        let resolved =
+            override_transfer_with_paired_bt(resolved, bt_pair, raw_amount, transfer_index);
+        out.emit(substrate, conn, resolved)?;
     }
     Ok(())
 }
 
-/// If `build_scaled_event_chunk_event` returned a `ScaledTokenTransfer` chunk
-/// event for the ERC20 `Transfer` event (carrying the ERC20's UNDERLYING amount
-/// as `scaled_amount`), override it with the paired `BalanceTransfer` event's
+/// If `build_scaled_event_chunk_event` reduced a `ScaledTransfer` delta for the
+/// ERC20 `Transfer` event (carrying the ERC20's UNDERLYING amount as
+/// `scaled_amount`), override it with the paired `BalanceTransfer` event's
 /// scaled amount (the actual scaled balance moved). For Liquidation paths
 /// (handled by `dispatch_liquidation`, not here) the override is a no-op.
 fn override_transfer_with_paired_bt(
-    event: AaveChunkEvent,
+    resolved: ResolvedDelta,
     bt_pair: Option<(U256, U256)>,
     fallback_amount: U256,
     fallback_index: U256,
-) -> AaveChunkEvent {
-    let AaveChunkEvent::ScaledTokenTransfer {
-        from_position_id,
-        to_position_id,
-        scaled_amount: _,
-        transfer_index: _,
-    } = event
-    else {
-        return event;
+) -> ResolvedDelta {
+    let DeltaEffect::ScaledTransfer { from, to, .. } = resolved.effect else {
+        return resolved;
     };
-    let (scaled_amount, transfer_index) = match bt_pair {
+    let (scaled_amount, index) = match bt_pair {
         Some((value, index)) => (value, index),
         None => (fallback_amount, fallback_index),
     };
-    AaveChunkEvent::ScaledTokenTransfer {
-        from_position_id,
-        to_position_id,
-        scaled_amount,
-        transfer_index,
+    ResolvedDelta {
+        effect: DeltaEffect::ScaledTransfer {
+            from,
+            to,
+            scaled_amount,
+            index,
+        },
+        ..resolved
     }
 }
 
@@ -913,7 +1074,7 @@ fn decode_balance_transfer_log(log: &Log) -> Option<(Address, Address, Address, 
     let index = U256::from_be_bytes::<32>(buf);
     Some((from, to, token, value, index))
 }
-#[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
+#[expect(clippy::too_many_lines)]
 /// Dispatch an `InterestAccrual` operation (amount == `balance_increase` →
 /// delta = 0; only the position's `last_index` advances). The enricher passes
 /// `scaled_amount: Some(0)` (the accrued-interest-only path — the balance
@@ -924,8 +1085,7 @@ fn dispatch_interest_accrual(
     conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     // ALL GHO vToken Mints — including interest accrual + the
@@ -954,7 +1114,7 @@ fn dispatch_interest_accrual(
             // which `build_gho_chunk_event` would compute for pool-event ops).
             // The discount math (delta for V1-V3 / pure-interest-accrual) is
             // verified byte-exact vs the Python gold at 18M.
-            let (chunk_event, refresh) = build_gho_chunk_event(
+            let (resolved, refresh) = build_gho_chunk_event(
                 ev,
                 op,
                 op.pool_event,
@@ -962,12 +1122,12 @@ fn dispatch_interest_accrual(
                 gho_ctx,
                 market_id,
                 conn,
-                gho_running_state,
+                out,
                 substrate,
             )?;
-            events.push(chunk_event);
-            if let Some(refresh_ev) = refresh {
-                events.push(refresh_ev);
+            out.emit(substrate, conn, resolved)?;
+            if let Some(refresh) = refresh {
+                out.emit(substrate, conn, refresh)?;
             }
             continue;
         }
@@ -1019,12 +1179,30 @@ fn dispatch_interest_accrual(
             &asset.underlying_token_address,
             substrate,
         )?;
-        events.push(AaveChunkEvent::ScaledTokenMint {
-            position,
-            position_id,
-            balance_delta: result.balance_delta,
-            new_index: result.new_index,
-        });
+        out.emit(
+            substrate,
+            conn,
+            ResolvedDelta {
+                effect: DeltaEffect::ScaledBalance {
+                    subject: PositionSubject {
+                        position,
+                        position_id,
+                    },
+                    balance_delta: result.balance_delta,
+                    index: result.new_index,
+                },
+                generation: scaled_token_generation(
+                    asset.id,
+                    position,
+                    if token_type == "a_token" {
+                        asset.a_token_revision
+                    } else {
+                        asset.v_token_revision
+                    },
+                ),
+                log_index: ev.log_index,
+            },
+        )?;
     }
     Ok(())
 }
@@ -1194,7 +1372,6 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
     let bytes = topic.0;
     Address::from_slice(&bytes[12..])
 }
-#[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
 /// Dispatch the GHO Borrow/Repay/FlashLoan operations. Mirrors the GHO branch
 /// of `_process_debt_mint_with_match` / `_process_debt_burn_with_match`. Each
 /// GHO scaled event is routed through the [`UnifiedGhoProcessor`] (NOT the
@@ -1208,8 +1385,7 @@ fn dispatch_gho_standard(
     conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event;
@@ -1230,48 +1406,48 @@ fn dispatch_gho_standard(
             // A non-GHO scaled event within a GHO operation (e.g. the
             // collateral leg of a GHO FlashLoan) → standard builder.
             let raw = pool_event.map_or(ev.amount, extract_pool_amount_word0);
-            let chunk_event =
-                build_scaled_event_chunk_event(ev, op, raw, market_id, conn, substrate)?;
-            events.push(chunk_event);
+            let resolved = build_scaled_event_chunk_event(ev, op, raw, market_id, conn, substrate)?;
+            out.emit(substrate, conn, resolved)?;
             continue;
         }
-        let (chunk_event, refresh) = build_gho_chunk_event(
-            ev,
-            op,
-            pool_event,
-            None,
-            gho_ctx,
-            market_id,
-            conn,
-            gho_running_state,
-            substrate,
+        let (resolved, refresh) = build_gho_chunk_event(
+            ev, op, pool_event, None, gho_ctx, market_id, conn, out, substrate,
         )?;
-        events.push(chunk_event);
-        if let Some(refresh_ev) = refresh {
-            events.push(refresh_ev);
+        out.emit(substrate, conn, resolved)?;
+        if let Some(refresh) = refresh {
+            out.emit(substrate, conn, refresh)?;
         }
     }
     Ok(())
 }
-/// The single bad-debt reset owner shared by both liquidation dispatch
-/// paths: emit the `DebtPositionReset` AND synchronize the per-tx GHO
-/// running state, so reset emission and the tuple a later same-tx GHO event
-/// reads cannot diverge (the apply buffer lands only after
-/// `process_transaction` returns — the map is the only fresh state).
+/// The single bad-debt reset owner shared by both liquidation dispatch paths:
+/// reduce the write-off and apply it to the view at once, so the reset's own
+/// position and the state a later same-transaction GHO event reads cannot
+/// diverge.
 fn emit_bad_debt_reset(
     position_id: i64,
     new_index: U256,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
-) {
-    events.push(AaveChunkEvent::DebtPositionReset {
-        position_id,
-        new_index,
-    });
-    gho_running_state.insert(position_id, (U256::ZERO, new_index));
+    generation: GenerationRef,
+    log_index: u64,
+    out: &mut DeltaSink<'_>,
+    substrate: &mut ChunkSubstrate,
+    conn: &Connection,
+) -> Result<(), ProcessTxError> {
+    out.emit(
+        substrate,
+        conn,
+        ResolvedDelta {
+            effect: DeltaEffect::DebtPositionReset {
+                position_id,
+                index: new_index,
+            },
+            generation,
+            log_index,
+        },
+    )
 }
 
-#[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
+#[expect(clippy::too_many_lines)]
 /// Dispatch the GHO `LiquidationCall`. Mirrors the GHO branch of
 /// `_process_debt_burn_with_match` (the bad-debt override) + the GHO branch of
 /// `_process_debt_mint_with_match` (the `COMBINED_BURN` Mint-skip for the
@@ -1283,8 +1459,7 @@ fn dispatch_gho_liquidation(
     conn: &Connection,
     gho_vtoken_address: Option<Address>,
     gho_ctx: &GhoDiscountContext,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -1323,12 +1498,19 @@ fn dispatch_gho_liquidation(
                 emit_bad_debt_reset(
                     position_id,
                     ev.index.unwrap_or_default(),
-                    events,
-                    gho_running_state,
-                );
+                    scaled_token_generation(
+                        asset.id,
+                        ScaledTokenPosition::Debt,
+                        asset.v_token_revision,
+                    ),
+                    ev.log_index,
+                    out,
+                    substrate,
+                    conn,
+                )?;
                 continue;
             }
-            let (chunk_event, refresh) = build_gho_chunk_event(
+            let (resolved, refresh) = build_gho_chunk_event(
                 ev,
                 op,
                 Some(pool_event),
@@ -1336,12 +1518,12 @@ fn dispatch_gho_liquidation(
                 gho_ctx,
                 market_id,
                 conn,
-                gho_running_state,
+                out,
                 substrate,
             )?;
-            events.push(chunk_event);
-            if let Some(refresh_ev) = refresh {
-                events.push(refresh_ev);
+            out.emit(substrate, conn, resolved)?;
+            if let Some(refresh) = refresh {
+                out.emit(substrate, conn, refresh)?;
             }
         } else {
             // Non-GHO event within a GHO liquidation: either the aToken
@@ -1387,25 +1569,34 @@ fn dispatch_gho_liquidation(
                 emit_bad_debt_reset(
                     position_id,
                     ev.index.unwrap_or_default(),
-                    events,
-                    gho_running_state,
-                );
+                    scaled_token_generation(
+                        asset.id,
+                        ScaledTokenPosition::Debt,
+                        asset.v_token_revision,
+                    ),
+                    ev.log_index,
+                    out,
+                    substrate,
+                    conn,
+                )?;
                 continue;
             }
             // The collateral leg (or a non-bad-debt stranded debt burn) →
             // standard builder.
             let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
-            let chunk_event =
+            let resolved =
                 build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-            events.push(chunk_event);
+            out.emit(substrate, conn, resolved)?;
         }
     }
     Ok(())
 }
-/// Build a GHO debt `AaveChunkEvent` from a single GHO scaled-token event via
-/// the [`UnifiedGhoProcessor`]. Mirrors the GHO branch of
+/// Reduce a single GHO scaled-token event into a resolved delta via the
+/// [`UnifiedGhoProcessor`]. Mirrors the GHO branch of
 /// `_process_debt_mint_with_match` / `_process_debt_burn_with_match`. Resolves
-/// the effective discount + threads the `actual_repay_amount` (for `GhoRepay`).
+/// the effective discount + threads the `actual_repay_amount` (for `GhoRepay`),
+/// and reads the position's preceding state from the projection view — the
+/// state an earlier event in this transaction established.
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_gho_chunk_event(
     ev: &ScaledTokenEvent,
@@ -1415,9 +1606,9 @@ fn build_gho_chunk_event(
     gho_ctx: &GhoDiscountContext,
     market_id: i64,
     conn: &Connection,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
-) -> Result<(AaveChunkEvent, Option<AaveChunkEvent>), ProcessTxError> {
+) -> Result<(ResolvedDelta, Option<ResolvedDelta>), ProcessTxError> {
     let asset = lookup_gho_debt_asset(ev, market_id, conn, substrate)?;
     let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
     let balance_increase = ev.balance_increase.unwrap_or_default();
@@ -1490,45 +1681,41 @@ fn build_gho_chunk_event(
         &asset.underlying_token_address,
         substrate,
     )?;
+    let subject = PositionSubject {
+        position: ScaledTokenPosition::Debt,
+        position_id,
+    };
+    let generation =
+        scaled_token_generation(asset.id, ScaledTokenPosition::Debt, asset.v_token_revision);
     // Read the position's actual prev balance + last_index — the GHO
     // processor's `accrue_debt_on_action` + `get_discounted_balance` NEED
     // them to compute the discount-scaled amount (the standard
     // `ScaledTokenProcessor` does not — GHO is the exception). Mirrors the
     // Python's read of `debt_position.balance` / `.last_index`.
     //
-    // THE PER-TX RUNNING STATE:
+    // THE INTERLEAVED READ POSITION:
     // when a single tx has multiple GHO events for the same position
     // (e.g., borrow + accrued-interest Mint + zero-noop Mint in the same
-    // `process_transaction`), each event MUST thread the running
-    // `prev_balance` + `prev_index` — reading the DB pre-tx state on every
-    // event re-applies the `accrue_debt_on_action` `discount_scaled` burn
-    // once per event, because `balance_increase` looks non-zero against a
-    // stale `prev_index` — the map stands in for the immediate
-    // read-your-own-writes balance the apply buffer lands.
-    //
-    // The map is per-tx (the run-loop's `apply_chunk_events_on_conn` lands
-    // the buffer right after `process_transaction` returns, so the next tx's
-    // reads are fresh). The map subs ONLY for the GHO debt paths (the
-    // `build_gho_chunk_event` callers) — the standard `dispatch_standard`
-    // path uses `ScaledTokenProcessor` which does NOT consult `prev_balance`
-    // (no discount math); it has no per-tx staleness.
-    let (prev_balance, prev_index) =
-        if let Some(&(balance, idx)) = gho_running_state.get(&position_id) {
-            (balance, idx)
-        } else {
-            let (balance, index_opt) = substrate.lookup_position_balance_index(
-                conn,
-                ScaledTokenPosition::Debt,
-                position_id,
-            )?;
-            let idx = index_opt.unwrap_or(index);
-            gho_running_state.insert(position_id, (balance, idx));
-            (balance, idx)
-        };
+    // `process_transaction`), each event MUST read the running
+    // `prev_balance` + `prev_index` — re-reading the pre-transaction state on
+    // every event re-applies the `accrue_debt_on_action` `discount_scaled`
+    // burn once per event, because `balance_increase` looks non-zero against a
+    // stale `prev_index`. The view holds exactly the state the earlier events
+    // of this transaction established (including a bad-debt reset's zeroed
+    // balance), and the reduction below reads it.
+    let (prev_balance, prev_index) = {
+        let (balance, index_opt) = out.position_facts(substrate, conn, subject)?;
+        (balance, index_opt.unwrap_or(index))
+    };
     let effective_discount =
         gho_ctx.effective_discount(ev.user_address, ev.log_index, asset.v_token_revision);
+    let refresh = |position_id| ResolvedDelta {
+        effect: DeltaEffect::GhoRefreshDiscount { position_id },
+        generation,
+        log_index: ev.log_index,
+    };
 
-    let (balance_delta, new_index, chunk_event, refresh) = match ev.event_type {
+    let (resolved, refresh) = match ev.event_type {
         ScaledTokenEventType::GhoDebtMint => {
             let result = processor.process_gho_debt_mint(
                 &event_data,
@@ -1537,16 +1724,17 @@ fn build_gho_chunk_event(
                 effective_discount,
                 actual_repay_amount,
             )?;
-            let refresh = result
-                .should_refresh_discount
-                .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
-            let chunk_event = AaveChunkEvent::ScaledTokenMint {
-                position: ScaledTokenPosition::Debt,
-                position_id,
-                balance_delta: result.balance_delta,
-                new_index: result.new_index,
+            let refresh = result.should_refresh_discount.then(|| refresh(position_id));
+            let resolved = ResolvedDelta {
+                effect: DeltaEffect::ScaledBalance {
+                    subject,
+                    balance_delta: result.balance_delta,
+                    index: result.new_index,
+                },
+                generation,
+                log_index: ev.log_index,
             };
-            (result.balance_delta, result.new_index, chunk_event, refresh)
+            (resolved, refresh)
         }
         ScaledTokenEventType::GhoDebtBurn | ScaledTokenEventType::GhoDebtTransfer => {
             let result = processor.process_gho_debt_burn(
@@ -1555,16 +1743,17 @@ fn build_gho_chunk_event(
                 prev_index,
                 effective_discount,
             )?;
-            let refresh = result
-                .should_refresh_discount
-                .then_some(AaveChunkEvent::GhoRefreshDiscount { position_id });
-            let chunk_event = AaveChunkEvent::ScaledTokenBurn {
-                position: ScaledTokenPosition::Debt,
-                position_id,
-                balance_delta: result.balance_delta,
-                new_index: result.new_index,
+            let refresh = result.should_refresh_discount.then(|| refresh(position_id));
+            let resolved = ResolvedDelta {
+                effect: DeltaEffect::ScaledBalance {
+                    subject,
+                    balance_delta: result.balance_delta,
+                    index: result.new_index,
+                },
+                generation,
+                log_index: ev.log_index,
             };
-            (result.balance_delta, result.new_index, chunk_event, refresh)
+            (resolved, refresh)
         }
         _ => {
             return Err(ProcessTxError::Deferred(format!(
@@ -1574,20 +1763,7 @@ fn build_gho_chunk_event(
         }
     };
 
-    // Update the per-tx running state (mirrors
-    // `apply_scaled_token_balance_delta_on_conn`); the I256-signed delta may
-    // be negative (a burn or a discount_scaled-burning BORROW edge case).
-    let new_balance = if balance_delta.is_negative() {
-        let abs = U256::try_from(-balance_delta).unwrap_or(U256::MAX);
-        prev_balance.saturating_sub(abs)
-    } else {
-        let abs = U256::try_from(balance_delta).unwrap_or(U256::MAX);
-        prev_balance.saturating_add(abs)
-    };
-    let new_index_for_map = new_index.max(prev_index);
-    gho_running_state.insert(position_id, (new_balance, new_index_for_map));
-
-    Ok((chunk_event, refresh))
+    Ok((resolved, refresh))
 }
 
 /// Look up the GHO debt asset for a scaled event's emitter (the vToken).
@@ -1618,15 +1794,13 @@ fn lookup_gho_debt_asset(
 /// burn attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
 /// single-liquidation "collect all burns" branch) never reaches
 /// `dispatch_gho_liquidation`, so the reset here is the only zeroing path.
-#[expect(clippy::too_many_arguments)]
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
     gho_ctx: &GhoDiscountContext,
     liq_patterns: &mut LiquidationPatternContext,
-    events: &mut Vec<AaveChunkEvent>,
-    gho_running_state: &mut HashMap<i64, (U256, U256)>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -1697,9 +1871,16 @@ fn dispatch_liquidation(
             emit_bad_debt_reset(
                 position_id,
                 ev.index.unwrap_or_default(),
-                events,
-                gho_running_state,
-            );
+                scaled_token_generation(
+                    asset.id,
+                    ScaledTokenPosition::Debt,
+                    asset.v_token_revision,
+                ),
+                ev.log_index,
+                out,
+                substrate,
+                conn,
+            )?;
             continue;
         }
         // The per-event-type raw-amount extractor resolves debt burn/transfer
@@ -1723,9 +1904,8 @@ fn dispatch_liquidation(
                 }
             }
         }
-        let chunk_event =
-            build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
-        events.push(chunk_event);
+        let resolved = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn, substrate)?;
+        out.emit(substrate, conn, resolved)?;
     }
     Ok(())
 }
@@ -1740,7 +1920,7 @@ fn dispatch_deficit_coverage(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    events: &mut Vec<AaveChunkEvent>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
@@ -1805,11 +1985,11 @@ fn dispatch_deficit_coverage(
                 Some((_, idx)) => idx,
                 None => ev.index.unwrap_or_default(),
             };
-            let chunk_event =
+            let resolved =
                 build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn, substrate)?;
-            let chunk_event =
-                override_transfer_with_paired_bt(chunk_event, bt_pair, raw_amount, transfer_index);
-            events.push(chunk_event);
+            let resolved =
+                override_transfer_with_paired_bt(resolved, bt_pair, raw_amount, transfer_index);
+            out.emit(substrate, conn, resolved)?;
         }
     }
     for ev in &scaled {
@@ -1818,9 +1998,9 @@ fn dispatch_deficit_coverage(
             // the burn's `amount` (the raw value) + `index` (the collateral-burn
             // strategy). Skip enrichment validation — the burn includes interest
             // accrued between the transfer + the burn.
-            let chunk_event =
+            let resolved =
                 build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn, substrate)?;
-            events.push(chunk_event);
+            out.emit(substrate, conn, resolved)?;
         }
     }
     Ok(())
@@ -1836,7 +2016,7 @@ pub(crate) fn dispatch_mint_to_treasury(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
-    events: &mut Vec<AaveChunkEvent>,
+    out: &mut DeltaSink<'_>,
     substrate: &mut ChunkSubstrate,
 ) -> Result<(), ProcessTxError> {
     let minted_amount = op.minted_to_treasury_amount.ok_or_else(|| {
@@ -1880,12 +2060,26 @@ pub(crate) fn dispatch_mint_to_treasury(
             &asset.underlying_token_address,
             substrate,
         )?;
-        events.push(AaveChunkEvent::ScaledTokenMint {
-            position: ScaledTokenPosition::Collateral,
-            position_id,
-            balance_delta: result.balance_delta,
-            new_index: result.new_index,
-        });
+        out.emit(
+            substrate,
+            conn,
+            ResolvedDelta {
+                effect: DeltaEffect::ScaledBalance {
+                    subject: PositionSubject {
+                        position: ScaledTokenPosition::Collateral,
+                        position_id,
+                    },
+                    balance_delta: result.balance_delta,
+                    index: result.new_index,
+                },
+                generation: scaled_token_generation(
+                    asset.id,
+                    ScaledTokenPosition::Collateral,
+                    asset.a_token_revision,
+                ),
+                log_index: ev.log_index,
+            },
+        )?;
     }
     Ok(())
 }
@@ -1928,7 +2122,17 @@ fn resolve_position_id(
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+    use degenbot_core::canonical_head::ChainAnchor;
     use degenbot_db::DegenbotDb;
+
+    /// The fixture transaction every test's deltas are positioned in: one
+    /// block, one transaction, block-wide log indices.
+    fn fixture_tx() -> TxRef {
+        let anchor = ChainAnchor::new(1, 100, B256::repeat_byte(0x11), B256::repeat_byte(0x22))
+            .expect("the fixture anchor is complete");
+        TxRef::new(anchor, B256::repeat_byte(0x33), 0)
+            .expect("the fixture transaction names its hash")
+    }
 
     /// A fresh in-memory write-capable DB seeded with a single market
     /// (id 1, chain 1) + a single asset (id 1, aToken rev 1) + its erc20
@@ -2372,33 +2576,32 @@ mod tests {
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
         let gho_ctx = GhoDiscountContext::new(&logs, &discounts, Some(vtoken), fixture_pool());
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
-        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_interest_accrual(
             &op,
             1,
             &conn,
             Some(vtoken),
             &gho_ctx,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("GHO interest accrual must not defer");
         assert_eq!(
-            events.len(),
+            out.deltas().len(),
             1,
-            "the single GhoDebtMint must produce one chunk event"
+            "the single GhoDebtMint must produce one delta"
         );
-        match &events[0] {
-            AaveChunkEvent::ScaledTokenMint { position, .. } => {
+        match out.deltas()[0].effect() {
+            DeltaEffect::ScaledBalance { subject, .. } => {
                 assert_eq!(
-                    *position,
+                    subject.position,
                     ScaledTokenPosition::Debt,
                     "GHO interest accrual → debt position"
                 );
             }
-            other => panic!("expected ScaledTokenMint, got {other:?}"),
+            other => panic!("expected a scaled-balance delta, got {other:?}"),
         }
     }
 
@@ -2623,8 +2826,9 @@ mod tests {
         };
 
         let conn = db.lock();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
-        dispatch_deficit_coverage(&op, 1, &conn, &mut events, &mut ChunkSubstrate::lazy(1))
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
+        dispatch_deficit_coverage(&op, 1, &conn, &mut out, &mut ChunkSubstrate::lazy(1))
             .expect("DeficitCoverage dispatch must not defer");
 
         // Expectation: exactly TWO chunk_events — ONE `ScaledTokenTransfer`
@@ -2635,37 +2839,40 @@ mod tests {
         // A THIRD event (= ERC20 + BT + Burn) would double-bill the user via
         // the BT chunk_event.
         assert_eq!(
-            events.len(),
+            out.deltas().len(),
             2,
-            "DeficitCoverage must emit exactly 2 chunk_events (the ERC20 paired with the BT + the deficit burn)"
+            "DeficitCoverage must emit exactly 2 deltas (the ERC20 paired with the BT + the deficit burn)"
         );
 
-        let transfer_chunk = events
+        let (scaled_amount, transfer_index) = out
+            .deltas()
             .iter()
-            .find(|e| matches!(e, AaveChunkEvent::ScaledTokenTransfer { .. }))
-            .expect("a ScaledTokenTransfer chunk_event must be present");
-        match transfer_chunk {
-            AaveChunkEvent::ScaledTokenTransfer {
-                scaled_amount,
-                transfer_index,
-                ..
-            } => {
-                assert_eq!(
-                    *scaled_amount, bt_scaled,
-                    "the ERC20 Transfer must be paired with the BT — scaled_amount must be the BT's scaled value (148831959), not the unscaled ERC20 amount (168401963)"
-                );
-                assert_eq!(
-                    *transfer_index, index,
-                    "transfer_index must be the BT's liquidity index (NOT the zero `ev.index.unwrap_or_default()` fallback)"
-                );
-            }
-            other => panic!("expected ScaledTokenTransfer, got {other:?}"),
-        }
+            .find_map(|delta| match delta.effect() {
+                DeltaEffect::ScaledTransfer {
+                    scaled_amount,
+                    index,
+                    ..
+                } => Some((*scaled_amount, *index)),
+                _ => None,
+            })
+            .expect("a scaled-transfer delta must be present");
+        assert_eq!(
+            scaled_amount, bt_scaled,
+            "the ERC20 Transfer must be paired with the BT — the transfer's scaled amount must be the BT's scaled value (148831959), not the unscaled ERC20 amount (168401963)"
+        );
+        assert_eq!(
+            transfer_index, index,
+            "the transfer's index must be the BT's liquidity index (NOT the zero fallback)"
+        );
         assert!(
-            events
+            out.deltas()
                 .iter()
-                .any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { .. })),
-            "the deficit-coverage burn chunk_event must be present"
+                .any(|delta| matches!(delta.effect(), DeltaEffect::ScaledBalance { .. })),
+            "the deficit-coverage burn delta must be present: {:?}",
+            out.deltas()
+                .iter()
+                .map(CanonicalDelta::encode)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2917,15 +3124,15 @@ mod tests {
         let discounts = HashMap::new();
         let logs: Vec<&Log> = Vec::new();
         let gho_ctx = GhoDiscountContext::new(&logs, &discounts, None, fixture_pool());
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_liquidation(
             &op0,
             1,
             &conn,
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut HashMap::new(),
+            &mut out,
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("op0 dispatch");
@@ -2935,19 +3142,20 @@ mod tests {
             &conn,
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut HashMap::new(),
+            &mut out,
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("op1 dispatch");
 
-        let debt_burns: Vec<_> = events
+        let debt_burns: Vec<_> = out
+            .deltas()
             .iter()
-            .filter(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt))
+            .filter(|delta| matches!(delta.effect(), DeltaEffect::ScaledBalance { subject, .. } if subject.position == ScaledTokenPosition::Debt))
             .collect();
-        let debt_mints: Vec<_> = events
+        let debt_mints: Vec<_> = out
+            .deltas()
             .iter()
-            .filter(|e| matches!(e, AaveChunkEvent::ScaledTokenMint { position, .. } if *position == ScaledTokenPosition::Debt))
+            .filter(|delta| matches!(delta.effect(), DeltaEffect::ScaledBalance { subject, balance_delta, .. } if subject.position == ScaledTokenPosition::Debt && !balance_delta.is_negative()))
             .collect();
         assert_eq!(
             debt_burns.len(),
@@ -2963,10 +3171,10 @@ mod tests {
         // The burn's delta = -ray_div(total, index, HalfUp) — the aggregate
         // (rev 1 → `enricher_debt_burn` = HalfUp).
         let expected_scaled = ray_div(total, index, Some(RayRounding::HalfUp)).unwrap();
-        match debt_burns[0] {
-            AaveChunkEvent::ScaledTokenBurn {
+        match debt_burns[0].effect() {
+            DeltaEffect::ScaledBalance {
                 balance_delta,
-                new_index,
+                index: new_index,
                 ..
             } => {
                 // balance_delta is negative I256; the magnitude equals the
@@ -3204,15 +3412,15 @@ mod tests {
 
         let conn = db.lock();
         let mut liq_patterns = LiquidationPatternContext::default();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_liquidation(
             &op,
             1,
             &conn,
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut HashMap::new(),
+            &mut out,
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("dispatch");
@@ -3221,11 +3429,8 @@ mod tests {
         // bad-debt write-off zeroes the balance). Without the reset the GHO
         // burn emits as a wrongly-sized ScaledTokenBurn instead
         // (delta = ray_div(142, index) = 126, leaving 1.28e15).
-        let reset = events.iter().find_map(|e| match e {
-            AaveChunkEvent::DebtPositionReset {
-                position_id,
-                new_index,
-            } => Some((*position_id, *new_index)),
+        let reset = out.deltas().iter().find_map(|delta| match delta.effect() {
+            DeltaEffect::DebtPositionReset { position_id, index } => Some((*position_id, *index)),
             _ => None,
         });
         let (reset_pid, reset_idx) =
@@ -3244,25 +3449,24 @@ mod tests {
             reset_pid, gho_debt_pid,
             "the reset must target the GHO vToken's debt position"
         );
-        // And no wrongly-sized ScaledTokenBurn for the GHO position.
+        // And no wrongly-sized burn delta for the GHO position.
         assert!(
-            !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenBurn { position, .. } if *position == ScaledTokenPosition::Debt)),
-            "the GHO bad-debt burn must NOT also emit a ScaledTokenBurn (would double-apply)",
+            !out.deltas().iter().any(|delta| matches!(delta.effect(), DeltaEffect::ScaledBalance { subject, .. } if subject.position == ScaledTokenPosition::Debt)),
+            "the GHO bad-debt burn must NOT also emit a scaled-balance delta (would double-apply)",
         );
     }
 
-    // ── bad-debt reset ↔ GHO running-state synchronization ───────────────
+    // ── bad-debt reset ↔ projection-view advancement ──────────────────────
     // A `DEFICIT_CREATED` bad-debt reset emitted by `dispatch_liquidation`
     // (a NON-GHO `LiquidationCall` carrying an attached GHO debt burn — the
-    // parser's `collect_debt_burns` single-liquidation branch) must
-    // synchronize the per-tx `gho_running_state` map, exactly like
-    // `dispatch_gho_liquidation`'s own reset does. The apply buffer lands
-    // only after `process_transaction` returns, so a later-sorted GHO
-    // operation for the same position in the same tx reads the map — if the
-    // reset didn't write it, the later event computes from the pre-reset
-    // (balance, index) tuple: the discount accrual (`accrue_debt_on_action`)
-    // burns a share off the pre-reset balance the contract already wrote
-    // off.
+    // parser's `collect_debt_burns` single-liquidation branch) must advance
+    // the projection view, exactly like `dispatch_gho_liquidation`'s own
+    // reset does. The chunk's writes land only after `process_transaction`
+    // returns, so a later-sorted GHO operation in the same tx reads the view —
+    // if the reset didn't advance it, the later event computes from the
+    // pre-reset (balance, index) tuple: the discount accrual
+    // (`accrue_debt_on_action`) burns a share off the pre-reset balance the
+    // contract already wrote off.
 
     /// WBTC liquidation asset + GHO vToken asset (revision 1 — the discount
     /// surface is active) + a user whose GHO debt position exists in the DB,
@@ -3320,7 +3524,7 @@ mod tests {
 
     // One tx: a WBTC `LiquidationCall` whose attached GHO debt burn is a
     // bad-debt write-off (`DEFICIT_CREATED`), then a later-sorted GHO borrow
-    // for the same position. The reset must seed the running-state map with
+    // for the same position. The reset must leave the view reading
     // (0, reset_index); the borrow's discount accrual is a pure function of
     // the tuple it reads — from the reset tuple the mint delta is exactly
     // `ray_div(value, index)`, from the pre-reset tuple it loses
@@ -3404,10 +3608,10 @@ mod tests {
 
         let conn = db.lock();
         let mut substrate = ChunkSubstrate::lazy(1);
-        // The pre-tx snapshot: the DB row holds the tuple as of the reset
+        // The read-side snapshot: the substrate holds the tuple as of the reset
         // event (balance before the write-off, index before the burn) because
-        // events apply only after `process_transaction` returns — the
-        // running-state map is the only state a later same-tx GHO op reads.
+        // the chunk's writes land only after `process_transaction` returns —
+        // the projection view is the only state a later same-tx GHO op reads.
         substrate.record_position_write(
             ScaledTokenPosition::Debt,
             gho_pid,
@@ -3416,8 +3620,8 @@ mod tests {
         );
 
         let mut liq_patterns = LiquidationPatternContext::default();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
-        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_operation(
             &op_liq,
             1,
@@ -3425,8 +3629,7 @@ mod tests {
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             &mut substrate,
         )
         .expect("liquidation dispatch");
@@ -3437,49 +3640,60 @@ mod tests {
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             &mut substrate,
         )
         .expect("GHO borrow dispatch");
 
-        let (reset_pid, reset_idx) = events
+        let (reset_pid, reset_idx) = out
+            .deltas()
             .iter()
-            .find_map(|e| match e {
-                AaveChunkEvent::DebtPositionReset {
-                    position_id,
-                    new_index,
-                } => Some((*position_id, *new_index)),
+            .find_map(|delta| match delta.effect() {
+                DeltaEffect::DebtPositionReset { position_id, index } => {
+                    Some((*position_id, *index))
+                }
                 _ => None,
             })
-            .expect("bad-debt GHO burn must emit a DebtPositionReset");
+            .expect("bad-debt GHO burn must emit a debt-position reset delta");
         assert_eq!(
             reset_pid, gho_pid,
             "the reset targets the GHO debt position"
         );
         assert_eq!(reset_idx, reset_index, "the reset advances last_index");
 
-        let mint_delta = events
+        let mint_delta = out
+            .deltas()
             .iter()
-            .find_map(|e| match e {
-                AaveChunkEvent::ScaledTokenMint {
-                    position: ScaledTokenPosition::Debt,
-                    position_id,
+            .find_map(|delta| match delta.effect() {
+                DeltaEffect::ScaledBalance {
+                    subject,
                     balance_delta,
                     ..
-                } if *position_id == gho_pid => Some(*balance_delta),
+                } if subject.position == ScaledTokenPosition::Debt
+                    && subject.position_id == gho_pid =>
+                {
+                    Some(*balance_delta)
+                }
                 _ => None,
             })
-            .expect("the later GHO borrow emits a debt ScaledTokenMint");
+            .expect("the later GHO borrow emits a debt scaled-balance delta");
         let expected_from_zero = I256::try_from(500_000_000_000_000_000_000u128).unwrap();
         assert_eq!(
             mint_delta, expected_from_zero,
             "the later GHO borrow must compute from the reset zero balance + reset index — a delta short of ray_div(value, index) means it read the pre-reset tuple",
         );
         assert_eq!(
-            gho_running_state.get(&gho_pid),
-            Some(&(U256::from(500_000_000_000_000_000_000u128), later_index)),
-            "the running state must reflect the zero-based computation",
+            out.view()
+                .position_state(PositionSubject {
+                    position: ScaledTokenPosition::Debt,
+                    position_id: gho_pid,
+                })
+                .expect("the view holds the advanced GHO debt state"),
+            (
+                U256::from(500_000_000_000_000_000_000u128),
+                Some(later_index)
+            ),
+            "the projection view must reflect the zero-based computation",
         );
     }
 
@@ -3573,8 +3787,8 @@ mod tests {
         );
 
         let mut liq_patterns = LiquidationPatternContext::default();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
-        let mut gho_running_state: HashMap<i64, (U256, U256)> = HashMap::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_operation(
             &op_liq,
             1,
@@ -3582,8 +3796,7 @@ mod tests {
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             &mut substrate,
         )
         .expect("liquidation dispatch");
@@ -3594,24 +3807,27 @@ mod tests {
             Some(gho_vtoken),
             &gho_ctx,
             &mut liq_patterns,
-            &mut events,
-            &mut gho_running_state,
+            &mut out,
             &mut substrate,
         )
         .expect("GHO repay dispatch");
 
-        let burn_delta = events
+        let burn_delta = out
+            .deltas()
             .iter()
-            .find_map(|e| match e {
-                AaveChunkEvent::ScaledTokenBurn {
-                    position: ScaledTokenPosition::Debt,
-                    position_id,
+            .find_map(|delta| match delta.effect() {
+                DeltaEffect::ScaledBalance {
+                    subject,
                     balance_delta,
                     ..
-                } if *position_id == gho_pid => Some(*balance_delta),
+                } if subject.position == ScaledTokenPosition::Debt
+                    && subject.position_id == gho_pid =>
+                {
+                    Some(*balance_delta)
+                }
                 _ => None,
             })
-            .expect("the later GHO repay emits a debt ScaledTokenBurn");
+            .expect("the later GHO repay emits a debt scaled-balance delta");
         let expected_from_zero = -I256::try_from(100_000_000_000_000_000_000u128).unwrap();
         assert_eq!(
             burn_delta, expected_from_zero,
@@ -3701,15 +3917,15 @@ mod tests {
         };
         let conn = db.lock();
         let mut liq_patterns = LiquidationPatternContext::default();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
         dispatch_liquidation(
             &op,
             1,
             &conn,
             &GhoDiscountContext::new(&[], &HashMap::new(), None, fixture_pool()),
             &mut liq_patterns,
-            &mut events,
-            &mut HashMap::new(),
+            &mut out,
             &mut ChunkSubstrate::lazy(1),
         )
         .expect("dispatch");
@@ -3717,15 +3933,17 @@ mod tests {
         // = the LiquidationCall word0 = 496_463_175), floor-divided → 408_261_084.
         // NOT the standard-mint path which would floor-divide (balance_increase -
         // value) = 496_463_174 → 408_261_083 (1 too small → DB +1 too high).
-        let debt_burn = events.iter().find_map(|e| match e {
-            AaveChunkEvent::ScaledTokenBurn {
-                position,
+        let debt_burn = out.deltas().iter().find_map(|delta| match delta.effect() {
+            DeltaEffect::ScaledBalance {
+                subject,
                 balance_delta,
                 ..
-            } if *position == ScaledTokenPosition::Debt => Some(*balance_delta),
+            } if subject.position == ScaledTokenPosition::Debt => Some(*balance_delta),
             _ => None,
         });
-        let burn_delta = debt_burn.expect("the liquidation DebtMint (value < balance_increase) must emit a ScaledTokenBurn sized by debtToCover");
+        let burn_delta = debt_burn.expect(
+            "the liquidation DebtMint (value < balance_increase) must reduce to a debt burn sized by debtToCover",
+        );
         // The burn delta must be -floor(debtToCover/idx) = -408_261_084,
         // NOT the standard-mint -floor((bi-value)/idx) = -408_261_083.
         assert!(
@@ -3738,10 +3956,10 @@ mod tests {
             U256::from(408_261_084u64),
             "the burn magnitude must be floor(debtToCover/idx) = 408_261_084, NOT the standard-mint floor((bi-value)/idx) = 408_261_083",
         );
-        // And it must NOT be a ScaledTokenMint (the standard borrow-mint path).
+        // And it must NOT reduce to a positive (borrow-mint) movement.
         assert!(
-            !events.iter().any(|e| matches!(e, AaveChunkEvent::ScaledTokenMint { position, .. } if *position == ScaledTokenPosition::Debt)),
-            "the liquidation DebtMint must NOT be dispatched as a borrow-mint (ScaledTokenMint)",
+            !out.deltas().iter().any(|delta| matches!(delta.effect(), DeltaEffect::ScaledBalance { subject, balance_delta, .. } if subject.position == ScaledTokenPosition::Debt && !balance_delta.is_negative())),
+            "the liquidation DebtMint must NOT be dispatched as a borrow-mint",
         );
     }
 
@@ -3864,14 +4082,14 @@ mod tests {
         let expected = -I256::try_from(enriched).unwrap();
 
         let conn = db.lock();
-        let mut events: Vec<AaveChunkEvent> = Vec::new();
-        dispatch_standard(&op, 1, &conn, &mut events, &mut ChunkSubstrate::lazy(1))
-            .expect("dispatch");
-        assert_eq!(events.len(), 1, "the single Mint must emit one chunk event");
-        match &events[0] {
-            AaveChunkEvent::ScaledTokenBurn {
+        let mut view = ProjectionView::new();
+        let mut out = DeltaSink::new(fixture_tx(), &mut view);
+        dispatch_standard(&op, 1, &conn, &mut out, &mut ChunkSubstrate::lazy(1)).expect("dispatch");
+        assert_eq!(out.deltas().len(), 1, "the single Mint must emit one delta");
+        match out.deltas()[0].effect() {
+            DeltaEffect::ScaledBalance {
                 balance_delta,
-                new_index,
+                index: new_index,
                 ..
             } => {
                 assert_eq!(
@@ -3880,7 +4098,7 @@ mod tests {
                 );
                 assert_eq!(*new_index, index);
             }
-            other => panic!("expected ScaledTokenBurn, got {other:?}"),
+            other => panic!("expected a scaled-balance delta, got {other:?}"),
         }
 
         // The override route is the same precedence.

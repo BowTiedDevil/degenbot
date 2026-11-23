@@ -37,11 +37,6 @@
       "sql": "SELECT g.id, g.token_id, g.v_token_id, g.v_gho_discount_rate_strategy, g.v_gho_discount_token, et_gho.chain, et_gho.address, et_v.address FROM aave_gho_tokens g LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id"
     },
     {
-      "arg_count": 0,
-      "rows_changed": 0,
-      "sql": "BEGIN DEFERRED"
-    },
-    {
       "arg_count": 1,
       "rows_changed": 0,
       "sql": "SELECT a.id, a.a_token_revision, a.v_token_revision, t_underlying.address AS underlying, t_a.address AS a_token, t_v.address AS v_token FROM aave_v3_assets a JOIN erc20_tokens t_underlying ON t_underlying.id = a.underlying_asset_id JOIN erc20_tokens t_a ON t_a.id = a.a_token_id JOIN erc20_tokens t_v ON t_v.id = a.v_token_id WHERE a.market_id = ?"
@@ -75,6 +70,11 @@
       "arg_count": 12,
       "rows_changed": 0,
       "sql": "SELECT cc.user_id, cc.asset_id, cc.id FROM aave_v3_user_collateral_configs cc JOIN aave_v3_users u ON u.id = cc.user_id WHERE u.market_id = ? AND u.address IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 0,
+      "rows_changed": 0,
+      "sql": "BEGIN DEFERRED"
     },
     {
       "arg_count": 3,

@@ -1,7 +1,8 @@
 //! The driver's per-transaction processing stage: per-tx log grouping + the
-//! per-tx apply loop (discount pre-pass → config dispatch → operations parse
-//! → the chunk-event apply → the async GHO discount refresh), all on the
-//! caller's `Transaction` connection.
+//! per-tx loop (discount pre-pass → configuration dispatch → the operation
+//! parse, which reduces against the chunk's projection view and advances it →
+//! delta persistence → the async GHO discount refresh), all on the caller's
+//! `Transaction` connection.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -14,9 +15,10 @@ use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
 use super::evidence::CandidateTransaction;
-use super::substrate::{candidate_addresses, ChunkSubstrate};
-use super::{AaveChunkEvent, RunError};
+use super::substrate::ChunkSubstrate;
+use super::RunError;
 use crate::config_dispatch::{ChunkContext, ChunkSpan};
+use crate::projection::{DeltaEffect, ProjectionView};
 use crate::transaction_processor::process_transaction;
 use crate::updater::aave_fetch::{ChunkLogFacts, LogIdentityRefusal};
 
@@ -201,6 +203,7 @@ pub(super) async fn process_chunk_on_conn(
     chain_id: i64,
     pool_address: Address,
     candidates: &[CandidateTransaction<'_>],
+    substrate: ChunkSubstrate,
     chunk_start: u64,
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
@@ -218,33 +221,19 @@ pub(super) async fn process_chunk_on_conn(
     // chunk reverts).
     let mut events_applied_total: usize = 0;
     let mut touched_user_addresses: HashSet<Address> = HashSet::new();
-    // The chunk-level substrate cache — a handful of set-shaped
-    // `SELECT ... IN` prefetches over the chunk's touched entity sets (the
-    // topic-derived candidate users + their positions/configs, the market's
-    // assets/contracts, the chain's GHO row), then in-memory map hits for the
-    // per-event substrate reads, with EVERY cache-visible write landing an
-    // overlay update (the apply arms in `apply.rs` + the config dispatch).
-    // The read-your-own-writes contract: reads for log-transaction N
-    // consult the cache ONLY where its state reflects all writes of
-    // transactions < N — the overlay guarantees it (see
-    // `substrate.rs`'s module doc). An empty chunk skips the prefetch (its
-    // only writes are the end-of-chunk cleanup + stamp).
-    let mut substrate = if candidates.is_empty() {
-        ChunkSubstrate::lazy(chain_id)
-    } else {
-        let all_logs: Vec<&Log> = candidates
-            .iter()
-            .flat_map(|candidate| candidate.group.logs.iter().copied())
-            .collect();
-        let (user_candidates, asset_candidates) = candidate_addresses(&all_logs);
-        ChunkSubstrate::prefetch_on_conn(
-            conn,
-            market_id,
-            chain_id,
-            &user_candidates,
-            &asset_candidates,
-        )?
-    };
+    // The chunk substrate arrives prefetched: the chunk's set-shaped
+    // `SELECT ... IN` reads were taken by the FETCH stage, BEFORE this chunk's
+    // write transaction opened (ADR-105 D4's read-side split). Reads stay
+    // inside the chunk only for the lazy straggler probes; every cache-visible
+    // write still lands an overlay update (the apply arms in `apply.rs` + the
+    // configuration dispatch), so log-transaction N's reads see exactly the
+    // writes of transactions < N.
+    let mut substrate = substrate;
+    // The chunk's forward-only projection: the operation family's read
+    // position. Each transaction's deltas advance it as they are reduced, so a
+    // later operation in the same transaction reads the state the earlier one
+    // established.
+    let mut view = ProjectionView::new();
     // The replay-bench stage spans (plain `Instant`; the telemetry chunk lands its
     // own spans later): the per-tx decode+compute block (the GHO/revision
     // reads, the discount pre-pass + config dispatch - BOTH hold the write
@@ -329,7 +318,7 @@ pub(super) async fn process_chunk_on_conn(
         // (e) The operations parser (sync, substrate lookups) — reads `conn`
         //     (sees this tx's config writes + prior txs' writes) + uses the
         //     overlay-resolved GHO addresses.
-        let op_events = process_transaction(
+        let deltas = process_transaction(
             market_id,
             chain_id,
             ctx.pool_address(),
@@ -339,6 +328,7 @@ pub(super) async fn process_chunk_on_conn(
             &candidate.evidence,
             &discounts,
             ctx.substrate_mut(),
+            &mut view,
         )
         .map_err(|e| {
             #[expect(clippy::print_stderr)] // auditable stderr parse-fail line
@@ -357,11 +347,12 @@ pub(super) async fn process_chunk_on_conn(
             "rpc.round_trips",
             degenbot_rpc::provider::rpc_round_trips().saturating_sub(compute_rt_start),
         );
-        // (f) Apply THIS tx's op events to `conn` — so tx N+1 sees them via
-        //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
-        //     scaled-token balance deltas land before the next tx's reads).
+        // (f) Persist THIS tx's canonical deltas to `conn` — so tx N+1 sees
+        //     them via read-your-own-writes (surface #2: the `Upgraded`
+        //     revision bump + the scaled-token balance movements land before
+        //     the next tx's reads).
         // The per-tx apply stage span (the Jaeger twin of the
-        // `apply_started` anchor): this tx's op-event applies to `conn` —
+        // `apply_started` anchor): this tx's delta applies to `conn` —
         // read-your-own-writes for tx N+1's reads. SQL-only.
         let apply_span = tracing::info_span!(
             "degenbot.updater.aave.apply",
@@ -370,14 +361,11 @@ pub(super) async fn process_chunk_on_conn(
         );
         let apply_guard = apply_span.enter();
         let apply_started = Instant::now();
-        ctx.apply_events(&op_events)?;
+        ctx.apply_deltas(&deltas)?;
         apply_time += apply_started.elapsed();
         drop(apply_guard);
-        apply_span.record(
-            "events.n",
-            u64::try_from(op_events.len()).unwrap_or(u64::MAX),
-        );
-        events_applied_total += op_events.len();
+        apply_span.record("events.n", u64::try_from(deltas.len()).unwrap_or(u64::MAX));
+        events_applied_total += deltas.len();
 
         // (f.4) DEBUG: per-tx touched-position trace (env-gated). When
         //     `the aave tx trace=1`, emit one JSONL line per touched
@@ -395,37 +383,24 @@ pub(super) async fn process_chunk_on_conn(
         //     narrowing tool, not the gate.
         if ::tracing::enabled!(::tracing::Level::DEBUG) {
             let mut seen: std::collections::HashSet<(bool, i64)> = std::collections::HashSet::new();
-            for ev in &op_events {
-                match ev {
-                    AaveChunkEvent::ScaledTokenMint {
-                        position,
-                        position_id,
-                        ..
-                    }
-                    | AaveChunkEvent::ScaledTokenBurn {
-                        position,
-                        position_id,
-                        ..
-                    } => {
+            for delta in &deltas {
+                match delta.effect() {
+                    DeltaEffect::ScaledBalance { subject, .. } => {
                         seen.insert((
-                            matches!(*position, degenbot_db::ScaledTokenPosition::Debt),
-                            *position_id,
+                            matches!(subject.position, degenbot_db::ScaledTokenPosition::Debt),
+                            subject.position_id,
                         ));
                     }
-                    AaveChunkEvent::DebtPositionReset { position_id, .. } => {
+                    DeltaEffect::DebtPositionReset { position_id, .. } => {
                         seen.insert((true, *position_id));
                     }
-                    AaveChunkEvent::ScaledTokenTransfer {
-                        from_position_id,
-                        to_position_id,
-                        ..
-                    } => {
-                        seen.insert((false, *from_position_id));
-                        if let Some(to) = to_position_id {
-                            seen.insert((false, *to));
+                    DeltaEffect::ScaledTransfer { from, to, .. } => {
+                        seen.insert((false, from.position_id));
+                        if let Some(to) = to {
+                            seen.insert((false, to.position_id));
                         }
                     }
-                    _ => {} // only position-bearing events feed this trace.
+                    DeltaEffect::GhoRefreshDiscount { .. } => {}
                 }
             }
             let txhex = alloy::hex::encode(group.tx_hash);
@@ -476,8 +451,8 @@ pub(super) async fn process_chunk_on_conn(
         //     (`balanceOf` `eth_call` at block-1 if `stk_aave_balance` is
         //     None). The refresh reads the POST-APPLY values (the apply above
         //     just landed them) + has the provider (this loop is async).
-        for ev in &op_events {
-            if let AaveChunkEvent::GhoRefreshDiscount { position_id } = ev {
+        for delta in &deltas {
+            if let DeltaEffect::GhoRefreshDiscount { position_id } = delta.effect() {
                 crate::config_dispatch::refresh_gho_discount(
                     provider,
                     conn,
@@ -652,6 +627,7 @@ mod tests {
                     1,
                     Address::ZERO,
                     &[],
+                    ChunkSubstrate::lazy(1),
                     3_000,
                     3_000,
                 ))

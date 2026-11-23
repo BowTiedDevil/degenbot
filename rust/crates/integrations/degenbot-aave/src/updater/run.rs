@@ -22,14 +22,15 @@ pub use activate::{
     ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use apply::{
-    apply_aave_chunk_writes_on_conn, apply_chunk_events_on_conn, AaveChunkEvent,
-    AaveChunkWriteReport,
+    apply_aave_chunk_writes_on_conn, apply_canonical_deltas_on_conn, apply_chunk_events_on_conn,
+    AaveChunkEvent, AaveChunkWriteReport, CanonicalDeltaWriteReport,
 };
 pub use evidence::EvidenceAcquisitionError;
 use evidence::{bind_chunk_evidence, trace_backed_count};
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
 use process::{group_logs_by_tx, guard_terminal_transaction_identity, process_chunk_on_conn};
 pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
+use substrate::{candidate_addresses, ChunkSubstrate};
 
 // ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
 
@@ -76,7 +77,7 @@ pub struct AaveChunkProgress {
     pub market_id: i64,
     pub chunk_start: u64,
     pub chunk_end: u64,
-    /// The total `AaveChunkEvent`s the apply fn wrote this chunk.
+    /// The total deltas + configuration events the chunk wrote.
     pub events_applied: usize,
     /// `true` iff the chunk's transaction committed; `false` if it rolled
     /// back (an error mid-chunk → the whole chunk reverted → restart will
@@ -223,7 +224,7 @@ pub struct AaveUpdateReport {
     pub terminal: Option<ChainAnchor>,
     /// Total chunks committed.
     pub chunks_committed: usize,
-    /// Total `AaveChunkEvent`s written across all chunks.
+    /// Total deltas + configuration events written across all chunks.
     pub total_events_applied: usize,
 }
 
@@ -370,7 +371,7 @@ pub struct RunSpec {
 ///    (RPC for revisions and metadata plus the substrate lookups), apply THAT
 ///    tx's config events to `conn` (so the ops parser sees them), run
 ///    `process_transaction` (the operations parser, sync, substrate lookups),
-///    and apply THAT tx's op events to `conn` (so tx N+1 sees them).
+///    and persist THAT tx's canonical deltas to `conn` (so tx N+1 sees them).
 /// 4. Stamp `last_update_block = chunk_end` as the LAST write (end-of-chunk).
 ///    The caller's `Transaction` commits (or drops, rolling back). The stamp
 ///    is the LAST write.
@@ -980,6 +981,31 @@ async fn run_aave_update_driver(
             degenbot_rpc::provider::rpc_round_trips().saturating_sub(evidence_rt_start),
         );
 
+        // 1c. The operation family's read-side substrate access, taken BEFORE
+        //     the chunk's transaction opens (ADR-105 D4): one set-shaped read of
+        //     the chunk's touched entities (candidate users and their
+        //     positions/configs, the market's assets and contracts, the chain's
+        //     GHO row). Resolution then runs against this read position — the
+        //     projection view seeds from it and advances by deltas — instead of
+        //     holding the write lock across its own reads.
+        let substrate = if candidates.is_empty() {
+            ChunkSubstrate::lazy(chain_id)
+        } else {
+            let all_logs: Vec<&Log> = candidates
+                .iter()
+                .flat_map(|candidate| candidate.group.logs.iter().copied())
+                .collect();
+            let (user_candidates, asset_candidates) = candidate_addresses(&all_logs);
+            let read = db.lock();
+            ChunkSubstrate::prefetch_on_conn(
+                &read,
+                market_id,
+                chain_id,
+                &user_candidates,
+                &asset_candidates,
+            )?
+        };
+
         // 2. The single-transaction chunk write (chunk atomicity). The per-tx
         //    processing (discount pre-pass + config dispatch + parse) borrows
         //    the Transaction's `&Connection` for substrate lookups + writes —
@@ -1013,6 +1039,7 @@ async fn run_aave_update_driver(
                 chain_id,
                 pool_address,
                 &candidates,
+                substrate,
                 working_start,
                 chunk_end,
             )

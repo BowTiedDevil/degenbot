@@ -13,6 +13,7 @@ pub mod gho_processor;
 pub mod operations;
 pub mod operations_parser;
 pub mod processors;
+pub mod projection;
 pub mod run;
 pub mod transaction_processor;
 pub mod verify;
@@ -27,6 +28,10 @@ pub use gho_processor::{
 pub use processors::{
     ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
     ScaledTokenMintResult, ScaledTokenProcessor,
+};
+pub use projection::{
+    CanonicalDelta, DeltaEffect, GenerationEntity, GenerationRef, PositionSubject, ProjectionError,
+    ProjectionView,
 };
 pub use run::{
     activate_aave_market, activate_aave_market_on_conn, apply_aave_chunk_writes_on_conn,

@@ -324,6 +324,23 @@ impl<'span> ChunkContext<'span> {
         Ok(report)
     }
 
+    /// The operation family's apply seam: persist the transaction's canonical
+    /// deltas through the same substrate overlay, so every written position
+    /// state is visible to a later read exactly as the SQL probe would report
+    /// it. Reduction already advanced the projection view; this call is the
+    /// storage half, and it performs no resolution.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`degenbot_db::DbError`] from any apply failure — the caller
+    /// drops the chunk `Transaction` (rollback).
+    pub(crate) fn apply_deltas(
+        &mut self,
+        deltas: &[crate::projection::CanonicalDelta],
+    ) -> Result<crate::run::CanonicalDeltaWriteReport, DbError> {
+        crate::run::apply_canonical_deltas_on_conn(self.conn, deltas, &mut *self.substrate)
+    }
+
     /// Read `sig` on `target` at `block_number` through the memo — one of the
     /// two seams every revision read in the dispatch goes through (the other is
     /// [`ChunkContext::read_revision_batch`]), so the memo's block lane is
