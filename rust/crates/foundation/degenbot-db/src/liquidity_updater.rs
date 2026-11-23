@@ -2145,6 +2145,278 @@ mod tests {
         assert_eq!(projected.last_event, delta.last_event);
     }
 
+    // ── the chunk-new (empty-base) twin ────────────────────────────────
+    //
+    // A pool whose row is created by THIS chunk's `PoolCreated` upsert has no
+    // committed base, so the pre-transaction PLAN compute (empty base + the
+    // chunk's events, sentinel `pool_id`) and the in-transaction DIRTY compute
+    // (a just-upserted EMPTY row + the same events) must reach the same write
+    // set. Two KNOWN asymmetries are asserted per side, never equal:
+    //
+    // (a) the plan delta carries the sentinel `pool_id` 0 (no row existed to
+    //     key yet) while the dirty compute carries the real row id.
+    // (b) the plan delta derives `drained_pool` from the full map's emptiness
+    //     (`tick_data.is_empty()`), while `compute_liquidity_delta_on_tables`
+    //     hardcodes `false`. The outcomes are equivalent by
+    //     drain-implies-touch (a tick's gross only moves via an event touching
+    //     it, so a fully-drained pool's every base tick lands in
+    //     `drained_ticks`), but the SQL differs: complement delete-all vs
+    //     per-key deletes.
+
+    /// Compare a chunk-new PLAN delta (`compute_*_liquidity_update_for_new_pool`
+    /// plus `derive_liquidity_delta_from_computed`) against the dirty compute's
+    /// delta over a just-upserted EMPTY row.
+    ///
+    /// Spacing is asserted equal as well: the plan's spacing is the
+    /// caller-supplied creation-row value while the dirty compute's is read
+    /// back from the upserted row, so the pin is that both sources agree.
+    fn assert_new_pool_delta_matches_empty_row_delta(
+        plan: &LiquidityDelta,
+        dirty: &LiquidityDelta,
+        real_pool_id: i64,
+        expect_plan_drained_pool: bool,
+    ) {
+        assert_eq!(
+            plan.tick_spacing, dirty.tick_spacing,
+            "creation-row spacing must equal the upserted row's read-back spacing"
+        );
+        assert_eq!(
+            plan.pool_id, 0,
+            "asymmetry (a): the plan delta keeps the sentinel pool_id"
+        );
+        assert_eq!(
+            dirty.pool_id, real_pool_id,
+            "asymmetry (a): the dirty compute resolves the real row id"
+        );
+        assert!(
+            !dirty.drained_pool,
+            "asymmetry (b): the dirty compute cannot see the full map and hardcodes drained_pool = false"
+        );
+        assert_eq!(
+            plan.drained_pool, expect_plan_drained_pool,
+            "asymmetry (b): the plan delta sets drained_pool from the full map's emptiness"
+        );
+        assert_eq!(plan.tick_data, dirty.tick_data, "same survive set");
+        assert_eq!(plan.drained_ticks, dirty.drained_ticks, "same drained keys");
+        assert_eq!(plan.last_event, dirty.last_event, "same stamp");
+    }
+
+    /// One liquidity event; `liquidity_delta` is signed (Burn negative).
+    fn ev(
+        block_number: u64,
+        log_index: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i64,
+    ) -> LiquidityUpdateEvent {
+        LiquidityUpdateEvent {
+            block_number,
+            log_index,
+            tick_lower,
+            tick_upper,
+            liquidity_delta: I256::try_from(liquidity_delta).unwrap(),
+        }
+    }
+
+    /// Chunk-new activity one chunk deep: mint two ranges, then burn one back
+    /// to gross=0. The burned pair drains; the minted pair survives.
+    fn chunk_new_mint_burn_events() -> Vec<LiquidityUpdateEvent> {
+        vec![
+            ev(100, 0, -10, 10, 1_000_000),
+            ev(100, 1, 100, 110, 250_000),
+            ev(101, 0, 100, 110, -250_000),
+        ]
+    }
+
+    /// Two mints, both burned back to gross=0 in the SAME chunk: every tick of
+    /// the chunk-new pool is pruned, so the post-apply map is empty.
+    fn chunk_new_fully_drained_events() -> Vec<LiquidityUpdateEvent> {
+        vec![
+            ev(100, 0, -10, 10, 500_000),
+            ev(100, 1, 100, 110, 250_000),
+            ev(101, 0, -10, 10, -500_000),
+            ev(101, 1, 100, 110, -250_000),
+        ]
+    }
+
+    /// Two mints then a ZERO-delta event last: the apply loop skips it before
+    /// any mutation, so it neither dirties ticks nor advances the stamp.
+    fn chunk_new_zero_delta_events() -> Vec<LiquidityUpdateEvent> {
+        vec![
+            ev(100, 0, -10, 10, 1_000_000),
+            ev(100, 1, 100, 110, 250_000),
+            ev(102, 0, 200, 210, 0),
+        ]
+    }
+
+    /// Chunk-new pool, mint then burn within one chunk: the empty-base plan
+    /// delta equals the dirty compute over the just-upserted empty row — same
+    /// survive ticks, same drained keys, same stamp (partial drain, so neither
+    /// side trips the drained-pool branch).
+    #[test]
+    fn v3_new_pool_chunk_mint_burn_plan_delta_matches_empty_row_dirty_compute() {
+        let (db, pool_id, addr) = v3_db_with_pool();
+        let events = chunk_new_mint_burn_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v3_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v3_liquidity_delta_on_conn(&conn, 1, &addr, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, pool_id, false);
+        assert_eq!(
+            plan.drained_ticks,
+            vec![100, 110],
+            "the burned pair's ticks are the drained set"
+        );
+    }
+
+    /// Chunk-new pool minted and fully burned in one chunk: every tick of the
+    /// row prunes, so the two deltas agree on an EMPTY survive set and name
+    /// EVERY tick as drained (drain-implies-touch), while asymmetry (b) keeps
+    /// `drained_pool` true only on the plan side.
+    #[test]
+    fn v3_new_pool_chunk_full_drain_plan_delta_matches_empty_row_dirty_compute() {
+        let (db, pool_id, addr) = v3_db_with_pool();
+        let events = chunk_new_fully_drained_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v3_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v3_liquidity_delta_on_conn(&conn, 1, &addr, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, pool_id, true);
+        assert!(
+            plan.tick_data.is_empty(),
+            "a fully-drained chunk-new pool has no survive ticks"
+        );
+        assert_eq!(
+            dirty.drained_ticks,
+            vec![-10, 10, 100, 110],
+            "per-key deletes must cover every tick the complement delete-all would"
+        );
+    }
+
+    /// Chunk-new pool with a zero-delta event LAST: both computes skip it
+    /// before mutating, so its ticks never enter the write set and the stamp
+    /// stays at the last NON-zero event.
+    #[test]
+    fn v3_new_pool_chunk_zero_delta_event_skipped_by_plan_and_dirty_compute() {
+        let (db, pool_id, addr) = v3_db_with_pool();
+        let events = chunk_new_zero_delta_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v3_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v3_liquidity_delta_on_conn(&conn, 1, &addr, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, pool_id, false);
+        let last_non_zero = BlockLog {
+            block: 100,
+            log_index: 1,
+        };
+        assert_eq!(
+            plan.last_event,
+            Some(last_non_zero),
+            "a zero-delta event must not advance the stamp"
+        );
+        for tick in [200, 210] {
+            assert!(
+                !plan.tick_data.contains_key(&tick),
+                "a zero-delta event must not create tick {tick}"
+            );
+            assert!(
+                !plan.drained_ticks.contains(&tick),
+                "a zero-delta event's ticks are never dirty, so never drained"
+            );
+        }
+    }
+
+    /// V4 mirror of the mint-then-burn case: the empty-base plan delta equals
+    /// the dirty compute over the just-upserted empty `uniswap_v4_pools` row
+    /// (the table target is chosen at persist time, the math is the V3 math).
+    #[test]
+    fn v4_new_pool_chunk_mint_burn_plan_delta_matches_empty_row_dirty_compute() {
+        let (db, managed_pool_id, hash) = v4_db_with_pool();
+        let events = chunk_new_mint_burn_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v4_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v4_liquidity_delta_on_conn(&conn, &hash, 1, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, managed_pool_id, false);
+        assert_eq!(plan.drained_ticks, vec![100, 110]);
+    }
+
+    /// V4 mirror of the fully-drained chunk-new pool: both deltas agree on an
+    /// empty survive set and a complete drained-key set; asymmetry (b) is the
+    /// only divergence.
+    #[test]
+    fn v4_new_pool_chunk_full_drain_plan_delta_matches_empty_row_dirty_compute() {
+        let (db, managed_pool_id, hash) = v4_db_with_pool();
+        let events = chunk_new_fully_drained_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v4_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v4_liquidity_delta_on_conn(&conn, &hash, 1, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, managed_pool_id, true);
+        assert!(plan.tick_data.is_empty());
+        assert_eq!(dirty.drained_ticks, vec![-10, 10, 100, 110]);
+    }
+
+    /// V4 mirror of the zero-delta-skip case: the skipped event leaves both
+    /// write sets and both stamps at the last non-zero event.
+    #[test]
+    fn v4_new_pool_chunk_zero_delta_event_skipped_by_plan_and_dirty_compute() {
+        let (db, managed_pool_id, hash) = v4_db_with_pool();
+        let events = chunk_new_zero_delta_events();
+        let plan = derive_liquidity_delta_from_computed(
+            &DegenbotDb::compute_v4_liquidity_update_for_new_pool(10, &events),
+            &events,
+        );
+        let dirty = {
+            let conn = db.lock();
+            DegenbotDb::compute_v4_liquidity_delta_on_conn(&conn, &hash, 1, &events)
+                .unwrap()
+                .unwrap()
+        };
+        assert_new_pool_delta_matches_empty_row_delta(&plan, &dirty, managed_pool_id, false);
+        assert_eq!(
+            plan.last_event,
+            Some(BlockLog {
+                block: 100,
+                log_index: 1
+            })
+        );
+        for tick in [200, 210] {
+            assert!(!plan.tick_data.contains_key(&tick));
+            assert!(!plan.drained_ticks.contains(&tick));
+        }
+    }
+
     #[test]
     fn apply_v4_full_drain_empties_tables_and_stamps_marker() {
         let (db, managed_pool_id, hash) = v4_db_with_pool();
