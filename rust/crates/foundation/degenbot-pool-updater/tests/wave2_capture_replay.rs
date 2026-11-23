@@ -217,8 +217,10 @@ fn wave2_generated_captures_replay_to_the_committed_goldens() {
             }
             // (d) the delta-persist branches: the drained pool's live sets are
             // EMPTY (the complement-delete fired over a NON-empty drained set
-            // — the branch a chunk-new pool can never produce) and the
-            // zero-amount Mint wrote nothing.
+            // this scenario's pre-existing pool held; `run.rs`'s
+            // `chunk_new_full_drain_takes_the_complement_delete` pins the
+            // chunk-new twin of that branch) and the zero-amount Mint wrote
+            // nothing.
             "w2_drained_pool_zero_mint" => {
                 assert_eq!(
                     row_count(&kept, "liquidity_positions"),

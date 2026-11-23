@@ -527,3 +527,12 @@ corpora and byte-compares against the committed home. Live network,
 paced, explicitly not pre-push. See ADR-068's close-out section for the
 record-mode error taxonomy and the key-set/dial-block idioms it rests
 on.
+
+### Post-survey note: derive-once
+
+The apply shape moved after these measurements: derive-once made the read
+pass's FULL map the one derivation, and the apply persists the delta derived
+from it — the "rewrites it all" finding above describes the pre-Perf-B
+full-map persist. The statement counts on this page are their measurement-time
+values; the live chunk loop asserts 16 (`EXPECTED_LEDGER_STATEMENTS` in
+`tests/sql_golden_replay.rs`).

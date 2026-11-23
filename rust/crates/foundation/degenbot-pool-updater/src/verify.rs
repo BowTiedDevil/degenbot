@@ -296,9 +296,10 @@ fn collect_pre_commit_checks(
             },
         ));
     }
-    // Chunk-new pools: planned, not yet in the DB address list (a pool
-    // both planned-new and already in the DB is covered above - the
-    // planned-new classification is only minted for absent rows).
+    // Chunk-new pools: minted from this chunk's creation set (the read pass
+    // plans them from an empty base, keyed to the id their upsert assigns),
+    // so the DB address list read above cannot name them. The `contains`
+    // guard keeps one check per pool.
     for (addr, plan) in &ctx.preverified.v3 {
         if plan.is_new_pool && !v3_addresses.contains(addr) {
             v3_checks.push((addr.to_checksum(None), *addr, plan.computed.clone()));

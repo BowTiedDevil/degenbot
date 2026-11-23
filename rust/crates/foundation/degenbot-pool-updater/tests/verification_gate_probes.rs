@@ -1,8 +1,8 @@
 //! Verification-gate negative probes (ADR-068 D4; GLOSSARY "negative probe").
 //!
-//! The pre-commit on-chain-truth gate (`run_pool_update` with
-//! `verify_chunk = true`) is the production coherence mechanism - and before
-//! this suite it had NEVER been probed against known-bad state. Each probe
+//! The pre-commit on-chain-truth gate (`run_pool_update`'s per-chunk gate,
+//! which runs on every chunk) is the production coherence mechanism - and
+//! before this suite it had NEVER been probed against known-bad state. Each probe
 //! here deliberately faults a COMMITTED golden capture IN MEMORY (the
 //! committed files stay untouched) and asserts the exact red the gate must
 //! produce. A gate whose red path has not been demonstrated is not evidence.

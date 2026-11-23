@@ -54,11 +54,15 @@ single-transaction-bound forms of the write surface.
   chunk's transaction, after the data writes, so a commit that includes the
   stamp proves the data; a rollback loses both together. An empty chunk still
   advances the stamp (chunk-end semantics).
-- **The interrupt contract.** A cancel flag is polled between chunks.
-  SIGINT *between* chunks is honored immediately: the not-yet-started chunk is
-  rolled back and a partial report returned. SIGINT *mid-chunk* lets the chunk
-  complete atomically (commit or rollback) before the run returns. Either way,
-  no partial-chunk state is observable.
+- **The interrupt contract.** A cancel flag is polled at each chunk boundary,
+  so the not-yet-started chunk has no writes to roll back. SIGINT *between*
+  chunks is honored immediately: the run returns its partial report — terminal
+  `Cancelled`, the counts it committed, `committed_through` naming the last
+  durable chunk end (the Aave updater surfaces the same boundary as its terminal
+  `RunError::Cancelled`). SIGINT *mid-chunk* takes effect at the next boundary:
+  the chunk in flight completes atomically (commit or rollback) first, and its
+  commit joins the returned counts. Either way, no partial-chunk state is
+  observable.
 
 ## The pinned tests
 

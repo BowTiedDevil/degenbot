@@ -149,10 +149,11 @@ pub struct ChunkProgress {
     /// back (an error mid-chunk → the whole chunk reverted → restart will
     /// re-process).
     pub committed: bool,
-    /// `true` iff this is the run's final chunk (`chunk_end >= last_block`).
-    /// Reported POST-commit so it reflects a committed final chunk (the
-    /// Python shell uses it to fire the completion-time backup). The Rust
-    /// completion full-verify computes finality inline.
+    /// `true` iff this is the run's final chunk (`chunk_end >= last_block`),
+    /// reported post-commit so it names a chunk whose writes are durable. A
+    /// shell's completion discriminator is the returned report's
+    /// [`RunTerminal`] (its `status` dict key) + `committed_through`; the
+    /// Rust completion full-verify computes finality inline.
     pub is_final: bool,
     /// Wall time of the chunk's RPC fetch passes (pool creations + the V3
     /// whole-chain + V4 per-manager liquidity scans). Plain `Instant` spans
@@ -1555,10 +1556,9 @@ pub fn run_pool_update_on_db(
         };
 
         // The market-wide gate's chunk predicate (interval boundary crossing +
-        // run completion), evaluated BEFORE the read pass: the pure block math
-        // is the same value the gate block below consumes, and the read
-        // pass needs it NOW — full maps are built iff any verification will
-        // consume them, the dirty overlay + delta otherwise.
+        // run completion), hoisted above the read pass so the gate block below
+        // consumes one value. The pure block math is independent of the read
+        // pass, which always builds the FULL maps the per-chunk gate requires.
         let run_full = crate::verify::should_run_full_verify_at_interval(
             working_start_block,
             working_end_block,
@@ -1611,8 +1611,8 @@ pub fn run_pool_update_on_db(
         // pre-transaction) overlay the planned maps for this chunk's touched
         // pools, so the verified state is exactly what the in-transaction gate
         // would see post-apply; a divergence never opens the tx.
-        // (`run_full` is computed above the read pass — the same value; the
-        // read pass consumed it as its full-map requirement.)
+        // (`run_full` is the predicate hoisted above the read pass — the same
+        // value, not a read-pass input.)
         if run_full {
             let full_verify_span = tracing::info_span!(
                 "degenbot.updater.pool.verify",
