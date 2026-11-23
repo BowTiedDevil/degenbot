@@ -24,6 +24,7 @@ use crate::conversion::rpc_types::{
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::rpc::provider::PyAlloyProvider;
+use alloy::eips::BlockId;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyList};
 use std::sync::Arc;
@@ -256,7 +257,7 @@ impl PyAsyncAlloyProvider {
 
         future_into_py(py, async move {
             let result = provider
-                .get_code(&addr, block_number)
+                .get_code(&addr, block_number.map(BlockId::number))
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
@@ -394,7 +395,7 @@ impl PyAsyncAlloyProvider {
 
         future_into_py(py, async move {
             let result = provider
-                .get_storage_at(&addr, pos, block_number)
+                .get_storage_at(&addr, pos, block_number.map(BlockId::number))
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
@@ -416,7 +417,7 @@ impl PyAsyncAlloyProvider {
 
         future_into_py(py, async move {
             let balance = provider
-                .get_balance(&addr, block_number)
+                .get_balance(&addr, block_number.map(BlockId::number))
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
@@ -440,7 +441,7 @@ impl PyAsyncAlloyProvider {
 
         future_into_py(py, async move {
             let count = provider
-                .get_transaction_count(&addr, block_number)
+                .get_transaction_count(&addr, block_number.map(BlockId::number))
                 .await
                 .map_err(Into::<PyErr>::into)?;
 

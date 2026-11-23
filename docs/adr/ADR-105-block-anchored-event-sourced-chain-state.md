@@ -304,6 +304,46 @@ verification reads" deviation is retired.
   read, and one per `ProxyCreated` block in the cold-boot bootstrap. The chunk
   transaction still covers no acquisition.
 
+### BlockId read transports (2026-11-23)
+
+The account, storage, and code reads state their read position as a `BlockId`
+instead of an `Option<u64>`, so the exact and the height lanes are one
+construction per operation and `BlockReads` builds no read params of its own.
+
+- Public signatures (mechanical and source-breaking at the call site — a
+  `BlockId` replaced the number parameter, so an `Option<u64>` argument becomes
+  `map(BlockId::number)` and a bare `u64` becomes `BlockId::number(n)`):
+  `get_code(&Address, Option<BlockId>)`, `get_balance(&Address,
+  Option<BlockId>)`, `get_transaction_count(&Address, Option<BlockId>)`,
+  `get_storage_at(&Address, U256, Option<BlockId>)`,
+  `get_account_at(&Address, BlockId)`, `get_accounts_batch_at(&[Address],
+  BlockId)`, `get_storage_batch_results_at(&[(Address, U256)], BlockId)`, and
+  `get_storage_batch_at(&[(Address, U256)], BlockId)`.
+- Wire behavior is unchanged in both existing lanes: `None` states the alloy
+  builder's node-default `latest` tag (what the previous `None` branch issued),
+  and `BlockId::Number` states the same height or tag word as before.
+  `BlockId::Hash` states `{blockHash, requireCanonical: true}` — the EIP-1898
+  identifier `BlockReads` pins — with the address in the corpus's lowercase
+  form and the slot a minimal hex quantity, so a pinned read and its height
+  twin differ in the identifier alone.
+- `BlockReads::code_at`, `storage_at`, and `balance_at` hand that identifier to
+  the transport and keep only the classification
+  (`rejects_hash_pinned_shape` → `ExactReadError::Unsupported`, D11). No path
+  degrades to a number-addressed read, and there is no parallel exact-read
+  family left to drift from the height lane.
+- `eth_call` is deliberately NOT on the `BlockId` lane yet: the recorded corpus
+  carries `data` on the hash-pinned lane and `input` on the number lanes (the
+  typed request builder emits `input`), so the pinned call and the typed call
+  are two wire forms of one operation today. Moving `eth_call` onto the typed
+  builder rewrites the recorded pinned corpus, which is its own change, not a
+  mechanical migration.
+- Batch member alignment and retries are untouched: members are the serial
+  reads' own `(method, params)` pairs, returned one outcome per input identity
+  in input order, and the whole round remains one "call" for the retry budget.
+- Python surfaces keep `block_number: int | None`; the adapters convert at the
+  `degenbot-rpc` boundary, so the generated `degenbot/_ffi` stubs are unchanged
+  and their drift gate stays green.
+
 # Appendix A — Type inventory and admitted ambiguity at scoping
 
 _Scoping snapshot, recorded before the cutover. The rows below state what the tree carried when this ADR was written; what it carries now is [Implemented shape and seam disposition](#implemented-shape-and-seam-disposition-2026-11-23)._

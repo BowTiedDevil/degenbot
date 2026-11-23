@@ -14,6 +14,7 @@
     clippy::items_after_statements
 )]
 
+use alloy::eips::BlockId;
 use alloy::primitives::{address, aliases::U112, Address, B256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::state::slot_layout;
@@ -1515,7 +1516,7 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
         // seam rejection, not a transport miss.
         let mut frame = ev.clone();
         frame.nonce = provider
-            .get_transaction_count(&ev.from, Some(pin))
+            .get_transaction_count(&ev.from, Some(BlockId::number(pin)))
             .await
             .expect("the node serves the arm count");
         let artifacts = process_frame(

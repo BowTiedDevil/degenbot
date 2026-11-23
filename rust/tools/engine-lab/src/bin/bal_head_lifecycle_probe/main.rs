@@ -95,6 +95,7 @@
 
 use std::time::{Duration, Instant};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::AlloyProvider;
@@ -317,7 +318,7 @@ async fn verify_settled_values(
     let view = driver.snapshot(anchor);
     let plant = plant_divergence();
     let outcomes = cold
-        .get_storage_batch_results_at(&keys, anchor.number)
+        .get_storage_batch_results_at(&keys, BlockId::number(anchor.number))
         .await
         .map_err(|error| format!("cold batch at {}: {error}", anchor.number))?;
     for ((address, slot), cold_value) in keys.iter().zip(outcomes) {

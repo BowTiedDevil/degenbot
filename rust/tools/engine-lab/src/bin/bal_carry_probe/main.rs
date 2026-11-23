@@ -57,6 +57,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::AlloyProvider;
@@ -380,7 +381,7 @@ async fn run() -> Result<(), String> {
         let mut cold_values: HashMap<(Address, U256), U256> = HashMap::new();
         for chunk in keys.chunks(COLD_CHUNK) {
             let outcomes = cold_provider
-                .get_storage_batch_results_at(chunk, number)
+                .get_storage_batch_results_at(chunk, BlockId::number(number))
                 .await
                 .map_err(|error| format!("cold batch at {number}: {error}"))?;
             for (key, outcome) in chunk.iter().zip(outcomes) {

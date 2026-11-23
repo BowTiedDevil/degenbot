@@ -62,6 +62,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::json_rpc::{RequestPacket, Response, ResponsePacket};
 use alloy::transports::{TransportError, TransportFut};
@@ -346,7 +347,7 @@ async fn drive(
             }
         }
         if verify {
-            let pending = provider.get_storage_batch_results_at(&key_vec, number);
+            let pending = provider.get_storage_batch_results_at(&key_vec, BlockId::number(number));
             let cold = chain
                 .unplanted(pending)
                 .await
@@ -400,7 +401,7 @@ async fn cold_read(
     number: u64,
 ) -> U256 {
     let slots = [(address, slot)];
-    let pending = provider.get_storage_batch_results_at(&slots, number);
+    let pending = provider.get_storage_batch_results_at(&slots, BlockId::number(number));
     let cold = chain
         .unplanted(pending)
         .await

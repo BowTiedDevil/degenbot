@@ -104,6 +104,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use alloy::eips::BlockId;
 use alloy::primitives::U256;
 
 use degenbot_rpc::provider::AlloyProvider;
@@ -281,7 +282,7 @@ async fn drive_serial(
         let mut material: Vec<u8> = Vec::new();
         for (address, slots) in &row.reads {
             let read = provider
-                .get_account_at(address, block)
+                .get_account_at(address, BlockId::number(block))
                 .await
                 .map_err(|error| format!("serial account read of {address}: {error}"))?;
             node.charge_read(ReadKind::Account, &ledger);
@@ -294,7 +295,7 @@ async fn drive_serial(
                     value
                 } else {
                     let word = provider
-                        .get_storage_at(address, *slot, Some(block))
+                        .get_storage_at(address, *slot, Some(BlockId::number(block)))
                         .await
                         .map_err(|error| {
                             format!("serial storage read of {address}/{slot}: {error}")

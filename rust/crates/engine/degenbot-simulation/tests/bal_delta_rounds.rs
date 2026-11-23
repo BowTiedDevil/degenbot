@@ -22,6 +22,7 @@
     reason = "the stub chain and its assertions fail loudly on a broken fixture"
 )]
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     DeltaHub, DeltaSnapshotCache, ReadOrigin, Retention,
@@ -509,7 +510,7 @@ async fn both_real_fixtures_answer_every_identity_through_rounds_with_zero_misma
                 "block {number}: every miss, and only a miss, took a member"
             );
             let cold = provider
-                .get_storage_batch_results_at(&key_vec, number)
+                .get_storage_batch_results_at(&key_vec, BlockId::number(number))
                 .await
                 .expect("the cold batch answers");
             for (index, read) in reads.into_iter().enumerate() {

@@ -60,6 +60,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::{AlloyProvider, BlockAccessListResponse};
@@ -135,7 +136,7 @@ async fn cold_values(
     let mut values = BTreeMap::new();
     for chunk in keys.chunks(COLD_CHUNK) {
         let outcomes = cold
-            .get_storage_batch_results_at(chunk, number)
+            .get_storage_batch_results_at(chunk, BlockId::number(number))
             .await
             .map_err(|error| format!("cold batch at {number}: {error}"))?;
         for (key, outcome) in chunk.iter().zip(outcomes) {

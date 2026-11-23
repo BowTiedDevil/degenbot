@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, Bytes, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
@@ -266,7 +267,9 @@ impl RpcConstruction for AlloyRpcConstruction {
         address: Address,
         block_number: Option<u64>,
     ) -> Result<Bytes, ProviderError> {
-        self.provider.get_code(&address, block_number).await
+        self.provider
+            .get_code(&address, block_number.map(BlockId::number))
+            .await
     }
 
     async fn get_balance(
@@ -274,7 +277,9 @@ impl RpcConstruction for AlloyRpcConstruction {
         address: Address,
         block_number: Option<u64>,
     ) -> Result<U256, ProviderError> {
-        self.provider.get_balance(&address, block_number).await
+        self.provider
+            .get_balance(&address, block_number.map(BlockId::number))
+            .await
     }
 
     async fn call(

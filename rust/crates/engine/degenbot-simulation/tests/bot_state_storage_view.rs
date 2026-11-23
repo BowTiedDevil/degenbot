@@ -19,6 +19,7 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use alloy::eips::BlockId;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::fee::fee_ratio;
@@ -579,7 +580,7 @@ async fn both_real_fixtures_answer_every_written_identity_cold_through_the_view(
             let (fallback, forwarded) = CountingChain::wrapping(blocking);
             let mut db = BotStateDb::new(&NO_SIM_ANCHOR, fallback).with_storage_view(hub.clone());
             let cold = provider
-                .get_storage_batch_results_at(&written, number)
+                .get_storage_batch_results_at(&written, BlockId::number(number))
                 .await
                 .expect("the cold batch answers");
 

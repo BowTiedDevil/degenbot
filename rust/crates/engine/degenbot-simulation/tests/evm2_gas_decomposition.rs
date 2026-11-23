@@ -109,6 +109,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ::evm2::evm::{AccountInfo, CacheDB, Db};
+use alloy::eips::BlockId;
 use alloy::primitives::{address, keccak256, Address, Bytes, U256};
 
 use degenbot_pools::{
@@ -433,7 +434,7 @@ impl<'p> Reads<'p> {
         }
         let value = self
             .provider
-            .get_storage_at(&to, slot, Some(self.block))
+            .get_storage_at(&to, slot, Some(BlockId::number(self.block)))
             .await
             .map_or(U256::ZERO, |b| U256::from_be_bytes(b.0));
         self.storages.insert((to, slot), value);
@@ -3032,7 +3033,7 @@ async fn anchor_setup() -> (Arc<AlloyProvider>, ScratchBlock, u64) {
         base_fee_next: u128::from(block.header.base_fee_per_gas.unwrap_or(0)),
     };
     let nonce = provider
-        .get_transaction_count(&SENDER, Some(PIN))
+        .get_transaction_count(&SENDER, Some(BlockId::number(PIN)))
         .await
         .unwrap();
     (provider, scratch_block, nonce)

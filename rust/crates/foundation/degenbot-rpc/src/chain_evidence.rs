@@ -30,6 +30,7 @@
 //! is the same seam at the range's END: a run's tip or explicit bound becomes
 //! one [`ChainAnchor`] before any projection work starts.
 
+use alloy::eips::{BlockId, RpcBlockHash};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{AnchorLinkError, ChainAnchor};
@@ -612,8 +613,20 @@ impl<'a> BlockReads<'a> {
         self.anchor
     }
 
-    /// The EIP-1898 block identifier every read pins: the snapshot's own hash,
-    /// required to still be canonical.
+    /// The EIP-1898 identifier every account, storage, code, and call read
+    /// pins: the snapshot's own hash, required to still be canonical.
+    ///
+    /// The account, storage, and code reads hand it to the transport's own
+    /// `BlockId` lane, so they inherit the single request construction each of
+    /// those operations owns. `eth_call` states the identifier in its own
+    /// params because the recorded corpus carries the `data` field on the
+    /// pinned lane (the typed request builder emits `input`), so moving it onto
+    /// that builder would rewrite the recorded wire.
+    fn pinned_id(&self) -> BlockId {
+        BlockId::Hash(RpcBlockHash::from_hash(self.anchor.hash(), Some(true)))
+    }
+
+    /// The EIP-1898 identifier as the raw params value `eth_call` carries.
     fn pinned_block(&self) -> serde_json::Value {
         json!({ "blockHash": format!("{}", self.anchor.hash()), "requireCanonical": true })
     }
@@ -650,8 +663,10 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn code_at(&self, address: Address) -> Result<Bytes, ExactReadError> {
-        let params = json!([Self::wire_address(address), self.pinned_block()]);
-        self.read("eth_getCode", params).await
+        self.provider
+            .get_code(&address, Some(self.pinned_id()))
+            .await
+            .map_err(|cause| self.classify("eth_getCode", cause))
     }
 
     /// `eth_getStorageAt` at the snapshot's block: the storage word `slot`.
@@ -661,12 +676,11 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn storage_at(&self, address: Address, slot: U256) -> Result<U256, ExactReadError> {
-        let params = json!([
-            Self::wire_address(address),
-            format!("0x{slot:x}"),
-            self.pinned_block()
-        ]);
-        let word: B256 = self.read("eth_getStorageAt", params).await?;
+        let word = self
+            .provider
+            .get_storage_at(&address, slot, Some(self.pinned_id()))
+            .await
+            .map_err(|cause| self.classify("eth_getStorageAt", cause))?;
         Ok(U256::from_be_bytes(word.0))
     }
 
@@ -699,8 +713,10 @@ impl<'a> BlockReads<'a> {
     /// [`ExactReadError::Unsupported`] when the node rejects the hash-pinned
     /// request shape, [`ExactReadError::Failed`] otherwise.
     pub async fn balance_at(&self, address: Address) -> Result<U256, ExactReadError> {
-        let params = json!([Self::wire_address(address), self.pinned_block()]);
-        self.read("eth_getBalance", params).await
+        self.provider
+            .get_balance(&address, Some(self.pinned_id()))
+            .await
+            .map_err(|cause| self.classify("eth_getBalance", cause))
     }
 
     /// One read through `method`, classified into the capability vocabulary.
@@ -1700,6 +1716,129 @@ mod tests {
                 "{method} must never name its block by number"
             );
         }
+    }
+
+    /// Every account, storage, and code read states the identifier in the
+    /// recorded corpus's own form — the lowercase address, the slot as a
+    /// minimal quantity, then the `{blockHash, requireCanonical}` pin — because
+    /// the transport states it once for every read family.
+    #[tokio::test]
+    async fn the_snapshot_reads_state_the_recorded_wire_params() {
+        let stub = EvidenceStub::new()
+            .read("eth_getCode", json!("0x6080"))
+            .read(
+                "eth_getStorageAt",
+                json!("0x000000000000000000000000000000000000000000000000000000000000000c"),
+            )
+            .read("eth_getBalance", json!("0x2a"));
+        let provider = stub.provider().await;
+        let pinned = anchor(100, 0xa1, 0xa0);
+        let reads = BlockReads::at(&provider, pinned);
+        let address = Address::repeat_byte(0x11);
+
+        reads
+            .code_at(address)
+            .await
+            .expect("the stub serves the code read");
+        reads
+            .storage_at(address, U256::ZERO)
+            .await
+            .expect("the stub serves the storage read");
+        reads
+            .balance_at(address)
+            .await
+            .expect("the stub serves the balance read");
+
+        let pin = json!({ "blockHash": format!("{}", pinned.hash()), "requireCanonical": true });
+        let wire = format!("0x{}", alloy::hex::encode(address.as_slice()));
+        let packets: Vec<(String, Value)> = stub
+            .packets()
+            .into_iter()
+            .map(|(method, params)| {
+                (
+                    method,
+                    serde_json::from_str(&params).expect("the stub records JSON params"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            packets,
+            vec![
+                (
+                    "eth_getCode".to_string(),
+                    json!([wire.clone(), pin.clone()])
+                ),
+                (
+                    "eth_getStorageAt".to_string(),
+                    json!([wire.clone(), "0x0", pin.clone()])
+                ),
+                ("eth_getBalance".to_string(), json!([wire, pin])),
+            ],
+            "the reads share the one request construction, pinned by hash"
+        );
+    }
+
+    /// A node that rejects the EIP-1898 shape has no account, storage, or code
+    /// read capability either: the same unsupported-shape classification, named
+    /// per method, and never a number-only fallback.
+    #[tokio::test]
+    async fn every_snapshot_read_refuses_a_node_without_the_hash_pinned_shape() {
+        let stub = EvidenceStub::new().rejecting_hash_pinned();
+        let provider = stub.provider().await;
+        let reads = BlockReads::at(&provider, anchor(100, 0xa1, 0xa0));
+        let address = Address::repeat_byte(0x11);
+
+        let code = reads
+            .code_at(address)
+            .await
+            .expect_err("a node without hash-pinned reads cannot serve the code read");
+        assert!(
+            matches!(
+                code,
+                ExactReadError::Unsupported {
+                    method: "eth_getCode",
+                    ..
+                }
+            ),
+            "got {code:?}"
+        );
+        let storage = reads
+            .storage_at(address, U256::ZERO)
+            .await
+            .expect_err("a node without hash-pinned reads cannot serve the storage read");
+        assert!(
+            matches!(
+                storage,
+                ExactReadError::Unsupported {
+                    method: "eth_getStorageAt",
+                    ..
+                }
+            ),
+            "got {storage:?}"
+        );
+        let balance = reads
+            .balance_at(address)
+            .await
+            .expect_err("a node without hash-pinned reads cannot serve the balance read");
+        assert!(
+            matches!(
+                balance,
+                ExactReadError::Unsupported {
+                    method: "eth_getBalance",
+                    ..
+                }
+            ),
+            "got {balance:?}"
+        );
+        assert_eq!(
+            stub.methods(),
+            vec![
+                "eth_getCode".to_string(),
+                "eth_getStorageAt".to_string(),
+                "eth_getBalance".to_string()
+            ],
+            "an unsupported capability is never retried as a number-only read"
+        );
     }
 
     #[tokio::test]

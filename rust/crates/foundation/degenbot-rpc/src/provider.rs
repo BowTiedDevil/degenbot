@@ -620,12 +620,18 @@ mod account_read_batch_tests {
         let address = Address::from([0x11; 20]);
         let block = 0x1234;
 
-        let serial_balance = provider.get_balance(&address, Some(block)).await.unwrap();
-        let serial_nonce = provider
-            .get_transaction_count(&address, Some(block))
+        let serial_balance = provider
+            .get_balance(&address, Some(BlockId::number(block)))
             .await
             .unwrap();
-        let serial_code = provider.get_code(&address, Some(block)).await.unwrap();
+        let serial_nonce = provider
+            .get_transaction_count(&address, Some(BlockId::number(block)))
+            .await
+            .unwrap();
+        let serial_code = provider
+            .get_code(&address, Some(BlockId::number(block)))
+            .await
+            .unwrap();
         let serial_packets = stub.packets();
         assert_eq!(
             serial_packets.len(),
@@ -634,7 +640,10 @@ mod account_read_batch_tests {
         );
         stub.clear();
 
-        let read = provider.get_account_at(&address, block).await.unwrap();
+        let read = provider
+            .get_account_at(&address, BlockId::number(block))
+            .await
+            .unwrap();
         assert_eq!(
             read,
             AccountRead {
@@ -674,7 +683,10 @@ mod account_read_batch_tests {
         let provider = stub.provider();
         let address = Address::from([0x22; 20]);
 
-        let read = provider.get_account_at(&address, 7).await.unwrap();
+        let read = provider
+            .get_account_at(&address, BlockId::number(7))
+            .await
+            .unwrap();
         assert_eq!(read.nonce, 42);
         assert_eq!(read.balance, U256::from(1_000_000_000_000_000_000_u64));
         assert_eq!(read.code, Bytes::from_static(&[0x60, 0x01, 0x60, 0x01]));
@@ -690,8 +702,14 @@ mod account_read_batch_tests {
         let provider = stub.provider();
         let address = Address::from([0x33; 20]);
 
-        let serial = provider.get_balance(&address, Some(7)).await.unwrap_err();
-        let batched = provider.get_account_at(&address, 7).await.unwrap_err();
+        let serial = provider
+            .get_balance(&address, Some(BlockId::number(7)))
+            .await
+            .unwrap_err();
+        let batched = provider
+            .get_account_at(&address, BlockId::number(7))
+            .await
+            .unwrap_err();
         assert!(
             matches!(serial, ProviderError::RpcError { code: -1, .. }),
             "serial baseline: {serial}"
@@ -865,7 +883,7 @@ mod accounts_batch_tests {
         ];
 
         let reads = provider
-            .get_accounts_batch_at(&addresses, block)
+            .get_accounts_batch_at(&addresses, BlockId::number(block))
             .await
             .unwrap();
 
@@ -924,7 +942,10 @@ mod accounts_batch_tests {
             Address::from([0x33; 20]),
         ];
 
-        let reads = provider.get_accounts_batch_at(&addresses, 7).await.unwrap();
+        let reads = provider
+            .get_accounts_batch_at(&addresses, BlockId::number(7))
+            .await
+            .unwrap();
 
         assert_eq!(reads.len(), 3);
         assert_eq!(reads[0].as_ref().unwrap(), &served_row());
@@ -956,7 +977,10 @@ mod accounts_batch_tests {
         let stub = MultiAccountStub::serving();
         let provider = stub.provider();
 
-        let reads = provider.get_accounts_batch_at(&[], 7).await.unwrap();
+        let reads = provider
+            .get_accounts_batch_at(&[], BlockId::number(7))
+            .await
+            .unwrap();
 
         assert!(reads.is_empty());
         assert!(stub.packets().is_empty(), "no packet was dispatched");
@@ -969,7 +993,7 @@ mod accounts_batch_tests {
         let provider = stub.provider();
 
         let error = provider
-            .get_accounts_batch_at(&[Address::from([0x11; 20])], 7)
+            .get_accounts_batch_at(&[Address::from([0x11; 20])], BlockId::number(7))
             .await
             .unwrap_err();
 
@@ -1151,7 +1175,7 @@ mod storage_batch_tests {
         for (address, slot) in slots {
             serial.push(
                 provider
-                    .get_storage_at(&address, slot, Some(block))
+                    .get_storage_at(&address, slot, Some(BlockId::number(block)))
                     .await
                     .unwrap(),
             );
@@ -1164,7 +1188,10 @@ mod storage_batch_tests {
         );
         stub.clear();
 
-        let batched = provider.get_storage_batch_at(&slots, block).await.unwrap();
+        let batched = provider
+            .get_storage_batch_at(&slots, BlockId::number(block))
+            .await
+            .unwrap();
         assert_eq!(
             batched,
             serial
@@ -1209,7 +1236,10 @@ mod storage_batch_tests {
             (first, U256::from(8u64)),
         ];
 
-        let values = provider.get_storage_batch_at(&slots, 7).await.unwrap();
+        let values = provider
+            .get_storage_batch_at(&slots, BlockId::number(7))
+            .await
+            .unwrap();
         assert_eq!(
             values,
             vec![
@@ -1231,11 +1261,11 @@ mod storage_batch_tests {
         let address = Address::from([0x44; 20]);
 
         let serial = provider
-            .get_storage_at(&address, U256::from(8u64), Some(7))
+            .get_storage_at(&address, U256::from(8u64), Some(BlockId::number(7)))
             .await
             .unwrap_err();
         let batched = provider
-            .get_storage_batch_at(&[(address, U256::from(8u64))], 7)
+            .get_storage_batch_at(&[(address, U256::from(8u64))], BlockId::number(7))
             .await
             .unwrap_err();
         assert!(
@@ -1265,7 +1295,7 @@ mod storage_batch_tests {
         ];
 
         let outcomes = provider
-            .get_storage_batch_results_at(&slots, 0x1234)
+            .get_storage_batch_results_at(&slots, BlockId::number(0x1234))
             .await
             .unwrap();
 
@@ -1324,7 +1354,7 @@ mod storage_batch_tests {
                     (address, refused_slot),
                     (address, U256::from(8u64)),
                 ],
-                7,
+                BlockId::number(7),
             )
             .await
             .unwrap_err();
@@ -1344,7 +1374,7 @@ mod storage_batch_tests {
         let stub = StorageStub::new();
         let provider = stub.provider();
         assert!(provider
-            .get_storage_batch_at(&[], 7)
+            .get_storage_batch_at(&[], BlockId::number(7))
             .await
             .unwrap()
             .is_empty());
@@ -1915,22 +1945,27 @@ impl AlloyProvider {
 
     /// Get contract code at an address.
     ///
+    /// `block` is the read position, and there is exactly ONE construction for
+    /// all of them: `None` states the request builder's node-default `latest`
+    /// tag, [`BlockId::Number`] states a height or tag word, and
+    /// [`BlockId::Hash`] states the EIP-1898 identifier
+    /// (`{ blockHash, requireCanonical }`) an exact read pins. The pinned lane
+    /// is the same construction as the number lane, so a caller that must read
+    /// one exact block does not need — and must not grow — a parallel read
+    /// family.
+    ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_code(
         &self,
         address: &Address,
-        block_number: Option<u64>,
+        block: Option<BlockId>,
     ) -> ProviderResult<Bytes> {
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner
-                    .get_code_at(*address)
-                    .block_id(block.into())
-                    .await
-            } else {
-                self.inner.get_code_at(*address).await
+            let result = match block {
+                Some(block) => self.inner.get_code_at(*address).block_id(block).await,
+                None => self.inner.get_code_at(*address).await,
             }
             .map_err(|e| e.into_provider_error("Failed to get code"))?;
 
@@ -2259,6 +2294,11 @@ impl AlloyProvider {
 
     /// Get storage at a given address and position.
     ///
+    /// `block` is the read position, in the same one construction
+    /// [`Self::get_code`] documents: absent states the builder's node-default
+    /// `latest` tag, a number states a height or tag word, and a hash states
+    /// the EIP-1898 pin.
+    ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
@@ -2266,7 +2306,7 @@ impl AlloyProvider {
         &self,
         address: &Address,
         position: U256,
-        block_number: Option<u64>,
+        block: Option<BlockId>,
     ) -> ProviderResult<B256> {
         // The `to_be_bytes::<32>()` byte-array detour is NOT
         // pointless — alloy's `get_storage_at` returns a `U256`
@@ -2276,13 +2316,14 @@ impl AlloyProvider {
         // (and zero-cost) conversion. If alloy ever returns `B256` directly,
         // return it as-is here.
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner
-                    .get_storage_at(*address, position)
-                    .block_id(block.into())
-                    .await
-            } else {
-                self.inner.get_storage_at(*address, position).await
+            let result = match block {
+                Some(block) => {
+                    self.inner
+                        .get_storage_at(*address, position)
+                        .block_id(block)
+                        .await
+                }
+                None => self.inner.get_storage_at(*address, position).await,
             }
             .map_err(|e| e.into_provider_error("Failed to get storage"))?;
 
@@ -2330,7 +2371,7 @@ impl AlloyProvider {
     pub async fn get_storage_batch_results_at(
         &self,
         slots: &[(Address, U256)],
-        block: u64,
+        block: BlockId,
     ) -> ProviderResult<Vec<ProviderResult<StorageValue>>> {
         if slots.is_empty() {
             return Ok(Vec::new());
@@ -2341,8 +2382,10 @@ impl AlloyProvider {
             for (address, position) in slots {
                 // One `ParamsWithBlock` shape per member: the block tag
                 // cannot differ across the batch by construction, and the
-                // serialized params match `get_storage_at(..).block_id(..)`.
-                let params = ParamsWithBlock::new((*address, *position), BlockId::number(block));
+                // serialized params match `get_storage_at(..).block_id(..)` —
+                // height quantity and EIP-1898 pin alike, since `block` IS the
+                // serial read's own `BlockId`.
+                let params = ParamsWithBlock::new((*address, *position), block);
                 let waiter = batch
                     .add_call::<_, StorageValue>("eth_getStorageAt", &params)
                     .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?;
@@ -2392,7 +2435,7 @@ impl AlloyProvider {
     pub async fn get_storage_batch_at(
         &self,
         slots: &[(Address, U256)],
-        block: u64,
+        block: BlockId,
     ) -> ProviderResult<Vec<StorageValue>> {
         self.get_storage_batch_results_at(slots, block)
             .await?
@@ -2402,22 +2445,23 @@ impl AlloyProvider {
 
     /// Get the balance of an address.
     ///
+    /// `block` is the read position, in the same one construction
+    /// [`Self::get_code`] documents: absent states the builder's node-default
+    /// `latest` tag, a number states a height or tag word, and a hash states
+    /// the EIP-1898 pin.
+    ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_balance(
         &self,
         address: &Address,
-        block_number: Option<u64>,
+        block: Option<BlockId>,
     ) -> ProviderResult<U256> {
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner
-                    .get_balance(*address)
-                    .block_id(block.into())
-                    .await
-            } else {
-                self.inner.get_balance(*address).await
+            let result = match block {
+                Some(block) => self.inner.get_balance(*address).block_id(block).await,
+                None => self.inner.get_balance(*address).await,
             }
             .map_err(|e| e.into_provider_error("Failed to get balance"))?;
 
@@ -2428,22 +2472,28 @@ impl AlloyProvider {
 
     /// Get the transaction count (nonce) for an address.
     ///
+    /// `block` is the read position, in the same one construction
+    /// [`Self::get_code`] documents: absent states the builder's node-default
+    /// `latest` tag, a number states a height or tag word, and a hash states
+    /// the EIP-1898 pin.
+    ///
     /// # Errors
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_transaction_count(
         &self,
         address: &Address,
-        block_number: Option<u64>,
+        block: Option<BlockId>,
     ) -> ProviderResult<u64> {
         self.retry_with_backoff(|| async {
-            let result = if let Some(block) = block_number {
-                self.inner
-                    .get_transaction_count(*address)
-                    .block_id(block.into())
-                    .await
-            } else {
-                self.inner.get_transaction_count(*address).await
+            let result = match block {
+                Some(block) => {
+                    self.inner
+                        .get_transaction_count(*address)
+                        .block_id(block)
+                        .await
+                }
+                None => self.inner.get_transaction_count(*address).await,
             }
             .map_err(|e| e.into_provider_error("Failed to get transaction count"))?;
 
@@ -2475,13 +2525,14 @@ impl AlloyProvider {
     pub async fn get_account_at(
         &self,
         address: &Address,
-        block: u64,
+        block: BlockId,
     ) -> ProviderResult<AccountRead> {
         let address = *address;
         self.retry_with_backoff(|| async {
             // One `ParamsWithBlock` for every member: the block tag cannot
-            // differ across the three reads by construction.
-            let params = ParamsWithBlock::new(address, BlockId::number(block));
+            // differ across the three reads by construction, and it is the
+            // serial reads' own `BlockId`.
+            let params = ParamsWithBlock::new(address, block);
             let mut batch = BatchRequest::new(self.inner.client());
             let balance = batch
                 .add_call::<_, U256>("eth_getBalance", &params)
@@ -2550,7 +2601,7 @@ impl AlloyProvider {
     pub async fn get_accounts_batch_at(
         &self,
         addresses: &[Address],
-        block: u64,
+        block: BlockId,
     ) -> ProviderResult<Vec<ProviderResult<AccountRead>>> {
         if addresses.is_empty() {
             return Ok(Vec::new());
@@ -2561,7 +2612,7 @@ impl AlloyProvider {
             for address in addresses {
                 // One `ParamsWithBlock` per address: every member pins the same
                 // block tag, and each address's three reads share one pair.
-                let params = ParamsWithBlock::new(*address, BlockId::number(block));
+                let params = ParamsWithBlock::new(*address, block);
                 let balance = batch
                     .add_call::<_, U256>("eth_getBalance", &params)
                     .map_err(|e| e.into_provider_error(GET_ACCOUNTS_CONTEXT))?;
@@ -5910,5 +5961,345 @@ mod block_access_list_tests {
         assert_eq!(packets.len(), 1, "one request: {packets:?}");
         assert_eq!(packets[0].0, JSON);
         assert_eq!(packets[0].1, format!("[\"{:#x}\"]", block_hash()));
+    }
+}
+
+/// Tests for the block-addressed read transports ([`AlloyProvider::get_code`],
+/// [`AlloyProvider::get_balance`], [`AlloyProvider::get_transaction_count`],
+/// [`AlloyProvider::get_storage_at`], and their batch siblings): ONE
+/// request-construction path per operation, whose [`BlockId`] lane carries the
+/// EIP-1898 identifier an exact read pins.
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod block_id_read_tests {
+    use super::*;
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::transports::{TransportError, TransportFut};
+    use serde_json::value::to_raw_value;
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+
+    /// One dispatched packet, recorded as its `(method, params)` members — one
+    /// entry per `call`, so a JSON-RPC batch is ONE entry.
+    type Packet = Vec<(String, String)>;
+
+    /// The block the hash-pinned lane names.
+    const PINNED: B256 = B256::new([0xa1; 32]);
+
+    /// The account row every read serves: two code bytes, 42 wei, nonce 42.
+    const CODE: &str = "0x60016001";
+    const BALANCE: &str = "0x2a";
+    const NONCE: &str = "0x2a";
+
+    /// A read-serving transport that records every packet it is dispatched.
+    #[derive(Debug, Clone)]
+    struct ReadStub {
+        packets: Arc<Mutex<Vec<Packet>>>,
+    }
+
+    impl ReadStub {
+        fn serving() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn packets(&self) -> Vec<Packet> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn clear(&self) {
+            self.packets.lock().unwrap().clear();
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+    }
+
+    /// The address in the wire form every read carries (lowercase hex).
+    fn wire(address: Address) -> String {
+        format!("0x{}", alloy::hex::encode(address.as_slice()))
+    }
+
+    /// Every recorded member, flattened out of its packet, as
+    /// `(method, params array)`.
+    fn members(stub: &ReadStub) -> Vec<(String, Value)> {
+        stub.packets()
+            .into_iter()
+            .flatten()
+            .map(|(method, params)| (method, serde_json::from_str(&params).unwrap()))
+            .collect()
+    }
+
+    /// The stub's answer for one request: the served row, with the storage word
+    /// derived from the slot it names (`slot * 10`) so member order stays
+    /// observable in the decoded values.
+    fn answer(req: &SerializedRequest) -> Response {
+        let params: Value = req
+            .params()
+            .map_or(Value::Null, |raw| serde_json::from_str(raw.get()).unwrap());
+        let result = match req.method() {
+            "eth_getCode" => json!(CODE),
+            "eth_getBalance" => json!(BALANCE),
+            "eth_getTransactionCount" => json!(NONCE),
+            "eth_getStorageAt" => {
+                let slot = params
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .expect("the slot is the second param");
+                let slot = U256::from_str_radix(slot.trim_start_matches("0x"), 16).unwrap();
+                json!(format!("{:#066x}", slot * U256::from(10)))
+            }
+            other => panic!("a read transport must not issue {other}"),
+        };
+        Response {
+            id: req.id().clone(),
+            payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
+        }
+    }
+
+    impl tower::Service<RequestPacket> for ReadStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded: Packet = match &req {
+                    RequestPacket::Single(one) => vec![recorded_member(one)],
+                    RequestPacket::Batch(many) => many.iter().map(recorded_member).collect(),
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                Ok(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(answer).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// A dispatched request's identity in wire form.
+    fn recorded_member(req: &SerializedRequest) -> (String, String) {
+        (
+            req.method().to_string(),
+            req.params()
+                .map_or_else(String::new, |params| params.get().to_string()),
+        )
+    }
+
+    /// The EIP-1898 identifier a hash `BlockId` states on the wire.
+    fn pin() -> Value {
+        json!({ "blockHash": format!("{PINNED}"), "requireCanonical": true })
+    }
+
+    /// Every serial read states the snapshot's own hash, required canonical, as
+    /// the recorded corpus does — one construction, no exact-read family.
+    #[tokio::test]
+    async fn serial_reads_pin_a_hash_block_id_as_the_eip_1898_identifier() {
+        let stub = ReadStub::serving();
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let pinned = BlockId::hash_canonical(PINNED);
+
+        provider.get_code(&address, Some(pinned)).await.unwrap();
+        provider.get_balance(&address, Some(pinned)).await.unwrap();
+        provider
+            .get_transaction_count(&address, Some(pinned))
+            .await
+            .unwrap();
+        provider
+            .get_storage_at(&address, U256::ZERO, Some(pinned))
+            .await
+            .unwrap();
+
+        let members = members(&stub);
+        assert_eq!(members.len(), 4, "four serial reads = four packets");
+        for (method, params) in &members {
+            assert_eq!(
+                params.as_array().and_then(|params| params.last()),
+                Some(&pin()),
+                "{method} must pin the snapshot hash, not a height"
+            );
+            assert_eq!(
+                params.as_array().and_then(|params| params.first()),
+                Some(&json!(wire(address))),
+                "{method} names its address in the recorded lowercase form"
+            );
+        }
+        assert_eq!(
+            members[3].1.as_array().map(Vec::len),
+            Some(3),
+            "eth_getStorageAt names address, slot, then the pin"
+        );
+        assert_eq!(
+            members[3].1.as_array().and_then(|params| params.get(1)),
+            Some(&json!("0x0")),
+            "the slot is a minimal hex quantity"
+        );
+    }
+
+    /// A number identifier states the recorded height word, and no identifier
+    /// preserves the `latest` tag the alloy request builder states for it —
+    /// byte-identical to the pre-migration wire in both lanes.
+    #[tokio::test]
+    async fn a_number_block_id_keeps_the_height_word_and_absence_preserves_the_latest_tag() {
+        let stub = ReadStub::serving();
+        let provider = stub.provider();
+        let address = Address::from([0x12; 20]);
+        let numbered = Some(BlockId::number(0x64));
+        let wire_address = json!(wire(address));
+
+        provider.get_code(&address, numbered).await.unwrap();
+        provider.get_balance(&address, numbered).await.unwrap();
+        provider
+            .get_transaction_count(&address, numbered)
+            .await
+            .unwrap();
+        provider
+            .get_storage_at(&address, U256::ZERO, numbered)
+            .await
+            .unwrap();
+        let numbered_members = members(&stub);
+        assert_eq!(
+            numbered_members[0].1,
+            json!([wire_address, "0x64"]),
+            "eth_getCode states the height word"
+        );
+        assert_eq!(numbered_members[1].1, json!([wire_address, "0x64"]));
+        assert_eq!(numbered_members[2].1, json!([wire_address, "0x64"]));
+        assert_eq!(
+            numbered_members[3].1,
+            json!([wire_address, "0x0", "0x64"]),
+            "eth_getStorageAt states the height word after the slot"
+        );
+
+        stub.clear();
+        provider.get_code(&address, None).await.unwrap();
+        provider.get_balance(&address, None).await.unwrap();
+        provider
+            .get_transaction_count(&address, None)
+            .await
+            .unwrap();
+        provider
+            .get_storage_at(&address, U256::ZERO, None)
+            .await
+            .unwrap();
+        let default_tag_members = members(&stub);
+        assert_eq!(
+            default_tag_members[0].1,
+            json!([wire_address, "latest"]),
+            "no identifier preserves the builder's node-default latest tag"
+        );
+        assert_eq!(default_tag_members[1].1, json!([wire_address, "latest"]));
+        assert_eq!(default_tag_members[2].1, json!([wire_address, "latest"]));
+        assert_eq!(
+            default_tag_members[3].1,
+            json!([wire_address, "0x0", "latest"]),
+            "the serial storage read without an identifier keeps the same tag"
+        );
+    }
+
+    /// The account batch members ARE the serial reads' requests: one
+    /// construction per operation, under either identifier.
+    #[tokio::test]
+    async fn account_batch_members_are_the_serial_reads_params_under_both_identifiers() {
+        let stub = ReadStub::serving();
+        let provider = stub.provider();
+        let address = Address::from([0x13; 20]);
+
+        for identifier in [BlockId::hash_canonical(PINNED), BlockId::number(7)] {
+            provider
+                .get_balance(&address, Some(identifier))
+                .await
+                .unwrap();
+            provider
+                .get_transaction_count(&address, Some(identifier))
+                .await
+                .unwrap();
+            provider.get_code(&address, Some(identifier)).await.unwrap();
+            let serial = members(&stub);
+            stub.clear();
+
+            let read = provider.get_account_at(&address, identifier).await.unwrap();
+            assert_eq!(read.balance, U256::from(42));
+            assert_eq!(read.nonce, 42);
+            assert_eq!(read.code, Bytes::from_static(&[0x60, 0x01, 0x60, 0x01]));
+            let batched = members(&stub);
+            assert_eq!(
+                batched, serial,
+                "the batch must issue the serial reads' own requests for {identifier:?}"
+            );
+
+            stub.clear();
+            provider
+                .get_accounts_batch_at(&[address], identifier)
+                .await
+                .unwrap();
+            assert_eq!(
+                members(&stub),
+                serial,
+                "the multi-account batch reuses the same construction for {identifier:?}"
+            );
+            stub.clear();
+        }
+    }
+
+    /// A storage batch states each member's own address and slot under the one
+    /// shared identifier, and answers one outcome per member in input order.
+    #[tokio::test]
+    async fn a_hash_pinned_storage_batch_keeps_its_members_aligned() {
+        let stub = ReadStub::serving();
+        let provider = stub.provider();
+        let pinned = BlockId::hash_canonical(PINNED);
+        let slots = [
+            (Address::from([0x01; 20]), U256::from(1)),
+            (Address::from([0x02; 20]), U256::from(2)),
+            (Address::from([0x03; 20]), U256::from(3)),
+        ];
+
+        let values = provider.get_storage_batch_at(&slots, pinned).await.unwrap();
+        assert_eq!(
+            values,
+            vec![U256::from(10), U256::from(20), U256::from(30)],
+            "one outcome per member, in the input order"
+        );
+        let recorded = members(&stub);
+        assert_eq!(recorded.len(), 3, "one member per slot in ONE packet");
+        for ((method, params), (address, slot)) in recorded.iter().zip(slots) {
+            assert_eq!(method, "eth_getStorageAt");
+            assert_eq!(
+                params,
+                &json!([wire(address), format!("{slot:#x}"), pin()]),
+                "every member pins the shared identifier"
+            );
+        }
+
+        stub.clear();
+        let outcomes = provider
+            .get_storage_batch_results_at(&slots, pinned)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcomes.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+            vec![U256::from(10), U256::from(20), U256::from(30)],
+            "the per-member shape answers the same values"
+        );
+        assert_eq!(
+            members(&stub).len(),
+            3,
+            "the per-member shape is the same one-packet batch"
+        );
     }
 }

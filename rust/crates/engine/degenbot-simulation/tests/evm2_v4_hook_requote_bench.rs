@@ -66,6 +66,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, Bytes, U256};
 use parking_lot::RwLock;
 
@@ -706,7 +707,12 @@ fn requote_latency_envelope() {
 
     let mut codes: Vec<(Address, Bytes)> = Vec::with_capacity(executed.len());
     for address in executed {
-        let code = rt.block_on(async { provider.get_code(&address, Some(PIN)).await.unwrap() });
+        let code = rt.block_on(async {
+            provider
+                .get_code(&address, Some(BlockId::number(PIN)))
+                .await
+                .unwrap()
+        });
         codes.push((address, code));
     }
     let mut code_hashes: HashMap<Address, alloy::primitives::B256> = HashMap::new();

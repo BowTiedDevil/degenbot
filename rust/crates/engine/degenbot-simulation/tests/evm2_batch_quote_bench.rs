@@ -91,6 +91,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{address, keccak256, Address, Bytes, U256};
 use degenbot_core::fee::fee_ratio;
 use degenbot_pools::{
@@ -364,13 +365,13 @@ async fn fetch_v3_state(
 ) -> (U256, u128, i32, hashbrown::HashMap<i32, TickInfo>) {
     let slot0 = decode_v3_slot0(storage_word(
         provider
-            .get_storage_at(&V3_POOL, U256::ZERO, Some(PIN))
+            .get_storage_at(&V3_POOL, U256::ZERO, Some(BlockId::number(PIN)))
             .await
             .unwrap(),
     ));
     let liquidity_word = storage_word(
         provider
-            .get_storage_at(&V3_POOL, U256::from(4u64), Some(PIN))
+            .get_storage_at(&V3_POOL, U256::from(4u64), Some(BlockId::number(PIN)))
             .await
             .unwrap(),
     );
@@ -463,7 +464,7 @@ async fn fetch_white_box(provider: &AlloyProvider, source: &AlloyTickWordSource)
             .get_storage_at(
                 &V2_PAIR,
                 U256::from(degenbot_pools::V2_RESERVES_SLOT),
-                Some(PIN),
+                Some(BlockId::number(PIN)),
             )
             .await
             .unwrap(),
@@ -779,7 +780,10 @@ fn print_parity(label: &str, evm: &QuotePass, wb: &QuotePass) {
 /// A contract's runtime bytecode at the pinned block.
 #[cfg(feature = "evm2-jit")]
 async fn provider_code(provider: &AlloyProvider, address: Address) -> Bytes {
-    provider.get_code(&address, Some(PIN)).await.unwrap()
+    provider
+        .get_code(&address, Some(BlockId::number(PIN)))
+        .await
+        .unwrap()
 }
 
 fn rpc_url() -> String {
@@ -805,7 +809,7 @@ async fn bench_batch_quote_path() {
         .unwrap()
         .expect("the pinned block is archived");
     let nonce = provider
-        .get_transaction_count(&SENDER, Some(PIN))
+        .get_transaction_count(&SENDER, Some(BlockId::number(PIN)))
         .await
         .unwrap();
     let base_fee_next = block.header.base_fee_per_gas.unwrap_or(0);

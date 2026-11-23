@@ -18,6 +18,7 @@
     reason = "the assertions fail loudly on a broken fixture"
 )]
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_simulation::sim::evm2::delta_snapshot::{
     DeltaHub, DeltaReport, DeltaSnapshotCache, Retention,
@@ -796,7 +797,7 @@ async fn assert_corpus_matches_cold_reads(real: &RealCoverage, idle: u64) -> usi
                     .await
                     .expect("the modeled chain answers");
                 let cold = provider
-                    .get_storage_batch_results_at(&[(address, slot)], number)
+                    .get_storage_batch_results_at(&[(address, slot)], BlockId::number(number))
                     .await
                     .expect("the cold batch answers");
                 let cold = cold[0].clone().expect("the cold member answers");
@@ -812,7 +813,7 @@ async fn assert_corpus_matches_cold_reads(real: &RealCoverage, idle: u64) -> usi
         // the chain's word there (an unknown entry is not a mismatch — its read
         // would take the cold path).
         let cold = provider
-            .get_storage_batch_results_at(&key_vec, number)
+            .get_storage_batch_results_at(&key_vec, BlockId::number(number))
             .await
             .expect("the cold batch answers");
         for (index, &(address, slot)) in key_vec.iter().enumerate() {

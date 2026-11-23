@@ -65,6 +65,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_bot::arb_engine::{
     EngineStages, ExactInputQuote, ProbeBlockContext, ProbeQuoteTransport,
@@ -251,7 +252,7 @@ async fn read_pinned_pool_state(provider: &AlloyProvider, pool_id: B256) -> Pinn
             .get_storage_at(
                 &POOL_MANAGER,
                 degenbot_pools::v4_slot0_slot(state_base),
-                Some(LIVE_PIN),
+                Some(BlockId::number(LIVE_PIN)),
             )
             .await
             .expect("PoolManager.slot0 reads at the pin")
@@ -262,7 +263,7 @@ async fn read_pinned_pool_state(provider: &AlloyProvider, pool_id: B256) -> Pinn
             .get_storage_at(
                 &POOL_MANAGER,
                 degenbot_pools::v4_liquidity_slot(state_base),
-                Some(LIVE_PIN),
+                Some(BlockId::number(LIVE_PIN)),
             )
             .await
             .expect("PoolManager liquidity reads at the pin")

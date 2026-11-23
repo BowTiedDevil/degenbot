@@ -175,6 +175,7 @@
 //! anchor over: a snapshot transition seam with no dispatch. Block hashes are
 //! per-chain facts and are never hub reads.
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, StorageValue, B256, U256};
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
@@ -656,7 +657,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_storage_batch_results_at(keys, self.anchor.number)
+            .get_storage_batch_results_at(keys, BlockId::number(self.anchor.number))
             .await
     }
 
@@ -669,7 +670,7 @@ impl ReadHub {
             return Ok(Vec::new());
         }
         self.provider
-            .get_accounts_batch_at(addresses, self.anchor.number)
+            .get_accounts_batch_at(addresses, BlockId::number(self.anchor.number))
             .await
     }
 

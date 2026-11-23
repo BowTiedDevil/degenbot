@@ -20,6 +20,7 @@
 //! tag, answered together. Three serial round trips per cold account miss was
 //! the measured cold-frame cost (the `cold_miss_fanout_probe` model).
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::{AccountRead, AlloyProvider};
 
@@ -91,7 +92,10 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
     /// `AlloyDB::basic_ref` — one JSON-RPC batch round trip. The all-empty
     /// account reads as non-existent.
     async fn get_account(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        let read = self.provider.get_account_at(&address, self.block).await?;
+        let read = self
+            .provider
+            .get_account_at(&address, BlockId::number(self.block))
+            .await?;
         Ok(account_info_from_read(&read))
     }
 
@@ -108,7 +112,7 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
     async fn get_storage(&mut self, address: Address, key: Word) -> Result<Word, Self::Error> {
         let value = self
             .provider
-            .get_storage_at(&address, key, Some(self.block))
+            .get_storage_at(&address, key, Some(BlockId::number(self.block)))
             .await?;
         Ok(Word::from_be_bytes(value.0))
     }

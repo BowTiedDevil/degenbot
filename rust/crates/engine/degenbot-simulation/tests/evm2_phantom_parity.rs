@@ -81,6 +81,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use alloy::eips::BlockId;
 use alloy::primitives::{address, keccak256, Address, Bytes, U256};
 use degenbot_math::concentrated_liquidity::tick_math::{
     MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK,
@@ -205,7 +206,7 @@ async fn call_words(
 
 async fn read_u256(provider: &AlloyProvider, to: Address, slot: U256, block: u64) -> U256 {
     let value = provider
-        .get_storage_at(&to, slot, Some(block))
+        .get_storage_at(&to, slot, Some(BlockId::number(block)))
         .await
         .unwrap();
     U256::from_be_bytes(value.0)
@@ -1339,7 +1340,7 @@ async fn phantom_corpus_parity() {
             .unwrap()
             .expect("the anchor block is archived");
         let nonce = provider
-            .get_transaction_count(&SENDER, Some(path.anchor))
+            .get_transaction_count(&SENDER, Some(BlockId::number(path.anchor)))
             .await
             .unwrap();
         let scratch_block = ScratchBlock {

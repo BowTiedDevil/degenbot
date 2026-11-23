@@ -14,6 +14,7 @@ use crate::conversion::rpc_types::{
 };
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
+use alloy::eips::BlockId;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyList};
 use runtime::get_runtime;
@@ -260,7 +261,11 @@ impl PyAlloyProvider {
 
         let result = py
             .detach(|| {
-                get_runtime().block_on(async { provider.get_code(&addr, block_number).await })
+                get_runtime().block_on(async {
+                    provider
+                        .get_code(&addr, block_number.map(BlockId::number))
+                        .await
+                })
             })
             .map_err(Into::<PyErr>::into)?;
 
@@ -506,8 +511,11 @@ impl PyAlloyProvider {
 
         let result = py
             .detach(|| {
-                get_runtime()
-                    .block_on(async { provider.get_storage_at(&addr, pos, block_number).await })
+                get_runtime().block_on(async {
+                    provider
+                        .get_storage_at(&addr, pos, block_number.map(BlockId::number))
+                        .await
+                })
             })
             .map_err(Into::<PyErr>::into)?;
 
@@ -531,7 +539,11 @@ impl PyAlloyProvider {
 
         let balance = py
             .detach(|| {
-                get_runtime().block_on(async { provider.get_balance(&addr, block_number).await })
+                get_runtime().block_on(async {
+                    provider
+                        .get_balance(&addr, block_number.map(BlockId::number))
+                        .await
+                })
             })
             .map_err(Into::<PyErr>::into)?;
 
@@ -555,8 +567,11 @@ impl PyAlloyProvider {
 
         let count = py
             .detach(|| {
-                get_runtime()
-                    .block_on(async { provider.get_transaction_count(&addr, block_number).await })
+                get_runtime().block_on(async {
+                    provider
+                        .get_transaction_count(&addr, block_number.map(BlockId::number))
+                        .await
+                })
             })
             .map_err(Into::<PyErr>::into)?;
 

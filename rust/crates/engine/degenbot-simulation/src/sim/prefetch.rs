@@ -87,6 +87,7 @@
 use std::future::Future;
 
 use crate::sim::evm2::hook_slots::HookSlotStore;
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::diag;
 use degenbot_execution::{HopInfo, PathInfo};
@@ -646,7 +647,9 @@ pub fn prefetch_into_memo(
             skipped: None,
         };
     }
-    let Some(read) = block_on_ambient(provider.get_storage_batch_at(&wanted, anchor)) else {
+    let Some(read) =
+        block_on_ambient(provider.get_storage_batch_at(&wanted, BlockId::number(anchor)))
+    else {
         return PrefetchReport {
             derived,
             learned: 0,

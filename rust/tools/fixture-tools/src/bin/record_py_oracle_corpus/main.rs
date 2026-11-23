@@ -102,6 +102,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use alloy::eips::BlockId;
 use alloy::primitives::{hex, keccak256, Address, Bytes, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_fixture_tools::paths;
@@ -1356,7 +1357,7 @@ async fn record_scenario(
                 .parse()
                 .map_err(|e| ScenarioFailure::terminal(format!("code target {target:?}: {e}")))?;
             provider
-                .get_code(&addr, Some(scenario.block))
+                .get_code(&addr, Some(BlockId::number(scenario.block)))
                 .await
                 .map_err(|e| ScenarioFailure::from_provider(&format!("get_code {target}"), &e))?;
         }

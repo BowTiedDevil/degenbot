@@ -57,6 +57,7 @@ use degenbot_arbitrage::probe_support::{dispatch_probe as probe, dispatch_scalin
 
 use std::time::Instant;
 
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_rpc::provider::{AlloyProvider, BlockAccessListResponse};
@@ -407,7 +408,7 @@ async fn verify_settled(
         .collect();
     let started = Instant::now();
     let cold_words = cold
-        .get_storage_batch_results_at(&keys, number)
+        .get_storage_batch_results_at(&keys, BlockId::number(number))
         .await
         .map_err(|error| format!("cold verification batch at {number}: {error}"))?;
     let verify_us = us(started);
@@ -460,7 +461,11 @@ async fn price_dynamic_fresh(
         let offset = U256::from(u64::try_from(rep).unwrap_or(u64::MAX) + 1);
         let started = Instant::now();
         let _ = provider
-            .get_storage_at(&read_address, read_slot + offset, Some(number))
+            .get_storage_at(
+                &read_address,
+                read_slot + offset,
+                Some(BlockId::number(number)),
+            )
             .await
             .map_err(|error| format!("dynamic serial read at {number}: {error}"))?;
         walls.push(us(started));
@@ -485,7 +490,7 @@ async fn price_dynamic_repeat(
     for _ in 0..reps {
         let started = Instant::now();
         let _ = provider
-            .get_storage_at(&read_address, read_slot, Some(number))
+            .get_storage_at(&read_address, read_slot, Some(BlockId::number(number)))
             .await
             .map_err(|error| format!("dynamic serial read (repeat) at {number}: {error}"))?;
         walls.push(us(started));
@@ -514,7 +519,7 @@ async fn price_prefetch_batches(
         for _ in 0..reps {
             let started = Instant::now();
             let answers = cold
-                .get_storage_batch_results_at(identities.as_slice(), number)
+                .get_storage_batch_results_at(identities.as_slice(), BlockId::number(number))
                 .await
                 .map_err(|error| format!("prefetch batch (count {count}) at {number}: {error}"))?;
             walls.push(us(started));
