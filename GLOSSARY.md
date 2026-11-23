@@ -1566,6 +1566,10 @@ custody WETH, armed per stream with the on-chain floor check.
 The exact identity of one block on the currently canonical branch: chain ID, height, block hash, and parent hash. Canonical names branch membership rather than finality; a Chain anchor is distinct from the live-work **Block epoch** and telemetry **Block lineage**.
 _Avoid_: block number as exact chain identity; "block lineage" for chain-parent identity; treating canonical as finalized.
 
+**Exact read**:
+A chain-state read whose transport selector names the exact block hash and requires canonical membership. A hash-aware cache key without the same transport pin is not an Exact read.
+_Avoid_: height-addressed reads described as exact because their cache carries a hash.
+
 **Event-sourced chain state**:
 Deterministic protocol projections derived from validated canonical chain facts and replayable deltas. It does not imply full state snapshots per block or a generic event-sourcing framework.
 _Avoid_: equating event sourcing with cloned state or a storage framework.
@@ -1581,6 +1585,10 @@ _Avoid_: inverse protocol arithmetic; treating an unvalidated SQL write set as a
 **Projection checkpoint**:
 One market's consistent relational projection at a committed Projection cursor, retained for Checkpoint replay. It is never a whole-database snapshot shared by unrelated markets.
 _Avoid_: global database rollback for one market's reorg.
+
+**Chunk seed**:
+The complete preceding projection and resolved entity-identity facts needed to resolve one canonical chunk. It is per-chunk resolution input, not a durable Projection checkpoint.
+_Avoid_: lazy relational reads during resolution; treating the seed as chain evidence or as a checkpoint.
 
 **Projection view**:
 A read-only protocol-state view at an exact position within a canonical block, composed from its preceding state and ordered deltas. It advances through transaction and event application without representing a transactional RPC snapshot or a cloned chain state.
