@@ -47,7 +47,7 @@ Deleting code is the complete retirement (ADR-087). No retirement tripwires — 
 
 ## Planning
 
-Use `ergo` for all planning (`ergo --help`, `ergo quickstart`). Include detailed implementation and planning notes in the task body. The `result` key is only for tasks with a durable document deliverable — most tasks close with `{"state":"done"}` and no `result`; the merged diff is the deliverable.
+Use `ergo` for all planning (`ergo --help`, `ergo quickstart`). The `ergo` body is the scratchpad: temporary prose, todos, research notes, and checklists belong in the epic or task body (`ergo body <id>`), which is durable and portable with the backlog, instead of new docs or comment blocks in the tree. Include detailed implementation and planning notes in the task body. The `result` key is only for tasks with a durable document deliverable — most tasks close with `{"state":"done"}` and no `result`; the merged diff is the deliverable.
 
 ## Refactoring & Feature Development
 
