@@ -109,6 +109,127 @@
     },
     {
       "columns": [
+        "checkpoint_id",
+        "market_id",
+        "generation_id"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          10
+        ],
+        [
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          2
+        ],
+        [
+          1,
+          1,
+          3
+        ],
+        [
+          1,
+          1,
+          4
+        ],
+        [
+          1,
+          1,
+          5
+        ],
+        [
+          1,
+          1,
+          6
+        ],
+        [
+          1,
+          1,
+          7
+        ],
+        [
+          1,
+          1,
+          8
+        ],
+        [
+          1,
+          1,
+          9
+        ]
+      ],
+      "table": "aave_v3_checkpoint_generations"
+    },
+    {
+      "columns": [
+        "checkpoint_id",
+        "position",
+        "position_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [
+        [
+          1,
+          "collateral",
+          1,
+          "0",
+          "1071623448981977742719804908"
+        ],
+        [
+          1,
+          "collateral",
+          2,
+          "83978912904",
+          "1177853343202950335388822609"
+        ],
+        [
+          1,
+          "collateral",
+          3,
+          "47591343074817669",
+          "1071623465633731550819601975"
+        ],
+        [
+          1,
+          "collateral",
+          4,
+          "159",
+          "1177853452738072026207891676"
+        ],
+        [
+          1,
+          "debt",
+          1,
+          "0",
+          "1247421492107835526032859472"
+        ],
+        [
+          1,
+          "debt",
+          2,
+          "0",
+          "1252296228166978335468125978"
+        ],
+        [
+          1,
+          "debt",
+          3,
+          "240496071",
+          "1247421626906352358306385584"
+        ]
+      ],
+      "table": "aave_v3_checkpoint_positions"
+    },
+    {
+      "columns": [
         "id",
         "user_id",
         "asset_id",
@@ -244,6 +365,20 @@
           null
         ],
         [
+          10,
+          1,
+          "scaled-token{asset=2,leg=debt}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
           2,
           1,
           "scaled-token{asset=2,leg=collateral}",
@@ -284,6 +419,76 @@
           null,
           null,
           null
+        ],
+        [
+          5,
+          1,
+          "contract{market=1,role=pool-address-provider}",
+          "seed",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          1,
+          "contract{market=1,role=pool-configurator}",
+          "seed",
+          8,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          7,
+          1,
+          "contract{market=1,role=pool}",
+          "seed",
+          11,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          8,
+          1,
+          "contract{market=1,role=price-oracle}",
+          "seed",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          9,
+          1,
+          "scaled-token{asset=1,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
         ]
       ],
       "table": "aave_v3_generations"
@@ -306,6 +511,39 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "journal_sequence",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "range_end_block",
+        "encoding_version"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          20,
+          1,
+          26130445,
+          "0xb32cc8a11b75cc6645f1971eee0ee4eed9cfc7bd360657a80f87d0b7455cebde",
+          "0xc6f9d0f4c34914324086553cd237c930dbf2f944a265d75287578a0625a3a8e5",
+          "0x250ca7a2fbbbfa8456cdb3efe555c293816409642c92329ddefbd2e3eae4b25b",
+          103,
+          546,
+          26130445,
+          "aave.projection-checkpoint/v2"
+        ]
+      ],
+      "table": "aave_v3_projection_checkpoints"
     },
     {
       "columns": [

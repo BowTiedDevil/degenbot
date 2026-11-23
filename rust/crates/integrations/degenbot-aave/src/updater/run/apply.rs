@@ -691,6 +691,10 @@ pub fn apply_aave_chunk_writes_on_conn(
     // chunks.
     let projection = crate::projection::market_projection(conn, market_id)
         .map_err(degenbot_db::DbError::from)?;
+    // This entrypoint applies already-reduced deltas without a reducing view,
+    // so it has no resume state to capture: it journals every delta and advances
+    // the cursor, and schedules no checkpoint (ADR-105 D9: correctness never
+    // depends on the cadence).
     super::process::commit_projection_unit_on_conn(
         conn,
         market_id,
@@ -698,6 +702,7 @@ pub fn apply_aave_chunk_writes_on_conn(
         chunk_end_block,
         projection.anchor,
         deltas,
+        None,
     )?;
 
     // Stamp `last_update_block` as the LAST write (restart invariant:

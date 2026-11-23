@@ -21,10 +21,15 @@ pub(crate) use super::run::substrate::PositionState;
 use alloy::primitives::{I256, U256};
 use degenbot_core::canonical_head::LogRef;
 
+mod checkpoint;
 mod configuration;
 mod journal;
 mod reduce;
 
+pub use checkpoint::{
+    checkpoint_due, classify_discount_prepass, CheckpointState, DiscountPath,
+    DiscountPrepassInputs, CHECKPOINT_ENCODING_VERSION,
+};
 pub use configuration::ConfigurationEffect;
 pub use degenbot_db::ScaledTokenPosition;
 pub use journal::{
@@ -80,6 +85,15 @@ pub enum ContractRole {
 }
 
 impl ContractRole {
+    /// Every role, in the vocabulary's order.
+    pub const ALL: &'static [Self] = &[
+        Self::Pool,
+        Self::PoolConfigurator,
+        Self::PoolAddressProvider,
+        Self::PoolDataProvider,
+        Self::PriceOracle,
+    ];
+
     /// The role a `aave_v3_contracts` row name stands for; `None` for a name
     /// outside the tracked role set.
     #[must_use]
@@ -106,6 +120,80 @@ impl ContractRole {
 }
 
 impl GenerationEntity {
+    /// The stable logical key a journaled generation relationship states,
+    /// decoded back into the entity it names (the inverse of [`Self::encode`]).
+    ///
+    /// A restore reads a checkpoint's generation family as text, so the inverse
+    /// exists once, here, beside the encoding it inverts — and refuses an entity
+    /// key it cannot reconstruct rather than guessing.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::projection::ProjectionError::Decode`] for an entity key the
+    /// vocabulary does not define.
+    pub fn decode(key: &str) -> Result<Self, crate::projection::ProjectionError> {
+        let bad = || crate::projection::ProjectionError::EntityKey {
+            key: key.to_string(),
+        };
+        if let Some(inner) = key
+            .strip_prefix("scaled-token{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            let (asset, leg) = inner.split_once(",leg=").ok_or_else(bad)?;
+            let asset_id: i64 = asset
+                .strip_prefix("asset=")
+                .ok_or_else(bad)?
+                .parse()
+                .map_err(|_| bad())?;
+            let position = match leg {
+                "collateral" => ScaledTokenPosition::Collateral,
+                "debt" => ScaledTokenPosition::Debt,
+                _ => return Err(bad()),
+            };
+            return Ok(Self::ScaledToken { asset_id, position });
+        }
+        if let Some(inner) = key
+            .strip_prefix("contract{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            let (market, role) = inner.split_once(",role=").ok_or_else(bad)?;
+            let market_id: i64 = market
+                .strip_prefix("market=")
+                .ok_or_else(bad)?
+                .parse()
+                .map_err(|_| bad())?;
+            let role = ContractRole::ALL
+                .iter()
+                .copied()
+                .find(|candidate| candidate.name() == role)
+                .ok_or_else(bad)?;
+            return Ok(Self::Contract { market_id, role });
+        }
+        if let Some(inner) = key
+            .strip_prefix("discount-token{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            let chain_id = inner
+                .strip_prefix("chain=")
+                .ok_or_else(bad)?
+                .parse()
+                .map_err(|_| bad())?;
+            return Ok(Self::DiscountToken { chain_id });
+        }
+        if let Some(inner) = key
+            .strip_prefix("gho-discount-link{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            let chain_id = inner
+                .strip_prefix("chain=")
+                .ok_or_else(bad)?
+                .parse()
+                .map_err(|_| bad())?;
+            return Ok(Self::GhoDiscountLink { chain_id });
+        }
+        Err(bad())
+    }
+
     /// The stable logical key a journaled generation relationship states.
     #[must_use]
     pub fn encode(self) -> String {
@@ -174,6 +262,21 @@ impl GenerationRef {
             entity,
             activation: GenerationActivation::Seed,
             revision: None,
+        }
+    }
+
+    /// The generation a checkpoint states, in the activation form it was
+    /// journaled under.
+    #[must_use]
+    pub const fn restored(
+        entity: GenerationEntity,
+        activation: GenerationActivation,
+        revision: Option<u32>,
+    ) -> Self {
+        Self {
+            entity,
+            activation,
+            revision,
         }
     }
 
@@ -496,6 +599,12 @@ pub enum ProjectionError {
     /// The effect's arithmetic left the `U256` balance domain.
     #[error("position id={position_id} balance arithmetic overflowed U256")]
     BalanceOverflow { position_id: i64 },
+    /// An entity key the generation vocabulary does not define: a restore cannot
+    /// reconstruct it, and guessing would attach a generation to the wrong
+    /// logical entity.
+    #[error("generation entity key {key:?} is outside the vocabulary")]
+    EntityKey { key: String },
+
     /// A generation revision the vocabulary cannot hold — a negative or
     /// wider-than-`u32` revision is a refusal, never a synthesized zero.
     #[error("generation revision {revision} is outside the u32 domain")]
@@ -528,6 +637,12 @@ impl ProjectionView {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Take the exact position a restored checkpoint states as the view's
+    /// cursor, so a resumed reduction refuses a delta behind it.
+    pub fn seed_cursor(&mut self, cursor: LogRef) {
+        self.cursor = Some(cursor);
     }
 
     /// The exact position the view has advanced to; `None` before its first
@@ -586,6 +701,22 @@ impl ProjectionView {
         self.generations
             .iter()
             .map(|(entity, generation)| (*entity, *generation))
+    }
+
+    /// Every position state the view holds, keyed by its subject — the state a
+    /// retained delta may move next, which is what a checkpoint captures.
+    pub fn positions(&self) -> impl Iterator<Item = (PositionSubject, PositionState)> + '_ {
+        self.positions
+            .iter()
+            .map(|((position, position_id), state)| {
+                (
+                    PositionSubject {
+                        position: *position,
+                        position_id: *position_id,
+                    },
+                    *state,
+                )
+            })
     }
 
     /// The generation a delta must be interpreted under, refusing a delta whose

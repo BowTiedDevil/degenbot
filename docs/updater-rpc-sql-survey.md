@@ -540,3 +540,90 @@ from it — the "rewrites it all" finding above describes the pre-Perf-B
 full-map persist. The statement counts on this page are their measurement-time
 values; the live chunk loop asserts 16 (`EXPECTED_LEDGER_STATEMENTS` in
 `tests/sql_golden_replay.rs`).
+
+### Projection checkpoints (ergo 7JIC7U — ADR-105 D8, D9: the initial cadence and its measured cost)
+
+A market's recovery used to be "replay the whole delta journal". It now has a
+bounded alternative: a **relational projection checkpoint** that states the exact
+cursor it restores to plus the state a forward reduction needs from there.
+Correctness never depends on it — the journal is mandatory at every committed
+unit and is complete on its own — so the checkpoint is purely a storage/recovery
+trade-off, and this section records the trade-off the initial cadence makes.
+
+**Schema (Rust-owned, `degenbot-db`; `RUST_SCHEMA_VERSION` 4 → 5).**
+
+| table | row | constraints |
+|---|---|---|
+| `aave_v3_projection_checkpoints` | one checkpoint's exact cursor: market, `journal_sequence`, full `ChainAnchor`, tx identity, `range_end_block`, payload `encoding_version` | `UNIQUE (market_id, journal_sequence)`; FK to the market, to `aave_v3_delta_journal (market_id, sequence)` (a checkpoint cannot name a position the journal did not commit), and to the block/transaction identities |
+| `aave_v3_checkpoint_generations` | one generation the projection read under | FK `(checkpoint_id, market_id)` → the checkpoint, `(market_id, generation_id)` → `aave_v3_generations` (no cross-market reference) |
+| `aave_v3_checkpoint_positions` | one position's settled `balance`/`last_index` at the checkpoint's cursor | `PRIMARY KEY (checkpoint_id, position, position_id)`; `CHECK position IN ('collateral','debt')` |
+
+The checkpoint's cursor identity is **not an argument** the writer accepts: it
+is derived from the cursor row the unit just wrote, inside the same caller
+transaction, as the unit's LAST statement. Journal rows, chain identities,
+generation lineage, checkpoint, and cursor therefore commit together or not at
+all, and a checkpoint cannot disagree with the cursor it is stored beside.
+
+**What the payload means (`degenbot-aave`).** The view side projects
+`ProjectionView` into the two state families a resume reads: the generations it
+reads under (deterministically ordered by entity key) and the settled state of
+every position it holds. The unit writer fills the rest from the market's own
+position rows — storage is the truth the apply just wrote — and accepts a
+non-zero view state with no row as nothing less than a foreign position
+(refused). The one state storage no longer holds is a position whose balance
+settled to zero: the end-of-chunk cleanup deletes its row while the view still
+reads `(0, index)` and a retained delta may move it again, so the view's overlay
+carries it into the checkpoint. Payload version: `aave.projection-checkpoint/v1`.
+
+**The initial cadence: every unit that advances the exact cursor is
+checkpointed.** It is the simplest policy that bounds recovery — no threshold,
+no extra read, no cross-unit state — and it makes the checkpoint set exactly the
+cursor history, so a restore replays zero deltas. Changing it is one function
+(`projection::checkpoint::checkpoint_due`). Retention and replay scheduling are
+the follow-up (`GR62YF`).
+
+**Measured cost (reproduce: `just test-rust-nextest -p degenbot-db -E
+'test(checkpoint_storage_and_write_amplification)' --no-capture`).** A synthetic
+market of 200 users / 400 settled positions, 4 checkpointed units of 8 deltas:
+
+- journal rows: 32 in **both** arms (the cadence changes nothing the journal
+  records);
+- checkpoint rows: 4 (one per unit) and 1,600 checkpoint position rows = 400 per
+  unit = one row per settled position, **never** one per delta;
+- SQLite file: 483,328 → 606,208 bytes, **+25.4 %** over the un-checkpointed arm
+  (a deliberately delta-light workload — the checkpoint's cost is per market
+  entity, the journal's is per delta, so the ratio inverts on busy chunks).
+
+Corpus-level cost, from the committed goldens (same runs, byte-identical
+drift-gated artifacts):
+
+| corpus | market shape | statements/unit | checkpoint rows written |
+|---|---|---:|---|
+| `aave_update_chunk_26130440-26130445` | 3 assets, 7 settled + 3 zeroed positions, 10 generations, 4 roles, 6 users | 64 → **75** (+17.2 %) | 1 parent + 10 generations + 7 positions on 18 journaled deltas |
+| `aave_config_chunk_19091050-19091059` | 3 assets, GHO discount path | 69 → **80** (+15.9 %) | 1 parent + generations + positions on 32 journaled deltas |
+| `wave4/w4_aave_gho_deprecation_then_discount_read_in_chunk` | 1,360 users, 1,150 settled positions | +6 per checkpointed unit | **2 checkpoints, 3,259 position rows** (≈1,630/unit: the settled rows plus the view's zeroed state) |
+
+The eleven statements are fixed per checkpointed unit: the market's settled
+position read, the generation-lineage upsert and its lookup, the checkpoint row
+insert, the two batched position/lineage inserts, and the five resume-state
+reads/inserts (assets, contracts, GHO, users). The empty schema grows the fixture
+databases by 7 pages (397,312 → 425,984 bytes).
+
+**The replay bench after the change** (`just bench-updaters`, two runs): the
+aave rows report **70** statements per chunk on the update corpus and **75** on
+the config corpus — the +6 the checkpoint adds over the journal-only shape the
+replay gates pin (64 / 69) — with the round-trip and response-byte columns
+unchanged (19 / 203,117 and 18 / 206,716: those carry the ADR-105 D1
+terminal-anchor reads from the earlier capture regeneration, not this work) and
+both runs' per-stage timings inside the commit-bound noise band the Perf-A/C
+rows established.
+
+**What this means for the tuning.** On a market whose position tables are far
+larger than the chunk's delta stream (the `wave4` deprecation corpus is 2.8× its
+live position table over two units), the every-unit cadence is recovery-optimal
+and storage-pessimistic. The lever is `checkpoint_due` plus one indexed read of
+the latest checkpoint's sequence — an interval in journal entries bounds replay
+by that interval while paying one checkpoint per interval. It is deliberately
+not tuned here: `GR62YF` owns bounded replay and the retention schedule that
+decides which checkpoints survive the reorg window, and any tuning must re-run
+the measurement above rather than assume the shape.

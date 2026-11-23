@@ -35,7 +35,7 @@ use rusqlite::{Connection, OptionalExtension as _};
 use super::context::ChunkContext;
 use super::{
     checksum, discount_to_i64, encode_single_address_call, eth_calls_batched_or_direct,
-    require_word0_u256, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION,
+    require_word0_u256, ConfigDispatchError,
 };
 
 /// `DiscountPercentUpdated(user, old, new)` →
@@ -348,7 +348,6 @@ pub(super) async fn build_discount_snapshot(
     let Some(rev) = vtoken_revision else {
         return Ok(HashMap::new());
     };
-    let discount_supported = rev < GHO_DISCOUNT_DEPRECATION_REVISION;
 
     let mut snapshot: HashMap<Address, U256> = HashMap::new();
     // path #2 is DEFERRED: the users the DB cache cannot answer collect here
@@ -377,21 +376,31 @@ pub(super) async fn build_discount_snapshot(
         if snapshot.contains_key(&user) || rpc_pending.contains(&user) {
             continue; // first-encounter wins (matches the Python `if user_address not in user_discounts`)
         }
-        // path #1: DB-cache.
+        // The one classification (path #1 settled / #2 chain read / #3
+        // deprecated): a checkpoint restates its three inputs, so the restored
+        // driver and this loop cannot disagree about which path answers a user.
         let user_str = checksum(&user);
-        if let Some(db_discount) = substrate.user_gho_discount(conn, market_id, &user_str)? {
-            snapshot.insert(user, U256::from(u64::try_from(db_discount).unwrap_or(0)));
-            continue;
+        let settled = substrate.user_gho_discount(conn, market_id, &user_str)?;
+        match crate::projection::classify_discount_prepass(
+            crate::projection::DiscountPrepassInputs {
+                vtoken: Some(vtoken_addr),
+                revision: Some(rev),
+                settled,
+            },
+        ) {
+            crate::projection::DiscountPath::Settled(discount) => {
+                snapshot.insert(user, U256::from(u64::try_from(discount).unwrap_or(0)));
+            }
+            crate::projection::DiscountPath::ChainRead => {
+                rpc_pending.insert(user);
+                rpc_users.push(user);
+            }
+            crate::projection::DiscountPath::Deprecated
+            | crate::projection::DiscountPath::NoGhoToken
+            | crate::projection::DiscountPath::UnresolvedRevision => {
+                snapshot.insert(user, U256::ZERO);
+            }
         }
-        // path #3: V4+ → 0 (must check before path #2 — the Python gates path
-        // #2 with `is_discount_supported`).
-        if !discount_supported {
-            snapshot.insert(user, U256::ZERO);
-            continue;
-        }
-        // path #2: deferred — collect the user; the batched read below.
-        rpc_pending.insert(user);
-        rpc_users.push(user);
     }
     // path #2 resolution: one transport pass over the deferred users. Every
     // call is independent (same target, same block; no call's result gates

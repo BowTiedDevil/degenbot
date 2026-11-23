@@ -71,7 +71,7 @@ fn log_coordinate(at: LogRef) -> LogCoordinate {
     LogCoordinate::new(*tx.anchor(), tx.hash(), tx.index(), at.index())
 }
 
-fn generation_record(generation: GenerationRef) -> GenerationRecord {
+pub(super) fn generation_record(generation: GenerationRef) -> GenerationRecord {
     GenerationRecord {
         entity: generation.entity().encode(),
         activation: match generation.activation() {

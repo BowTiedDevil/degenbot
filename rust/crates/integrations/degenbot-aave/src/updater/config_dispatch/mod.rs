@@ -105,7 +105,7 @@ use revision::{resolve_contract_revision_updated, resolve_upgraded};
 /// The GHO-discount deprecation revision (V4+). At vToken revision ≥ this value,
 /// the discount mechanism is deprecated → the effective discount is always 0
 /// (`build_discount_snapshot` path #3; `is_discount_supported` gate).
-const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
+pub(crate) const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
 
 // ── error ──────────────────────────────────────────────────────────────────
 

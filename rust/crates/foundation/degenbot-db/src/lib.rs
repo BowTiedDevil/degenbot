@@ -112,20 +112,21 @@ pub use pathfinding::{is_protocol_native_sentinel, PathEdge, PathGraphData};
 #[cfg(any(test, feature = "writer"))]
 pub use projection::write_projection_unit_on_conn;
 pub use projection::{
-    read_journal_on_conn, read_projection_cursor_on_conn, CursorAnchor, DeltaJournalEntry,
-    DeltaJournalRow, GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCursor,
-    ProjectionError, ProjectionUnit,
+    read_checkpoint_on_conn, read_journal_on_conn, read_latest_checkpoint_on_conn,
+    read_projection_cursor_on_conn, CheckpointAsset, CheckpointContract, CheckpointGho,
+    CheckpointPositionState, CheckpointUser, CursorAnchor, DeltaJournalEntry, DeltaJournalRow,
+    GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCheckpoint,
+    ProjectionCheckpointRow, ProjectionCursor, ProjectionError, ProjectionUnit,
 };
 pub use read::{ExchangeFamily, GraphEdition};
 pub use rows::{
     LfjPoolRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,
     ManagedPoolLiquidityPositionRow, PoolKindRow, PoolManagerRow, V2PoolRow, V3PoolRow, V4PoolRow,
 };
+pub use schema::ScaledTokenPosition;
 pub use snapshot::{LiquidityAtTick, LiquidityMap, PoolKey};
 pub use species::{ChainIdentifiers, Family, Manifest, ManifestError, SlotLayout, Species};
 #[cfg(any(test, feature = "writer"))]
-pub use write::{
-    decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,
-};
+pub use write::{decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration};
 #[cfg(any(test, feature = "writer"))]
 pub use write::{AaveMarketPurgeCount, DebtPositionRefreshContext};

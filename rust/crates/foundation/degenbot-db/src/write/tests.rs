@@ -1,5 +1,6 @@
 use super::*;
 use crate::connection::DegenbotDb;
+use crate::schema::ScaledTokenPosition;
 
 /// Build a fresh in-memory **write-capable** DB seeded with a single
 /// market (id 1) — the FK parent every Aave row references.

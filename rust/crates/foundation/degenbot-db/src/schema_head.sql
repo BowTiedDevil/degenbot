@@ -58,6 +58,77 @@ CREATE TABLE IF NOT EXISTS aave_v3_block_anchors (
 	CHECK (substr(parent_hash, 1, 2) = '0x' AND length(parent_hash) = 66),
 	CHECK (block_hash <> parent_hash)
 );
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_assets (
+	checkpoint_id INTEGER NOT NULL,
+	asset_id INTEGER NOT NULL,
+	underlying_address VARCHAR(42) NOT NULL,
+	a_token_address VARCHAR(42) NOT NULL,
+	v_token_address VARCHAR(42) NOT NULL,
+	a_token_revision INTEGER NOT NULL,
+	v_token_revision INTEGER NOT NULL,
+	PRIMARY KEY (checkpoint_id, asset_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(underlying_address) > 0 AND length(a_token_address) > 0 AND length(v_token_address) > 0),
+	CHECK (a_token_revision >= 0 AND v_token_revision >= 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_contracts (
+	checkpoint_id INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	address VARCHAR(42) NOT NULL,
+	revision INTEGER,
+	PRIMARY KEY (checkpoint_id, name),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(name) > 0 AND length(address) > 0),
+	CHECK (revision IS NULL OR revision >= 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_generations (
+	checkpoint_id INTEGER NOT NULL,
+	market_id INTEGER NOT NULL,
+	generation_id INTEGER NOT NULL,
+	PRIMARY KEY (checkpoint_id, generation_id),
+	FOREIGN KEY(checkpoint_id, market_id) REFERENCES aave_v3_projection_checkpoints (id, market_id),
+	FOREIGN KEY(market_id, generation_id) REFERENCES aave_v3_generations (market_id, id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_gho (
+	checkpoint_id INTEGER NOT NULL,
+	gho_id INTEGER NOT NULL,
+	token_id INTEGER NOT NULL,
+	v_token_id INTEGER,
+	gho_token_address VARCHAR(42) NOT NULL,
+	v_token_address VARCHAR(42),
+	discount_rate_strategy VARCHAR(42),
+	discount_token VARCHAR(42),
+	PRIMARY KEY (checkpoint_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(gho_token_address) > 0),
+	CHECK ((v_token_id IS NULL) = (v_token_address IS NULL)),
+	CHECK (discount_rate_strategy IS NULL OR length(discount_rate_strategy) > 0),
+	CHECK (discount_token IS NULL OR length(discount_token) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_positions (
+	checkpoint_id INTEGER NOT NULL,
+	position TEXT NOT NULL,
+	position_id INTEGER NOT NULL,
+	balance VARCHAR(78) NOT NULL,
+	last_index VARCHAR(78),
+	PRIMARY KEY (checkpoint_id, position, position_id),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (position IN ('collateral', 'debt')),
+	CHECK (length(balance) > 0 AND (last_index IS NULL OR length(last_index) > 0))
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_users (
+	checkpoint_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	address VARCHAR(42) NOT NULL,
+	gho_discount INTEGER NOT NULL,
+	stk_aave_balance VARCHAR(78),
+	PRIMARY KEY (checkpoint_id, user_id),
+	UNIQUE (checkpoint_id, address),
+	FOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+	CHECK (length(address) > 0),
+	CHECK (gho_discount >= 0),
+	CHECK (stk_aave_balance IS NULL OR length(stk_aave_balance) > 0)
+);
 CREATE TABLE IF NOT EXISTS aave_v3_collateral_positions (
 	id INTEGER NOT NULL,
 	user_id INTEGER NOT NULL,
@@ -154,6 +225,34 @@ CREATE TABLE IF NOT EXISTS aave_v3_markets (
 	active BOOLEAN NOT NULL,
 	last_update_block INTEGER,
 	PRIMARY KEY (id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_projection_checkpoints (
+	id INTEGER NOT NULL,
+	market_id INTEGER NOT NULL,
+	journal_sequence INTEGER NOT NULL,
+	chain_id INTEGER NOT NULL,
+	block_number INTEGER NOT NULL,
+	block_hash VARCHAR(66) NOT NULL,
+	parent_hash VARCHAR(66) NOT NULL,
+	tx_hash VARCHAR(66) NOT NULL,
+	tx_index INTEGER NOT NULL,
+	log_index INTEGER NOT NULL,
+	range_end_block INTEGER NOT NULL,
+	encoding_version TEXT NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE (id, market_id),
+	UNIQUE (market_id, journal_sequence),
+	FOREIGN KEY(market_id) REFERENCES aave_v3_markets (id),
+	FOREIGN KEY(market_id, journal_sequence) REFERENCES aave_v3_delta_journal (market_id, sequence),
+	FOREIGN KEY(chain_id, block_hash, block_number, parent_hash) REFERENCES aave_v3_block_anchors (chain_id, block_hash, block_number, parent_hash),
+	FOREIGN KEY(chain_id, tx_hash, block_hash, tx_index) REFERENCES aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index),
+	CHECK (journal_sequence > 0),
+	CHECK (block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+	CHECK (range_end_block >= block_number),
+	CHECK (substr(block_hash, 1, 2) = '0x' AND length(block_hash) = 66),
+	CHECK (substr(parent_hash, 1, 2) = '0x' AND length(parent_hash) = 66),
+	CHECK (substr(tx_hash, 1, 2) = '0x' AND length(tx_hash) = 66),
+	CHECK (length(encoding_version) > 0)
 );
 CREATE TABLE IF NOT EXISTS aave_v3_projection_cursors (
 	market_id INTEGER NOT NULL,

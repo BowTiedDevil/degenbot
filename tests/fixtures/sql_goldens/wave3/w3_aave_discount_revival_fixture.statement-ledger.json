@@ -172,6 +172,61 @@
       "sql": "INSERT INTO aave_v3_projection_cursors (market_id, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, journal_sequence, range_end_block) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT ? FROM aave_v3_projection_cursors WHERE market_id = ?)"
     },
     {
+      "arg_count": 77,
+      "rows_changed": 6,
+      "sql": "INSERT OR IGNORE INTO aave_v3_generations (market_id, entity, activation_kind, revision, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, entity, activation_kind, revision, chain_id, tx_hash, log_index FROM aave_v3_generations WHERE market_id = ?"
+    },
+    {
+      "arg_count": 2,
+      "rows_changed": 0,
+      "sql": "SELECT ?, p.id, p.balance, p.last_index FROM aave_v3_collateral_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ? UNION ALL SELECT ?, p.id, p.balance, p.last_index FROM aave_v3_debt_positions p JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ?"
+    },
+    {
+      "arg_count": 11,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_projection_checkpoints (market_id, journal_sequence, chain_id, block_number, block_hash, parent_hash, tx_hash, tx_index, log_index, range_end_block, encoding_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 21,
+      "rows_changed": 7,
+      "sql": "INSERT INTO aave_v3_checkpoint_generations (checkpoint_id, market_id, generation_id) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)"
+    },
+    {
+      "arg_count": 5,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_checkpoint_positions (checkpoint_id, position, position_id, balance, last_index) VALUES (?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 7,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_checkpoint_assets (checkpoint_id, asset_id, underlying_address, a_token_address, v_token_address, a_token_revision, v_token_revision) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 16,
+      "rows_changed": 4,
+      "sql": "INSERT INTO aave_v3_checkpoint_contracts (checkpoint_id, name, address, revision) VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 8,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_checkpoint_gho (checkpoint_id, gho_id, token_id, v_token_id, gho_token_address, v_token_address, discount_rate_strategy, discount_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    },
+    {
+      "arg_count": 1,
+      "rows_changed": 0,
+      "sql": "SELECT id, address, gho_discount, stk_aave_balance FROM aave_v3_users WHERE market_id = ? ORDER BY id"
+    },
+    {
+      "arg_count": 5,
+      "rows_changed": 1,
+      "sql": "INSERT INTO aave_v3_checkpoint_users (checkpoint_id, user_id, address, gho_discount, stk_aave_balance) VALUES (?, ?, ?, ?, ?)"
+    },
+    {
       "arg_count": 2,
       "rows_changed": 1,
       "sql": "UPDATE aave_v3_markets SET last_update_block = ? WHERE id = ?"

@@ -470,11 +470,23 @@ pub(super) async fn resolve_chunk(
     }
 
     let _ = (apply_time, chunk_end, events_applied_total);
+    let checkpoint = if crate::projection::checkpoint_due(chunk_deltas.len()) {
+        // The GHO family is captured from resolution's read position, so the
+        // row must have been read by the boundary (a chunk with no dispatch read
+        // would otherwise capture nothing where the chain has a GHO row).
+        let _ = substrate.gho_asset(conn)?;
+        Some(crate::projection::CheckpointState::capture(
+            &view, &substrate,
+        ))
+    } else {
+        None
+    };
     Ok(ChunkResolution {
         deltas: chunk_deltas,
         substrate,
         touched_user_addresses,
         decode_compute_time,
+        checkpoint,
     })
 }
 
@@ -585,6 +597,9 @@ pub(super) struct ChunkResolution {
     pub(super) substrate: ChunkSubstrate,
     pub(super) touched_user_addresses: HashSet<Address>,
     pub(super) decode_compute_time: Duration,
+    /// The view's resume state when the cadence scheduled a checkpoint for this
+    /// chunk's projection unit (ADR-105 D8, D9).
+    pub(super) checkpoint: Option<crate::projection::CheckpointState>,
 }
 
 /// Persist one chunk's resolved deltas under the caller's write transaction,
@@ -618,6 +633,7 @@ pub(super) fn persist_chunk(
         chunk_end,
         anchor,
         &resolution.deltas,
+        resolution.checkpoint.as_ref(),
     )?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
@@ -653,12 +669,16 @@ pub(super) fn commit_projection_unit_on_conn(
     chunk_end: u64,
     anchor: CursorAnchor,
     deltas: &[crate::projection::CanonicalDelta],
+    checkpoint: Option<&crate::projection::CheckpointState>,
 ) -> Result<Option<ProjectionCursor>, degenbot_db::DbError> {
     let entries = crate::projection::journal_entries(deltas);
     let anchor = match anchor {
         CursorAnchor::First { .. } if entries.is_empty() => CursorAnchor::Unchanged,
         other => other,
     };
+    let checkpoint = checkpoint
+        .filter(|_| !entries.is_empty())
+        .map(crate::projection::CheckpointState::wire);
     let unit = ProjectionUnit {
         market_id,
         chain_id,
@@ -666,6 +686,7 @@ pub(super) fn commit_projection_unit_on_conn(
         entries: &entries,
         range_end_block: chunk_end,
         anchor,
+        checkpoint,
     };
     Ok(degenbot_db::write_projection_unit_on_conn(conn, &unit)?)
 }

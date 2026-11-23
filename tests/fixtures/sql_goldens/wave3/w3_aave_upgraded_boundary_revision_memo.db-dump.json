@@ -85,6 +85,67 @@
     },
     {
       "columns": [
+        "checkpoint_id",
+        "market_id",
+        "generation_id"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          2
+        ],
+        [
+          1,
+          1,
+          3
+        ],
+        [
+          1,
+          1,
+          4
+        ],
+        [
+          1,
+          1,
+          5
+        ],
+        [
+          1,
+          1,
+          6
+        ],
+        [
+          1,
+          1,
+          7
+        ],
+        [
+          1,
+          1,
+          8
+        ]
+      ],
+      "table": "aave_v3_checkpoint_generations"
+    },
+    {
+      "columns": [
+        "checkpoint_id",
+        "position",
+        "position_id",
+        "balance",
+        "last_index"
+      ],
+      "rows": [],
+      "table": "aave_v3_checkpoint_positions"
+    },
+    {
+      "columns": [
         "id",
         "user_id",
         "asset_id",
@@ -202,6 +263,90 @@
           "0xec558332a2fcbf8c59081547c97256119b4dd75ceddede4586786e75efa0627c",
           0,
           0
+        ],
+        [
+          3,
+          1,
+          "contract{market=1,role=pool-address-provider}",
+          "seed",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          1,
+          "contract{market=1,role=pool-configurator}",
+          "seed",
+          8,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          1,
+          "contract{market=1,role=pool}",
+          "seed",
+          11,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          1,
+          "contract{market=1,role=price-oracle}",
+          "seed",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          7,
+          1,
+          "scaled-token{asset=1,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          8,
+          1,
+          "scaled-token{asset=2,leg=collateral}",
+          "seed",
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
         ]
       ],
       "table": "aave_v3_generations"
@@ -224,6 +369,39 @@
         ]
       ],
       "table": "aave_v3_markets"
+    },
+    {
+      "columns": [
+        "id",
+        "market_id",
+        "journal_sequence",
+        "chain_id",
+        "block_number",
+        "block_hash",
+        "parent_hash",
+        "tx_hash",
+        "tx_index",
+        "log_index",
+        "range_end_block",
+        "encoding_version"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          2,
+          1,
+          1002,
+          "0x8d6c98e59b99b453ad086d229fff0a76b26bd736d913256971f1f7e5df0efd77",
+          "0xa71ca41918eda0f02f5b9d034207bc6da722ef3dbac84742f3e5c64d80fd55e5",
+          "0xec558332a2fcbf8c59081547c97256119b4dd75ceddede4586786e75efa0627c",
+          0,
+          0,
+          1002,
+          "aave.projection-checkpoint/v2"
+        ]
+      ],
+      "table": "aave_v3_projection_checkpoints"
     },
     {
       "columns": [

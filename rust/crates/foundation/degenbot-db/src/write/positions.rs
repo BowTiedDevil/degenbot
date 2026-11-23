@@ -2,6 +2,7 @@
 
 use super::util::parse_decimal_u256;
 use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
+use crate::schema::ScaledTokenPosition;
 
 /// The post-apply context the discount refresh reads: the GHO debt position's
 /// `scaled_balance`/`last_index` (POST-apply — the `ScaledTokenMint`/`Burn` apply
@@ -24,40 +25,6 @@ pub struct DebtPositionRefreshContext {
     /// `aave_v3_users.stk_aave_balance` — the `balanceOf` cache. `None`
     /// triggers `get_or_init_stk_aave_balance`.
     pub stk_aave_balance: Option<U256>,
-}
-
-/// Which position table a `ScaledToken` event applies to (mirrors the
-/// `CollateralMintEvent`/`DebtMintEvent` dispatch in the Python `_process_
-/// scaled_token_operation`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ScaledTokenPosition {
-    /// `aave_v3_collateral_positions` (aToken Mint/Burn/BalanceTransfer).
-    Collateral,
-    /// `aave_v3_debt_positions` (vToken Mint/Burn).
-    Debt,
-}
-
-impl ScaledTokenPosition {
-    /// The literal table name (compile-time-dispatched; no injection surface).
-    #[must_use]
-    pub const fn table(self) -> &'static str {
-        match self {
-            Self::Collateral => "aave_v3_collateral_positions",
-            Self::Debt => "aave_v3_debt_positions",
-        }
-    }
-
-    /// The literal `balance`/`last_index` column pair (identical across both
-    /// tables — `(balance VARCHAR(78) NOT NULL, last_index VARCHAR(78))`).
-    #[must_use]
-    pub const fn balance_col(self) -> &'static str {
-        "balance"
-    }
-
-    #[must_use]
-    pub const fn last_index_col(self) -> &'static str {
-        "last_index"
-    }
 }
 
 /// The shared `mint`/`burn` apply body (both are signed deltas). Reads the

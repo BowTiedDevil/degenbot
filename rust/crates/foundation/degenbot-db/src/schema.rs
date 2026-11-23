@@ -32,10 +32,70 @@ pub const SCHEMA_HEAD: &str = include_str!("schema_head.sql");
 /// The open path applies pending steps automatically (ADR-052 D2), so no
 /// consumer calls a migration verb; a binary older than the DB refuses with
 /// [`crate::error::DbError::SchemaAhead`] and never writes ahead.
-pub const RUST_SCHEMA_VERSION: u32 = 4;
+pub const RUST_SCHEMA_VERSION: u32 = 6;
 
 /// Name of the private Rust-owned schema stamp table.
 pub const SCHEMA_VERSION_TABLE: &str = "_degenbot_db_schema_version";
+
+/// Which position table a `ScaledToken` event applies to (mirrors the
+/// `CollateralMintEvent`/`DebtMintEvent` dispatch in the Python `_process_
+/// scaled_token_operation`).
+///
+/// The vocabulary lives here, not in the write substrate, because it names a
+/// schema fact — which of the two position relations a balance belongs to — and
+/// a read-only projection reader must be able to name that relation without
+/// compiling the writer (ADR-070).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ScaledTokenPosition {
+    /// `aave_v3_collateral_positions` (aToken Mint/Burn/BalanceTransfer).
+    Collateral,
+    /// `aave_v3_debt_positions` (vToken Mint/Burn).
+    Debt,
+}
+
+impl ScaledTokenPosition {
+    /// Every position relation, in the schema's table order.
+    pub const ALL: &'static [Self] = &[Self::Collateral, Self::Debt];
+
+    /// The literal table name (compile-time-dispatched; no injection surface).
+    #[must_use]
+    pub const fn table(self) -> &'static str {
+        match self {
+            Self::Collateral => table::AAVE_V3_COLLATERAL_POSITIONS,
+            Self::Debt => table::AAVE_V3_DEBT_POSITIONS,
+        }
+    }
+
+    /// The literal `balance`/`last_index` column pair (identical across both
+    /// tables — `(balance VARCHAR(78) NOT NULL, last_index VARCHAR(78))`).
+    #[must_use]
+    pub const fn balance_col(self) -> &'static str {
+        "balance"
+    }
+
+    #[must_use]
+    pub const fn last_index_col(self) -> &'static str {
+        "last_index"
+    }
+
+    /// The stable text a checkpoint row states for this relation.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Collateral => "collateral",
+            Self::Debt => "debt",
+        }
+    }
+
+    /// The relation a checkpoint row's `position` column names.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|position| position.code() == code)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Table-name constants — single source of truth for the SQL strings in `read.rs`
@@ -68,6 +128,25 @@ pub mod table {
     pub const AAVE_V3_BLOCK_ANCHORS: &str = "aave_v3_block_anchors";
     /// The exact transaction identities the projection has recorded.
     pub const AAVE_V3_TRANSACTION_ANCHORS: &str = "aave_v3_transaction_anchors";
+    /// The per-market relational Projection checkpoint (ADR-105 D8, D9): one
+    /// row per checkpointed exact cursor.
+    pub const AAVE_V3_PROJECTION_CHECKPOINTS: &str = "aave_v3_projection_checkpoints";
+    /// The generation relationships a checkpoint's projection read under.
+    pub const AAVE_V3_CHECKPOINT_GENERATIONS: &str = "aave_v3_checkpoint_generations";
+    /// The settled per-position state a checkpoint restores.
+    pub const AAVE_V3_CHECKPOINT_POSITIONS: &str = "aave_v3_checkpoint_positions";
+    /// The reserve identities (address mappings and revisions) a checkpoint restores.
+    pub const AAVE_V3_CHECKPOINT_ASSETS: &str = "aave_v3_checkpoint_assets";
+    /// The contract endpoints and revisions a checkpoint restores.
+    pub const AAVE_V3_CHECKPOINT_CONTRACTS: &str = "aave_v3_checkpoint_contracts";
+    /// The GHO row (vToken link, discount token and strategy) a checkpoint restores.
+    pub const AAVE_V3_CHECKPOINT_GHO: &str = "aave_v3_checkpoint_gho";
+    /// The per-user discount state a checkpoint restores.
+    pub const AAVE_V3_CHECKPOINT_USERS: &str = "aave_v3_checkpoint_users";
+    /// The collateral leg of a market's scaled-token positions.
+    pub const AAVE_V3_COLLATERAL_POSITIONS: &str = "aave_v3_collateral_positions";
+    /// The debt leg of a market's scaled-token positions.
+    pub const AAVE_V3_DEBT_POSITIONS: &str = "aave_v3_debt_positions";
 
     /// The LFJ (Trader Joe Liquidity Book) binned-pair subclass table. LFJ is
     /// the declared-but-unsupported `lfj_binned` family (ADR-059 D8): the table

@@ -101,8 +101,11 @@ const EXPECTED_APPLIED_EVENTS: usize = 32;
 /// statements, so the delta against the seed corpus's 64 is purely the
 /// span's event mix (GHO debt burns + position/user creation + the
 /// USDT/WETH operation events) plus the projection unit's batched journal
-/// writes (per distinct identity, never per delta).
-const EXPECTED_LEDGER_STATEMENTS: usize = 69;
+/// writes (per distinct identity, never per delta) and the projection
+/// checkpoint it commits (the settled position rows, the generation lineage it
+/// reads under, and the checkpoint row itself: six statements, fixed per
+/// checkpointed unit).
+const EXPECTED_LEDGER_STATEMENTS: usize = 80;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -207,12 +210,15 @@ const DUMP_TABLES: &[&str] = &[
     "aave_gho_tokens",
     "aave_v3_asset_configs",
     "aave_v3_assets",
+    "aave_v3_checkpoint_generations",
+    "aave_v3_checkpoint_positions",
     "aave_v3_collateral_positions",
     "aave_v3_contracts",
     "aave_v3_debt_positions",
     "aave_v3_emode_categories",
     "aave_v3_generations",
     "aave_v3_markets",
+    "aave_v3_projection_checkpoints",
     "aave_v3_projection_cursors",
     "aave_v3_user_collateral_configs",
     "aave_v3_users",

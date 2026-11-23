@@ -15,10 +15,12 @@ use degenbot_core::canonical_head::ChainAnchor;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    encode_hash, read_projection_cursor_on_conn, CursorAnchor, DeltaJournalEntry,
-    GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCursor, ProjectionError,
-    ProjectionUnit,
+    encode_hash, read_projection_cursor_on_conn, CheckpointPositionState, CursorAnchor,
+    DeltaJournalEntry, GenerationActivation, GenerationRecord, LogCoordinate, ProjectionCheckpoint,
+    ProjectionCursor, ProjectionError, ProjectionUnit,
 };
+use crate::rows::decode::decode_u256;
+use crate::schema::ScaledTokenPosition;
 
 /// The market row's numeric claim: its chain and the `last_update_block` the
 /// exact cursor replaces.
@@ -176,16 +178,17 @@ fn placeholders(rows: usize, columns: usize) -> String {
     sql
 }
 
-/// One batched `INSERT OR IGNORE` per [`IDENTITY_BATCH_ROWS`] rows.
-fn insert_rows(
+/// One batched statement per [`IDENTITY_BATCH_ROWS`] rows.
+fn insert_batched(
     conn: &Connection,
+    verb: &str,
     into: &str,
     columns: usize,
     rows: &[Vec<rusqlite::types::Value>],
 ) -> Result<(), ProjectionError> {
     for batch in rows.chunks(IDENTITY_BATCH_ROWS) {
         let sql = format!(
-            "INSERT OR IGNORE {into} VALUES {}",
+            "{verb} {into} VALUES {}",
             placeholders(batch.len(), columns)
         );
         let values: Vec<rusqlite::types::Value> =
@@ -193,6 +196,28 @@ fn insert_rows(
         conn.execute(&sql, rusqlite::params_from_iter(values))?;
     }
     Ok(())
+}
+
+/// An identity batch: the same identity may be named by many units, so the
+/// insert is idempotent and the writer verifies what it recorded.
+fn insert_rows(
+    conn: &Connection,
+    into: &str,
+    columns: usize,
+    rows: &[Vec<rusqlite::types::Value>],
+) -> Result<(), ProjectionError> {
+    insert_batched(conn, "INSERT OR IGNORE", into, columns, rows)
+}
+
+/// An exact batch: a checkpoint's own rows are written once, so a duplicate is a
+/// contradiction rather than something to ignore.
+fn insert_rows_exact(
+    conn: &Connection,
+    into: &str,
+    columns: usize,
+    rows: &[Vec<rusqlite::types::Value>],
+) -> Result<(), ProjectionError> {
+    insert_batched(conn, "INSERT", into, columns, rows)
 }
 
 /// Record the unit's block identities, refusing a hash already recorded at
@@ -336,27 +361,345 @@ fn validate_generations(unit: &ProjectionUnit<'_>) -> Result<(), ProjectionError
         let Some(generation) = &entry.generation else {
             continue;
         };
-        if generation.entity.is_empty() {
-            return Err(ProjectionError::InvalidGenerationEntity {
-                market_id: unit.market_id,
-            });
-        }
-        let GenerationActivation::Event(at) = generation.activation else {
-            continue;
-        };
-        let readable = at.anchor().chain_id() == entry.position.anchor().chain_id()
-            && at.anchor().number() <= entry.position.anchor().number()
-            && (at.anchor().number() < entry.position.anchor().number()
-                || (at.anchor().hash() == entry.position.anchor().hash()
-                    && (at.tx_index(), at.log_index())
-                        <= (entry.position.tx_index(), entry.position.log_index())));
-        if !readable {
-            return Err(ProjectionError::GenerationNotForward {
-                market_id: unit.market_id,
-                entity: generation.entity.clone(),
-            });
-        }
+        require_generation(unit.market_id, generation, entry.position)?;
     }
+    Ok(())
+}
+
+/// One generation relationship a unit or checkpoint names must be readable at the
+/// position that names it: a non-empty entity, and — for an event-activated
+/// generation — an activation at or before that position (ADR-105 D6).
+fn require_generation(
+    market_id: i64,
+    generation: &GenerationRecord,
+    position: LogCoordinate,
+) -> Result<(), ProjectionError> {
+    if generation.entity.is_empty() {
+        return Err(ProjectionError::InvalidGenerationEntity { market_id });
+    }
+    let GenerationActivation::Event(at) = generation.activation else {
+        return Ok(());
+    };
+    if !is_readable_at(at, position) {
+        return Err(ProjectionError::GenerationNotForward {
+            market_id,
+            entity: generation.entity.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether a generation activated at `at` is readable at `position`: same chain,
+/// and at or before the position on the same branch (ADR-105 D6 — a replacement
+/// creates a new generation at its exact event position rather than rewriting
+/// what an earlier event meant).
+fn is_readable_at(at: LogCoordinate, position: LogCoordinate) -> bool {
+    at.anchor().chain_id() == position.anchor().chain_id()
+        && at.anchor().number() <= position.anchor().number()
+        && (at.anchor().number() < position.anchor().number()
+            || (at.anchor().hash() == position.anchor().hash()
+                && (at.tx_index(), at.log_index()) <= (position.tx_index(), position.log_index())))
+}
+
+/// Check that every generation a checkpoint names is readable at the checkpoint's
+/// own position: a checkpoint cannot read under a generation activated later
+/// than the cursor it captures.
+fn validate_checkpoint_generations(
+    market_id: i64,
+    position: LogCoordinate,
+    generations: &[GenerationRecord],
+) -> Result<(), ProjectionError> {
+    for generation in generations {
+        require_generation(market_id, generation, position)?;
+    }
+    Ok(())
+}
+
+/// The bounded batch shape of one resume-state family: an owned row plus the
+/// placeholder count it binds.
+fn value_rows<T>(
+    items: &[T],
+    to_row: impl Fn(usize, &T) -> Vec<rusqlite::types::Value>,
+) -> Vec<Vec<rusqlite::types::Value>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| to_row(index, item))
+        .collect()
+}
+
+/// Write the resolution state a checkpoint must carry beside its positions and
+/// generations: the reserve identities, the contract endpoints and revisions,
+/// the GHO row's link and discount columns, and the per-user discount state
+/// (ADR-105 D8, D9).
+///
+/// These are the reads resolution makes at the unit's boundary, so a resume
+/// classifies GHO initialization, discount paths, and replacement generations
+/// from the checkpoint alone rather than from rows that may sit on an abandoned
+/// branch.
+fn write_checkpoint_resume_state(
+    conn: &Connection,
+    unit: &ProjectionUnit<'_>,
+    checkpoint_id: i64,
+    checkpoint: &ProjectionCheckpoint<'_>,
+) -> Result<(), ProjectionError> {
+    let rows = value_rows(checkpoint.assets, |_, asset| {
+        vec![
+            rusqlite::types::Value::Integer(checkpoint_id),
+            rusqlite::types::Value::Integer(asset.asset_id),
+            rusqlite::types::Value::Text(asset.underlying_address.clone()),
+            rusqlite::types::Value::Text(asset.a_token_address.clone()),
+            rusqlite::types::Value::Text(asset.v_token_address.clone()),
+            rusqlite::types::Value::Integer(i64::from(asset.a_token_revision)),
+            rusqlite::types::Value::Integer(i64::from(asset.v_token_revision)),
+        ]
+    });
+    insert_rows_exact(
+        conn,
+        "INTO aave_v3_checkpoint_assets (checkpoint_id, asset_id, underlying_address, \
+            a_token_address, v_token_address, a_token_revision, v_token_revision)",
+        7,
+        &rows,
+    )?;
+
+    let rows = value_rows(checkpoint.contracts, |_, contract| {
+        vec![
+            rusqlite::types::Value::Integer(checkpoint_id),
+            rusqlite::types::Value::Text(contract.name.clone()),
+            rusqlite::types::Value::Text(contract.address.clone()),
+            contract
+                .revision
+                .map_or(rusqlite::types::Value::Null, |revision| {
+                    rusqlite::types::Value::Integer(i64::from(revision))
+                }),
+        ]
+    });
+    insert_rows_exact(
+        conn,
+        "INTO aave_v3_checkpoint_contracts (checkpoint_id, name, address, revision)",
+        4,
+        &rows,
+    )?;
+
+    if let Some(gho) = checkpoint.gho {
+        conn.execute(
+            "INSERT INTO aave_v3_checkpoint_gho (checkpoint_id, gho_id, token_id, \
+                v_token_id, gho_token_address, v_token_address, discount_rate_strategy, \
+                discount_token) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                checkpoint_id,
+                gho.gho_id,
+                gho.token_id,
+                gho.v_token_id,
+                gho.gho_token_address,
+                gho.v_token_address,
+                gho.discount_rate_strategy,
+                gho.discount_token,
+            ],
+        )?;
+    }
+
+    let users = market_users_on_conn(conn, checkpoint_id, unit.market_id)?;
+    insert_rows_exact(
+        conn,
+        "INTO aave_v3_checkpoint_users (checkpoint_id, user_id, address, gho_discount,             stk_aave_balance)",
+        5,
+        &users,
+    )?;
+    Ok(())
+}
+
+/// The market's complete user set at the cursor, with the two discount columns
+/// resolution reads at transaction start. Storage is the only enumeration of the
+/// set, so the unit writer reads it here rather than accepting a partial answer
+/// from a candidate-scoped cache.
+fn market_users_on_conn(
+    conn: &Connection,
+    checkpoint_id: i64,
+    market_id: i64,
+) -> Result<Vec<Vec<rusqlite::types::Value>>, ProjectionError> {
+    let mut statement = conn.prepare(
+        "SELECT id, address, gho_discount, stk_aave_balance            FROM aave_v3_users WHERE market_id = ?1 ORDER BY id",
+    )?;
+    let mut rows = statement.query(params![market_id])?;
+    let mut values = Vec::new();
+    while let Some(row) = rows.next()? {
+        let balance: Option<String> = row.get(3)?;
+        values.push(vec![
+            rusqlite::types::Value::Integer(checkpoint_id),
+            rusqlite::types::Value::Integer(row.get(0)?),
+            rusqlite::types::Value::Text(row.get(1)?),
+            rusqlite::types::Value::Integer(row.get(2)?),
+            balance.map_or(rusqlite::types::Value::Null, rusqlite::types::Value::Text),
+        ]);
+    }
+    Ok(values)
+}
+
+/// The market's settled position state at the unit's cursor: every row the two
+/// position relations hold for the market, overlaid by the reducing view's own
+/// state.
+///
+/// The storage rows are the truth the apply just wrote. The overlay exists for
+/// the one state storage no longer holds: the end-of-chunk cleanup deletes a
+/// position whose balance settled to zero, while the reducing view still reads
+/// `(0, index)` for it — and a retained delta may name that position again. A
+/// NON-zero overlay state with no row is therefore not this market's storage,
+/// and is refused rather than written into the checkpoint.
+fn checkpoint_positions_on_conn(
+    conn: &Connection,
+    market_id: i64,
+    overlay: &[CheckpointPositionState],
+) -> Result<Vec<CheckpointPositionState>, ProjectionError> {
+    let mut statement = conn.prepare(
+        "SELECT 'collateral', p.id, p.balance, p.last_index \
+           FROM aave_v3_collateral_positions p \
+           JOIN aave_v3_users u ON u.id = p.user_id \
+          WHERE u.market_id = ?1 \
+         UNION ALL \
+         SELECT 'debt', p.id, p.balance, p.last_index \
+           FROM aave_v3_debt_positions p \
+           JOIN aave_v3_users u ON u.id = p.user_id \
+          WHERE u.market_id = ?1",
+    )?;
+    let mut rows = statement.query(params![market_id])?;
+    let mut positions: std::collections::BTreeMap<
+        (ScaledTokenPosition, i64),
+        CheckpointPositionState,
+    > = std::collections::BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let code: String = row.get(0)?;
+        let position = ScaledTokenPosition::from_code(&code)
+            .ok_or_else(|| ProjectionError::Decode(format!("position relation {code:?}")))?;
+        let position_id: i64 = row.get(1)?;
+        let balance: String = row.get(2)?;
+        let index: Option<String> = row.get(3)?;
+        positions.insert(
+            (position, position_id),
+            CheckpointPositionState {
+                position,
+                position_id,
+                balance: decode_u256(&balance).map_err(|error| {
+                    ProjectionError::Decode(format!("position {position_id} balance: {error}"))
+                })?,
+                index: index
+                    .map(|index| {
+                        decode_u256(&index).map_err(|error| {
+                            ProjectionError::Decode(format!(
+                                "position {position_id} index: {error}"
+                            ))
+                        })
+                    })
+                    .transpose()?,
+            },
+        );
+    }
+    drop(rows);
+    drop(statement);
+
+    for state in overlay {
+        let key = (state.position, state.position_id);
+        if positions.contains_key(&key) {
+            continue;
+        }
+        if !state.balance.is_zero() {
+            return Err(ProjectionError::CheckpointPositionNotInMarket {
+                market_id,
+                position: state.position,
+                position_id: state.position_id,
+            });
+        }
+        positions.insert(key, *state);
+    }
+    Ok(positions.into_values().collect())
+}
+
+/// Commit one checkpoint at the cursor the unit just advanced to (ADR-105 D8,
+/// D9).
+///
+/// The checkpoint's position, journal sequence, and range claim are the unit's
+/// own — never arguments — so a checkpoint cannot name a cursor the unit did not
+/// commit. It is written LAST, inside the caller's transaction: a refusal here
+/// (or anywhere after) leaves the whole unit uncommitted.
+fn write_checkpoint(
+    conn: &Connection,
+    unit: &ProjectionUnit<'_>,
+    checkpoint: &ProjectionCheckpoint<'_>,
+    cursor: &ProjectionCursor,
+) -> Result<(), ProjectionError> {
+    let position = cursor.position;
+    validate_checkpoint_generations(unit.market_id, position, checkpoint.generations)?;
+    let generation_ids = write_generations(conn, unit.market_id, checkpoint.generations)?;
+    let positions = checkpoint_positions_on_conn(conn, unit.market_id, checkpoint.positions)?;
+
+    conn.execute(
+        "INSERT INTO aave_v3_projection_checkpoints \
+            (market_id, journal_sequence, chain_id, block_number, block_hash, parent_hash, \
+             tx_hash, tx_index, log_index, range_end_block, encoding_version) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            unit.market_id,
+            cursor.journal_sequence,
+            chain_id_column(position.anchor().chain_id())?,
+            index_column(position.anchor().number(), "block number")?,
+            encode_hash(position.anchor().hash()),
+            encode_hash(position.anchor().parent_hash()),
+            encode_hash(position.tx_hash()),
+            index_column(position.tx_index(), "tx index")?,
+            index_column(position.log_index(), "log index")?,
+            index_column(cursor.range_end_block, "range end")?,
+            checkpoint.encoding_version,
+        ],
+    )?;
+    let checkpoint_id = conn.last_insert_rowid();
+
+    let rows: Vec<Vec<rusqlite::types::Value>> = checkpoint
+        .generations
+        .iter()
+        .map(|generation| {
+            let generation_id = generation_ids
+                .get(&generation_key(generation))
+                .copied()
+                .ok_or_else(|| ProjectionError::MissingGeneration {
+                    market_id: unit.market_id,
+                    entity: generation.entity.clone(),
+                })?;
+            Ok(vec![
+                rusqlite::types::Value::Integer(checkpoint_id),
+                rusqlite::types::Value::Integer(unit.market_id),
+                rusqlite::types::Value::Integer(generation_id),
+            ])
+        })
+        .collect::<Result<Vec<_>, ProjectionError>>()?;
+    insert_rows_exact(
+        conn,
+        "INTO aave_v3_checkpoint_generations (checkpoint_id, market_id, generation_id)",
+        3,
+        &rows,
+    )?;
+
+    let rows: Vec<Vec<rusqlite::types::Value>> = positions
+        .iter()
+        .map(|state| {
+            vec![
+                rusqlite::types::Value::Integer(checkpoint_id),
+                rusqlite::types::Value::Text(state.position.code().to_string()),
+                rusqlite::types::Value::Integer(state.position_id),
+                rusqlite::types::Value::Text(state.balance.to_string()),
+                state.index.map_or(rusqlite::types::Value::Null, |index| {
+                    rusqlite::types::Value::Text(index.to_string())
+                }),
+            ]
+        })
+        .collect();
+    insert_rows_exact(
+        conn,
+        "INTO aave_v3_checkpoint_positions \
+            (checkpoint_id, position, position_id, balance, last_index)",
+        5,
+        &rows,
+    )?;
+    write_checkpoint_resume_state(conn, unit, checkpoint_id, checkpoint)?;
     Ok(())
 }
 
@@ -369,7 +712,7 @@ fn validate_generations(unit: &ProjectionUnit<'_>) -> Result<(), ProjectionError
 /// generations rather than one per delta.
 fn write_generations(
     conn: &Connection,
-    unit: &ProjectionUnit<'_>,
+    market_id: i64,
     generations: &[GenerationRecord],
 ) -> Result<std::collections::HashMap<String, i64>, ProjectionError> {
     let mut ids = std::collections::HashMap::new();
@@ -393,7 +736,7 @@ fn write_generations(
                 ),
             };
         rows.push(vec![
-            rusqlite::types::Value::Integer(unit.market_id),
+            rusqlite::types::Value::Integer(market_id),
             rusqlite::types::Value::Text(generation.entity.clone()),
             rusqlite::types::Value::Text(kind.to_string()),
             generation
@@ -434,7 +777,7 @@ fn write_generations(
          FROM aave_v3_generations WHERE market_id = ?1",
     )?;
     let mut known: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    let mut cursor = statement.query(params![unit.market_id])?;
+    let mut cursor = statement.query(params![market_id])?;
     while let Some(row) = cursor.next()? {
         let entity: String = row.get(1)?;
         let kind: String = row.get(2)?;
@@ -463,7 +806,7 @@ fn write_generations(
             .get(&key)
             .copied()
             .ok_or_else(|| ProjectionError::MissingGeneration {
-                market_id: unit.market_id,
+                market_id,
                 entity: generation.entity.clone(),
             })?;
         ids.insert(key, id);
@@ -640,6 +983,19 @@ pub fn write_projection_unit_on_conn(
         }
     }
 
+    if let Some(checkpoint) = unit.checkpoint {
+        if unit.entries.is_empty() {
+            return Err(ProjectionError::CheckpointWithoutCursor {
+                market_id: unit.market_id,
+            });
+        }
+        if checkpoint.encoding_version.is_empty() {
+            return Err(ProjectionError::CheckpointWithoutVersion {
+                market_id: unit.market_id,
+            });
+        }
+    }
+
     let ordinals = position_ordinals(unit.entries);
 
     match (&unit.anchor, &held) {
@@ -761,7 +1117,7 @@ pub fn write_projection_unit_on_conn(
     let identities = collect_identities(unit);
     write_block_identities(conn, &identities.blocks)?;
     write_transaction_identities(conn, &identities.transactions)?;
-    let generation_ids = write_generations(conn, unit, &identities.generations)?;
+    let generation_ids = write_generations(conn, unit.market_id, &identities.generations)?;
     write_journal_entries(conn, unit, &ordinals, sequence_start, &generation_ids)?;
     sequence += i64::try_from(unit.entries.len()).unwrap_or(i64::MAX);
 
@@ -881,6 +1237,9 @@ pub fn write_projection_unit_on_conn(
                 });
             }
         }
+    }
+    if let Some(checkpoint) = unit.checkpoint {
+        write_checkpoint(conn, unit, &checkpoint, &cursor)?;
     }
     Ok(Some(cursor))
 }

@@ -108,8 +108,135 @@ pub const RUST_MIGRATIONS: &[MigrationStep] = &[
         name: "projection_cursors_and_delta_journal",
         sql: PROJECTION_PERSISTENCE_DDL,
     },
+    MigrationStep {
+        version: 5,
+        name: "projection_checkpoints",
+        sql: PROJECTION_CHECKPOINTS_DDL,
+    },
+    MigrationStep {
+        version: 6,
+        name: "projection_checkpoint_resume_state",
+        sql: PROJECTION_CHECKPOINT_RESUME_DDL,
+    },
 ];
 
+/// The v4 → v5 step: the per-market relational Projection checkpoint — the exact
+/// cursor it captures, the generation relationships the projection read under,
+/// and the settled per-position state (ADR-105 D8, D9).
+///
+/// The same DDL is carried by [`SCHEMA_HEAD`], so a fresh standalone file and a
+/// migrated v4 file converge on one schema; the mirror is asserted in this
+/// module's tests.
+const PROJECTION_CHECKPOINTS_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS aave_v3_projection_checkpoints (
+\tid INTEGER NOT NULL,
+\tmarket_id INTEGER NOT NULL,
+\tjournal_sequence INTEGER NOT NULL,
+\tchain_id INTEGER NOT NULL,
+\tblock_number INTEGER NOT NULL,
+\tblock_hash VARCHAR(66) NOT NULL,
+\tparent_hash VARCHAR(66) NOT NULL,
+\ttx_hash VARCHAR(66) NOT NULL,
+\ttx_index INTEGER NOT NULL,
+\tlog_index INTEGER NOT NULL,
+\trange_end_block INTEGER NOT NULL,
+\tencoding_version TEXT NOT NULL,
+\tPRIMARY KEY (id),
+\tUNIQUE (id, market_id),
+\tUNIQUE (market_id, journal_sequence),
+\tFOREIGN KEY(market_id) REFERENCES aave_v3_markets (id),
+\tFOREIGN KEY(market_id, journal_sequence) REFERENCES aave_v3_delta_journal (market_id, sequence),
+\tFOREIGN KEY(chain_id, block_hash, block_number, parent_hash) REFERENCES aave_v3_block_anchors (chain_id, block_hash, block_number, parent_hash),
+\tFOREIGN KEY(chain_id, tx_hash, block_hash, tx_index) REFERENCES aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index),
+\tCHECK (journal_sequence > 0),
+\tCHECK (block_number >= 0 AND tx_index >= 0 AND log_index >= 0),
+\tCHECK (range_end_block >= block_number),
+\tCHECK (substr(block_hash, 1, 2) = '0x' AND length(block_hash) = 66),
+\tCHECK (substr(parent_hash, 1, 2) = '0x' AND length(parent_hash) = 66),
+\tCHECK (substr(tx_hash, 1, 2) = '0x' AND length(tx_hash) = 66),
+\tCHECK (length(encoding_version) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_generations (
+\tcheckpoint_id INTEGER NOT NULL,
+\tmarket_id INTEGER NOT NULL,
+\tgeneration_id INTEGER NOT NULL,
+\tPRIMARY KEY (checkpoint_id, generation_id),
+\tFOREIGN KEY(checkpoint_id, market_id) REFERENCES aave_v3_projection_checkpoints (id, market_id),
+\tFOREIGN KEY(market_id, generation_id) REFERENCES aave_v3_generations (market_id, id)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_positions (
+\tcheckpoint_id INTEGER NOT NULL,
+\tposition TEXT NOT NULL,
+\tposition_id INTEGER NOT NULL,
+\tbalance VARCHAR(78) NOT NULL,
+\tlast_index VARCHAR(78),
+\tPRIMARY KEY (checkpoint_id, position, position_id),
+\tFOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+\tCHECK (position IN ('collateral', 'debt')),
+\tCHECK (length(balance) > 0 AND (last_index IS NULL OR length(last_index) > 0))
+);";
+
+/// The v5 → v6 step: the resolution state a checkpoint must carry beside the
+/// position/generation families - the reserve identities, the contract endpoints
+/// and revisions, the GHO row's link and discount columns, and the per-user
+/// discount state (ADR-105 D8, D9).
+///
+/// The same DDL is carried by [`SCHEMA_HEAD`], so a fresh standalone file and a
+/// migrated v5 file converge on one schema; the mirror is asserted in this
+/// module's tests.
+const PROJECTION_CHECKPOINT_RESUME_DDL: &str = "\
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_assets (
+\tcheckpoint_id INTEGER NOT NULL,
+\tasset_id INTEGER NOT NULL,
+\tunderlying_address VARCHAR(42) NOT NULL,
+\ta_token_address VARCHAR(42) NOT NULL,
+\tv_token_address VARCHAR(42) NOT NULL,
+\ta_token_revision INTEGER NOT NULL,
+\tv_token_revision INTEGER NOT NULL,
+\tPRIMARY KEY (checkpoint_id, asset_id),
+\tFOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+\tCHECK (length(underlying_address) > 0 AND length(a_token_address) > 0 AND length(v_token_address) > 0),
+\tCHECK (a_token_revision >= 0 AND v_token_revision >= 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_contracts (
+\tcheckpoint_id INTEGER NOT NULL,
+\tname TEXT NOT NULL,
+\taddress VARCHAR(42) NOT NULL,
+\trevision INTEGER,
+\tPRIMARY KEY (checkpoint_id, name),
+\tFOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+\tCHECK (length(name) > 0 AND length(address) > 0),
+\tCHECK (revision IS NULL OR revision >= 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_gho (
+\tcheckpoint_id INTEGER NOT NULL,
+\tgho_id INTEGER NOT NULL,
+\ttoken_id INTEGER NOT NULL,
+\tv_token_id INTEGER,
+\tgho_token_address VARCHAR(42) NOT NULL,
+\tv_token_address VARCHAR(42),
+\tdiscount_rate_strategy VARCHAR(42),
+\tdiscount_token VARCHAR(42),
+\tPRIMARY KEY (checkpoint_id),
+\tFOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+\tCHECK (length(gho_token_address) > 0),
+\tCHECK ((v_token_id IS NULL) = (v_token_address IS NULL)),
+\tCHECK (discount_rate_strategy IS NULL OR length(discount_rate_strategy) > 0),
+\tCHECK (discount_token IS NULL OR length(discount_token) > 0)
+);
+CREATE TABLE IF NOT EXISTS aave_v3_checkpoint_users (
+\tcheckpoint_id INTEGER NOT NULL,
+\tuser_id INTEGER NOT NULL,
+\taddress VARCHAR(42) NOT NULL,
+\tgho_discount INTEGER NOT NULL,
+\tstk_aave_balance VARCHAR(78),
+\tPRIMARY KEY (checkpoint_id, user_id),
+\tUNIQUE (checkpoint_id, address),
+\tFOREIGN KEY(checkpoint_id) REFERENCES aave_v3_projection_checkpoints (id),
+\tCHECK (length(address) > 0),
+\tCHECK (gho_discount >= 0),
+\tCHECK (stk_aave_balance IS NULL OR length(stk_aave_balance) > 0)
+);";
 /// The v3 → v4 step: the per-market Projection cursor, the canonical delta
 /// journal, the generation relationships, and the block/transaction identities
 /// they reference (ADR-105 D7, D8).
@@ -830,17 +957,116 @@ mod tests {
         };
         for name in [
             table::AAVE_V3_BLOCK_ANCHORS,
+            table::AAVE_V3_CHECKPOINT_ASSETS,
+            table::AAVE_V3_CHECKPOINT_CONTRACTS,
+            table::AAVE_V3_CHECKPOINT_GENERATIONS,
+            table::AAVE_V3_CHECKPOINT_GHO,
+            table::AAVE_V3_CHECKPOINT_POSITIONS,
+            table::AAVE_V3_CHECKPOINT_USERS,
             table::AAVE_V3_DELTA_JOURNAL,
             table::AAVE_V3_GENERATIONS,
+            table::AAVE_V3_PROJECTION_CHECKPOINTS,
             table::AAVE_V3_PROJECTION_CURSORS,
             table::AAVE_V3_TRANSACTION_ANCHORS,
         ] {
             assert_eq!(
                 sql_of(&migrated, name),
                 sql_of(&fresh, name),
-                "the v4 step and the schema head must declare {name} identically"
+                "the forward steps and the schema head must declare {name} identically"
             );
         }
+    }
+
+    /// A v4-stamped file has no checkpoint tables: drop the ones the head DDL
+    /// creates, so the v5 forward step is what puts them back.
+    fn v4_checkpointless_file(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        crate::migrate::ensure_schema(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE aave_v3_checkpoint_generations;
+             DROP TABLE aave_v3_checkpoint_positions;
+             DROP TABLE aave_v3_projection_checkpoints;",
+        )
+        .unwrap();
+        conn.execute_batch(&format!(
+            "DELETE FROM {SCHEMA_VERSION_TABLE}; INSERT INTO {SCHEMA_VERSION_TABLE} (schema_version) VALUES (4);"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn checkpoint_step_creates_the_tables_on_a_v4_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoints.db");
+        v4_checkpointless_file(&path);
+
+        let (conn, state) =
+            ensure_schema_at_open_with(&path, true, primed, RUST_MIGRATIONS, RUST_SCHEMA_VERSION)
+                .unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        for name in [
+            table::AAVE_V3_CHECKPOINT_ASSETS,
+            table::AAVE_V3_CHECKPOINT_CONTRACTS,
+            table::AAVE_V3_CHECKPOINT_GENERATIONS,
+            table::AAVE_V3_CHECKPOINT_GHO,
+            table::AAVE_V3_CHECKPOINT_POSITIONS,
+            table::AAVE_V3_CHECKPOINT_USERS,
+            table::AAVE_V3_PROJECTION_CHECKPOINTS,
+        ] {
+            assert!(table_exists(&conn, name).unwrap(), "{name} after v6");
+        }
+        drop(conn);
+        assert_eq!(stamp_in(&path), RUST_SCHEMA_VERSION);
+    }
+
+    /// A v5-stamped file carries the checkpoint family but not its resume state:
+    /// drop the v6 tables so the forward step is what puts them back.
+    fn v5_resumeless_file(path: &Path) {
+        let conn = Connection::open(path).unwrap();
+        crate::migrate::ensure_schema(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE aave_v3_checkpoint_assets;
+             DROP TABLE aave_v3_checkpoint_contracts;
+             DROP TABLE aave_v3_checkpoint_gho;
+             DROP TABLE aave_v3_checkpoint_users;",
+        )
+        .unwrap();
+        conn.execute_batch(&format!(
+            "DELETE FROM {SCHEMA_VERSION_TABLE}; INSERT INTO {SCHEMA_VERSION_TABLE} (schema_version) VALUES (5);"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn checkpoint_resume_step_creates_the_state_tables_on_a_v5_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.db");
+        v5_resumeless_file(&path);
+
+        let (conn, state) =
+            ensure_schema_at_open_with(&path, true, primed, RUST_MIGRATIONS, RUST_SCHEMA_VERSION)
+                .unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        for name in [
+            table::AAVE_V3_CHECKPOINT_ASSETS,
+            table::AAVE_V3_CHECKPOINT_CONTRACTS,
+            table::AAVE_V3_CHECKPOINT_GHO,
+            table::AAVE_V3_CHECKPOINT_USERS,
+        ] {
+            assert!(table_exists(&conn, name).unwrap(), "{name} after v6");
+        }
+        drop(conn);
+        assert_eq!(stamp_in(&path), RUST_SCHEMA_VERSION);
     }
 
     #[test]

@@ -1110,6 +1110,65 @@ impl ChunkSubstrate {
     ///
     /// The rows are the resolution's own read position — no probe is issued
     /// for a fact the prefetch already carries.
+    /// The reserve identities this resolution cache holds, in asset-id order —
+    /// the checkpoint's asset family (ADR-105 D8, D9). The prefetch loads every
+    /// market asset, so a chunk-boundary capture is complete.
+    pub(crate) fn capture_assets(&self) -> Vec<degenbot_db::CheckpointAsset> {
+        let mut assets: Vec<degenbot_db::CheckpointAsset> = self
+            .assets_by_id
+            .values()
+            .map(|asset| degenbot_db::CheckpointAsset {
+                asset_id: asset.id,
+                underlying_address: asset.underlying_token_address.clone(),
+                a_token_address: asset.a_token_address.clone(),
+                v_token_address: asset.v_token_address.clone(),
+                a_token_revision: asset.a_token_revision,
+                v_token_revision: asset.v_token_revision,
+            })
+            .collect();
+        assets.sort_by_key(|asset| asset.asset_id);
+        assets
+    }
+
+    /// The contract endpoints and revisions this resolution cache holds, in role
+    /// order — the checkpoint's endpoint family. The prefetch loads every market
+    /// contract role, so a chunk-boundary capture is complete.
+    pub(crate) fn capture_contracts(&self) -> Vec<degenbot_db::CheckpointContract> {
+        let mut contracts: Vec<degenbot_db::CheckpointContract> = self
+            .contract_addresses
+            .iter()
+            .map(
+                |((market_id, name), address)| degenbot_db::CheckpointContract {
+                    name: name.clone(),
+                    address: address.clone(),
+                    revision: self
+                        .contract_revisions
+                        .get(&(*market_id, name.clone()))
+                        .copied()
+                        .flatten(),
+                },
+            )
+            .collect();
+        contracts.sort_by(|left, right| left.name.cmp(&right.name));
+        contracts
+    }
+
+    /// The chain's GHO row as resolution read it, if the chain has one — the
+    /// checkpoint's GHO family. `None` covers both "no GHO row" and "not read
+    /// yet"; a unit boundary always has read it (the driver ensures the read
+    /// before it captures).
+    pub(crate) fn capture_gho(&self) -> Option<degenbot_db::CheckpointGho> {
+        self.gho.as_ref().map(|gho| degenbot_db::CheckpointGho {
+            gho_id: gho.id,
+            token_id: gho.token_id,
+            v_token_id: gho.v_token_id,
+            gho_token_address: gho.gho_token_address.clone(),
+            v_token_address: gho.v_token_address.clone(),
+            discount_rate_strategy: gho.v_gho_discount_rate_strategy.clone(),
+            discount_token: gho.v_gho_discount_token.clone(),
+        })
+    }
+
     pub(crate) fn observe_seed_generations(
         &self,
         view: &mut crate::projection::ProjectionView,

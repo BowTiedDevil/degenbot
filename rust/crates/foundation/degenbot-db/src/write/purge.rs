@@ -23,24 +23,29 @@
 //! Children first, so the purge is correct on a connection that enforces
 //! foreign keys as well as on this crate's default (unenforced) connections:
 //!
-//! 1. `aave_v3_projection_cursors` — references the market row, the journal,
+//! 1. `aave_v3_checkpoint_positions`, `aave_v3_checkpoint_generations`,
+//!    `aave_v3_checkpoint_assets`, `aave_v3_checkpoint_contracts`,
+//!    `aave_v3_checkpoint_gho`, and `aave_v3_checkpoint_users` — each references
+//!    its checkpoint.
+//! 2. `aave_v3_projection_checkpoints` — references the market row, the
+//!    journal, the chain identities, and the generation rows.
+//! 3. `aave_v3_projection_cursors` — references the market row, the journal,
 //!    and the chain identities.
-//! 2. `aave_v3_delta_journal` — references the market row, the chain
+//! 4. `aave_v3_delta_journal` — references the market row, the chain
 //!    identities, and the generation rows.
-//! 3. `aave_v3_generations` — references the market row and the chain
+//! 5. `aave_v3_generations` — references the market row and the chain
 //!    identities.
-//! 4. `aave_v3_collateral_positions` — references `aave_v3_users` and
+//! 6. `aave_v3_collateral_positions` — references `aave_v3_users` and
 //!    `aave_v3_assets`.
-//! 2. `aave_v3_debt_positions` — same two parents.
-//! 3. `aave_v3_user_collateral_configs` — same two parents.
-//! 4. `aave_v3_asset_configs` — references `aave_v3_assets`.
-//! 5. `aave_v3_users` — references `aave_v3_assets` through
-//!    `isolation_mode_collateral_asset_id`.
-//! 6. `aave_v3_assets` — references `aave_v3_emode_categories` through
-//!    `e_mode_category_id`.
-//! 7. `aave_v3_emode_categories` — references only the market row (kept).
-//! 8. `aave_v3_contracts` (minus the address provider) — references only the
-//!    market row (kept).
+//! 8. `aave_v3_user_collateral_configs` — same two parents.
+//! 9. `aave_v3_asset_configs` — references `aave_v3_assets`.
+//! 10. `aave_v3_users` — references `aave_v3_assets` through
+//!     `isolation_mode_collateral_asset_id`.
+//! 11. `aave_v3_assets` — references `aave_v3_emode_categories` through
+//!     `e_mode_category_id`.
+//! 12. `aave_v3_emode_categories` — references only the market row (kept).
+//! 13. `aave_v3_contracts` (minus the address provider) — references only the
+//!     market row (kept).
 //!
 //! The GHO token row is not deleted: `aave_gho_tokens` is keyed by the chain's
 //! GHO `erc20_tokens` row, not by market, so the purge clears its
@@ -63,6 +68,38 @@ const GHO_TABLE: &str = "aave_gho_tokens";
 /// The market-scoped relations the purge clears, in foreign-key-safe order,
 /// each with the predicate that selects its rows for `?1` = the market id.
 const PURGE_STEPS: &[PurgeStep] = &[
+    PurgeStep {
+        table: "aave_v3_checkpoint_positions",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints                     WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_generations",
+        predicate: "market_id = ?1",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_assets",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_contracts",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_gho",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_users",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_projection_checkpoints",
+        predicate: "market_id = ?1",
+    },
     PurgeStep {
         table: "aave_v3_projection_cursors",
         predicate: "market_id = ?1",

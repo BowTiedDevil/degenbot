@@ -30,9 +30,11 @@ pub use processors::{
     ScaledTokenMintResult, ScaledTokenProcessor,
 };
 pub use projection::{
-    journal_entries, journal_entry, market_projection, CanonicalDelta, ConfigurationEffect,
-    ContractRole, DeltaEffect, GenerationActivation, GenerationEntity, GenerationRef,
-    MarketProjection, PositionSubject, ProjectionError, ProjectionView, DELTA_ENCODING_VERSION,
+    checkpoint_due, classify_discount_prepass, journal_entries, journal_entry, market_projection,
+    CanonicalDelta, CheckpointState, ConfigurationEffect, ContractRole, DeltaEffect, DiscountPath,
+    DiscountPrepassInputs, GenerationActivation, GenerationEntity, GenerationRef, MarketProjection,
+    PositionSubject, ProjectionError, ProjectionView, CHECKPOINT_ENCODING_VERSION,
+    DELTA_ENCODING_VERSION,
 };
 pub use run::{
     activate_aave_market, activate_aave_market_on_conn, apply_aave_chunk_writes_on_conn,

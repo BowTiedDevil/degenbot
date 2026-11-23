@@ -98,9 +98,13 @@ const EXPECTED_APPLIED_EVENTS: usize = 20;
 /// zero-balance DELETEs, the multi-row asset UPDATE, and the end-of-chunk
 /// stamp) plus the projection unit's 12: the market-claim and cursor reads, the
 /// batched block and transaction identity upserts, the batched generation
-/// upsert, the batched journal INSERT, and the cursor INSERT. The journal cost
-/// is per DISTINCT identity, never per delta.
-const EXPECTED_LEDGER_STATEMENTS: usize = 64;
+/// upsert, the batched journal INSERT, and the cursor INSERT, plus the
+/// projection checkpoint's 11: the market's settled position read, the
+/// generation lineage upsert and lookup, the checkpoint row INSERT, the two
+/// batched state INSERTs, and the five resume-state reads/INSERTs (assets,
+/// contracts, GHO, users). The journal cost is per DISTINCT identity, never per
+/// delta, and the checkpoint cost is per market entity, never per delta.
+const EXPECTED_LEDGER_STATEMENTS: usize = 75;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
@@ -209,12 +213,15 @@ const DUMP_TABLES: &[&str] = &[
     "aave_gho_tokens",
     "aave_v3_asset_configs",
     "aave_v3_assets",
+    "aave_v3_checkpoint_generations",
+    "aave_v3_checkpoint_positions",
     "aave_v3_collateral_positions",
     "aave_v3_contracts",
     "aave_v3_debt_positions",
     "aave_v3_emode_categories",
     "aave_v3_generations",
     "aave_v3_markets",
+    "aave_v3_projection_checkpoints",
     "aave_v3_projection_cursors",
     "aave_v3_user_collateral_configs",
     "aave_v3_users",
@@ -554,6 +561,107 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
         after_restart.served - served.served,
         0,
         "the restart no-op must serve nothing"
+    );
+}
+
+/// The checkpoint a replayed chunk commits agrees with the exact cursor it
+/// commits, and the journal is complete whether or not a checkpoint was
+/// scheduled (ADR-105 D8, D9).
+///
+/// The checkpoint's cursor identity is not an argument the driver supplies: the
+/// unit writer derives it from the row it just wrote, so the two can only agree.
+/// This gate holds the driver to that, over the real corpus: the span's one unit
+/// journals every delta, advances the exact cursor to the span end, and
+/// checkpoints exactly that position.
+#[test]
+fn the_replayed_chunk_checkpoints_the_cursor_it_commits() {
+    let cassette = committed_cassette();
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "checkpoint.db");
+    run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed run must commit cleanly");
+
+    let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
+    let conn = db.lock();
+    let cursor = degenbot_db::read_projection_cursor_on_conn(&conn, market_id)
+        .expect("the cursor read")
+        .expect("the run committed an exact cursor");
+    let checkpoint = degenbot_db::read_latest_checkpoint_on_conn(&conn, market_id)
+        .expect("the checkpoint read")
+        .expect("the run's advancing unit checkpointed its cursor");
+
+    assert_eq!(checkpoint.journal_sequence, cursor.journal_sequence);
+    assert_eq!(
+        checkpoint.position, cursor.position,
+        "one cursor, one position"
+    );
+    assert_eq!(checkpoint.range_end_block, cursor.range_end_block);
+    assert_eq!(
+        checkpoint.encoding_version,
+        degenbot_aave::projection::CHECKPOINT_ENCODING_VERSION,
+        "the checkpoint states the payload version its vocabulary owns"
+    );
+
+    let journal = degenbot_db::read_journal_on_conn(&conn, market_id).expect("the journal read");
+    assert_eq!(
+        i64::try_from(journal.len()).unwrap(),
+        cursor.journal_sequence,
+        "the journal is complete on its own: it needs no checkpoint to be whole"
+    );
+    assert_eq!(
+        journal[usize::try_from(cursor.journal_sequence).unwrap() - 1].position,
+        checkpoint.position
+    );
+    assert!(
+        !checkpoint.generations.is_empty(),
+        "the checkpoint states the generations the projection read under"
+    );
+
+    let settled: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM aave_v3_collateral_positions p \
+                     JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ?1) \
+                  + (SELECT COUNT(*) FROM aave_v3_debt_positions p \
+                     JOIN aave_v3_users u ON u.id = p.user_id WHERE u.market_id = ?1)",
+            rusqlite::params![market_id],
+            |row| row.get(0),
+        )
+        .expect("the settled position count");
+    assert_eq!(
+        i64::try_from(
+            checkpoint
+                .positions
+                .iter()
+                .filter(|state| !state.balance.is_zero())
+                .count()
+        )
+        .unwrap(),
+        settled,
+        "every settled position row of the market travels in the checkpoint"
+    );
+    assert!(
+        checkpoint
+            .positions
+            .iter()
+            .any(|state| state.balance.is_zero()),
+        "the view's settled-zero positions travel too: the chunk cleanup deleted their rows          and a retained delta may move them again"
     );
 }
 
