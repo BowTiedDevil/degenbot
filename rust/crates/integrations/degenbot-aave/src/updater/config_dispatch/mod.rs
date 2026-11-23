@@ -21,7 +21,7 @@
 //! earlier event's write — surface-table row 6
 //! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)). The VIEW advance is
 //! the caller's: configuration and operation deltas advance the projection in
-//! canonical event order (`process_transaction`).
+//! canonical event order (`OperationReducer::reduce_transaction`).
 //!
 //! The resolvers live in the child modules, one seam each:
 //! - `context`: the per-chunk dispatch context (`ChunkContext` + the
@@ -183,7 +183,7 @@ fn fixture_tx(block_number: u64) -> degenbot_core::canonical_head::TxRef {
 /// [`decode_aave_log`], + for the 10 enum-covered config event types,
 /// resolve ids + emit [`ConfigurationEffect`] variants. Non-config events
 /// (Supply/Borrow/Mint/Burn/Transfer — the Operation events
-/// `process_transaction` handles) are skipped. The six upgrade-transition
+/// `OperationReducer::reduce_transaction` handles) are skipped. The six upgrade-transition
 /// events (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
 /// `PoolDataProviderUpdated`/`AddressSet`/`ProxyCreated`) all route through
 /// [`resolve_missing_variant_event`]: the upgrade-transition resolvers

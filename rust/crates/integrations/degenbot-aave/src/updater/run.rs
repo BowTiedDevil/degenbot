@@ -451,7 +451,7 @@ pub struct RunSpec {
 /// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
 /// 3. Resolve OUTSIDE the chunk's write transaction: for each tx group,
 ///    re-resolve the GHO vToken revision, read the pre-block discount facts,
-///    dispatch the configuration events, and run `process_transaction`,
+///    dispatch the configuration events, and run `reduce_transaction`,
 ///    reducing each event into a canonical delta and advancing the projection
 ///    view in canonical event order (so tx N+1 reads what tx N wrote). Every
 ///    read is hash-pinned to the position it observes.

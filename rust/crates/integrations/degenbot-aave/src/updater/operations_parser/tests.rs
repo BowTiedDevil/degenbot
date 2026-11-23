@@ -2402,6 +2402,7 @@ fn mint_to_treasury_collateral_mint_event(
 /// `dispatch_mint_to_treasury` re-ray_div it, shrinking by `idx/RAY`
 /// (= the -8.04e12 residual on the treasury WETH position).
 #[test]
+#[expect(clippy::too_many_lines)] // one assertion per double-conversion artifact
 fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     let db = fresh_db_with_mint_to_treasury_asset();
     let conn = db.lock();
@@ -2507,17 +2508,26 @@ fn mint_to_treasury_dp3_does_not_pre_scale_then_dispatch_single_converts() {
     )
     .unwrap();
     let mut view = crate::projection::ProjectionView::new();
-    let mut out = crate::transaction_processor::DeltaSink::new(tx, &mut view);
-    crate::transaction_processor::dispatch_mint_to_treasury(
-        &op,
-        1, // market_id
-        &mut out,
-        &mut crate::updater::run::seed::ChunkSeed::for_tests_users(&conn, 1, 1, &[treasury])
-            .into_substrate(),
-    )
-    .unwrap();
-    assert_eq!(out.deltas().len(), 1);
-    match out.deltas()[0].effect() {
+    let mut substrate =
+        crate::updater::run::seed::ChunkSeed::for_tests_users(&conn, 1, 1, &[treasury])
+            .into_substrate();
+    let discounts = HashMap::new();
+    let mut reducer = crate::transaction_processor::OperationReducer::new(
+        crate::transaction_processor::MarketIdentity {
+            market_id: 1,
+            chain_id: 1,
+            pool_address: Address::ZERO,
+            gho_token_address: None,
+            gho_vtoken_address: None,
+        },
+        tx,
+        &discounts,
+        &mut substrate,
+        &mut view,
+    );
+    reducer.dispatch_mint_to_treasury(&op).unwrap();
+    assert_eq!(reducer.deltas().len(), 1);
+    match reducer.deltas()[0].effect() {
         crate::projection::DeltaEffect::ScaledBalance { balance_delta, .. } => {
             assert_eq!(
                 *balance_delta,

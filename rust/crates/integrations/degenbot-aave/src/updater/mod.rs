@@ -46,5 +46,5 @@ pub use run::{
     CanonicalDeltaWriteReport, ChunkWriteReport, EvidenceAcquisitionError, MarketResetFacts,
     NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
-pub use transaction_processor::{process_transaction, ProcessTxError};
+pub use transaction_processor::ProcessTxError;
 pub use verify::VerificationEvidenceError;

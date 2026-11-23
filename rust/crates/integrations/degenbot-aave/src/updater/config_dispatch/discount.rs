@@ -64,7 +64,7 @@ pub(super) fn dispatch_discount_percent_updated(
 /// Scoping:
 /// - Returns `None` if the emitter is NOT `gho_asset.v_gho_discount_token` —
 ///   aToken/vToken/scaled-token Transfers are handled by the ops path
-///   (`process_transaction`); only the stkAAVE discount token is this fn's
+///   (`OperationReducer::reduce_transaction`); only the stkAAVE discount token is this fn's
 ///   scope (matches the Python `assert contract_address == discount_token`).
 ///
 /// A zero-leg `Transfer` is a half-event: the `ZERO_ADDRESS` side is skipped
@@ -235,7 +235,7 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 // ── the discount pre-pass (the 3-way hybrid) ───────────────────────────────
 
 /// Build the per-tx GHO discount snapshot — the `HashMap<Address, U256>` that
-/// `process_transaction` consumes as the `discounts` parameter: scan the
+/// `OperationReducer::reduce_transaction` consumes as the `discounts` field: scan the
 /// tx's GHO
 /// vToken Mint/Burn events, + for each user, resolve the START discount (the
 /// value in effect at tx start, BEFORE any `DISCOUNT_PERCENT_UPDATED` in this

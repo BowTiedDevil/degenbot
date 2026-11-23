@@ -763,7 +763,7 @@ impl DegenbotDb {
     /// The caller resolves `chain_id` from `fetch_aave_market_row(market_id)`.
     ///
     /// The resolved `gho_token_address` + `v_token_address` are what the
-    /// orchestrator passes to `process_transaction` as `gho_token_address` /
+    /// orchestrator passes to `OperationReducer` as the GHO identity's token /
     /// `gho_vtoken_address` + what `run_aave_update` uses as the discount-token
     /// filter (`v_gho_discount_token` is the stkAAVE address).
     ///

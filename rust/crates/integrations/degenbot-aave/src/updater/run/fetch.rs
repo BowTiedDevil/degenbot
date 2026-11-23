@@ -152,7 +152,7 @@ pub(super) async fn bootstrap_pool_contracts(
 ///
 /// Returns `(spec, gho_asset)` — the `gho_asset` is the chain's GHO token row
 /// (`None` for non-GHO markets); the orchestrator passes it to the discount
-/// pre-pass + `process_transaction`.
+/// pre-pass + `OperationReducer::reduce_transaction`.
 pub(super) fn build_fetch_spec(
     db: &DegenbotDb,
     market_id: i64,

@@ -28,8 +28,7 @@ use super::substrate::ChunkSubstrate;
 use super::{ConfigDispatchError, RunError};
 use crate::config_dispatch::{ChunkContext, ChunkSpan, ParentAnchors, RevisionMemo};
 use crate::projection::{CanonicalDelta, DeltaEffect, ProjectionView};
-use crate::transaction_processor::process_transaction;
-use crate::transaction_processor::ProcessTxError;
+use crate::transaction_processor::{MarketIdentity, OperationReducer, ProcessTxError};
 
 /// The per-chunk resolution owner: the read memos the chunk's exact reads
 /// share, plus the two stages that run before and around the seed.
@@ -119,18 +118,21 @@ impl ChunkResolver {
             let discounts = dispatch.discounts;
             let config_deltas = dispatch.deltas;
             chunk_deltas.extend(config_deltas.iter().cloned());
-            let deltas = process_transaction(
+            let identity = MarketIdentity {
                 market_id,
                 chain_id,
-                ctx.pool_address(),
-                dispatch.gho_underlying_address,
-                dispatch.gho_vtoken_address,
-                &candidate.evidence,
+                pool_address: ctx.pool_address(),
+                gho_token_address: dispatch.gho_underlying_address,
+                gho_vtoken_address: dispatch.gho_vtoken_address,
+            };
+            let deltas = OperationReducer::new(
+                identity,
+                *candidate.evidence.tx(),
                 &discounts,
                 ctx.substrate_mut(),
                 &mut view,
-                &config_deltas,
             )
+            .reduce_transaction(&candidate.evidence, &config_deltas)
             .map_err(|error| {
                 #[expect(clippy::print_stderr)]
                 {
