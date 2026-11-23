@@ -235,7 +235,6 @@ pub mod db {
     #[pymodule_export]
     use super::snapshot::PyDatabaseSnapshot;
 
-    // Read seams (token-id resolution + graph edition).
     #[pymodule_export]
     use super::read_seams::{
         db_fetch_graph_edition, db_resolve_native_token_ids, db_resolve_token_ids,

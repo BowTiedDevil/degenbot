@@ -741,8 +741,8 @@ fn build_owned_finder(
             .collect()
     });
 
-    // Build the graph + create a lazy iterator. The graph is pruned and
-    // node-valid-depths are computed inside OwnedPathFinder::new.
+    // The graph is pruned and node-valid-depths are computed inside
+    // OwnedPathFinder::new.
     let mut graph = degenbot_pathfinding::graph::PathGraph::from_edges(rust_edges);
     graph.prune_dead_ends();
 
@@ -1054,7 +1054,6 @@ impl PathIterator {
             return Ok(None);
         };
         let start = self.buffer.len() - len;
-        // Resolve indices → shared cached (pool_id, kind_u8) tuples.
         let list = PyList::empty(py);
         for i in start..self.buffer.len() {
             let idx = self.buffer[i];
@@ -1218,9 +1217,8 @@ impl PathBatchIterator {
                 ));
             }
 
-            // Build the batch under the GIL (indices -> shared cached
-            // `(pool_id, kind_u8)` tuples; tuples are immutable, so sharing
-            // one per pool is semantics-preserving).
+            // Tuples are immutable, so sharing one per pool is
+            // semantics-preserving.
             let finder = &taken.finder;
             let buffer = &mut taken.buffer;
             let batch_lens = &mut taken.batch_lens;

@@ -175,7 +175,6 @@ where
         // `target = "log"` and the original log target in the `log.target`
         // field — resolve the real target transparently.
         let logger_name = if meta.target() == "log" {
-            // Extract the original log target from the event's fields.
             extract_log_target(event).unwrap_or_else(|| "log".to_string())
         } else {
             meta.target().to_string()
@@ -296,8 +295,6 @@ pub(crate) fn read_failure_policy_overrides(
     }
 }
 
-/// Extract the original `log::` target from a `LogTracer`-bridged event.
-///
 /// When `tracing_log::LogTracer` bridges a `log::` record, the tracing event
 /// has `target = "log"` and the original log target is stored in the
 /// `log.target` field; this visitor returns it if found.
@@ -405,7 +402,6 @@ fn drainer_loop(state: Arc<PythonLogLayerState>) {
             last_flush = Instant::now();
         }
 
-        // Check shutdown: if the flag is set, flush remaining and exit.
         if state.shutdown.load(Ordering::Acquire) {
             if !batch.is_empty() {
                 flush_batch_to_python(&batch);
@@ -701,10 +697,8 @@ where
 pub fn init_logging_subscriber() {
     let () = INIT_DONE.get_or_init(|| {
 
-        // Build the Python-forwarding layer.
         let python_layer = PythonLogLayer::new();
 
-        // Store the state reference for `shutdown_log_drainer`.
         let state = Arc::clone(&python_layer.state);
         let _ = GLOBAL_LAYER_STATE.set(state);
 
@@ -712,10 +706,10 @@ pub fn init_logging_subscriber() {
         // any log:: calls during subscriber setup are captured.
         let _ = tracing_log::LogTracer::init();
 
-        // Build the subscriber registry. `EnvFilter` controls which events
-        // each layer receives; ADR-043 §4 resolves it from the typed telemetry
-        // config, with an explicit `RUST_LOG` winning verbatim on every sink
-        // (the config knobs are then ignored, with one WARN).
+        // `EnvFilter` controls which events each layer receives; ADR-043 §4
+        // resolves it from the typed telemetry config, with an explicit
+        // `RUST_LOG` winning verbatim on every sink (the config knobs are
+        // then ignored, with one WARN).
         #[cfg(feature = "otel")]
         let (console_filter, record_filter) = (console_env_filter(), record_env_filter());
         #[cfg(not(feature = "otel"))]

@@ -22,7 +22,6 @@ impl PyContract {
     #[new]
     #[pyo3(signature = (address, provider_url=None))]
     fn new(py: Python<'_>, address: &str, provider_url: Option<String>) -> PyResult<Self> {
-        // Default provider URL if not provided
         let url = provider_url.unwrap_or_else(|| "http://localhost:8545".to_string());
         let address = address.to_string();
 

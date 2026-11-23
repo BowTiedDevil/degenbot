@@ -50,7 +50,6 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
 fn extract_i256(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
     let py = obj.py();
     if obj.is_instance(&pyo3::types::PyInt::type_object(py))? {
-        // Get 32-byte signed representation directly
         let kwargs = pyo3::types::PyDict::new(py);
         kwargs.set_item("signed", true)?;
         let bytes_obj = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;

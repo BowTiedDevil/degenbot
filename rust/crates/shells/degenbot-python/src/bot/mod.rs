@@ -2298,7 +2298,7 @@ impl PyBot {
             }
         };
 
-        // The CREATE2 verify (Fork A), deployer/init-hash resolution, and the
+        // The CREATE2 verify, deployer/init-hash resolution, and the
         // write-lock acquisition live inside the door's V3 request interior.
         // The seed fetcher is wrapped here (GIL held) — a Python callback
         // cannot cross into the core closure — and the remaining params are

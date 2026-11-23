@@ -544,8 +544,8 @@ impl InlineSimulator for InlineSimHook {
             // re-enters it inside the spawned task so `degenbot.simulate.inline`
             // joins the block trace instead of forking an orphan root.
             // The same capture is ALSO the seam span the sim body
-            // reuses (see `simulate_path_on_evm_in_span`) — the seam no longer
-            // opens a second same-named span under `degenbot.simulate.inline`.
+            // reuses (see `simulate_path_on_evm_in_span`), so exactly one
+            // `degenbot.simulate.inline` span is opened.
             let sim_task_parent = tracing::Span::current();
             let seam_span = tracing::Span::current();
             let sim_future = async move {

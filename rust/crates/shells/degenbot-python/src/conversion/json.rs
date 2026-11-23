@@ -132,17 +132,14 @@ mod tests {
     #[test]
     fn test_python_int_to_json() {
         pyo3::Python::attach(|py| {
-            // Small positive
             let small = pyo3::types::PyInt::new(py, 42);
             let json = python_to_json(&small).unwrap();
             assert_eq!(json, serde_json::json!(42));
 
-            // Small negative
             let neg = pyo3::types::PyInt::new(py, -100);
             let json = python_to_json(&neg).unwrap();
             assert_eq!(json, serde_json::json!(-100));
 
-            // Large positive (doesn't fit i64)
             let large = pyo3::types::PyInt::new(py, i128::from(u64::MAX) + 1);
             let json = python_to_json(&large).unwrap();
             assert!(json.is_string());

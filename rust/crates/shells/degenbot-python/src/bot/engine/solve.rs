@@ -367,7 +367,6 @@ impl PyArbEngine {
             )));
         };
 
-        // Convert the snapshot to a Python dict via JSON round-trip.
         let json = serde_json::to_string(&snapshot).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "diagnostic_inspect_path: serialization failed: {e}"

@@ -1145,12 +1145,9 @@ impl PyLiquidityPool {
         }
     }
 
-    // --- Identity getters ---
-    // These read the shared `BotState` under a read guard, including the
-    // immutable per-pool identity slices (ADR-005): token0/token1, factory,
-    // fees, and address come off the registered identity slice (+ the
-    // registration descriptor) so the Python companion's `from_handle` can
-    // be self-describing — the Polars `_from_pydf` end state.
+    // These getters read the shared `BotState` under a read guard, off the
+    // registered identity slice, so the Python companion's `from_handle` can
+    // be self-describing.
 
     /// Pool contract address (EIP-55 checksummed hex). Empty string when the
     /// registered family has no address field; raises if the id is not
@@ -1407,15 +1404,10 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- Token-recovery getters (ADR-005 identity slice) ---
-    // Recover token handles for the pool's token0/token1 from the SAME shared
-    // BotState (ADR-006: one Bot per chain owns all assets). The companion
-    // wraps these via `Erc20Token.from_handle` so the `from_handle(py_pool)`
-    // seam needs no token args — the Polars `_from_pydf` end state.
-    //
-    // Returns `None` when the registered family has no token field, or when
-    // the token address is not registered in the shared BotState token
-    // registry.
+    // Token-recovery getters read the SAME shared BotState (ADR-006: one Bot
+    // per chain owns all assets). The companion wraps these via
+    // `Erc20Token.from_handle`, so the `from_handle(py_pool)` seam needs no
+    // token args.
 
     /// Token0 companion handle: `Erc20Token`, or `NativeToken` for V4's
     /// zero-address currency. `None` when the registered family has no token

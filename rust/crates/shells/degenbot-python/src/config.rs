@@ -147,12 +147,6 @@ impl StrategyReadinessView {
     }
 }
 
-// =============================================================================
-// Driver-domain resolution (ADR-062 D7/D10): thin readers of the layers the
-// boot load published, so the Python driver resolves a value through the same
-// cascade as the console instead of owning a second config model.
-// =============================================================================
-
 /// The layers behind the installed typed config: the standard operator file
 /// the loader selected over the process environment, plus the per-key and
 /// per-entry provenance the driver-domain resolvers tag a winner with.
@@ -719,14 +713,6 @@ fn settlement_broadcast_endpoints_in(
 pub fn resolved_config(py: ::pyo3::Python<'_>) -> PyResult<::pyo3::Py<ResolvedConfig>> {
     ::pyo3::Py::new(py, ResolvedConfig::installed())
 }
-
-// =============================================================================
-// Hypothetical resolution (ADR-013 private seam): a pure function of a
-// captured environment and an operator file. It installs NOTHING and is
-// reachable only from the raw FFI, never from `degenbot.config`, so a caller
-// that asks HOW the cascade resolves an input cannot be reading the answer
-// this process happened to install.
-// =============================================================================
 
 /// The layered load a hypothetical resolution reads: the captured environment
 /// (never the process environment) over the named file (or the standard file

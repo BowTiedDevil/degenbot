@@ -29,9 +29,8 @@ static INIT_LOGGING: OnceLock<()> = OnceLock::new();
 
 fn ensure_logging_setup() {
     INIT_LOGGING.get_or_init(|| {
-        // Initialize the Rust tracing subscriber (Python-forwarding layer).
-        // This is normally called from `#[pymodule]`, but in a standalone
-        // test we must call it explicitly. Idempotent.
+        // Normally called from `#[pymodule]`; a standalone test calls it
+        // explicitly. Idempotent.
         python_log_layer::init_logging_subscriber();
 
         // Python logging must be configured before Rust emits. We configure

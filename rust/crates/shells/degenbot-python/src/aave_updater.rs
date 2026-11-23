@@ -296,7 +296,6 @@ fn verify_touched_positions_on_chain(
     use degenbot_db::DegenbotDb;
 
     let path = PathBuf::from(database_path);
-    // Parse the optional touched_users filter into Addresses.
     let touched: Option<Vec<alloy::primitives::Address>> =
         touched_users.map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
 
@@ -341,7 +340,6 @@ fn verify_touched_positions_on_chain(
         })
         .map_err(run_err_to_py)?;
 
-    // Build the divergence dicts.
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(divergences.len());
     for d in divergences {
         let dict = PyDict::new(py);

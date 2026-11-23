@@ -54,7 +54,6 @@ impl PyArbEngine {
             let profit_py =
                 crate::conversion::alloy::PyU256(solve_result.profit).into_pyobject(py)?;
 
-            // Build hop_outputs as a Python list
             let hop_outputs_py = PyList::empty(py);
             for hop_out in &solve_result.hop_outputs {
                 let hop_py = crate::conversion::alloy::PyU256(*hop_out).into_pyobject(py)?;
@@ -62,7 +61,6 @@ impl PyArbEngine {
             }
             let hop_tuple = hop_outputs_py.into_pyobject(py)?;
 
-            // Build consumed_inputs as a Python list
             let consumed_inputs_py = PyList::empty(py);
             for consumed in &solve_result.consumed_inputs {
                 let consumed_py = crate::conversion::alloy::PyU256(*consumed).into_pyobject(py)?;
