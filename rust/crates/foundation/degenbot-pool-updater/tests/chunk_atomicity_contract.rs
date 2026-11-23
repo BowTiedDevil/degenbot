@@ -242,10 +242,10 @@ fn chunk_interrupt_rolls_back_and_restart_is_clean() {
     // ============================================================
     let new_pool_addr = Address::from([0x44; 20]);
     let inputs_chunk2 = chunk_inputs_with_v3_pool(spec.id, new_pool_addr);
-    // The driver refreshes each spec's in-memory marker from the DB between
-    // chunks (`load_active_exchange_specs`); the optimistic stamp's WHERE
-    // clause carries that refreshed marker (Perf A's structural check). The
-    // stale pre-chunk marker here is exactly what `MarkerMoved` guards.
+    // The driver advances each spec's in-memory marker from the committed
+    // chunk's `stamped_last_update_block`; the optimistic stamp's WHERE clause
+    // carries that marker. The stale pre-chunk marker here is exactly what
+    // `MarkerMoved` guards.
     let mut refreshed_spec = spec.clone();
     refreshed_spec.last_update_block = Some(i64::try_from(BLOCK_B).unwrap());
     let specs_chunk2 = [refreshed_spec];

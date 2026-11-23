@@ -122,9 +122,10 @@ const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The optimistic stamp's retry budget: how many times one run may drop a
 /// chunk because its assumed `last_update_block` marker moved under it
-/// (`RunError::MarkerMoved`) before the run surfaces the error. Under the
-/// bot's single-writer discipline this is unreachable; the bound is the
-/// loud-failure backstop.
+/// (`RunError::MarkerMoved`) before the run surfaces the error. A retry
+/// re-reads the exchange specs and re-plans the SAME chunk from the markers the
+/// DB holds, without advancing the cursor. Under the bot's single-writer
+/// discipline this is unreachable; the bound is the loud-failure backstop.
 const MARKER_RETRY_CAP: usize = 4;
 
 // ── progress reporting ─────────────────────────────────────────────────
@@ -1210,6 +1211,23 @@ pub fn run_pool_update(
     )
 }
 
+/// The active specs still holding unprocessed blocks at or below `last_block`.
+///
+/// The driver re-reads this from the DB on a [`RunError::MarkerMoved`] retry:
+/// the persisted stamps — not the dropped attempt's in-memory snapshot — are the
+/// plan's authority, so the re-attempt's per-exchange fetch starts
+/// ([`in_scope_fetch_start`]) come from the markers that actually moved.
+fn unprocessed_specs(specs: &[ExchangeSpec], last_block: u64) -> Vec<ExchangeSpec> {
+    specs
+        .iter()
+        .filter(|s| {
+            s.last_update_block
+                .is_none_or(|b| u64::try_from(b).unwrap_or(0) < last_block)
+        })
+        .cloned()
+        .collect()
+}
+
 /// Pre-opened-handle variant of [`run_pool_update`] — behaviorally identical
 /// (same chunk loop, same PRAGMA/open contract minus the open itself). The
 /// statement-ledger golden machinery ([`degenbot_db::sql_ledger::LedgerDb`],
@@ -1292,14 +1310,7 @@ pub fn run_pool_update_on_db(
     // `initial_start_block` = the minimum `last_update_block + 1` across the
     // active specs (the earliest block any exchange still needs). Exchanges
     // whose `last_update_block` is already at/`> to_block` are excluded.
-    let mut specs_to_update: Vec<ExchangeSpec> = specs
-        .iter()
-        .filter(|s| {
-            s.last_update_block
-                .is_none_or(|b| u64::try_from(b).unwrap_or(0) < last_block)
-        })
-        .cloned()
-        .collect();
+    let mut specs_to_update = unprocessed_specs(&specs, last_block);
     if specs_to_update.is_empty() {
         return Ok(UpdateReport {
             chain_id,
@@ -1626,9 +1637,10 @@ pub fn run_pool_update_on_db(
                     // The assumed marker moved under the chunk (structural:
                     // single-writer means this is unreachable in production;
                     // the check exists so the invariant is not merely argued).
-                    // Drop the tx (rollback - nothing staged survives) and
-                    // re-plan the chunk with refreshed specs. Bounded so a
-                    // pathological flip cannot spin the loop.
+                    // Drop the tx (rollback - nothing staged survives), re-read
+                    // the specs, and re-run the SAME chunk: the re-attempt's
+                    // per-exchange fetch starts come from the markers the DB
+                    // holds, not from the dropped attempt's snapshot.
                     drop(tx);
                     chunk_lock_hold_time = lock_hold_started.elapsed();
                     if let Some(t) = degenbot_core::updater_telemetry::updaters() {
@@ -1652,6 +1664,12 @@ pub fn run_pool_update_on_db(
                         });
                         return Err(RunError::MarkerMoved { exchange_id });
                     }
+                    // The refresh SELECT runs with the chunk's write lock
+                    // released, and the cursor stays put: the loop re-plans
+                    // from `working_start_block`.
+                    drop(guard);
+                    specs_to_update =
+                        unprocessed_specs(&load_active_exchange_specs(db, chain_id)?, last_block);
                     continue;
                 }
                 Err(e) => {
@@ -2359,5 +2377,330 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM liquidity_positions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 0, "the fully-drained chunk-new pool holds no rows");
+    }
+
+    /// The chain these driver-level marker-move tests advance.
+    const TEST_CHAIN: i64 = 84_532;
+
+    /// Every `eth_getLogs` the stub answered: `(scoped, fromBlock)`, where
+    /// `scoped` marks the per-exchange creation fetch (the request carrying a
+    /// factory `address` filter) as opposed to the whole-chain V3 scan.
+    type ServedLogs = Arc<std::sync::Mutex<Vec<(bool, u64)>>>;
+
+    /// A JSON-RPC stub serving empty `eth_getLogs` answers, with `on_logs` run
+    /// on every answered request — the hook between the driver's in-memory
+    /// marker snapshot and its optimistic stamp, where a concurrent writer moves
+    /// the marker.
+    ///
+    /// The provider's default caching layer answers a repeated identical filter
+    /// locally, so only a RE-PLANNED range reaches the wire: a retry that keeps
+    /// its stale specs issues no second creation fetch. The retry tests read
+    /// exactly that.
+    struct MarkerMoveNode {
+        url: String,
+        shutdown: Arc<AtomicBool>,
+        served: ServedLogs,
+    }
+
+    impl MarkerMoveNode {
+        fn spawn(on_logs: Box<dyn Fn(bool, u64) + Send + Sync>) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            listener.set_nonblocking(true).unwrap();
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let served: ServedLogs = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let flag = Arc::clone(&shutdown);
+            let served_thread = Arc::clone(&served);
+            let on_logs = Arc::from(on_logs);
+            std::thread::spawn(move || {
+                while !flag.load(Ordering::Acquire) {
+                    match listener.accept() {
+                        Ok((mut stream, _peer)) => {
+                            let _ = answer_rpc(&mut stream, &served_thread, &*on_logs);
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self {
+                url,
+                shutdown,
+                served,
+            }
+        }
+
+        fn served(&self) -> Vec<(bool, u64)> {
+            self.served.lock().unwrap().clone()
+        }
+
+        fn creation_fetch_starts(&self) -> Vec<u64> {
+            self.served()
+                .into_iter()
+                .filter(|(scoped, _)| *scoped)
+                .map(|(_, from_block)| from_block)
+                .collect()
+        }
+    }
+
+    impl Drop for MarkerMoveNode {
+        fn drop(&mut self) {
+            self.shutdown.store(true, Ordering::Release);
+        }
+    }
+
+    fn answer_rpc(
+        stream: &mut std::net::TcpStream,
+        served: &ServedLogs,
+        on_logs: &(dyn Fn(bool, u64) + Send + Sync),
+    ) -> std::io::Result<()> {
+        use std::io::{Read, Write};
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let n = stream.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(());
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        while buf.len() < header_end + content_length {
+            let n = stream.read(&mut chunk)?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        let request: serde_json::Value =
+            serde_json::from_slice(&buf[header_end..]).unwrap_or(serde_json::Value::Null);
+        let id = request["id"].clone();
+        let response = match request["method"].as_str().unwrap_or_default() {
+            "eth_getLogs" => {
+                let filter = &request["params"][0];
+                let scoped = filter.get("address").is_some();
+                let from_block = filter
+                    .get("fromBlock")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+                    .unwrap_or_default();
+                served.lock().unwrap().push((scoped, from_block));
+                on_logs(scoped, from_block);
+                serde_json::json!({"jsonrpc": "2.0", "id": id, "result": []})
+            }
+            "eth_chainId" => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": format!("0x{TEST_CHAIN:x}"),
+            }),
+            _ => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": "method not found"},
+            }),
+        };
+        let body = response.to_string();
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes())?;
+        stream.write_all(body.as_bytes())?;
+        stream.flush()
+    }
+
+    /// A temp DB with one ACTIVE `uniswap_v3` exchange, never stamped.
+    fn seed_active_v3(path: &Path) {
+        let (db, _state) = DegenbotDb::open_for_writes(path).unwrap();
+        let exchange = db
+            .upsert_exchange(TEST_CHAIN, "uniswap_v3", Address::repeat_byte(0xf1), None)
+            .unwrap();
+        db.set_exchange_active(exchange.id, true).unwrap();
+    }
+
+    /// The persisted marker — the value a refreshed spec reads.
+    fn persisted_marker(path: &Path) -> Option<i64> {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.query_row(
+            "SELECT last_update_block FROM exchanges WHERE chain_id = ?1 AND active = 1",
+            [TEST_CHAIN],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    /// Move the marker from OUTSIDE the driver's handle — the concurrent-writer
+    /// shape the optimistic stamp's check exists for.
+    fn move_marker(path: &Path, to: i64) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.busy_timeout(Duration::from_secs(5)).unwrap();
+        conn.execute(
+            "UPDATE exchanges SET last_update_block = ?1 WHERE chain_id = ?2 AND active = 1",
+            rusqlite::params![to, TEST_CHAIN],
+        )
+        .unwrap();
+    }
+
+    /// Drive `run_pool_update` over the stub node's injected transport.
+    fn drive(
+        path: &Path,
+        node: &MarkerMoveNode,
+        to_block: u64,
+        chunk_size: u64,
+        progress: Arc<dyn ProgressSink>,
+    ) -> Result<UpdateReport, RunError> {
+        let provider = degenbot_core::runtime::get_runtime()
+            .block_on(AlloyProvider::new(&node.url, 5))
+            .unwrap();
+        run_pool_update(
+            path,
+            TEST_CHAIN,
+            Some(to_block),
+            chunk_size,
+            10_000,
+            provider,
+            Arc::new(AtomicBool::new(false)),
+            progress,
+            None,
+            false,
+        )
+    }
+
+    /// The chunks the run reported as committed, by boundary.
+    #[derive(Default)]
+    struct RecordedChunks(std::sync::Mutex<Vec<ChunkProgress>>);
+
+    impl ProgressSink for RecordedChunks {
+        fn report_chunk(&self, progress: &ChunkProgress) {
+            self.0.lock().unwrap().push(*progress);
+        }
+    }
+
+    impl RecordedChunks {
+        fn committed(&self) -> Vec<(u64, u64)> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|p| p.committed)
+                .map(|p| (p.chunk_start, p.chunk_end))
+                .collect()
+        }
+    }
+
+    /// A `MarkerMoved` retry plans from the DB's markers, not from the dropped
+    /// attempt's snapshot: the re-attempt re-reads the exchange specs, so its
+    /// per-exchange fetch start comes from the moved marker and the chunk
+    /// commits instead of failing the same way until the run dies.
+    #[test]
+    fn marker_moved_retry_reloads_specs_before_replanning() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("marker_move_retry.db");
+        seed_active_v3(&path);
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let node = MarkerMoveNode::spawn({
+            let path = path.clone();
+            Box::new(move |scoped, _from_block| {
+                if scoped && attempts.fetch_add(1, Ordering::AcqRel) == 0 {
+                    move_marker(&path, 5);
+                }
+            })
+        });
+
+        let report = drive(&path, &node, 10, 10, Arc::new(NoProgress)).unwrap();
+        assert_eq!(
+            report.chunks_committed, 1,
+            "the retried attempt commits the chunk"
+        );
+        assert_eq!(
+            persisted_marker(&path),
+            Some(10),
+            "the retried chunk stamps the chunk end"
+        );
+        assert_eq!(
+            node.creation_fetch_starts(),
+            vec![1, 6],
+            "the re-attempt plans from the DB's marker (5 + 1 = 6), not the stale snapshot's 1",
+        );
+    }
+
+    /// A marker that keeps moving exhausts the run-wide retry budget and
+    /// surfaces the loud `MarkerMoved` backstop instead of spinning.
+    #[test]
+    fn marker_move_budget_exhaustion_surfaces_marker_moved() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("marker_move_budget.db");
+        seed_active_v3(&path);
+        let node = MarkerMoveNode::spawn({
+            let path = path.clone();
+            Box::new(move |scoped, _from_block| {
+                if scoped {
+                    // Every attempt refreshes to the marker its fetch then
+                    // moves, so each retry re-plans a range the cache has not
+                    // seen and the marker keeps slipping under the stamp.
+                    let next = persisted_marker(&path).map_or(5, |marker| marker + 1);
+                    move_marker(&path, next);
+                }
+            })
+        });
+
+        let err = drive(&path, &node, 10, 10, Arc::new(NoProgress)).unwrap_err();
+        assert!(
+            matches!(err, RunError::MarkerMoved { .. }),
+            "a persistently moved marker surfaces the loud backstop, got: {err:?}",
+        );
+        assert_eq!(
+            node.creation_fetch_starts(),
+            vec![1, 6, 7, 8, 9],
+            "one re-planned attempt per retry, then the budget (MARKER_RETRY_CAP) halts the run",
+        );
+        assert_ne!(
+            persisted_marker(&path),
+            Some(10),
+            "the rolled-back chunk never advanced the stamp",
+        );
+    }
+
+    /// The retried chunk keeps the cursor: a marker move re-runs the SAME block
+    /// range, so no block is skipped and the stamp lands on the chunk end.
+    #[test]
+    fn marker_moved_retry_does_not_advance_the_chunk_cursor() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("marker_move_cursor.db");
+        seed_active_v3(&path);
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let node = MarkerMoveNode::spawn({
+            let path = path.clone();
+            Box::new(move |scoped, _from_block| {
+                if scoped && attempts.fetch_add(1, Ordering::AcqRel) == 0 {
+                    move_marker(&path, 5);
+                }
+            })
+        });
+        let sink = Arc::new(RecordedChunks::default());
+
+        let report = drive(&path, &node, 20, 10, sink.clone()).unwrap();
+        assert_eq!(report.chunks_committed, 2);
+        assert_eq!(
+            sink.committed(),
+            vec![(1, 10), (11, 20)],
+            "the retried chunk re-runs 1..=10 before the cursor advances to 11",
+        );
+        assert_eq!(persisted_marker(&path), Some(20));
     }
 }

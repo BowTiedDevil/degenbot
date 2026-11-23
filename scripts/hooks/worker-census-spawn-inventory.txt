@@ -136,6 +136,7 @@ rust/crates/engine/degenbot-bot/src/bot_core/verify_claims.rs:blocking_caller_sh
 rust/crates/engine/degenbot-bot/src/hosted_sources.rs:counting_listener
 rust/crates/engine/degenbot-strategy/src/backrun_driver/tests.rs:ipc_node
 rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs:recording_ipc_node
+rust/crates/foundation/degenbot-pool-updater/src/run.rs:spawn
 rust/crates/foundation/degenbot-rpc/src/provider.rs:spawn_429_node
 rust/crates/foundation/degenbot-rpc/src/provider.rs:spawn_slow_first_node
 rust/crates/foundation/degenbot-rpc/src/subscription/tests.rs:a_publication_cannot_be_displaced_by_a_concurrent_transition
