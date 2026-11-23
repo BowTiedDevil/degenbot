@@ -43,6 +43,11 @@ BOOTSTRAP_BLOCK = 1000
 # The fixture events live at this block (one chunk, one event).
 FIXTURE_BLOCK = 1001
 
+# The block identity every canned log carries: the mock RPC serves this hash as
+# the terminal header's own hash, so a resolved anchor and the logs it fences
+# name one block (ADR-105 D1).
+DEFAULT_BLOCK_HASH = "0x" + (b"bk" + b"\x00" * 30).hex()
+
 
 def _hex(n: int) -> str:
     """Encode a non-negative int as a JSON-RPC hex string (`0x...`)."""
@@ -75,7 +80,6 @@ def _make_log(
     (the fetch spec groups logs by `transactionHash`).
     """
     tx_hash = tx_hash or "0x" + (b"tx" + b"\x00" * 30).hex()
-    block_hash = "0x" + (b"bk" + b"\x00" * 30).hex()
     return {
         "address": address,
         "topics": topics,
@@ -84,7 +88,7 @@ def _make_log(
         "logIndex": _hex(log_index),
         "transactionIndex": _hex(log_index),
         "transactionHash": tx_hash,
-        "blockHash": block_hash,
+        "blockHash": DEFAULT_BLOCK_HASH,
         "removed": False,
     }
 

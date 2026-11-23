@@ -38,14 +38,19 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use alloy::primitives::B256;
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveChunkProgress, NoProgress, ProgressSink, RunSpec,
-    VerifyPolicy,
+    run_aave_update, run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, NoProgress,
+    ProgressSink, RunError, RunSpec, VerifyPolicy,
 };
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
-use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
-use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::cassette::{
+    entry_digest, entry_key, verify_cassette_bytes, Cassette, CassetteEntry, CassetteResponse,
+};
+use degenbot_rpc::cassette_replay::{CassetteReplayTransport, ServedSnapshot};
+use degenbot_rpc::chain_evidence::{ChainEvidenceError, HeaderRefusal, ProjectionRefusal};
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 /// The committed golden capture (machine-emitted, drift-gated).
@@ -96,19 +101,20 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 52;
 
 /// Independent literal: the exact number of ledger entries the replayed
 /// chunk serves from the cassette per run - the RPC round-trip count of the
-/// chunk's fetch surface (the recorded getLogs passes; this span dispatches
-/// no config events and no GHO-discount path, so no `eth_call`, and the run
-/// resolves its tip from the pin, so no `eth_chainId`/`eth_blockNumber` -
-/// those recorded entries belong to the recorder's own run shape). The RPC counter
-/// drift gate: an added or removed fetch pass (batching, a new pass, a
-/// re-fetch) changes this and fails the plain `cargo test` run.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 6;
+/// chunk's fetch surface: the recorded getLogs passes (this span dispatches no
+/// config events and no GHO-discount path, so no `eth_call`), plus the terminal
+/// anchor the run resolves before it fetches anything (the endpoint's
+/// `eth_chainId` and the terminal block's header; a pinned run never asks
+/// `eth_blockNumber`). The RPC counter drift gate: an added or removed fetch
+/// pass (batching, a new pass, a re-fetch, an anchor read) changes this and
+/// fails the plain `cargo test` run.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 8;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 28274;
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 56439;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
@@ -516,4 +522,230 @@ fn aave_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     let dump_json = dump_tables_golden_json(&conn, DUMP_TABLES).expect("dump the touched tables");
     drop(conn);
     check_or_regen("db dump", &dump_json, DUMP_GOLDEN_PATH);
+}
+
+// ── the run's terminal anchor (ADR-105 D1/D2) ──────────────────────────────
+//
+// Both arms of the run's terminal selection — the chain tip and an explicit
+// to_block — resolve ONE exact ChainAnchor through the same acquisition
+// interface the live node serves, and the anchor is carried into the chunk
+// rather than discarded back to a number. The recorded captures are the corpus
+// itself: only the evidence under test is rewritten.
+
+/// One recorded answer in the recorder's canonical form, digested the way the
+/// recorder writes it.
+fn recorded_entry(result: Value) -> CassetteEntry {
+    let response = CassetteResponse::Success { result };
+    CassetteEntry {
+        digest: entry_digest(&response),
+        response,
+    }
+}
+
+fn header_key(number: u64) -> String {
+    entry_key(
+        "eth_getBlockByNumber",
+        &json!([format!("0x{number:x}"), false]),
+    )
+}
+
+fn chain_key() -> String {
+    entry_key("eth_chainId", &Value::Null)
+}
+
+fn head_key() -> String {
+    entry_key("eth_blockNumber", &Value::Null)
+}
+
+/// The committed capture with its recorded head number rewritten to the pinned
+/// span end, so the tip arm resolves the same terminal height the pin names.
+fn tip_pinned_cassette() -> Cassette {
+    let mut cassette = committed_cassette();
+    cassette.entries.insert(
+        head_key(),
+        recorded_entry(Value::String(SPAN_TO.to_string())),
+    );
+    cassette
+}
+
+/// The terminal anchor the committed capture recorded, read back through the
+/// cassette's own header evidence.
+fn recorded_terminal_anchor() -> degenbot_core::canonical_head::ChainAnchor {
+    committed_cassette()
+        .recorded_headers()
+        .expect("the committed capture carries its recorded headers")
+        .into_iter()
+        .find(|anchor| anchor.number() == SPAN_TO)
+        .expect("the capture records the block its span closes on")
+}
+
+/// Run one replayed chunk over a cassette, returning the run's outcome and the
+/// transport's serving stats.
+fn run_recorded(
+    cassette: &Cassette,
+    to_block: Option<u64>,
+) -> (Result<AaveUpdateReport, RunError>, ServedSnapshot) {
+    let transport = CassetteReplayTransport::new(cassette.clone());
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "terminal.db");
+    let result = run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block,
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider: transport.as_alloy_provider(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(NoProgress),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    );
+    (result, transport.served_snapshot())
+}
+
+#[test]
+fn tip_and_explicit_runs_resolve_the_same_terminal_anchor() {
+    let pinned = recorded_terminal_anchor();
+    let (explicit, explicit_served) = run_recorded(&committed_cassette(), Some(SPAN_TO));
+    let explicit = explicit.expect("the pinned replay must commit");
+    let (tip, tip_served) = run_recorded(&tip_pinned_cassette(), None);
+    let tip = tip.expect("the tip replay must commit");
+
+    assert_eq!(
+        explicit.terminal,
+        Some(pinned),
+        "the pinned run states the anchor its terminal header names"
+    );
+    assert_eq!(
+        tip.terminal, explicit.terminal,
+        "the tip arm resolves through the SAME terminal path as a pin"
+    );
+    assert_eq!(explicit.to_block, SPAN_TO);
+    assert_eq!(tip.to_block, explicit.to_block);
+    assert_eq!(explicit.total_events_applied, EXPECTED_APPLIED_EVENTS);
+    assert_eq!(
+        tip.total_events_applied, explicit.total_events_applied,
+        "the anchor did not change what the chunk applied"
+    );
+
+    let header_reads = |served: &ServedSnapshot| {
+        served
+            .per_method
+            .get("eth_getBlockByNumber")
+            .map(|method| method.served)
+    };
+    assert_eq!(header_reads(&explicit_served), Some(1));
+    assert_eq!(header_reads(&tip_served), Some(1));
+    assert!(
+        !explicit_served.per_method.contains_key("eth_blockNumber"),
+        "a pinned run never asks the chain for its tip"
+    );
+    assert_eq!(
+        tip_served
+            .per_method
+            .get("eth_blockNumber")
+            .map(|method| method.served),
+        Some(1),
+        "the tip arm resolves its height from the node's head"
+    );
+}
+
+#[test]
+fn a_missing_terminal_header_refuses_before_any_chunk_work() {
+    let mut cassette = committed_cassette();
+    cassette.entries.remove(&header_key(SPAN_TO));
+
+    let (result, served) = run_recorded(&cassette, Some(SPAN_TO));
+
+    let error = result.expect_err("a terminal with no recorded header cannot anchor the run");
+    assert!(
+        matches!(error, RunError::TerminalAnchor(_)),
+        "the refusal is the terminal-anchor class, got {error:?}"
+    );
+    assert!(
+        !served.per_method.contains_key("eth_getLogs"),
+        "no chunk was fetched: the run refused before chunk processing"
+    );
+}
+
+#[test]
+fn a_recorded_null_terminal_header_is_a_typed_missing_header() {
+    let mut cassette = committed_cassette();
+    cassette
+        .entries
+        .insert(header_key(SPAN_TO), recorded_entry(Value::Null));
+
+    let (result, served) = run_recorded(&cassette, Some(SPAN_TO));
+
+    let error = result.expect_err("a node with no complete header names no terminal");
+    assert!(
+        matches!(
+            error,
+            RunError::TerminalAnchor(ChainEvidenceError::Header(HeaderRefusal::MissingHeader {
+                number: SPAN_TO
+            }))
+        ),
+        "a null header is a typed missing-header refusal, got {error:?}"
+    );
+    assert!(!served.per_method.contains_key("eth_getLogs"));
+}
+
+#[test]
+fn a_cross_chain_terminal_header_refuses_before_any_chunk_work() {
+    let mut cassette = committed_cassette();
+    cassette
+        .entries
+        .insert(chain_key(), recorded_entry(json!("0x2")));
+
+    let (result, served) = run_recorded(&cassette, Some(SPAN_TO));
+
+    let error = result.expect_err("a terminal block on another chain is not this market's");
+    assert!(
+        matches!(
+            error,
+            RunError::TerminalAnchor(ChainEvidenceError::CrossChainTerminal {
+                number: SPAN_TO,
+                expected: 1,
+                served: 2,
+            })
+        ),
+        "a cross-chain terminal is a typed refusal, got {error:?}"
+    );
+    assert!(!served.per_method.contains_key("eth_getLogs"));
+}
+
+#[test]
+fn a_same_height_substitution_after_resolution_refuses_the_chunk() {
+    let recorded = recorded_terminal_anchor();
+    let mut cassette = committed_cassette();
+    cassette.entries.insert(
+        header_key(SPAN_TO),
+        recorded_entry(json!({
+            "number": format!("{SPAN_TO}"),
+            "hash": format!("{}", B256::repeat_byte(0xb0)),
+            "parentHash": format!("{}", recorded.parent_hash()),
+        })),
+    );
+
+    let (result, served) = run_recorded(&cassette, Some(SPAN_TO));
+
+    let error = result.expect_err("a same-height substitution cannot pass as the anchor's block");
+    assert!(
+        matches!(
+            error,
+            RunError::TerminalEvidence(ProjectionRefusal::LogBranchMismatch {
+                number: SPAN_TO,
+                ..
+            })
+        ),
+        "the anchored height's logs refuse the substituted block, got {error:?}"
+    );
+    assert!(
+        served.per_method.contains_key("eth_getLogs"),
+        "the chunk was fetched and then refused before its transaction"
+    );
 }

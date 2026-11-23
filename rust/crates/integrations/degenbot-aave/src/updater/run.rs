@@ -37,11 +37,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
+use alloy::rpc::types::Log;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::op_info;
 use degenbot_core::runtime::get_runtime;
 use degenbot_core::updater_telemetry::{UpdaterKind, UpdaterStage};
 use degenbot_db::{DbError, DegenbotDb};
+use degenbot_rpc::chain_evidence::{
+    place_logs_at, resolve_terminal_anchor, ChainEvidenceError, ProjectionRefusal,
+};
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::{Connection, Transaction};
 
@@ -162,6 +167,25 @@ impl ProgressSink for NoProgress {
     fn report_chunk(&self, _progress: &AaveChunkProgress) {}
 }
 
+/// Refuse a chunk whose terminal-height logs were emitted in another block than
+/// the run's resolved terminal anchor.
+///
+/// The anchor is the range's CLOSING evidence (ADR-105 D1/D2): resolution named a
+/// block, and a log at that height carrying another block's hash means the height
+/// was re-resolved to a same-height branch between the two reads. Logs below the
+/// terminal height belong to the chunk's own range rather than to the anchor, so
+/// only the terminal height is fenced here.
+fn guard_terminal_evidence(terminal: ChainAnchor, logs: &[Log]) -> Result<(), RunError> {
+    let at_terminal: Vec<Log> = logs
+        .iter()
+        .filter(|log| log.block_number == Some(terminal.number()))
+        .cloned()
+        .collect();
+    place_logs_at(terminal, at_terminal)
+        .map(|_placed| ())
+        .map_err(RunError::TerminalEvidence)
+}
+
 /// The percentage (0–100) of the run's block span covered through `chunk_end`.
 /// The denominator is the run's actual range (`from_block..=last_block`), so
 /// the estimate is meaningful even when the run starts well below the chain
@@ -189,6 +213,11 @@ pub struct AaveUpdateReport {
     pub from_block: u64,
     /// The last block the run advanced `last_update_block` to.
     pub to_block: u64,
+    /// The exact anchor the run's terminal block resolved to. `None` when the
+    /// run had nothing to do (a caught-up market stays a pure no-op: it selects
+    /// a range end and stops), and on the `Default` shape; any run that fetches
+    /// resolves its terminal anchor first and states it here.
+    pub terminal: Option<ChainAnchor>,
     /// Total chunks committed.
     pub chunks_committed: usize,
     /// Total `AaveChunkEvent`s written across all chunks.
@@ -241,6 +270,17 @@ pub enum RunError {
         chunk_end: u64,
         divergences: Vec<crate::verify::VerificationDivergence>,
     },
+    /// The run's terminal block never became an exact anchor: a missing header,
+    /// a cross-chain endpoint, or a failed header read. Refused before any chunk
+    /// is fetched, so no cursor can move on a block the run cannot name.
+    #[error("terminal anchor unresolved: {0}")]
+    TerminalAnchor(#[from] ChainEvidenceError),
+    /// The final chunk's terminal-height evidence disagreed with the anchor the
+    /// run resolved: the height was re-resolved to another branch between
+    /// resolution and fetch (a same-height substitution). The chunk is refused
+    /// before its transaction opens.
+    #[error("terminal block evidence disagreed with the resolved anchor: {0}")]
+    TerminalEvidence(#[from] ProjectionRefusal),
 }
 
 /// The run's pre-commit verification policy — the core twin of the CLI's
@@ -602,15 +642,19 @@ async fn run_aave_update_driver(
     // `--chunk` commit granularity.
     let fetcher = LogFetcher::new(provider.clone(), max_block_range);
 
-    // Resolve the chain tip if `to_block` is None.
+    // The range's END is selected first and stays a number for exactly that:
+    // a run with nothing left to do must cost no evidence read (the restart
+    // invariant's RPC face). The height is not carried anywhere — the moment
+    // there IS work, it resolves to ONE exact anchor through the resolver both
+    // arms share, and that anchor travels into chunk acquisition (ADR-105 D1).
     let last_block = match to_block {
-        Some(n) => n,
+        Some(bound) => bound,
         None => provider.get_block_number().await?,
     };
 
     let from_block = u64::try_from(last_update_block).unwrap_or(0) + 1;
     if from_block > last_block {
-        // Already up to date — nothing to do.
+        // Already up to date — nothing to do, and nothing to anchor.
         return Ok(AaveUpdateReport {
             chain_id,
             market_id,
@@ -619,6 +663,18 @@ async fn run_aave_update_driver(
             ..Default::default()
         });
     }
+
+    // Both arms (the tip's selected height and the caller's own bound) resolve
+    // through ONE path: the endpoint's chain and one header read. The anchor is
+    // carried into the chunk loop, where the final chunk's terminal-height logs
+    // are fenced by it — a same-height substitution between resolution and fetch
+    // is a refusal rather than a chunk accepted on a height alone.
+    let terminal_chain = u64::try_from(chain_id).map_err(|_| {
+        RunError::Provider(ProviderError::InvalidParams {
+            message: format!("chain id {chain_id} is not a chain identifier"),
+        })
+    })?;
+    let terminal = resolve_terminal_anchor(&provider, terminal_chain, Some(last_block)).await?;
 
     // Cold-boot bootstrap. On a fresh market `activate` seeds only
     // `POOL_ADDRESS_PROVIDER`; `build_fetch_spec` below hard-errors if `POOL`/
@@ -648,6 +704,7 @@ async fn run_aave_update_driver(
         market_id,
         from_block,
         to_block: last_block,
+        terminal: Some(terminal),
         ..Default::default()
     };
 
@@ -851,6 +908,9 @@ async fn run_aave_update_driver(
                     .await?;
             chunk_fetch_time += fetch_started.elapsed();
             merge_chunk_log_extension(&mut logs, extra);
+        }
+        if chunk_end == last_block {
+            guard_terminal_evidence(terminal, &logs)?;
         }
         if logs.iter().any(is_endpoint_replacement_event) {
             endpoints_dirty = true;

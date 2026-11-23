@@ -444,7 +444,8 @@ mod tests {
         CassetteSpan, CASSETTE_SCHEMA_V1,
     };
     use crate::provider::{LogFetcher, LogFilter};
-    use alloy::primitives::B256;
+    use alloy::primitives::{Address, Bytes, B256};
+    use degenbot_core::canonical_head::ChainAnchor;
     use degenbot_core::errors::ProviderError;
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -719,6 +720,283 @@ mod tests {
         assert_eq!(
             block["hash"],
             "0xa1a5bb3c37fd83e481030db0443928109d1eef21539f3f5fbdfdaa985e980c55"
+        );
+    }
+
+    // ── recorded header + exact-read evidence (the acquisition interface) ─
+    //
+    // Live and recorded operation share ONE acquisition surface: the header
+    // chain and hash-pinned read views take an AlloyProvider, so a cassette
+    // transport answers them exactly as a node does. These cases are the
+    // recorded half of that seam.
+
+    fn success_entry(result: Value) -> CassetteEntry {
+        let response = CassetteResponse::Success { result };
+        CassetteEntry {
+            digest: entry_digest(&response),
+            response,
+        }
+    }
+
+    fn failure_entry(code: i64, message: &str) -> CassetteEntry {
+        let response = CassetteResponse::Failure {
+            error: json!({ "code": code, "message": message }),
+        };
+        CassetteEntry {
+            digest: entry_digest(&response),
+            response,
+        }
+    }
+
+    fn cassette_over(span: (u64, u64), entries: Vec<(String, CassetteEntry)>) -> Cassette {
+        Cassette {
+            schema: CASSETTE_SCHEMA_V1.to_string(),
+            chain_id: 1,
+            provenance: CassetteProvenance {
+                source: "recorded-node/1.0".to_string(),
+                recorded_at: "1970-01-01T00:00:00Z".to_string(),
+                span: CassetteSpan {
+                    from_block: span.0,
+                    to_block: span.1,
+                },
+            },
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    /// The recorded chain-id read: alloy sends NO params, so the canonical
+    /// ledger key carries a JSON null in the params position.
+    fn chain_entry() -> (String, CassetteEntry) {
+        (
+            entry_key("eth_chainId", &Value::Null),
+            success_entry(json!("0x1")),
+        )
+    }
+
+    /// A recorded header in the cassette's CANONICAL form: the recorder
+    /// decimalizes the wire quantities, so a height is a decimal string here.
+    fn header_record(number: u64, hash_tag: u8, parent_tag: u8) -> Value {
+        json!({
+            "number": format!("{number}"),
+            "hash": format!("{}", B256::new([hash_tag; 32])),
+            "parentHash": format!("{}", B256::new([parent_tag; 32])),
+        })
+    }
+
+    fn header_entry(number: u64, hash_tag: u8, parent_tag: u8) -> (String, CassetteEntry) {
+        (
+            entry_key(
+                "eth_getBlockByNumber",
+                &json!([format!("0x{number:x}"), false]),
+            ),
+            success_entry(header_record(number, hash_tag, parent_tag)),
+        )
+    }
+
+    fn header_cassette(span: (u64, u64), headers: &[(u64, u8, u8)]) -> Cassette {
+        let mut entries = vec![chain_entry()];
+        for (number, hash_tag, parent_tag) in headers {
+            entries.push(header_entry(*number, *hash_tag, *parent_tag));
+        }
+        cassette_over(span, entries)
+    }
+
+    #[tokio::test]
+    async fn a_recorded_header_chain_replays_offline_through_the_acquisition_interface() {
+        let transport = CassetteReplayTransport::new(header_cassette(
+            (100, 102),
+            &[(100, 0xa1, 0xa0), (101, 0xa2, 0xa1), (102, 0xa3, 0xa2)],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let chain = crate::chain_evidence::acquire_header_chain(&provider, 100, 102)
+            .await
+            .expect("the ledger answers every header of the range");
+
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain.from_block(), 100);
+        assert_eq!(chain.terminal().number(), 102);
+        assert_eq!(chain.terminal().hash(), B256::new([0xa3; 32]));
+        assert_eq!(chain.terminal().parent_hash(), B256::new([0xa2; 32]));
+        let served = transport.served_snapshot();
+        assert_eq!(
+            served.requests, served.served,
+            "every header read is a recorded entry — a fixture gap is loud"
+        );
+        assert_eq!(
+            served.served, 6,
+            "one chain read + one header read per block: an UNBOUND provider re-reads its chain id \
+             per lineage read, and a bound one pays none"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_log_range_replays_over_its_complete_header_evidence() {
+        let empty_logs = (
+            entry_key(
+                "eth_getLogs",
+                &json!([{ "fromBlock": "0x64", "toBlock": "0x66", "topics": [] }]),
+            ),
+            success_entry(json!([])),
+        );
+        let mut cassette = header_cassette(
+            (100, 102),
+            &[(100, 0xa1, 0xa0), (101, 0xa2, 0xa1), (102, 0xa3, 0xa2)],
+        );
+        cassette.entries.insert(empty_logs.0, empty_logs.1);
+        let transport = CassetteReplayTransport::new(cassette);
+        let provider = transport.as_alloy_provider();
+        let fetcher = LogFetcher::new(Arc::new(provider.clone()), 1_000);
+        let filter = LogFilter::new(100, 102, None, None).expect("a valid fixture filter");
+
+        let unit = crate::chain_evidence::ProjectionRange::acquire(&provider, &fetcher, &filter)
+            .await
+            .expect("a replayed range with no matching logs is still a complete unit");
+
+        assert!(unit.logs().is_empty());
+        assert_eq!(unit.span(), 100..=102);
+        assert_eq!(unit.headers().len(), 3, "every block of the range is named");
+        assert_eq!(
+            transport.served_snapshot().served,
+            7,
+            "one header per block (each with its chain read) and one logs answer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_header_that_names_no_parent_refuses_the_replayed_range() {
+        let mut cassette = header_cassette((100, 102), &[(100, 0xa1, 0xa0)]);
+        cassette.entries.insert(
+            entry_key("eth_getBlockByNumber", &json!(["0x65", false])),
+            success_entry(json!({
+                "number": "101",
+                "hash": format!("{}", B256::new([0xa2; 32])),
+            })),
+        );
+        let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+
+        let refusal = crate::chain_evidence::acquire_header_chain(&provider, 100, 101)
+            .await
+            .expect_err("a header that names no parent names no lineage");
+
+        assert!(
+            matches!(
+                refusal,
+                crate::chain_evidence::ChainEvidenceError::Header(
+                    crate::chain_evidence::HeaderRefusal::MissingHeader { number: 101 }
+                )
+            ),
+            "got {refusal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_broken_parent_link_refuses_the_replayed_range() {
+        // The cassette is canonical and its digests are intact: the recorded
+        // evidence itself disagrees, which is what acquisition must refuse.
+        let provider = CassetteReplayTransport::new(header_cassette(
+            (100, 101),
+            &[(100, 0xa1, 0xa0), (101, 0xa2, 0xb0)],
+        ))
+        .as_alloy_provider();
+
+        let refusal = crate::chain_evidence::acquire_header_chain(&provider, 100, 101)
+            .await
+            .expect_err("a child naming another parent is a different branch");
+
+        assert!(
+            matches!(
+                refusal,
+                crate::chain_evidence::ChainEvidenceError::Header(
+                    crate::chain_evidence::HeaderRefusal::BrokenParentLink { number: 101, .. }
+                )
+            ),
+            "got {refusal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_exact_read_replays_at_its_pinned_block_hash() {
+        let pinned = ChainAnchor::new(1, 100, B256::new([0xa1; 32]), B256::new([0xa0; 32]))
+            .expect("a complete fixture anchor");
+        let to = Address::repeat_byte(0x11);
+        let data = Bytes::from(vec![0xde, 0xad]);
+        let params = json!([
+            { "to": format!("{to}"), "data": format!("{data}") },
+            {
+                "blockHash": format!("{}", pinned.hash()),
+                "requireCanonical": true
+            }
+        ]);
+        let key = entry_key("eth_call", &params);
+        assert!(
+            key.contains("blockHash") && key.contains("requireCanonical"),
+            "the recorded request shape is the hash-pinned identifier: {key}"
+        );
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (100, 100),
+            vec![(key, success_entry(json!("0x1234")))],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let answer = crate::chain_evidence::BlockReads::at(&provider, pinned)
+            .call(to, data)
+            .await
+            .expect("the ledger answers the hash-pinned read");
+
+        assert_eq!(answer, Bytes::from(vec![0x12, 0x34]));
+        let served = transport.served_snapshot();
+        assert_eq!(served.served, 1, "one exact read, served from the ledger");
+        assert_eq!(
+            served.requests, 1,
+            "an exact read is never retried as a number-tagged read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_unsupported_exact_read_is_a_typed_capability_failure() {
+        let pinned = ChainAnchor::new(1, 100, B256::new([0xa1; 32]), B256::new([0xa0; 32]))
+            .expect("a complete fixture anchor");
+        let to = Address::repeat_byte(0x11);
+        let params = json!([
+            { "to": format!("{to}"), "data": "0x" },
+            {
+                "blockHash": format!("{}", pinned.hash()),
+                "requireCanonical": true
+            }
+        ]);
+        let key = entry_key("eth_call", &params);
+        let transport = CassetteReplayTransport::new(cassette_over(
+            (100, 100),
+            vec![(
+                key,
+                failure_entry(
+                    -32_601,
+                    "the method eth_call does not support a block hash identifier",
+                ),
+            )],
+        ));
+        let provider = transport.as_alloy_provider();
+
+        let error = crate::chain_evidence::BlockReads::at(&provider, pinned)
+            .call(to, Bytes::new())
+            .await
+            .expect_err("a recorded missing capability cannot serve an exact read");
+
+        assert!(
+            matches!(
+                error,
+                crate::chain_evidence::ExactReadError::Unsupported {
+                    method: "eth_call",
+                    ..
+                }
+            ),
+            "a recorded capability refusal is a typed node-evidence failure: {error:?}"
+        );
+        assert_eq!(
+            transport.served_snapshot().requests,
+            1,
+            "the capability verdict never degrades to a number-only read"
         );
     }
 

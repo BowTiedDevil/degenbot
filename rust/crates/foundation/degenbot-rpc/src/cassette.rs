@@ -41,6 +41,11 @@
 //! The pipeline that writes a capture ([`RecordingTransport`] flushed through
 //! [`Cassette::canonical_bytes`]) is the same pipeline the gate runs.
 //!
+//! A capture's `eth_getBlockByNumber` answers are chain evidence rather than
+//! payload: a recorded run resolves its blocks through exactly the reads a live
+//! run does, and [`Cassette::recorded_headers`] reads them back as the linked
+//! [`ChainAnchor`] chain the capture proves (ADR-105 D1/D2).
+//!
 //! The recorder that drives it is the non-publishable fixture tool
 //! `record_updater_cassette` in `degenbot-fixture-tools`
 //! (`rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs`); it needs
@@ -50,6 +55,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use alloy::primitives::B256;
 use alloy::providers::{Provider, RootProvider};
 use alloy::pubsub::PubSubConnect as _;
 use alloy::rpc::client::RpcClient;
@@ -62,6 +68,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::provider::AlloyProvider;
+use degenbot_core::canonical_head::ChainAnchor;
 
 /// The schema marker written into every v1 cassette.
 pub const CASSETTE_SCHEMA_V1: &str = "degenbot.cassette/v1";
@@ -95,6 +102,83 @@ pub struct CassetteProvenance {
     pub recorded_at: String,
     /// The pinned block span the capture covers.
     pub span: CassetteSpan,
+}
+
+/// Why a cassette's recorded header evidence is not usable as chain evidence.
+///
+/// Header evidence is the block identities a recorded run resolved, so it has to
+/// be MORE than parseable bytes: a header outside the capture's own span, a
+/// header that names no parent, or two headers that name different branches are
+/// all ways a capture stops being evidence of the span it claims.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HeaderEvidenceError {
+    /// A ledger entry key is not the `[method, params]` pair the recorder
+    /// writes, so the cassette cannot be read as evidence at all.
+    #[error("cassette ledger key {0} is not a recorded request")]
+    MalformedEntry(String),
+    /// The recorded header read names no block height (a tag such as `latest`):
+    /// a height-addressed capture cannot state which block it pinned.
+    #[error("cassette records a header read for {0}, which names no block height")]
+    HeaderWithoutHeight(String),
+    /// The recorded answer is not a complete header: a failure answer, a null
+    /// block, or a header naming no block hash or parent.
+    #[error("the cassette's recorded header at block {number} is not a complete header")]
+    IncompleteHeader {
+        /// The height the recorded request named.
+        number: u64,
+    },
+    /// The recorded header's own `number` disagrees with the request that
+    /// recorded it.
+    #[error("the cassette's header for block {number} states block {served}")]
+    HeaderNumberMismatch {
+        /// The height the recorded request named.
+        number: u64,
+        /// The height the recorded answer states.
+        served: u64,
+    },
+    /// The recorded header names a block outside the capture's pinned span.
+    #[error("the cassette records a header at block {number}, outside its span {from}-{to}")]
+    HeaderOutsideSpan {
+        /// The height the recorded answer names.
+        number: u64,
+        /// The capture's first height.
+        from: u64,
+        /// The capture's last height.
+        to: u64,
+    },
+    /// Two recorded headers at consecutive heights name different branches.
+    #[error(
+        "the cassette's header at block {number} names parent {actual}, but the recorded block \
+         before it hashes to {expected}"
+    )]
+    BrokenParentLink {
+        /// The child's height.
+        number: u64,
+        /// The preceding recorded header's own hash.
+        expected: B256,
+        /// The parent hash the child names.
+        actual: B256,
+    },
+    /// Two recorded header reads name ONE height with different blocks: a
+    /// same-height substitution recorded into the ledger, where which block the
+    /// capture names would depend on which request shape a run issued.
+    #[error("the cassette records two different blocks at height {number}: {first} and {second}")]
+    SameHeightSubstitution {
+        /// The height both recorded blocks claim.
+        number: u64,
+        /// The first recorded block's hash.
+        first: B256,
+        /// The competing recorded block's hash.
+        second: B256,
+    },
+    /// Two recorded header reads name ONE height with the same block: no
+    /// substitution, but a capture that answers a height twice states no single
+    /// record of it.
+    #[error("the cassette records block {number} twice, so it states no single record of it")]
+    DuplicateHeaderHeight {
+        /// The height both recorded reads name.
+        number: u64,
+    },
 }
 
 /// A pinned block span (inclusive on both ends).
@@ -181,12 +265,103 @@ impl Cassette {
     pub fn canonical_bytes(&self) -> serde_json::Result<Vec<u8>> {
         serde_json::to_vec_pretty(self)
     }
+
+    /// The exact anchors this capture's recorded header reads state, ascending
+    /// by height — the block identities a recorded run resolved (ADR-105 D1/D2).
+    ///
+    /// The ledger is the one source: every `eth_getBlockByNumber` entry is read
+    /// back as a header answer, its height comes from the request that produced
+    /// it, and consecutive records must name one branch. A capture that recorded
+    /// no header read has no header evidence (an empty list) — that is a capture
+    /// which resolved no block identity, not a broken one.
+    ///
+    /// # Errors
+    ///
+    /// [`HeaderEvidenceError`] for a recorded read that names no height, an
+    /// answer that is not a complete header, a header outside the pinned span, a
+    /// header whose own number disagrees with its request, two reads that name
+    /// one height (whether they agree or substitute a block), or consecutive
+    /// headers that name different branches.
+    pub fn recorded_headers(&self) -> Result<Vec<ChainAnchor>, HeaderEvidenceError> {
+        let (from, to) = (
+            self.provenance.span.from_block,
+            self.provenance.span.to_block,
+        );
+        let mut anchors: Vec<ChainAnchor> = Vec::new();
+        for (key, entry) in &self.entries {
+            let parsed: Vec<Value> = serde_json::from_str(key)
+                .map_err(|_| HeaderEvidenceError::MalformedEntry(key.clone()))?;
+            if parsed.first().and_then(Value::as_str) != Some("eth_getBlockByNumber") {
+                continue;
+            }
+            let number = parsed
+                .get(1)
+                .and_then(|params| params.get(0))
+                .and_then(Value::as_str)
+                .and_then(|height| height.parse::<u64>().ok())
+                .ok_or_else(|| HeaderEvidenceError::HeaderWithoutHeight(key.clone()))?;
+            if !(from..=to).contains(&number) {
+                return Err(HeaderEvidenceError::HeaderOutsideSpan { number, from, to });
+            }
+            let CassetteResponse::Success { result } = &entry.response else {
+                return Err(HeaderEvidenceError::IncompleteHeader { number });
+            };
+            let field = |name: &str| {
+                result
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .and_then(|raw| raw.parse::<B256>().ok())
+            };
+            let (Some(hash), Some(parent_hash)) = (field("hash"), field("parentHash")) else {
+                return Err(HeaderEvidenceError::IncompleteHeader { number });
+            };
+            if let Some(served) = result
+                .get("number")
+                .and_then(Value::as_str)
+                .and_then(|raw| raw.parse::<u64>().ok())
+            {
+                if served != number {
+                    return Err(HeaderEvidenceError::HeaderNumberMismatch { number, served });
+                }
+            }
+            let anchor = ChainAnchor::new(self.chain_id, number, hash, parent_hash)
+                .map_err(|_| HeaderEvidenceError::IncompleteHeader { number })?;
+            anchors.push(anchor);
+        }
+        anchors.sort_by_key(ChainAnchor::number);
+        for pair in anchors.windows(2) {
+            let [earlier, later] = pair else { continue };
+            if later.number() == earlier.number() {
+                if later.hash() == earlier.hash() {
+                    return Err(HeaderEvidenceError::DuplicateHeaderHeight {
+                        number: later.number(),
+                    });
+                }
+                return Err(HeaderEvidenceError::SameHeightSubstitution {
+                    number: later.number(),
+                    first: earlier.hash(),
+                    second: later.hash(),
+                });
+            }
+            if later.number() == earlier.number() + 1 && later.parent_hash() != earlier.hash() {
+                return Err(HeaderEvidenceError::BrokenParentLink {
+                    number: later.number(),
+                    expected: earlier.hash(),
+                    actual: later.parent_hash(),
+                });
+            }
+        }
+        Ok(anchors)
+    }
 }
 
 /// The drift gate for a committed cassette (GLOSSARY "drift gate" +
 /// "negative probe"): parse, re-serialize through the recorder's own
-/// canonical writer, and require byte-identity. Any hand edit or recorded
-/// byte mutation diverges the canonical form and fails.
+/// canonical writer, require byte-identity, and require the recorded header
+/// evidence to state a usable chain. Any hand edit or recorded byte mutation
+/// diverges the canonical form and fails; a mutation that keeps the bytes
+/// canonical (a re-digested parent hash, say) is what the header check
+/// refuses.
 ///
 /// # Errors
 ///
@@ -221,6 +396,9 @@ pub fn verify_cassette_bytes(bytes: &[u8]) -> Result<(), String> {
             ));
         }
     }
+    cassette
+        .recorded_headers()
+        .map_err(|error| format!("cassette header evidence fails: {error}"))?;
     Ok(())
 }
 
@@ -789,6 +967,393 @@ mod tests {
             verdict.is_err(),
             "a mutated recorded response MUST fail the drift gate, got {verdict:?}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Header evidence: the recorder carries the block identities a run
+    // resolved, and the drift gate proves they are chain evidence rather
+    // than bytes that happen to parse.
+    // ------------------------------------------------------------------
+
+    /// The node a header recording talks to: one header answer per height,
+    /// the endpoint's chain id, and an empty logs answer. Records the method
+    /// of every request so a test can state the recorded request shape.
+    #[derive(Clone)]
+    struct HeaderNode {
+        chain: u64,
+        headers: BTreeMap<u64, Value>,
+        methods: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl HeaderNode {
+        fn new() -> Self {
+            Self {
+                chain: 1,
+                headers: BTreeMap::new(),
+                methods: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn header(self, number: u64, hash_tag: u8, parent_tag: u8) -> Self {
+            let header = serde_json::json!({
+                "number": format!("0x{number:x}"),
+                "hash": format!("{}", alloy::primitives::B256::new([hash_tag; 32])),
+                "parentHash": format!("{}", alloy::primitives::B256::new([parent_tag; 32])),
+            });
+            self.header_value(number, header)
+        }
+
+        fn header_value(mut self, number: u64, header: Value) -> Self {
+            self.headers.insert(number, header);
+            self
+        }
+
+        fn handle(&self, packet: RequestPacket) -> ResponsePacket {
+            match packet {
+                RequestPacket::Single(req) => ResponsePacket::Single(self.respond(&req)),
+                RequestPacket::Batch(reqs) => {
+                    ResponsePacket::Batch(reqs.iter().map(|req| self.respond(req)).collect())
+                }
+            }
+        }
+
+        fn respond(&self, req: &SerializedRequest) -> Response {
+            self.methods.lock().push(req.method().to_string());
+            let params: Value = req
+                .params()
+                .and_then(|raw| serde_json::from_str(raw.get()).ok())
+                .unwrap_or(Value::Null);
+            let payload = match req.method() {
+                "eth_chainId" => ok_answer(&Value::String(format!("0x{:x}", self.chain))),
+                "eth_getBlockByNumber" => {
+                    let number = params
+                        .get(0)
+                        .and_then(Value::as_str)
+                        .and_then(|raw| u64::from_str_radix(raw.trim_start_matches("0x"), 16).ok());
+                    match number.and_then(|number| self.headers.get(&number)) {
+                        Some(header) => ok_answer(header),
+                        None => ok_answer(&Value::Null),
+                    }
+                }
+                "eth_getLogs" => ok_answer(&Value::Array(Vec::new())),
+                other => ResponsePayload::Failure(ErrorPayload {
+                    code: -32_601,
+                    message: Cow::Owned(format!("header node does not serve {other}")),
+                    data: None,
+                }),
+            };
+            Response {
+                id: req.id().clone(),
+                payload,
+            }
+        }
+    }
+
+    impl tower::Service<RequestPacket> for HeaderNode {
+        type Response = ResponsePacket;
+        type Error = alloy::transports::TransportError;
+        type Future = alloy::transports::TransportFut<'static>;
+
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let node = self.clone();
+            Box::pin(std::future::ready(Ok(node.handle(req))))
+        }
+    }
+
+    fn ok_answer(value: &Value) -> ResponsePayload {
+        ResponsePayload::Success(
+            serde_json::value::to_raw_value(value).expect("a fixture answer serializes"),
+        )
+    }
+
+    fn provenance_over(from_block: u64, to_block: u64) -> CassetteProvenance {
+        CassetteProvenance {
+            source: "header-node/1.0".to_string(),
+            recorded_at: rfc3339_utc(1_770_000_000),
+            span: CassetteSpan {
+                from_block,
+                to_block,
+            },
+        }
+    }
+
+    /// Record one header read per height of `heights` through the recorder, the
+    /// way a run records the block identities it resolved, and flush the
+    /// cassette under the (possibly different) declared `span`.
+    async fn header_capture(
+        node: HeaderNode,
+        heights: std::ops::RangeInclusive<u64>,
+        span: CassetteSpan,
+    ) -> (Cassette, Vec<u8>) {
+        let recorder = RecordingTransport::new(node.boxed());
+        let provider = recorder.as_alloy_provider();
+        for number in heights {
+            provider
+                .get_block_lineage_at(number)
+                .await
+                .expect("the stub answers the header read");
+        }
+        let cassette = recorder.cassette(1, provenance_over(span.from_block, span.to_block));
+        let bytes = cassette
+            .canonical_bytes()
+            .expect("a recorded cassette serializes");
+        (cassette, bytes)
+    }
+
+    fn three_header_node() -> HeaderNode {
+        HeaderNode::new()
+            .header(100, 0xa1, 0xa0)
+            .header(101, 0xa2, 0xa1)
+            .header(102, 0xa3, 0xa2)
+    }
+
+    #[tokio::test]
+    async fn a_recorded_header_chain_is_complete_evidence_and_regenerates_identically() {
+        let (cassette, bytes) = header_capture(
+            three_header_node(),
+            100..=102,
+            CassetteSpan {
+                from_block: 100,
+                to_block: 102,
+            },
+        )
+        .await;
+
+        verify_cassette_bytes(&bytes)
+            .expect("a complete recorded header chain is valid chain evidence");
+        assert_eq!(
+            Cassette::from_json_bytes(&bytes).expect("the canonical bytes parse"),
+            cassette,
+            "regeneration through the canonical writer is byte-identical"
+        );
+
+        let recorded = cassette
+            .recorded_headers()
+            .expect("the recorded headers state a linked chain");
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|anchor| (anchor.number(), anchor.hash()))
+                .collect::<Vec<_>>(),
+            vec![
+                (100, alloy::primitives::B256::new([0xa1; 32])),
+                (101, alloy::primitives::B256::new([0xa2; 32])),
+                (102, alloy::primitives::B256::new([0xa3; 32])),
+            ],
+            "the evidence is the chain the run resolved, height by height"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_header_outside_the_pinned_span_fails_the_drift_gate() {
+        // The capture pinned 100..=101 but the recorder also carries block
+        // 102's header: evidence the provenance span does not claim.
+        let (_, bytes) = header_capture(
+            three_header_node(),
+            100..=102,
+            CassetteSpan {
+                from_block: 100,
+                to_block: 101,
+            },
+        )
+        .await;
+
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            matches!(
+                verdict,
+                Err(ref reason) if reason.contains("outside its span 100-101")
+            ),
+            "a header the capture's span does not cover is not its evidence: {verdict:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_self_consistent_header_mutation_fails_the_drift_gate() {
+        // The negative probe for chain evidence: mutate a recorded header's
+        // parent hash AND recompute that entry's write digest, so the byte and
+        // digest gates are satisfied and only the parent link can catch it.
+        let (cassette, _) = header_capture(
+            three_header_node(),
+            100..=102,
+            CassetteSpan {
+                from_block: 100,
+                to_block: 102,
+            },
+        )
+        .await;
+        let mut mutated = cassette.clone();
+        let key = mutated
+            .entries
+            .keys()
+            .find(|key| key.contains("eth_getBlockByNumber") && key.contains("101"))
+            .expect("the capture records block 101's header")
+            .clone();
+        let entry = mutated.entries.get_mut(&key).expect("the entry exists");
+        let CassetteResponse::Success { result } = &mut entry.response else {
+            panic!("a recorded header is a success answer");
+        };
+        result["parentHash"] =
+            Value::String(format!("{}", alloy::primitives::B256::new([0xb0; 32])));
+        entry.digest = entry_digest(&entry.response);
+
+        let bytes = mutated
+            .canonical_bytes()
+            .expect("the mutated cassette serializes");
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            matches!(
+                verdict,
+                Err(ref reason) if reason.contains("names parent")
+            ),
+            "a self-consistent header mutation must fail the chain gate: {verdict:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recorded_header_without_its_parent_fails_the_drift_gate() {
+        let node = HeaderNode::new()
+            .header(100, 0xa1, 0xa0)
+            .header_value(
+                101,
+                serde_json::json!({ "number": "0x65", "hash": format!("{}", alloy::primitives::B256::new([0xa2; 32])) }),
+            );
+        let (_, bytes) = header_capture(
+            node,
+            100..=101,
+            CassetteSpan {
+                from_block: 100,
+                to_block: 101,
+            },
+        )
+        .await;
+
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            matches!(
+                verdict,
+                Err(ref reason) if reason.contains("is not a complete header")
+            ),
+            "a header that names no parent is not chain evidence: {verdict:?}"
+        );
+    }
+
+    /// One recorded header answer under an explicit request-param shape, so a
+    /// test can state two canonical keys for one height.
+    fn header_entry_with_params(
+        params: &Value,
+        hash_tag: u8,
+        parent_tag: u8,
+    ) -> (String, CassetteEntry) {
+        let response = CassetteResponse::Success {
+            result: serde_json::json!({
+                "number": "100",
+                "hash": format!("{}", alloy::primitives::B256::new([hash_tag; 32])),
+                "parentHash": format!("{}", alloy::primitives::B256::new([parent_tag; 32])),
+            }),
+        };
+        (
+            entry_key("eth_getBlockByNumber", params),
+            CassetteEntry {
+                digest: entry_digest(&response),
+                response,
+            },
+        )
+    }
+
+    /// A capture whose ledger carries two header reads for ONE height under two
+    /// distinct canonical request keys (the `false`/`true` full-transactions
+    /// shapes).
+    fn two_headers_at_one_height(first: (u8, u8), second: (u8, u8)) -> Cassette {
+        Cassette {
+            schema: CASSETTE_SCHEMA_V1.to_string(),
+            chain_id: 1,
+            provenance: provenance_over(100, 100),
+            entries: [
+                header_entry_with_params(&serde_json::json!(["0x64", false]), first.0, first.1),
+                header_entry_with_params(&serde_json::json!(["0x64", true]), second.0, second.1),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[test]
+    fn a_same_height_substitution_in_the_ledger_fails_the_drift_gate() {
+        // Two canonical keys, one height, two DIFFERENT blocks: whichever
+        // request shape a replayed run issued would decide which block the
+        // capture named, so the capture names no single block at that height.
+        let cassette = two_headers_at_one_height((0xa1, 0xa0), (0xb1, 0xa0));
+
+        let refusal = cassette
+            .recorded_headers()
+            .expect_err("two blocks at one height are not one chain");
+        assert!(
+            matches!(
+                refusal,
+                HeaderEvidenceError::SameHeightSubstitution { number: 100, .. }
+            ),
+            "got {refusal:?}"
+        );
+
+        let bytes = cassette.canonical_bytes().expect("the cassette serializes");
+        let verdict = verify_cassette_bytes(&bytes);
+        assert!(
+            matches!(
+                verdict,
+                Err(ref reason) if reason.contains("two different blocks at height 100")
+            ),
+            "the drift gate must refuse a substituted height: {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_header_height_is_refused_as_ambiguous_evidence() {
+        // The same block recorded under two request shapes: no substitution,
+        // but a capture that answers one height twice states no single record.
+        let cassette = two_headers_at_one_height((0xa1, 0xa0), (0xa1, 0xa0));
+
+        let refusal = cassette
+            .recorded_headers()
+            .expect_err("one height recorded twice is not a single record");
+        assert!(
+            matches!(
+                refusal,
+                HeaderEvidenceError::DuplicateHeaderHeight { number: 100 }
+            ),
+            "got {refusal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_capture_without_recorded_headers_states_no_header_evidence() {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1234");
+        let recorder =
+            RecordingTransport::new(alloy::transports::mock::MockTransport::new(asserter).boxed());
+        recorder
+            .as_alloy_provider()
+            .get_block_number()
+            .await
+            .unwrap();
+        let cassette = recorder.cassette(1, provenance());
+
+        assert!(
+            cassette
+                .recorded_headers()
+                .expect("no header evidence is not broken evidence")
+                .is_empty(),
+            "a capture that resolved no header claims no header evidence"
+        );
+        verify_cassette_bytes(&cassette.canonical_bytes().unwrap())
+            .expect("the pool-updater captures stay valid captures");
     }
 
     // ------------------------------------------------------------------

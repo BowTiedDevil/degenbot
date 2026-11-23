@@ -167,14 +167,14 @@ const SPANS: &[SpanExpectations] = &[
     SpanExpectations {
         name: "w5_aave_pool_data_provider_updated",
         chunks: 1,
-        served: 8,
+        served: 10,
         get_logs: 6,
         eth_calls: 2,
     },
     SpanExpectations {
         name: "w5_aave_address_set_registration",
         chunks: 1,
-        served: 8,
+        served: 10,
         get_logs: 6,
         eth_calls: 2,
     },
@@ -183,8 +183,9 @@ const SPANS: &[SpanExpectations] = &[
         chunks: 1,
         // The bootstrap span's reserve set is empty, so the scaled-token pass
         // issues no `getLogs` (the empty token set short-circuits); five
-        // `getLogs` passes plus the two proxy-creation revision reads.
-        served: 7,
+        // `getLogs` passes, the two proxy-creation revision reads, and the
+        // terminal anchor's chain-id + header reads.
+        served: 9,
         get_logs: 5,
         eth_calls: 2,
     },

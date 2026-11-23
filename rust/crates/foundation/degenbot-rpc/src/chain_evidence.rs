@@ -23,9 +23,12 @@
 //! request shape is a typed node-evidence failure
 //! ([`ExactReadError::Unsupported`]), never a number-only fallback.
 //!
-//! The recorded-transport half of this seam (cassette evidence for headers and
-//! hash-pinned reads) is a separate task; this module speaks to a live
-//! [`AlloyProvider`] only.
+//! Every entry point takes ONE [`AlloyProvider`], so the acquisition surface is
+//! the same live and recorded: a cassette replay transport presents as a
+//! provider, and a recorded header chain or hash-pinned read answers through
+//! these same functions ([`crate::cassette_replay`]). [`resolve_terminal_anchor`]
+//! is the same seam at the range's END: a run's tip or explicit bound becomes
+//! one [`ChainAnchor`] before any projection work starts.
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::rpc::types::Log;
@@ -183,6 +186,65 @@ impl HeaderChain {
             .find(|anchor| anchor.number() == number)
             .copied()
     }
+
+    /// The logs proven to have been emitted in blocks this chain names, in the
+    /// unit's canonical `(block_number, log_index)` order.
+    ///
+    /// # Errors
+    ///
+    /// One [`ProjectionRefusal`] per log that cannot be placed: no block
+    /// number, no log index, no block hash, a height this chain does not cover,
+    /// or a block hash that is not the chain's hash at that height.
+    pub fn place_logs(&self, logs: Vec<Log>) -> Result<Vec<Log>, ProjectionRefusal> {
+        let (from, to) = (self.from_block(), self.to_block());
+        let mut logs = logs;
+        for log in &logs {
+            let Some(number) = log.block_number else {
+                return Err(ProjectionRefusal::LogWithoutBlockNumber);
+            };
+            if !(from..=to).contains(&number) {
+                return Err(ProjectionRefusal::LogOutsideRange { number, from, to });
+            }
+            if log.log_index.is_none() {
+                return Err(ProjectionRefusal::LogWithoutIndex { number });
+            }
+            let Some(block_hash) = log.block_hash else {
+                return Err(ProjectionRefusal::LogWithoutBlockHash { number });
+            };
+            let Some(header) = self.anchor_at(number) else {
+                return Err(ProjectionRefusal::LogOutsideRange { number, from, to });
+            };
+            if header.hash() != block_hash {
+                return Err(ProjectionRefusal::LogBranchMismatch {
+                    number,
+                    header: header.hash(),
+                    log: block_hash,
+                });
+            }
+        }
+        logs.sort_by_key(|log| (log.block_number, log.log_index));
+        Ok(logs)
+    }
+}
+
+/// Prove every log of `logs` was emitted in `anchor`'s own block: the
+/// single-block sibling of [`HeaderChain::place_logs`].
+///
+/// A consumer that resolved ONE exact block (a run's range terminal, say)
+/// fences the logs at that height against the resolved anchor, so a same-height
+/// substitution between resolution and fetch is a refusal rather than a chunk
+/// accepted on a number alone.
+///
+/// # Errors
+///
+/// [`ProjectionRefusal::LogOutsideRange`] for a log at another height, and
+/// the [`HeaderChain::place_logs`] refusals for a log that cannot be placed in
+/// `anchor`'s block.
+pub fn place_logs_at(anchor: ChainAnchor, logs: Vec<Log>) -> Result<Vec<Log>, ProjectionRefusal> {
+    HeaderChain {
+        anchors: vec![anchor],
+    }
+    .place_logs(logs)
 }
 
 /// Why a header chain was refused. Every variant is deterministic evidence
@@ -302,6 +364,18 @@ pub enum ChainEvidenceError {
     /// no header chain to carry.
     #[error("a projection range needs an explicit from_block and to_block")]
     UnboundedFilter,
+    /// The node served the range's terminal block on another chain: an anchor
+    /// is chain-local evidence, so a run for one chain never closes on another
+    /// chain's block.
+    #[error("terminal block {number} is on chain {served}, but this range is chain {expected}")]
+    CrossChainTerminal {
+        /// The terminal height.
+        number: u64,
+        /// The chain the caller's range belongs to.
+        expected: u64,
+        /// The chain the served header states.
+        served: u64,
+    },
 }
 
 /// One historical projection unit: the complete header chain of a block range
@@ -329,33 +403,7 @@ impl ProjectionRange {
     /// canonical order, so a caller reads the range exactly as the chain states
     /// it regardless of how the node or a filter answered.
     pub fn new(headers: HeaderChain, logs: Vec<Log>) -> Result<Self, ProjectionRefusal> {
-        let (from, to) = (headers.from_block(), headers.to_block());
-        let mut logs = logs;
-        for log in &logs {
-            let Some(number) = log.block_number else {
-                return Err(ProjectionRefusal::LogWithoutBlockNumber);
-            };
-            if !(from..=to).contains(&number) {
-                return Err(ProjectionRefusal::LogOutsideRange { number, from, to });
-            }
-            if log.log_index.is_none() {
-                return Err(ProjectionRefusal::LogWithoutIndex { number });
-            }
-            let Some(block_hash) = log.block_hash else {
-                return Err(ProjectionRefusal::LogWithoutBlockHash { number });
-            };
-            let Some(header) = headers.anchor_at(number) else {
-                return Err(ProjectionRefusal::LogOutsideRange { number, from, to });
-            };
-            if header.hash() != block_hash {
-                return Err(ProjectionRefusal::LogBranchMismatch {
-                    number,
-                    header: header.hash(),
-                    log: block_hash,
-                });
-            }
-        }
-        logs.sort_by_key(|log| (log.block_number, log.log_index));
+        let logs = headers.place_logs(logs)?;
         Ok(Self { headers, logs })
     }
 
@@ -447,6 +495,45 @@ pub async fn acquire_header_chain(
         anchors.push(anchor.ok_or(HeaderRefusal::MissingHeader { number })?);
     }
     HeaderChain::from_anchors(anchors).map_err(ChainEvidenceError::from)
+}
+
+/// Resolve a range's terminal block — the chain tip when `to_block` is `None`,
+/// the caller's own bound otherwise — to the exact [`ChainAnchor`] the range
+/// closes on.
+///
+/// BOTH arms take this one path: the height is resolved, then ONE header read
+/// states the block's identity (`eth_getBlockByNumber`, no body). A tip run
+/// asks the node for its head number first, so no caller advances on a height
+/// whose block was never named; a bound run pays the header read alone.
+///
+/// # Errors
+///
+/// [`ChainEvidenceError::Provider`] when a read fails,
+/// [`ChainEvidenceError::Header`] with [`HeaderRefusal::MissingHeader`] when the
+/// node holds no complete header at that height, and
+/// [`ChainEvidenceError::CrossChainTerminal`] when the served block belongs to
+/// another chain than `chain_id`.
+pub async fn resolve_terminal_anchor(
+    provider: &AlloyProvider,
+    chain_id: u64,
+    to_block: Option<u64>,
+) -> Result<ChainAnchor, ChainEvidenceError> {
+    let number = match to_block {
+        Some(number) => number,
+        None => provider.get_block_number().await?,
+    };
+    let served = provider
+        .get_block_lineage_at(number)
+        .await?
+        .ok_or(HeaderRefusal::MissingHeader { number })?;
+    if served.chain_id() != chain_id {
+        return Err(ChainEvidenceError::CrossChainTerminal {
+            number,
+            expected: chain_id,
+            served: served.chain_id(),
+        });
+    }
+    Ok(served)
 }
 
 /// Why one hash-pinned read failed.
@@ -727,6 +814,8 @@ mod tests {
         reads: BTreeMap<&'static str, Value>,
         failures: BTreeMap<&'static str, (i64, String)>,
         reject_hash_pinned: bool,
+        /// The chain `eth_chainId` serves; `None` is the fixture's chain 1.
+        chain: Option<u64>,
     }
 
     impl EvidenceStub {
@@ -738,6 +827,7 @@ mod tests {
                     reads: BTreeMap::new(),
                     failures: BTreeMap::new(),
                     reject_hash_pinned: false,
+                    chain: None,
                 })),
                 packets: Arc::new(Mutex::new(Vec::new())),
             }
@@ -773,6 +863,13 @@ mod tests {
 
         fn rejecting_hash_pinned(self) -> Self {
             self.state.lock().unwrap().reject_hash_pinned = true;
+            self
+        }
+
+        /// Serve this chain id from `eth_chainId`: an endpoint bound to another
+        /// chain than the caller's market.
+        fn chain(self, chain: u64) -> Self {
+            self.state.lock().unwrap().chain = Some(chain);
             self
         }
 
@@ -821,7 +918,7 @@ mod tests {
             .unwrap_or(Value::Null);
         let success = |value: Value| ResponsePayload::Success(to_raw_value(&value).unwrap());
         let payload = match req.method() {
-            "eth_chainId" => success(json!("0x1")),
+            "eth_chainId" => success(json!(format!("0x{:x}", state.chain.unwrap_or(1)))),
             "eth_blockNumber" => success(json!("0x64")),
             "eth_getBlockByNumber" => {
                 let number = params
@@ -1312,6 +1409,110 @@ mod tests {
             stub.methods(),
             vec!["eth_call".to_string()],
             "an unsupported capability is never retried as a number-only read"
+        );
+    }
+
+    #[test]
+    fn a_header_chain_places_only_logs_it_emitted() {
+        let chain = chain_of(100..=102);
+        let placed = chain
+            .place_logs(vec![log_at(102, hash(102), 1), log_at(100, hash(100), 0)])
+            .expect("both logs name blocks the chain covers");
+        assert_eq!(
+            placed
+                .iter()
+                .map(|log| log.block_number)
+                .collect::<Vec<_>>(),
+            vec![Some(100), Some(102)],
+            "placement states the canonical order"
+        );
+        assert_eq!(
+            chain
+                .place_logs(vec![log_at(103, hash(103), 0)])
+                .expect_err("a log outside the chain is not placed by it"),
+            ProjectionRefusal::LogOutsideRange {
+                number: 103,
+                from: 100,
+                to: 102,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tip_run_resolves_its_terminal_block_to_an_exact_anchor() {
+        // eth_blockNumber serves 0x64 = 100, and the node holds that header.
+        let stub = EvidenceStub::new().header(100, 0xa1, 0xa0);
+        let provider = stub.provider().await;
+
+        let terminal = resolve_terminal_anchor(&provider, CHAIN, None)
+            .await
+            .expect("the tip resolves to the header the node serves");
+
+        assert_eq!(terminal, anchor(100, 0xa1, 0xa0));
+        assert_eq!(
+            stub.methods(),
+            vec![
+                "eth_blockNumber".to_string(),
+                "eth_getBlockByNumber".to_string()
+            ],
+            "the tip arms one number read then one header read, never a bare number"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_terminal_block_resolves_through_the_same_path() {
+        let stub = EvidenceStub::new().header(100, 0xa1, 0xa0);
+        let provider = stub.provider().await;
+
+        let terminal = resolve_terminal_anchor(&provider, CHAIN, Some(100))
+            .await
+            .expect("an explicit bound resolves to its header");
+
+        assert_eq!(terminal, anchor(100, 0xa1, 0xa0));
+        assert_eq!(
+            stub.methods(),
+            vec!["eth_getBlockByNumber".to_string()],
+            "a bound run arms the header read only, and never asks the tip"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_terminal_header_refuses_the_terminal_anchor() {
+        let stub = EvidenceStub::new();
+        let provider = stub.provider().await;
+
+        let refusal = resolve_terminal_anchor(&provider, CHAIN, Some(102))
+            .await
+            .expect_err("a bound with no complete header has no exact terminal");
+
+        assert!(
+            matches!(
+                refusal,
+                ChainEvidenceError::Header(HeaderRefusal::MissingHeader { number: 102 })
+            ),
+            "got {refusal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_terminal_header_on_another_chain_refuses_the_terminal_anchor() {
+        let stub = EvidenceStub::new().chain(2).header(101, 0xa2, 0xa1);
+        let provider = stub.raw_provider();
+
+        let refusal = resolve_terminal_anchor(&provider, CHAIN, Some(101))
+            .await
+            .expect_err("a terminal block on another chain is not this run's terminal");
+
+        assert!(
+            matches!(
+                refusal,
+                ChainEvidenceError::CrossChainTerminal {
+                    number: 101,
+                    expected: CHAIN,
+                    served: 2,
+                }
+            ),
+            "got {refusal:?}"
         );
     }
 }

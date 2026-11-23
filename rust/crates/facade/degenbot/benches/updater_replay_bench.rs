@@ -714,9 +714,10 @@ fn aave_iteration(
 /// One measured iteration of the config-era Aave workload (the
 /// `aave_config_iteration` twin of [`aave_iteration`]: the config-era seed +
 /// its applied-events literal; the RPC-surface gate rides the served
-/// snapshot — the config-era corpus's 7 round trips ARE the cross-tx
-/// fact-dependence gate, since a re-issued `getDiscountPercent` for the
-/// later same-user txs would push the count to 9).
+/// snapshot — the config-era corpus's 9 round trips ARE the cross-tx
+/// fact-dependence gate (6 getLogs + the discount call + the terminal anchor's
+/// chain-id and header reads), since a re-issued `getDiscountPercent` for the
+/// later same-user txs would push the count to 10).
 fn aave_config_iteration(
     cassette: &Cassette,
     chain_id: i64,
@@ -767,8 +768,10 @@ fn aave_config_iteration(
         "every request must be a served ledger entry — a fixture gap is loud"
     );
     assert_eq!(
-        served.served, 7,
-        "the config-era RPC surface drifted — a re-issued getDiscountPercent          for the later same-user txs (a broken cross-tx fact phase) would show here"
+        served.served, 9,
+        "the config-era RPC surface drifted — a re-issued getDiscountPercent for the \
+         later same-user txs (a broken cross-tx fact phase) would show here (9 = 6 \
+         getLogs + the discount call + the terminal anchor's chain-id and header reads)"
     );
     let chunks = collector.0.lock().unwrap().clone();
     (

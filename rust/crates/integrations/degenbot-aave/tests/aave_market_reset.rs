@@ -412,6 +412,17 @@ fn proxy_created_log(
     })
 }
 
+/// The run's terminal evidence — the header of the block a window closes on.
+/// The synthetic fixtures serve one block hash at every height, so the header
+/// names that hash; the parent link is the previous height's decimal form.
+fn terminal_header(terminal: u64) -> serde_json::Value {
+    serde_json::json!({
+        "number": terminal.to_string(),
+        "hash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+        "parentHash": format!("0x{:064x}", terminal.saturating_sub(1)),
+    })
+}
+
 /// A completing replay ledger over the fixture window: everything the REAL
 /// cold boot asks from the reset state. The bootstrap's address-provider fetch
 /// answers the three `ProxyCreated` events; the revision reads answer the
@@ -580,6 +591,18 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
         serde_json::json!([]),
     );
 
+    // The run's terminal anchor: resolved before anything is fetched.
+    add(
+        "eth_chainId",
+        serde_json::Value::Null,
+        serde_json::json!("0x1"),
+    );
+    add(
+        "eth_getBlockByNumber",
+        serde_json::json!([format!("0x{:x}", FIXTURE_END_BLOCK), false]),
+        terminal_header(FIXTURE_END_BLOCK),
+    );
+
     CassetteReplayTransport::new(Cassette {
         schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
         chain_id: 1,
@@ -596,12 +619,12 @@ fn completing_sync_cassette() -> CassetteReplayTransport {
 /// `eth_getLogs`, keyed through the cassette's own canonical key. Its recorded
 /// answer is empty, so the bootstrap resolves nothing and reports its failure —
 /// the observable that a reset market re-entered the cold boot.
-fn bootstrap_only_cassette() -> CassetteReplayTransport {
+fn bootstrap_only_cassette(terminal: u64) -> CassetteReplayTransport {
     let from_block = FIXTURE_START_BLOCK;
     let boot_end = from_block + BOOTSTRAP_WINDOW;
     let span = CassetteSpan {
         from_block,
-        to_block: from_block,
+        to_block: terminal,
     };
     let params = serde_json::Value::Array(vec![bootstrap_filter(from_block, boot_end)]);
     let key = entry_key("eth_getLogs", &params);
@@ -616,6 +639,30 @@ fn bootstrap_only_cassette() -> CassetteReplayTransport {
             response,
         },
     );
+    // The run resolves its terminal anchor before anything else, so the ledger
+    // carries that evidence even when the capture is deliberately incomplete.
+    let anchors = [
+        (
+            "eth_chainId",
+            serde_json::Value::Null,
+            serde_json::json!("0x1"),
+        ),
+        (
+            "eth_getBlockByNumber",
+            serde_json::json!([format!("0x{terminal:x}"), false]),
+            terminal_header(terminal),
+        ),
+    ];
+    for (method, params, result) in anchors {
+        let response = CassetteResponse::Success { result };
+        entries.insert(
+            entry_key(method, &params),
+            CassetteEntry {
+                digest: entry_digest(&response),
+                response,
+            },
+        );
+    }
     CassetteReplayTransport::new(Cassette {
         schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
         chain_id: 1,
@@ -672,8 +719,8 @@ fn a_reset_market_syncs_normally_over_the_fixture_window() {
     // bootstrap-window fetch passes (bootstrap + chunk), the revision call per
     // proxy id per dispatch phase (the bootstrap's memo and the chunk's), and
     // the three empty passes + the chain-wide oracle pass.
-    assert_eq!(requests, 10);
-    assert_eq!(served, 10);
+    assert_eq!(requests, 12);
+    assert_eq!(served, 12);
 
     let conn = db.lock();
     let stamp: Option<i64> = conn
@@ -714,15 +761,17 @@ fn a_warm_market_skips_the_bootstrap_and_reaches_the_chunk_fetch() {
     // stamp), so the run starts one block past it rather than at the
     // activation block the reset test uses.
     let (db, _market_id) = populated();
-    let (result, requests, served) = run_once(&db, &bootstrap_only_cassette(), 26_130_446);
+    let terminal = 26_130_446;
+    let (result, requests, served) = run_once(&db, &bootstrap_only_cassette(terminal), terminal);
     assert!(
         !matches!(result, Err(RunError::BootstrapFailed(_))),
         "a warm market's bootstrap is a no-op, so the run reaches the chunk fetch \
          instead of reporting the bootstrap failed; got {result:?}"
     );
     assert_eq!(
-        served, 0,
-        "the ledger carries only the bootstrap filter, which a warm market never issues"
+        served, 2,
+        "only the terminal anchor is served: the ledger's single getLogs entry is the \
+         bootstrap filter, which a warm market never issues"
     );
     assert!(
         requests >= 1,

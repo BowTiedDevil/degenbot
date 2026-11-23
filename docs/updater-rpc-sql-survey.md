@@ -307,10 +307,14 @@ Bench rows (same workload, same command, median of 9 after 2 warmups):
 
 | capture | rt | resp bytes | stmts | fetch µs | dc+cmp µs | apply µs | lock-hold µs | chunk µs |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| aave_update_chunk_26130440-26130445 (current era, no config events) | 6 | 28274 | 52 | 572 | 213 | 147 | 1803 | 5012 |
-| aave_config_chunk_19091050-19091059 (discount-path RPC) | 7 | 34815 | 60 | 584 | 463 | 228 | 2220 | 5441 |
+| aave_update_chunk_26130440-26130445 (current era, no config events) | 8 | 56439 | 52 | 385 | 212 | 219 | 1903 | 5179 |
+| aave_config_chunk_19091050-19091059 (discount-path RPC) | 9 | 54826 | 60 | 448 | 456 | 409 | 2377 | 5965 |
 
-Replay-suite literals for the new capture (`aave_config_cassette_replay.rs`; measured, not assumed): `EXPECTED_APPLIED_EVENTS = 32`, `EXPECTED_LEDGER_STATEMENTS = 60`, `EXPECTED_RPC_ROUND_TRIPS = 7`, `EXPECTED_RPC_RESPONSE_BYTES = 34815` — rt = 7 IS the cross-tx gate (a re-issued `getDiscountPercent` for the later same-user txs reads 9). The committed goldens are new files; every EXISTING golden/literal is untouched (the seed aave suite stays 20 events / 52 statements / 6 rt / 28274 bytes, byte-identical).
+Both Aave rows moved by +2 round trips in the V6ACGF row regeneration (ADR-105 D1): a run resolves its terminal block to ONE exact `ChainAnchor` before it fetches anything, so the endpoint's `eth_chainId` and the terminal block's header are recorded and replayed beside the getLogs passes. The statement counts, the applied-event counts, and every SQL golden are unchanged — the added evidence is RPC-only.
+
+The PRE-resolution baseline these rows are compared against (same command, same corpus, recorded at the ancestry commit before the resolver and the cassette row regeneration landed): aave_update 6 rt / 28274 bytes / fetch 417 / dc+cmp 219 / apply 220 / lock-hold 1958 / chunk 4958 µs; aave_config 7 rt / 34815 bytes / fetch 390 / dc+cmp 444 / apply 382 / lock-hold 2296 / chunk 5335 µs. The resolver's two extra reads are OUTSIDE the transaction, so the write-lock hold moved by noise only; a re-run after the change read lock-hold 1835 / 2119 µs on the same rows.
+
+Replay-suite literals for the new capture (`aave_config_cassette_replay.rs`; measured, not assumed): `EXPECTED_APPLIED_EVENTS = 32`, `EXPECTED_LEDGER_STATEMENTS = 60`, `EXPECTED_RPC_ROUND_TRIPS = 9`, `EXPECTED_RPC_RESPONSE_BYTES = 54826` — rt = 9 IS the cross-tx gate (a re-issued `getDiscountPercent` for the later same-user txs reads 10; the two reads above the getLogs + discount calls are the terminal-anchor evidence). The seed aave suite's literals are the same shape: 20 events / 52 statements / 8 rt / 56439 bytes.
 
 **Decision: (c) do-not-fix — the in-lock compute/SQL shape is accepted; the design question closes.**
 

@@ -283,6 +283,37 @@ fn two_chunk_rotation_cassette() -> CassetteReplayTransport {
         serde_json::json!([]),
     );
 
+    // The run's terminal evidence: the endpoint's chain id and the header of
+    // the block the span closes on. A run resolves both before it fetches
+    // (ADR-105 D1), and the synthetic fixtures serve one block hash at every
+    // height, so the header names that hash.
+    let anchors = [
+        (
+            "eth_chainId",
+            serde_json::Value::Null,
+            serde_json::json!("0x1"),
+        ),
+        (
+            "eth_getBlockByNumber",
+            serde_json::json!([format!("0x{CHUNK_END:x}"), false]),
+            serde_json::json!({
+                "number": CHUNK_END.to_string(),
+                "hash": "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314",
+                "parentHash": format!("0x{:064x}", CHUNK_END - 1),
+            }),
+        ),
+    ];
+    for (method, params, result) in anchors {
+        let response = CassetteResponse::Success { result };
+        entries.insert(
+            entry_key(method, &params),
+            CassetteEntry {
+                digest: entry_digest(&response),
+                response,
+            },
+        );
+    }
+
     CassetteReplayTransport::new(Cassette {
         schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
         chain_id: 1,
@@ -333,8 +364,9 @@ fn address_set_pool_rotation_fetches_new_pool_logs_next_chunk() {
     // wire surface, including chunk 2's new-address Pool pass.
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 11,
-        "eleven filters issued, none repeated"
+        snapshot.requests, 13,
+        "eleven filters issued, none repeated, plus the terminal anchor's chain-id \
+         and header reads"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),

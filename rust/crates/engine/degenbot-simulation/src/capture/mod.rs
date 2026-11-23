@@ -133,10 +133,12 @@ impl ScratchChain {
             }
             "eth_getLogs" => self.serve_get_logs(req),
             "eth_call" => self.serve_eth_call(req),
+            "eth_getBlockByNumber" => self.serve_get_block_by_number(req),
             other => failure_payload(
                 -32601,
                 &format!(
-                    "scratch chain serves eth_chainId/eth_blockNumber/eth_getLogs/eth_call only, got {other:?}"
+                    "scratch chain serves eth_chainId/eth_blockNumber/eth_getLogs/eth_call/\
+                     eth_getBlockByNumber only, got {other:?}"
                 ),
             ),
         };
@@ -201,6 +203,34 @@ impl ScratchChain {
             .map(|log| inner.rpc_log_json(log))
             .collect();
         success_payload_value(&Value::Array(logs))
+    }
+
+    /// `eth_getBlockByNumber`: one height's block IDENTITY from the served
+    /// chain — its own hash and its parent's, both on the same deterministic
+    /// scheme the frames' logs carry ([`block_hash`]), so a header and the logs
+    /// it emitted name one block. A height past the served head has no header.
+    fn serve_get_block_by_number(&self, req: &SerializedRequest) -> ResponsePayload {
+        let Some(items) = request_param_array(req) else {
+            return failure_payload(
+                -32602,
+                "eth_getBlockByNumber params must be one [tag, full] array",
+            );
+        };
+        let Some(tag) = items.first() else {
+            return failure_payload(-32602, "eth_getBlockByNumber requires a block tag");
+        };
+        let Ok(block) = parse_block_tag(tag) else {
+            return failure_payload(-32602, "eth_getBlockByNumber requires a block tag");
+        };
+        let inner = self.0.lock();
+        if block > inner.head {
+            return success_payload_value(&Value::Null);
+        }
+        success_payload_value(&serde_json::json!({
+            "number": hex_quantity(block),
+            "hash": hex_data(block_hash(block).as_slice()),
+            "parentHash": hex_data(block_hash(block.saturating_sub(1)).as_slice()),
+        }))
     }
 
     fn serve_eth_call(&self, req: &SerializedRequest) -> ResponsePayload {

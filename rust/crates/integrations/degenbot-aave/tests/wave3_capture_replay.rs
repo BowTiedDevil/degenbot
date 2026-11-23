@@ -91,10 +91,11 @@ const SPAN_FROM: u64 = 1000;
 const SPAN_TO: u64 = 1002;
 
 /// Independent literals: the chunk's recorded RPC surface per scenario — the
-/// The rt-gate shape (six getLogs passes + the scenario's `eth_call`s).
-const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
-const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 8;
-const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
+/// rt-gate shape (six getLogs passes + the scenario's `eth_call`s + the
+/// terminal anchor's chain-id and header reads; ADR-105 D1).
+const S1_EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
+const S2_EXPECTED_RPC_ROUND_TRIPS: u64 = 10;
+const S3_EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
 
 /// The pinned chain literals (the generator's `ACTOR_PINS` + free literals;
 /// a frame-sequence change fails these loudly at generation time). Each
@@ -636,9 +637,9 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
         None,
     );
     assert_eq!(
-        s1_probe.served.served, 6,
+        s1_probe.served.served, 8,
         "s1 probe: with the user pre-seeded (the committed-DB view) the recorded \
-         discount call drops — the rt gate (7) is RED under this mutation"
+         discount call drops — the rt gate (9) is RED under this mutation"
     );
     assert_eq!(
         served_eth_calls(&s1_probe.served),
@@ -716,7 +717,7 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
         None,
     );
     assert_eq!(
-        s3_probe.served.served, 6,
+        s3_probe.served.served, 8,
         "s3 probe: at the deprecation revision the recorded discount call drops"
     );
     assert_eq!(

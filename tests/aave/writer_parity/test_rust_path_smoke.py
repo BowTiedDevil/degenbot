@@ -8,7 +8,9 @@ row. Once this is GREEN, the Python-oracle side + the row comparison are added.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+import urllib.request
+from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
 from tests.aave.writer_parity.harness import (
@@ -29,6 +31,18 @@ if TYPE_CHECKING:
 # The user address in the fixture event + the category_id it sets.
 _USER_ADDRESS = "0x" + "ab" * 20
 _CATEGORY_ID = 2
+
+
+def _mock_rpc(url: str, method: str, params: list[Any]) -> dict[str, Any]:
+    """POST one JSON-RPC request to the mock server and return its envelope."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    request = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage] — a loopback mock
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request) as response:  # ruff: ignore[suspicious-url-open-usage] — a loopback mock
+        return json.loads(response.read())
 
 
 def test_run_aave_update_offline_drives_user_e_mode_set(tmp_path: Path) -> None:
@@ -63,3 +77,23 @@ def test_run_aave_update_offline_drives_user_e_mode_set(tmp_path: Path) -> None:
     assert user["e_mode"] == _CATEGORY_ID
     assert user["gho_discount"] == 0
     assert user["stk_aave_balance"] is None
+
+
+def test_mock_serves_a_complete_terminal_header_its_logs_carry() -> None:
+    """`eth_getBlockByNumber` answers a complete header at the requested height,
+    hashing to the block every canned log carries; a method the mock does not
+    serve is a JSON-RPC error rather than a fabricated success."""
+    fixture_log = make_user_e_mode_set_log(
+        user_address=_USER_ADDRESS,
+        category_id=_CATEGORY_ID,
+    )
+    with mock_rpc_server(logs=[fixture_log], block_number=FIXTURE_BLOCK) as rpc_url:
+        envelope = _mock_rpc(rpc_url, "eth_getBlockByNumber", [hex(FIXTURE_BLOCK), False])
+        unserved = _mock_rpc(rpc_url, "eth_getProof", [])
+
+    served = envelope["result"]
+    assert served["number"] == hex(FIXTURE_BLOCK)
+    assert served["hash"] == fixture_log["blockHash"]
+    assert served["parentHash"] != served["hash"]
+    assert int(served["parentHash"], 16) != 0
+    assert unserved["error"]["code"] == -32601

@@ -29,6 +29,7 @@ from degenbot.db import db_upgrade_database
 from tests.helpers.aave_logs import (
     A_TOKEN_ADDRESS,
     BOOTSTRAP_BLOCK,
+    DEFAULT_BLOCK_HASH,
     GHO_TOKEN_ADDRESS,
     GHO_VTOKEN_ADDRESS,
     POOL_ADDRESS,
@@ -41,6 +42,38 @@ from tests.helpers.aave_logs import (
     _hex,
     _u256,
 )
+
+#: The parent every served header names: nonzero and distinct from the block
+#: hash, so a link check reads a real parent rather than the zero word.
+DEFAULT_PARENT_BLOCK_HASH = "0x" + (b"pp" + b"\x00" * 30).hex()
+
+
+def terminal_header(number: int) -> dict[str, str]:
+    """The complete header the mock serves for one height.
+
+    The hash is the one every canned log carries (``DEFAULT_BLOCK_HASH``), so the
+    writer's resolved terminal anchor fences the logs at its height (ADR-105 D1).
+    """
+    return {
+        "number": _hex(number),
+        "hash": DEFAULT_BLOCK_HASH,
+        "parentHash": DEFAULT_PARENT_BLOCK_HASH,
+    }
+
+
+def _block_tag_number(tag: Any) -> int | None:
+    """Decode a JSON-RPC block tag: a hex quantity (``0x3e9``) or a decimal string."""
+    if not isinstance(tag, str):
+        return None
+    try:
+        return int(tag, 16) if tag.startswith("0x") else int(tag, 10)
+    except ValueError:
+        return None
+
+
+class _UnservedMethod(Exception):
+    """The mock serves no canned answer for a method: answered as a JSON-RPC
+    method-not-found, never as a fabricated success."""
 
 
 def _abi_string(text: str) -> str:
@@ -165,7 +198,7 @@ class MockRpcRegistry:
 
 
 class _MockRpcHandler(BaseHTTPRequestHandler):
-    """Serves canned `eth_getLogs` + `eth_blockNumber` (+ a generic fallback)."""
+    """Serves the canned methods the writer issues; any other method is loud."""
 
     registry: MockRpcRegistry  # set as a class attr by `mock_rpc_server`
 
@@ -189,7 +222,17 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
         req_id = req.get("id")
         if not isinstance(method, str):
             method = ""
-        result = self._canned_result(method, req)
+        try:
+            result = self._canned_result(method, req)
+        except _UnservedMethod as unserved:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"mock RPC serves no {unserved} answer",
+                },
+            }
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     def _canned_result(self, method: str, req: dict[str, Any]) -> Any:
@@ -201,8 +244,23 @@ class _MockRpcHandler(BaseHTTPRequestHandler):
             return self._eth_call_result(req)
         if method == "eth_chainId":
             return _hex(1)
-        # Generic OK for any auxiliary method (eth_getBlockByNumber, etc.).
-        return "0x0"
+        if method == "eth_getBlockByNumber":
+            return self._header_result(req)
+        if method == "eth_getStorageAt":
+            # The fixture market's addresses are not EIP-1967 proxies, so the
+            # implementation slot reads as the zero word.
+            return _u256(0)
+        raise _UnservedMethod(method)
+
+    def _header_result(self, req: dict[str, Any]) -> dict[str, str] | None:
+        params = req.get("params", [])
+        tag = params[0] if params else None
+        number = _block_tag_number(tag)
+        if number is None:
+            # No height, no header: a null answer is the typed missing-header
+            # refusal downstream, never a fabricated block.
+            return None
+        return terminal_header(number)
 
     def _eth_call_result(self, req: dict[str, Any]) -> str:
         # alloy/web3 send `eth_call` params as `[{to, data/input, ...}]`.

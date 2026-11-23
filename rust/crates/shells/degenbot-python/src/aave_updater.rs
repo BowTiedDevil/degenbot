@@ -699,6 +699,7 @@ mod tests {
                 market_id: 42,
                 from_block: 10,
                 to_block: 99,
+                terminal: None,
                 chunks_committed: 3,
                 total_events_applied: 17,
             };

@@ -16,6 +16,22 @@
       },
       "digest": "0x83494e7f98947c054857b6d0dc66da7b8f22bd35d0bb47b997acf2d3b7ae7842"
     },
+    "[\"eth_chainId\",null]": {
+      "response": {
+        "result": "1"
+      },
+      "digest": "0x8dfd224581066fc06a67c2becfb96b35e2b756729861a0c3d2af6cfbe5eb6f8b"
+    },
+    "[\"eth_getBlockByNumber\",[\"1002\",false]]": {
+      "response": {
+        "result": {
+          "hash": "0x8d6c98e59b99b453ad086d229fff0a76b26bd736d913256971f1f7e5df0efd77",
+          "number": "1002",
+          "parentHash": "0xa71ca41918eda0f02f5b9d034207bc6da722ef3dbac84742f3e5c64d80fd55e5"
+        }
+      },
+      "digest": "0x7775c16ebf76a0bde68f57851458c52c19dcf1358e7ffae994e077ec6e1fbb57"
+    },
     "[\"eth_getLogs\",[{\"address\":\"0x7070707070707070707070707070707070707070\",\"fromBlock\":\"1000\",\"toBlock\":\"1002\",\"topics\":[[\"0x4a465a9bd819d9662563c1e11ae958f8109e437e7f4bf1c6ef0b9a7b3f35d478\",\"0x56b5f80d8cac1479698aa7d01605fd6111e90b15fc4d2b377417f46034876cbd\",\"0x8932892569eba59c8382a089d9b732d1f49272878775235761a2a6b0309cd465\",\"0x90affc163f1a2dfedcd36aa02ed992eeeba8100a4014f0b4cdc20ea265a66627\",\"0x9ef0e8c8e52743bb38b83b17d9429141d494b8041ca6d616a6c77cebae9cd8b7\",\"0xc853974cfbf81487a14a23565917bee63f527853bcb5fa54f2ae1cdf8a38356d\"]]}]]": {
       "response": {
         "result": []

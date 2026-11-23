@@ -198,6 +198,11 @@ fn seed_user(db: &DegenbotDb, gho_discount: i64, stk_aave_balance: Option<&str>)
     .unwrap();
 }
 
+/// The one block hash the synthetic captures serve for every height (the
+/// fixtures are a chain of states, not a chain of blocks).
+const SYNTHETIC_BLOCK_HASH: &str =
+    "0xc698c93cdbe7ab12221088ec36e9ee86f85e11048876814b84cb0a5d558d3314";
+
 /// The `DiscountTokenUpdated(old, new)` log — emitted by the GHO vToken.
 fn discount_token_updated_log(tx: &str, block: u64, log_index: u64, old: &str, new: &str) -> Value {
     json!({
@@ -426,7 +431,40 @@ impl Ledger {
         self.add_get_logs(&[token], &Self::stk_aave_topics(), result);
     }
 
-    fn into_transport(self) -> CassetteReplayTransport {
+    /// The run's terminal evidence: the endpoint's chain id and the header of
+    /// the block the span closes on. A run resolves both before it fetches
+    /// (ADR-105 D1), so a recorded capture carries them; the synthetic fixtures
+    /// serve one block hash for every height, so the header names that hash.
+    fn add_terminal_anchor(&mut self) {
+        let chain = CassetteResponse::Success {
+            result: json!("0x1"),
+        };
+        self.entries.insert(
+            entry_key("eth_chainId", &Value::Null),
+            CassetteEntry {
+                digest: entry_digest(&chain),
+                response: chain,
+            },
+        );
+        let header = CassetteResponse::Success {
+            result: json!({
+                "number": self.to_block.to_string(),
+                "hash": SYNTHETIC_BLOCK_HASH,
+                "parentHash": format!("0x{:064x}", self.to_block.saturating_sub(1)),
+            }),
+        };
+        let params = json!([format!("0x{:x}", self.to_block), false]);
+        self.entries.insert(
+            entry_key("eth_getBlockByNumber", &params),
+            CassetteEntry {
+                digest: entry_digest(&header),
+                response: header,
+            },
+        );
+    }
+
+    fn into_transport(mut self) -> CassetteReplayTransport {
+        self.add_terminal_anchor();
         CassetteReplayTransport::new(Cassette {
             schema: degenbot_rpc::cassette::CASSETTE_SCHEMA_V1.to_string(),
             chain_id: 1,
@@ -506,9 +544,10 @@ fn discount_token_replacement_fetches_old_and_new_token_streams() {
     assert_eq!(report.to_block, CHUNK_END);
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 7,
+        snapshot.requests, 9,
         "five main passes + the committed T0 pass + the ONE uncovered \
-         generation (T1) — a committed-token insert would re-request T0"
+         generation (T1) + the terminal anchor's chain-id and header reads — a \
+         committed-token insert would re-request T0"
     );
     assert_eq!(
         snapshot.per_method.get("eth_getLogs").map(|m| m.served),
@@ -548,8 +587,9 @@ fn multiple_discount_token_updates_fetch_every_generation() {
     assert_eq!(report.chunks_committed, 1);
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 8,
-        "five main passes + the committed T0 pass + the TWO uncovered          generations (T1, T2)"
+        snapshot.requests, 10,
+        "five main passes + the committed T0 pass + the TWO uncovered \
+         generations (T1, T2) + the terminal anchor's chain-id and header reads"
     );
     assert_eq!(
         committed_discount_token(&db).as_deref(),
@@ -597,8 +637,9 @@ fn initial_set_none_to_some_matches_current_behavior() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 6,
-        "five main passes + the introduced T1 pass — the current wire shape"
+        snapshot.requests, 8,
+        "five main passes + the introduced T1 pass + the terminal anchor's \
+         chain-id and header reads — the current wire shape"
     );
 }
 
@@ -642,9 +683,9 @@ fn discount_token_replacement_reseeds_balances_from_the_new_ledger() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 8,
+        snapshot.requests, 10,
         "five main passes + committed T0 + the uncovered T1 pass + the T1 \
-         balanceOf backfill call"
+         balanceOf backfill call + the terminal anchor's chain-id and header reads"
     );
 }
 
@@ -684,7 +725,7 @@ fn same_tx_rotation_refresh_uses_new_contract() {
          recorded eth_call answers only a T1-targeted balanceOf"
     );
     let snapshot = transport.served_snapshot();
-    assert_eq!(snapshot.requests, 9);
+    assert_eq!(snapshot.requests, 11);
     assert_eq!(
         snapshot.per_method.get("eth_call").map(|m| m.served),
         Some(1),
@@ -724,7 +765,9 @@ fn unchanged_discount_token_preserves_cached_balances_and_wire_shape() {
     );
     let snapshot = transport.served_snapshot();
     assert_eq!(
-        snapshot.requests, 6,
-        "five main passes + the committed T0 pass — the supplemental plan          is empty (every generation already covered)"
+        snapshot.requests, 8,
+        "five main passes + the committed T0 pass + the terminal anchor's chain-id \
+         and header reads — the supplemental plan is empty (every generation \
+         already covered)"
     );
 }

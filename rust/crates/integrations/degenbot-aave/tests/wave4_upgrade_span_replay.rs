@@ -153,6 +153,10 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 /// round-trip count and the run's committed chunk count. A regression that
 /// changes the RPC surface or the chunk boundaries fails these before the
 /// byte-diff consults a golden.
+///
+/// `served` is the whole surface the run asks: the getLogs passes, the pinned
+/// `eth_calls`, and the terminal anchor's chain-id and header reads (ADR-105 D1 —
+/// a run resolves its terminal block before it fetches anything).
 struct WindowExpectations {
     name: &'static str,
     chunks: usize,
@@ -165,42 +169,42 @@ const WINDOWS: &[WindowExpectations] = &[
     WindowExpectations {
         name: "w4_aave_pre_upgrade_control",
         chunks: 2,
-        served: 12,
+        served: 14,
         get_logs: 12,
         eth_calls: 0,
     },
     WindowExpectations {
         name: "w4_aave_atoken_upgrade_in_chunk",
         chunks: 2,
-        served: 13,
+        served: 15,
         get_logs: 12,
         eth_calls: 1,
     },
     WindowExpectations {
         name: "w4_aave_upgrade_plus_same_block_config",
         chunks: 2,
-        served: 17,
+        served: 19,
         get_logs: 12,
         eth_calls: 5,
     },
     WindowExpectations {
         name: "w4_aave_multi_upgrade_one_chunk",
         chunks: 2,
-        served: 18,
+        served: 20,
         get_logs: 12,
         eth_calls: 6,
     },
     WindowExpectations {
         name: "w4_aave_gho_deprecation_at_chunk_boundary",
         chunks: 2,
-        served: 19,
+        served: 21,
         get_logs: 12,
         eth_calls: 7,
     },
     WindowExpectations {
         name: "w4_aave_gho_deprecation_then_discount_read_in_chunk",
         chunks: 2,
-        served: 19,
+        served: 21,
         get_logs: 12,
         eth_calls: 7,
     },

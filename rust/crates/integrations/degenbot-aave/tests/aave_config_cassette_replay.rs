@@ -107,22 +107,23 @@ const EXPECTED_LEDGER_STATEMENTS: usize = 60;
 /// chunk serves from the cassette per run - the RPC round-trip count of the
 /// chunk's fetch surface PLUS the discount pre-pass's single
 /// `getDiscountPercent` `eth_call` (6 getLogs passes + 1 `eth_call`; the run
-/// resolves its tip from the pin, so no `eth_chainId`/`eth_blockNumber` -
-/// those recorded entries belong to the recorder's own run shape).
+/// resolves its tip from the pin, so no `eth_blockNumber`), plus the terminal
+/// anchor every run resolves before it fetches (the endpoint's `eth_chainId`
+/// and the terminal block's header).
 ///
 /// THE CROSS-TX FACT-DEPENDENCE GATE: exactly ONE discount `eth_call` serves
 /// the whole chunk. The first GHO burn's user is absent from the harness DB
 /// (path #2 - the RPC); the SAME user's two later burns read the row the
 /// ops parser created in the first tx (path #1 - the DB cache, no RPC). A
 /// pre-lock fact phase that computed the facts against the committed DB
-/// would re-issue the call for the later txs and push this count to 9.
-const EXPECTED_RPC_ROUND_TRIPS: u64 = 7;
+/// would re-issue the call for the later txs and push this count to 10.
+const EXPECTED_RPC_ROUND_TRIPS: u64 = 9;
 
 /// Independent literal: the serialized payload bytes those served answers
 /// carried (the recorded `result` members in wire form). Ties the suite's
 /// expectation to this corpus file: a re-recorded cassette whose answers
 /// carry different traffic fails here too.
-const EXPECTED_RPC_RESPONSE_BYTES: u64 = 34815;
+const EXPECTED_RPC_RESPONSE_BYTES: u64 = 54826;
 
 /// The Aave V3 Ethereum bootstrap block (`activate_aave_market`'s fresh-seed
 /// stamp; the substrate constant mirrors `updater/run/activate.rs`).
