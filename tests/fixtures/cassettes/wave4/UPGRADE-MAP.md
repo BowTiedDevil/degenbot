@@ -50,7 +50,7 @@ Distinct scaled-upgrade blocks: 18042111, 18777806, 18870593, 22839362, 23088584
 
 ## (C) Cassette window plan
 
-Recorded cassettes home: tests/fixtures/cassettes/wave4/`<name>`.json ; SQL goldens: tests/fixtures/sql_goldens/wave4/`<name>`.{statement-ledger,db-dump}.json. Chunk formula (run.rs): from_block=last_update_block+1; chunk_end=min(to_block, working_start+chunk_size-1). LogFetcher max_blocks_per_request=2000 but the LOOP chunk_size is independent and is what defines boundaries.
+Recorded cassettes home: tests/fixtures/cassettes/wave4/`<name>`.json.zst (the cassette module's committed package) ; SQL goldens: tests/fixtures/sql_goldens/wave4/`<name>`.{statement-ledger,db-dump}.json. Chunk formula (run.rs): from_block=last_update_block+1; chunk_end=min(to_block, working_start+chunk_size-1). LogFetcher max_blocks_per_request=2000 but the LOOP chunk_size is independent and is what defines boundaries.
 
 | Window | name | cursor (last_update_block) | chunk_size | to_block | chunks | transition |
 |---|---|---|---|---|---|---|

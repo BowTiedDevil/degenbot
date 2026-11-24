@@ -109,7 +109,7 @@ Recorded by `cargo run --manifest-path rust/Cargo.toml -p degenbot-fixture-tools
 under `tests/fixtures/sql_goldens/wave5/`. The recorder runs every window
 twice and aborts unless both passes are byte-identical. `--check` regenerates
 and exits non-zero on drift; the `degenbot-fixture-tools` binary
-`record_updater_cassette --check <cassette.json>...` (no feature lane; offline)
+`record_updater_cassette --check <cassette.json.zst>...` (no feature lane; offline)
 re-verifies the canonical bytes through the other writer. The replay gate is
 `rust/crates/integrations/degenbot-aave/tests/wave5_config_span_replay.rs`,
 with the `REGENERATE_SQL_GOLDENS=1` arm through the same writer.

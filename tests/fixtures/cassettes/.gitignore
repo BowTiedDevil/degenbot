@@ -1,0 +1,4 @@
+# Cassettes ship ONLY as .json.zst packages (degenbot_rpc::cassette owns the
+# artifact codec); a plain .json here is an unpackaged recording, regenerable
+# output that the reader prefers while it exists.
+*.json
