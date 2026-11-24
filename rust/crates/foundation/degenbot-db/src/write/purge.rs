@@ -25,8 +25,9 @@
 //!
 //! 1. `aave_v3_checkpoint_positions`, `aave_v3_checkpoint_generations`,
 //!    `aave_v3_checkpoint_assets`, `aave_v3_checkpoint_contracts`,
-//!    `aave_v3_checkpoint_gho`, and `aave_v3_checkpoint_users` — each references
-//!    its checkpoint.
+//!    `aave_v3_checkpoint_gho`, `aave_v3_checkpoint_users`,
+//!    `aave_v3_checkpoint_asset_configs`, `aave_v3_checkpoint_user_collaterals`,
+//!    and `aave_v3_checkpoint_emode_categories` — each references its checkpoint.
 //! 2. `aave_v3_projection_checkpoints` — references the market row, the
 //!    journal, the chain identities, and the generation rows.
 //! 3. `aave_v3_projection_cursors` — references the market row, the journal,
@@ -68,6 +69,21 @@ const GHO_TABLE: &str = "aave_gho_tokens";
 /// The market-scoped relations the purge clears, in foreign-key-safe order,
 /// each with the predicate that selects its rows for `?1` = the market id.
 const PURGE_STEPS: &[PurgeStep] = &[
+    PurgeStep {
+        table: "aave_v3_checkpoint_asset_configs",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_user_collaterals",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
+    PurgeStep {
+        table: "aave_v3_checkpoint_emode_categories",
+        predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints \
+                    WHERE market_id = ?1)",
+    },
     PurgeStep {
         table: "aave_v3_checkpoint_positions",
         predicate: "checkpoint_id IN (SELECT id FROM aave_v3_projection_checkpoints                     WHERE market_id = ?1)",

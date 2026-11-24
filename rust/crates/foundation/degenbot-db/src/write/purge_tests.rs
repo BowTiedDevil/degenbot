@@ -145,6 +145,103 @@ fn count_reports_the_rows_a_purge_would_remove() {
 }
 
 #[test]
+fn purge_clears_every_checkpoint_child_with_foreign_keys_enabled() {
+    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    {
+        let conn = db.lock();
+        conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_markets (id, chain_id, name, active) \
+             VALUES (1, 1, 'Market A', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_block_anchors \
+             (chain_id, block_number, block_hash, parent_hash) VALUES \
+             (1, 1, '0x00000000000000000000000000000000000000000000000000000000000000aa', \
+                      '0x00000000000000000000000000000000000000000000000000000000000000bb')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_transaction_anchors (chain_id, tx_hash, block_hash, tx_index) \
+             VALUES (1, \
+             '0x00000000000000000000000000000000000000000000000000000000000000cc', \
+             '0x00000000000000000000000000000000000000000000000000000000000000aa', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_delta_journal \
+             (id, market_id, sequence, position_ordinal, chain_id, block_number, block_hash, \
+              parent_hash, tx_hash, tx_index, log_index, generation_id, encoding_version, \
+              delta_encoding) VALUES \
+             (1, 1, 1, 1, 1, 1, \
+              '0x00000000000000000000000000000000000000000000000000000000000000aa', \
+              '0x00000000000000000000000000000000000000000000000000000000000000bb', \
+              '0x00000000000000000000000000000000000000000000000000000000000000cc', \
+              0, 0, NULL, 'v1', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_projection_checkpoints \
+             (id, market_id, journal_sequence, chain_id, block_number, block_hash, parent_hash, \
+              tx_hash, tx_index, log_index, range_end_block, encoding_version) VALUES \
+             (1, 1, 1, 1, 1, \
+              '0x00000000000000000000000000000000000000000000000000000000000000aa', \
+              '0x00000000000000000000000000000000000000000000000000000000000000bb', \
+              '0x00000000000000000000000000000000000000000000000000000000000000cc', \
+              0, 0, 1, 'v1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_checkpoint_asset_configs \
+             (checkpoint_id, asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+              borrowing_enabled, stable_borrowing_enabled, flash_loan_enabled, isolation_mode, \
+              borrowable_in_isolation) VALUES (1, 1, 1, 2, 3, 1, 0, 1, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_checkpoint_user_collaterals \
+             (checkpoint_id, user_id, asset_id, enabled) VALUES (1, 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO aave_v3_checkpoint_emode_categories \
+             (checkpoint_id, category_id, ltv, liquidation_threshold, liquidation_bonus) \
+             VALUES (1, 1, 1, 2, 3)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let mut guard = db.lock();
+    let tx = guard.transaction().unwrap();
+    DegenbotDb::purge_aave_market_on_conn(&tx, 1).unwrap();
+    tx.commit().unwrap();
+
+    for table in [
+        "aave_v3_checkpoint_asset_configs",
+        "aave_v3_checkpoint_user_collaterals",
+        "aave_v3_checkpoint_emode_categories",
+        "aave_v3_projection_checkpoints",
+        "aave_v3_delta_journal",
+    ] {
+        let rows: i64 = guard
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+}
+
+#[test]
 fn purge_clears_one_market_and_leaves_the_other_and_non_market_tables_untouched() {
     let db = two_market_db();
     let before = untouched_counts(&db);
