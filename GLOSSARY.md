@@ -1761,13 +1761,38 @@ The inline sim arm's NAMED no-payload outcome: `simulate_path` returned `None`, 
 candidate left that arm un-simulated. Its span carries `simulate.verdict=degraded` plus
 the class (`SimDegradeReason`): `no_encoder_arm` (a hop family with no command-stream
 encoder arm can never be assembled) or `hook_refused` (the hook produced nothing: an
-unregistered pool, or the u128 projection overflow). Counted once per degrade at
-`degenbot_sim_degrades_total{reason}`.
+unregistered pool, the u128 projection overflow, or a route whose hop families all
+compose while the encoder has no producer for the route's shape). Counted once per
+degrade at `degenbot_sim_degrades_total{reason}`.
 
 _Avoid_: "sim failure" (a sim that RAN and reverted), "sim skip" (an assembly-stage
 verdict about a row, never a sim outcome).
 
 
+
+**Unsupported-capability refusal**:
+The typed admission outcome for a path whose hop families or whole-route shape has
+no command-stream producer for the relevant execution arm — a permanent property of
+the route, decided before registration. Distinct from a broken pool (construction
+refusal), malformed or unresolvable state, a target-specific composition decline,
+and a transient transport failure, each of which keeps its own typed owner.
+_Avoid_: "unsupported pool" (construction incapability), "bad path" (a caller bug),
+"unsupported target" (target-relative executability).
+
+**Compose-capable path**:
+A path whose hops and whole-route composition are declared solvable and composable for
+the relevant execution arm. It is eligible for execution-oriented registration, not a
+claim that any particular deployment target accepts it or that execution succeeds.
+_Avoid_: "verified path" (pool-state verification), "globally executable", a per-path
+capability allowlist.
+
+**Target candidate**:
+One compose-capable path offered to one deployment under the session's target-selection
+policy, with its own target-specific composition, simulation, outcome, and submission.
+A target decline belongs to that candidate and does not revoke the path's arm-level
+compose capability.
+_Avoid_: treating a target refusal as global path incapability; collapsing candidates
+across deployments by path identity.
 
 **Path registry**:
 The solve engine's identity module: path/pool relations, the reverse index, signature
