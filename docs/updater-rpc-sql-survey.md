@@ -163,6 +163,37 @@ leading-zero digit), not by field — a non-minimal short quantity sent by a nod
 minimal-form spelling in the ledger. Field-aware canonicalization is the v2
 format note, filed for the capture decision (ergo `QR7QVT`).
 
+### Cassette artifacts: the committed cassette IS a `.json.zst` package
+
+A cassette's committed artifact is not the plain JSON: it is that canonical JSON
+framed with zstd (`<name>.json.zst`), and the codec has exactly one home — the
+cassette module (`degenbot_rpc::cassette::write_artifact` / `read_artifact` /
+`verify_artifact`, behind the non-default `cassette-artifacts` feature, the same
+lane shape `degenbot-pools` gives its capture fixtures per ADR-084 D3). No recorder
+and no consumer chooses its own packaging, which is why every corpus directory, every
+`--check` drift gate, and every replay suite moved together.
+
+The measured need: the wave-4 GHO-deprecation capture records whole-transaction call
+traces, and its canonical bytes had grown to 107 MB — past the git host's 100 MB
+per-file limit, which is a push failure, not a test failure. Packed at the module's
+level it is 19.0 MB (5.7x), and the whole committed cassette corpus is now 19 MB
+instead of 107 MB.
+
+The package is **transport, not format**. The drift gate compares the DECODED
+canonical bytes, so:
+
+- a `libzstd` version that packs the same content into a different frame is not
+  drift (the artifact's identity is the JSON it decodes to, and re-packing never
+  reddens a gate);
+- a packaged artifact cannot launder a mutated recording: the entry write digest and
+  the header-evidence check run on the decoded bytes, so the negative probes stay red
+  (demonstrated at the module level by
+  `a_mutated_answer_fails_the_gate_through_the_package`).
+
+A plain `.json` beside a package wins, because that is the unpackaged artifact a
+recorder just produced; `tests/fixtures/cassettes/.gitignore` keeps such recordings
+untracked, so the committed corpus is packages only.
+
 ## The replay-surface authority (the current surface, one committed home)
 
 The per-capture counters on this page no longer have two homes. Before this
@@ -187,9 +218,9 @@ checking.
 |---|---|
 | `schema` | `degenbot.replay-surface/v1`; any other tag is refused |
 | `captures[]` | one entry per governed capture |
-| `captures[].id` | the capture id: the cassette's file stem |
+| `captures[].id` | the capture id: the cassette artifact's name without its `.json.zst` suffix |
 | `captures[].kind` | `pool_update` (`run_pool_update`) or `aave_update` (`run_aave_update`) |
-| `captures[].cassette` | the committed cassette, repository-relative |
+| `captures[].cassette` | the committed cassette package, repository-relative |
 | `captures[].span.from_block` / `.to_block` | the recorded span; asserted equal to the cassette's provenance span |
 | `captures[].rpc.round_trips` | ledger entries the replayed run serves |
 | `captures[].rpc.response_bytes` | serialized payload bytes those answers carry |
@@ -388,7 +419,7 @@ aave golden is untouched (no aave code landed in this task).
 
 ### The Aave pre-lock fact-phase decision (ergo QR7QVT — the config-heavy corpus + the A2 verdict)
 
-Perf A's aave half was refused for want of evidence: the seed corpus records zero in-lock RPC, and the two candidate fact-phase shapes were unmeasured. The gating corpus now exists — `tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json` (the corpus's 7th cassette, recorder `--kind aave-run`, provenance `reth/v2.7.0-3d592ec` via `eth-mainnet.public.blastapi.io` — the same reth engine family as the rest of the corpus), spanning mainnet 19,091,050..=19,091,059 in the GHO-discount era, ~4.5 months after the discount config landed at block 17,699,249. The span carries THREE variable-debt GHO `Burn`s by the SAME user in three different txs — the fact-dependence shape both candidate designs must preserve, recorded live:
+Perf A's aave half was refused for want of evidence: the seed corpus records zero in-lock RPC, and the two candidate fact-phase shapes were unmeasured. The gating corpus now exists — `tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json.zst` (the corpus's 7th cassette, recorder `--kind aave-run`, provenance `reth/v2.7.0-3d592ec` via `eth-mainnet.public.blastapi.io` — the same reth engine family as the rest of the corpus), spanning mainnet 19,091,050..=19,091,059 in the GHO-discount era, ~4.5 months after the discount config landed at block 17,699,249. The span carries THREE variable-debt GHO `Burn`s by the SAME user in three different txs — the fact-dependence shape both candidate designs must preserve, recorded live:
 
 - tx 1 (block 19,091,050): the user is absent from the harness DB → the discount pre-pass takes path #2 — `getDiscountPercent(user)` `eth_call` at the tx's block, RECORDED (the cassette's single `eth_call`; the run's 7 round trips = the 6 getLogs passes + this call). The ops parser then creates the user + the GHO debt position in the chunk apply.
 - txs 2+3 (blocks 19,091,053 / 19,091,057): the SAME user burns again → the pre-pass takes path #1 — the DB-cache read of the row the ops parser created in tx 1 — NO RPC. A pre-lock fact phase computing facts against the COMMITTED DB would re-issue the call (the round-trip gate would read 9, not 7): the fact phase must replay the chunk's own applies. That is the cross-tx overlay case, recorded — and it makes the shadow-DB fact run necessarily a FULL apply replay, not a topic scan.

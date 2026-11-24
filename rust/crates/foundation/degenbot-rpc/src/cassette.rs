@@ -41,6 +41,24 @@
 //! The pipeline that writes a capture ([`RecordingTransport`] flushed through
 //! [`Cassette::canonical_bytes`]) is the same pipeline the gate runs.
 //!
+//! # Artifacts
+//!
+//! A committed cassette is a **package**: the canonical bytes above, framed
+//! with zstd as `<name>.json.zst`. `write_artifact` is the only writer and
+//! `read_artifact` the only reader, so every recorder and every replay suite
+//! inherits the packaging instead of choosing it — recorded receipt and trace
+//! payloads are highly redundant (the largest committed capture measures
+//! 107 MB decoded), which is what keeps the corpus below a git host's
+//! per-file limit. The package is transport, not format: `verify_artifact`
+//! gates the DECODED canonical bytes, so a libzstd that frames the same
+//! content differently never reddens a gate. A plain `.json` beside a package
+//! wins, because that is the artifact a recorder just produced.
+//!
+//! The codec lives behind the non-default `cassette-artifacts` feature, the
+//! same lane shape `degenbot-pools` gives its capture fixtures (ADR-084 D3):
+//! the pure-Rust tree compiles no zstd, and the recording, replay, and
+//! drift-gate lanes opt in.
+//!
 //! A capture's `eth_getBlockByNumber` answers are chain evidence rather than
 //! payload: a recorded run resolves its blocks through exactly the reads a live
 //! run does, and [`Cassette::recorded_headers`] reads them back as the linked
@@ -49,11 +67,14 @@
 //! The recorder that drives it is the non-publishable fixture tool
 //! `record_updater_cassette` in `degenbot-fixture-tools`
 //! (`rust/tools/fixture-tools/src/bin/record_updater_cassette/main.rs`); it needs
-//! no feature lane, and its `--check <cassette.json>...` arm is the offline gate that
+//! no feature lane, and its `--check <cassette.json[.zst]>...` arm is the offline gate that
 //! runs [`verify_cassette_bytes`] over the committed corpus.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+#[cfg(feature = "cassette-artifacts")]
+use std::path::{Path, PathBuf};
 
 use alloy::primitives::B256;
 use alloy::providers::{Provider, RootProvider};
@@ -405,6 +426,139 @@ pub fn verify_cassette_bytes(bytes: &[u8]) -> Result<(), String> {
         .recorded_headers()
         .map_err(|error| format!("cassette header evidence fails: {error}"))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Artifact packaging
+// ---------------------------------------------------------------------------
+
+/// The suffix of a committed cassette package: `<name>.json` ships as
+/// `<name>.json.zst`.
+#[cfg(feature = "cassette-artifacts")]
+pub const CASSETTE_ARTIFACT_SUFFIX: &str = ".zst";
+
+/// The zstd level every cassette package is written with. Receipt and trace
+/// payloads are highly redundant (the largest committed capture measures
+/// 107 MB decoded -> 19 MB here); the level is a write-side choice and never a
+/// gate input, because the gate compares decoded bytes.
+#[cfg(feature = "cassette-artifacts")]
+const CASSETTE_PACK_LEVEL: i32 = 19;
+
+#[cfg(feature = "cassette-artifacts")]
+impl Cassette {
+    /// Parse a cassette from its artifact: `logical_path` itself, or its
+    /// `.zst` package.
+    ///
+    /// # Errors
+    ///
+    /// When the artifact is missing, its package cannot be decoded, or the
+    /// decoded bytes are not a v1 cassette.
+    pub fn from_artifact<P: AsRef<Path>>(logical_path: P) -> std::io::Result<Self> {
+        let bytes = read_artifact(logical_path)?;
+        Self::from_json_bytes(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+}
+
+/// The committed artifact path for `logical_path`: the `.json` name plus
+/// [`CASSETTE_ARTIFACT_SUFFIX`]. The one place the suffix is spelled.
+#[cfg(feature = "cassette-artifacts")]
+#[must_use]
+pub fn artifact_path<P: AsRef<Path>>(logical_path: P) -> PathBuf {
+    packaged_path(logical_path.as_ref())
+}
+
+/// Write `canonical_bytes` as the package for `logical_path`, returning the
+/// path the package was written to.
+///
+/// # Errors
+///
+/// When the package cannot be encoded or written.
+#[cfg(feature = "cassette-artifacts")]
+pub fn write_artifact<P: AsRef<Path>>(
+    logical_path: P,
+    canonical_bytes: &[u8],
+) -> std::io::Result<PathBuf> {
+    let package = artifact_path(logical_path);
+    std::fs::write(
+        &package,
+        zstd::encode_all(canonical_bytes, CASSETTE_PACK_LEVEL)?,
+    )?;
+    Ok(package)
+}
+
+/// The canonical bytes of the cassette artifact at `logical_path`.
+///
+/// A plain file wins over its package: an unpackaged recording is exactly what
+/// a recorder just produced. An explicit `.zst` path decodes directly.
+///
+/// # Errors
+///
+/// When neither path is present, or the package cannot be decoded.
+#[cfg(feature = "cassette-artifacts")]
+pub fn read_artifact<P: AsRef<Path>>(logical_path: P) -> std::io::Result<Vec<u8>> {
+    let logical = logical_path.as_ref();
+    if is_package(logical) {
+        return decode_package(logical);
+    }
+    match std::fs::read(logical) {
+        Ok(bytes) => Ok(bytes),
+        Err(plain_error) if plain_error.kind() == std::io::ErrorKind::NotFound => {
+            let package = packaged_path(logical);
+            if package.try_exists()? {
+                decode_package(&package)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "cassette artifact missing: neither {} nor {} is present; regenerate it \
+                         with its recorder",
+                        logical.display(),
+                        package.display()
+                    ),
+                ))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The drift gate over the committed artifact at `logical_path`: read it
+/// (decoding the package), then run [`verify_cassette_bytes`].
+///
+/// # Errors
+///
+/// The reason the artifact is unreadable or failed the gate.
+#[cfg(feature = "cassette-artifacts")]
+pub fn verify_artifact<P: AsRef<Path>>(logical_path: P) -> Result<(), String> {
+    let path = logical_path.as_ref();
+    let bytes = read_artifact(path)
+        .map_err(|e| format!("cassette artifact {} is unreadable: {e}", path.display()))?;
+    verify_cassette_bytes(&bytes)
+}
+
+#[cfg(feature = "cassette-artifacts")]
+fn is_package(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "zst")
+}
+
+#[cfg(feature = "cassette-artifacts")]
+fn packaged_path(logical: &Path) -> PathBuf {
+    if is_package(logical) {
+        return logical.to_path_buf();
+    }
+    let mut package = logical.as_os_str().to_owned();
+    package.push(CASSETTE_ARTIFACT_SUFFIX);
+    PathBuf::from(package)
+}
+
+#[cfg(feature = "cassette-artifacts")]
+fn decode_package(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+
+    let mut decoded = Vec::new();
+    zstd::Decoder::new(std::fs::File::open(path)?)?.read_to_end(&mut decoded)?;
+    Ok(decoded)
 }
 
 /// Canonicalize a JSON value: sort object keys recursively and normalize hex
@@ -1426,7 +1580,7 @@ mod tests {
             "aave_update_chunk_26130440-26130445.json",
             "aave_config_chunk_19091050-19091059.json",
         ] {
-            let bytes = std::fs::read(corpus_dir().join(file)).unwrap();
+            let bytes = read_artifact(corpus_dir().join(file)).unwrap();
             verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{file}: drift gate RED: {e}"));
             let cassette = Cassette::from_json_bytes(&bytes).unwrap();
             for key in cassette.entries.keys() {
@@ -1448,10 +1602,10 @@ mod tests {
             .join("../../../../tests/fixtures/cassettes")
     }
 
-    /// Drift gate over the committed seed corpus: every cassette must be
-    /// byte-identical to its canonical regeneration through the recorder's
-    /// writer, and the corpus must carry at least the two pinned spans
-    /// (one pool-updater chunk, one Aave market chunk).
+    /// Drift gate over the committed seed corpus: every `.json.zst` package
+    /// must decode to bytes byte-identical to the canonical regeneration
+    /// through the recorder's writer, and the corpus must carry at least the
+    /// two pinned spans (one pool-updater chunk, one Aave market chunk).
     #[test]
     fn committed_cassette_corpus_is_byte_identical() {
         // The corpus home carries the seed recordings at the top level and
@@ -1465,7 +1619,7 @@ mod tests {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     collect(&path, files);
-                } else if path.extension().is_some_and(|ext| ext == "json") {
+                } else if path.extension().is_some_and(|ext| ext == "zst") {
                     files.push(path);
                 }
             }
@@ -1480,8 +1634,7 @@ mod tests {
             files.len()
         );
         for path in &files {
-            let bytes = std::fs::read(path).unwrap();
-            verify_cassette_bytes(&bytes)
+            verify_artifact(path)
                 .unwrap_or_else(|e| panic!("drift gate RED for {}: {e}", path.display()));
         }
     }
@@ -1600,14 +1753,14 @@ mod tests {
         let mut files: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("cassette corpus missing at {}: {e}", dir.display()))
             .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "zst"))
             .collect();
         files.sort();
 
         let mut total_tokens = 0usize;
         let mut total_entries = 0usize;
         for path in &files {
-            let bytes = std::fs::read(path).unwrap();
+            let bytes = read_artifact(path).unwrap();
             verify_cassette_bytes(&bytes)
                 .unwrap_or_else(|e| panic!("drift gate RED for {}: {e}", path.display()));
             let cassette = Cassette::from_json_bytes(&bytes).unwrap();
@@ -1705,7 +1858,7 @@ mod tests {
         // In-memory copy (never written to disk): the pool cassette's
         // recorded eth_blockNumber answer becomes the non-minimal token.
         let path = corpus_dir().join("pool_v3_created_26102622-26102626.json");
-        let bytes = std::fs::read(&path).unwrap();
+        let bytes = read_artifact(&path).unwrap();
         let mut cassette = Cassette::from_json_bytes(&bytes).unwrap();
         let block_key = cassette
             .entries
@@ -1759,6 +1912,171 @@ mod tests {
             pre_fix_restored, "0x00000000",
             "the decimalize-then-restore mangles this value class; \
              the precision rule must keep preserving it verbatim"
+        );
+    }
+}
+
+/// The artifact codec: the package is transport, the decoded bytes are the
+/// format.
+#[cfg(all(test, feature = "cassette-artifacts"))]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod artifact_tests {
+    use super::*;
+
+    /// One throwaway tree under the system temp directory, removed on drop.
+    struct ScratchDir {
+        path: PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "degenbot-cassette-artifact-{label}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("scratch dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// A one-entry cassette whose recorded answer is `result`.
+    fn cassette(result: Value) -> Cassette {
+        let response = CassetteResponse::Success { result };
+        let digest = entry_digest(&response);
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            entry_key("eth_blockNumber", &serde_json::json!([])),
+            CassetteEntry { response, digest },
+        );
+        Cassette {
+            schema: CASSETTE_SCHEMA_V1.to_string(),
+            chain_id: 1,
+            provenance: CassetteProvenance {
+                source: "mock-node/1.0".to_string(),
+                recorded_at: rfc3339_utc(1_770_000_000),
+                span: CassetteSpan {
+                    from_block: 1,
+                    to_block: 1,
+                },
+            },
+            entries,
+        }
+    }
+
+    #[test]
+    fn a_package_round_trips_to_its_canonical_bytes() {
+        let dir = ScratchDir::new("round-trip");
+        let logical = dir.path().join("capture.json");
+        let cassette = cassette(Value::String("4660".to_string()));
+        let canonical = cassette.canonical_bytes().unwrap();
+
+        let package = write_artifact(&logical, &canonical).unwrap();
+
+        assert_eq!(package, dir.path().join("capture.json.zst"));
+        assert!(
+            !logical.exists(),
+            "the plain path is never written: the package is the artifact"
+        );
+        assert_eq!(read_artifact(&logical).unwrap(), canonical);
+        assert_eq!(
+            read_artifact(&package).unwrap(),
+            canonical,
+            "an explicit .zst path decodes directly"
+        );
+        verify_artifact(&logical).expect("a packaged cassette passes the drift gate");
+        assert_eq!(Cassette::from_artifact(&logical).unwrap(), cassette);
+    }
+
+    #[test]
+    fn a_plain_recording_wins_over_its_package() {
+        let dir = ScratchDir::new("plain-wins");
+        let logical = dir.path().join("fresh.json");
+        write_artifact(
+            &logical,
+            &cassette(Value::String("4660".to_string()))
+                .canonical_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+        let plain = cassette(Value::String("4661".to_string()))
+            .canonical_bytes()
+            .unwrap();
+        std::fs::write(&logical, &plain).unwrap();
+
+        assert_eq!(
+            read_artifact(&logical).unwrap(),
+            plain,
+            "the unpackaged recording beside the package is the newest artifact"
+        );
+    }
+
+    #[test]
+    fn a_missing_artifact_names_both_paths() {
+        let dir = ScratchDir::new("missing");
+
+        let error = read_artifact(dir.path().join("absent.json"))
+            .expect_err("an absent artifact is an error");
+        let message = error.to_string();
+        assert!(message.contains("absent.json"), "{message}");
+        assert!(message.contains("absent.json.zst"), "{message}");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn a_corrupt_package_is_refused() {
+        let dir = ScratchDir::new("corrupt");
+        std::fs::write(dir.path().join("broken.json.zst"), b"not a zstd frame").unwrap();
+
+        assert!(read_artifact(dir.path().join("broken.json")).is_err());
+        assert!(verify_artifact(dir.path().join("broken.json")).is_err());
+    }
+
+    /// Negative probe (ADR-068 D4): the gate has to stay red through the
+    /// package, or compression would launder a mutated recording.
+    #[test]
+    fn a_mutated_answer_fails_the_gate_through_the_package() {
+        let dir = ScratchDir::new("mutated");
+        let logical = dir.path().join("mutated.json");
+        let mut mutated = cassette(Value::String("4660".to_string()));
+        mutated.entries.values_mut().next().unwrap().response = CassetteResponse::Success {
+            result: Value::String("4661".to_string()),
+        };
+        write_artifact(&logical, &mutated.canonical_bytes().unwrap()).unwrap();
+
+        let verdict = verify_artifact(&logical).expect_err("the mutated answer must be red");
+        assert!(verdict.contains("write digest"), "{verdict}");
+    }
+
+    #[test]
+    fn packaging_shrinks_a_redundant_artifact() {
+        let dir = ScratchDir::new("shrink");
+        let logical = dir.path().join("big.json");
+        let traced = Value::Array(vec![
+            serde_json::json!({
+                "topic": "0x0000000000000000000000000000000000000000000000000000000000000000"
+            });
+            4_000
+        ]);
+        let canonical = cassette(traced).canonical_bytes().unwrap();
+
+        let package = write_artifact(&logical, &canonical).unwrap();
+        let packed = std::fs::metadata(&package).unwrap().len();
+
+        assert!(
+            packed * 10 < canonical.len() as u64,
+            "packed {packed} bytes against {} canonical: the package is the size win",
+            canonical.len()
         );
     }
 }

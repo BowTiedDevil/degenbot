@@ -32,6 +32,10 @@ tracing = { version = "^0.1" }
 # temp dirs host the throwaway harness DBs. Dev-only - the feature never
 # reaches production builds of this crate.
 degenbot-db = { workspace = true, features = ["sql-ledger"] }
+# The replay suites read the committed cassettes through the cassette module's
+# artifact codec (`.json.zst` packages). Dev-only: the product tree compiles no
+# zstd (ADR-084 D3).
+degenbot-rpc = { workspace = true, features = ["cassette-artifacts"] }
 tempfile = { version = "^3.27" }
 # The wave-3 replay suite's negative probes mutate a recorded answer inside
 # the parsed cassette (re-signed through the writer's own digest fn).

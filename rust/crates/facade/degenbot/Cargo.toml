@@ -189,6 +189,10 @@ required-features = ["sql-ledger"]
 # `activate_exchange` substrate yet).
 rusqlite = { version = "^0.43" }
 tempfile = { version = "^3.27" }
+# The replay bench reads the committed cassettes through the cassette module's
+# artifact codec (`.json.zst` packages). Dev-only: the product tree compiles no
+# zstd (ADR-084 D3).
+degenbot-rpc = { workspace = true, features = ["cassette-artifacts"] }
 async-trait = "0.1"
 alloy = { version = "^2.6", features = ["full"] }
 # The engine (ADR-089 cutover) — the parity tests drive the evm2 in-memory DB.

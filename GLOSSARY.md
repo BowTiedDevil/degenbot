@@ -930,7 +930,9 @@ _Avoid_: "fixture" for recorded traffic, "snapshot"
 
 **Cassette**:
 The wire-form half of a golden capture — the ordered RPC question→answer ledger for
-the pinned span, replayable in place of a live node.
+the pinned span, replayable in place of a live node. Its committed artifact is a
+zstd package (`<name>.json.zst`) written and read by the cassette module's artifact
+codec; the format is the canonical JSON the package decodes to.
 _Avoid_: "mock", "stub", "recording"
 
 **Statement ledger**:

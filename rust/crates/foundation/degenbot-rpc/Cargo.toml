@@ -38,7 +38,17 @@ tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "s
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 tower = { version = "^0.5", default-features = false }
 
+# Cassette artifact packaging (`src/cassette.rs`): the committed cassettes ship
+# as zstd-framed `.json.zst` packages. Optional for the same reason
+# `degenbot-pools` keeps `capture-fixtures` optional (ADR-084 D3): the
+# pure-Rust tree compiles no zstd by default, and the recording, replay, and
+# drift-gate lanes are the ones that opt in.
+zstd = { workspace = true, optional = true }
+
 [dev-dependencies]
+# The in-crate corpus tests read the committed `.json.zst` cassettes, so the
+# test target builds this crate's own `cassette-artifacts` lane.
+degenbot-rpc = { path = ".", features = ["cassette-artifacts"] }
 # The IPC guard test binds a fake node on a real Unix socket.
 tempfile = { version = "^3.27" }
 # Virtual time: the simulation call policy's ceiling is asserted against a
@@ -48,6 +58,10 @@ tracing-subscriber = { version = "^0.3", default-features = false, features = ["
 
 [features]
 default = []
+# The cassette artifact codec: pack canonical cassette bytes into a committed
+# `.json.zst` package and decode one back. Real recorders, replay suites, and
+# the drift gates enable it; nothing in the product tree needs it.
+cassette-artifacts = ["dep:zstd"]
 # Test-only support visible to downstream crates' tests: the pending-tx pump's
 # frame injection (`PendingTxPump::push`), the subscription item injection
 # (`SubscriptionHandle::push_item`), and the ring sender they need. In a

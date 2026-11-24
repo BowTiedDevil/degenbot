@@ -365,7 +365,7 @@ struct ReplayRun {
 /// and return the serving snapshot + end-state handle.
 fn replay_and_gate(name: &str, expect: &SpanExpectations) -> ReplayRun {
     let seed = read_seed(name);
-    let bytes = std::fs::read(cassette_path(name))
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name))
         .unwrap_or_else(|e| panic!("{name}: committed cassette must exist: {e}"));
     verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{name}: drift gate RED: {e}"));
     let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
@@ -503,7 +503,7 @@ fn mutate_one_eth_call(cassette: &mut Cassette, key_marker: &str, new_word: u64)
 }
 
 fn load_cassette(name: &str) -> Cassette {
-    let bytes = std::fs::read(cassette_path(name)).unwrap();
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name)).unwrap();
     Cassette::from_json_bytes(&bytes).unwrap()
 }
 
@@ -512,7 +512,7 @@ fn load_cassette(name: &str) -> Cassette {
 fn wave5_config_spans_replay_to_the_committed_goldens() {
     // ── the committed surfaces (pinned before any replay) ───────────────
     for expect in SPANS {
-        let bytes = std::fs::read(cassette_path(expect.name)).unwrap();
+        let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(expect.name)).unwrap();
         verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{}: {e}", expect.name));
         let cassette = Cassette::from_json_bytes(&bytes).unwrap();
         let calls = cassette

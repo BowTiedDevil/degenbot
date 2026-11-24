@@ -30,7 +30,7 @@
 //!
 //!     cargo run --locked --manifest-path rust/Cargo.toml \
 //!         -p degenbot-fixture-tools --bin record_updater_cassette \
-//!         -- --check <cassette.json>...
+//!         -- --check <cassette.json.zst>...
 //!
 //!     cargo run --locked --manifest-path rust/Cargo.toml \
 //!         -p degenbot-fixture-tools --bin record_updater_cassette \
@@ -59,10 +59,11 @@
 //!   only the Pool-contract pass).
 //!
 //! The write-versus-check contract is unchanged. Record mode is the LIVE arm: it flushes
-//! the cassette through the canonical writer and writes `--out` with `fs::write`.
-//! `--check <cassette.json>...` is fully OFFLINE and writes nothing: it re-serializes
-//! each committed cassette through that same writer and re-checks every entry digest,
-//! printing one verdict per file and exiting 1 on any drift.
+//! the cassette through the canonical writer and hands `--out` to the cassette module,
+//! which writes the committed artifact as a `.json.zst` package (`write_artifact`).
+//! `--check <cassette.json[.zst]>...` is fully OFFLINE and writes nothing: it decodes
+//! each committed artifact, re-serializes it through that same writer, and re-checks
+//! every entry digest, printing one verdict per file and exiting 1 on any drift.
 
 // Run-once diagnostic tool: stdout/stderr reports ARE its interface, its
 // prose names CLI flags and updaters that pedantry would backtick, and the
@@ -80,7 +81,8 @@ use degenbot_aave::updater::{activate_aave_market, run_aave_update, RunSpec, Ver
 use degenbot_db::DegenbotDb;
 use degenbot_pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
 use degenbot_rpc::cassette::{
-    rfc3339_utc, verify_cassette_bytes, CassetteProvenance, CassetteSpan, RecordingTransport,
+    read_artifact, rfc3339_utc, verify_cassette_bytes, write_artifact, CassetteProvenance,
+    CassetteSpan, RecordingTransport,
 };
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
@@ -138,7 +140,7 @@ fn parse_block(label: &str, raw: &str) -> Result<u64, String> {
 }
 
 fn usage() -> String {
-    "usage: record_updater_cassette --check <cassette.json>...\n \
+    "usage: record_updater_cassette --check <cassette.json[.zst]>...\n \
        or:  record_updater_cassette --kind pool --factory <addr> \
        --from <n> --to <n> --out <path>\n \
        or:  record_updater_cassette --kind aave --pool <addr> \
@@ -227,7 +229,7 @@ enum Either {
 fn run_check(files: &[PathBuf]) -> ExitCode {
     let mut red = 0;
     for path in files {
-        let bytes = match std::fs::read(path) {
+        let bytes = match read_artifact(path) {
             Ok(bytes) => bytes,
             Err(e) => {
                 println!("DRIFT GATE RED {}: read failed: {e}", path.display());
@@ -237,7 +239,7 @@ fn run_check(files: &[PathBuf]) -> ExitCode {
         };
         match verify_cassette_bytes(&bytes) {
             Ok(()) => println!(
-                "drift gate green {} ({} bytes, byte-identical canonical regeneration)",
+                "drift gate green {} ({} canonical bytes, byte-identical canonical regeneration)",
                 path.display(),
                 bytes.len()
             ),
@@ -798,12 +800,13 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
     if let Some(parent) = args.out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
-    std::fs::write(&args.out, &bytes).map_err(|e| format!("write {}: {e}", args.out.display()))?;
+    let package = write_artifact(&args.out, &bytes)
+        .map_err(|e| format!("write {}: {e}", args.out.display()))?;
 
     println!(
         "recorded cassette {} ({} entries, {decoded} fetched events, chain {chain_id}, \
          span {}..={}, source {source:?})",
-        args.out.display(),
+        package.display(),
         entries,
         args.from_block,
         args.to_block,

@@ -70,12 +70,12 @@ pub enum CaptureKind {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplayCapture {
-    /// The capture id: the cassette's file stem (and the replay suite's name
-    /// for the workload).
+    /// The capture id: the cassette's artifact name without its `.json.zst`
+    /// suffix (and the replay suite's name for the workload).
     pub id: String,
     /// The chunk loop this entry governs.
     pub kind: CaptureKind,
-    /// The committed cassette, relative to the repository root.
+    /// The committed cassette package, relative to the repository root.
     pub cassette: String,
     /// The recorded span the cassette was taken over.
     pub span: CaptureSpan,
@@ -327,7 +327,7 @@ pub enum ReplaySurfaceError {
 #[expect(clippy::panic, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::cassette::{verify_cassette_bytes, Cassette};
+    use crate::cassette::{verify_artifact, Cassette};
 
     /// The workspace nests every crate manifest four levels under the
     /// repository root.
@@ -354,7 +354,7 @@ mod tests {
             r#"{{
                 "id": "{id}",
                 "kind": "pool_update",
-                "cassette": "tests/fixtures/cassettes/{id}.json",
+                "cassette": "tests/fixtures/cassettes/{id}.json.zst",
                 "span": {{"from_block": 1, "to_block": 2}},
                 "rpc": {{"round_trips": 2, "response_bytes": 10}},
                 "sql": {{"statements": 3}},
@@ -366,7 +366,7 @@ mod tests {
     /// The committed authority governs exactly the three primary captures and
     /// agrees with the committed cassettes it points at: the file exists, its
     /// bytes pass the cassette drift gate, the manifest's span is the
-    /// cassette's provenance span, and the id is the cassette's file stem.
+    /// cassette's provenance span, and the id is the cassette artifact's stem.
     #[test]
     fn the_committed_authority_matches_the_committed_cassettes() {
         let surface = committed_surface();
@@ -381,16 +381,15 @@ mod tests {
                 .capture(id)
                 .expect("the authority governs the primary captures");
             assert!(
-                capture.cassette.ends_with(&format!("/{id}.json")),
-                "capture {id} must name its own cassette file, not {}",
+                capture.cassette.ends_with(&format!("/{id}.json.zst")),
+                "capture {id} must name its own cassette package, not {}",
                 capture.cassette
             );
             let path = repo_root().join(&capture.cassette);
-            let bytes = std::fs::read(&path).unwrap_or_else(|e| {
-                panic!("capture {id}: cassette {} must exist: {e}", path.display())
+            verify_artifact(&path).expect("the committed cassette must pass its drift gate");
+            let cassette = Cassette::from_artifact(&path).unwrap_or_else(|e| {
+                panic!("capture {id}: cassette {} must decode: {e}", path.display())
             });
-            verify_cassette_bytes(&bytes).expect("the committed cassette must pass its drift gate");
-            let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
             assert_eq!(
                 capture.span,
                 CaptureSpan {

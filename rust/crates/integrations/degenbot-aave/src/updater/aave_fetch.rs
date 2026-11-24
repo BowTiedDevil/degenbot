@@ -1210,7 +1210,8 @@ mod tests {
             "/../../../../tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json"
         );
 
-        let bytes = std::fs::read(CAPTURE).expect("the committed chunk capture must exist");
+        let bytes = degenbot_rpc::cassette::read_artifact(CAPTURE)
+            .expect("the committed chunk capture must exist");
         let transport = CassetteReplayTransport::new(
             Cassette::from_json_bytes(&bytes).expect("the committed capture is a v1 cassette"),
         );

@@ -16,10 +16,13 @@
 # pyo3: the pure-Rust core must stay importable without a Python interpreter
 # (ADR-005); only the binding shell may carry it.
 #
-# zstd/zstd-sys: the C-build capture-fixture dependency (ADR-084 D3). pools
-# keeps it behind the non-default `capture-fixtures` feature, which
-# single-package default-feature resolution does not enable; opt-in lanes
-# (`executor-ab-probe`, the test lanes) still compile it, documented residual.
+# zstd/zstd-sys: the C-build fixture dependency (ADR-084 D3), and the same lane
+# shape serves every fixture kind. pools keeps it behind the non-default
+# `capture-fixtures` feature and degenbot-rpc behind non-default
+# `cassette-artifacts` (the committed cassette `.json.zst` package codec,
+# ADR-068 D7), neither of which single-package default-feature resolution
+# enables; opt-in lanes (`executor-ab-probe`, the recording/replay/drift-gate
+# dev-dependency edges) still compile it, documented residual.
 *: pyo3 zstd ; except degenbot-python
 
 # ADR-098 D1: the generic execution seam is executor-agnostic. The neutral

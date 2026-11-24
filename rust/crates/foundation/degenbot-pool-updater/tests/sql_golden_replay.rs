@@ -152,7 +152,7 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
 fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     let capture = surface_capture();
     let cassette_path = repo_root().join(&capture.cassette);
-    let bytes = std::fs::read(&cassette_path).unwrap_or_else(|e| {
+    let bytes = degenbot_rpc::cassette::read_artifact(&cassette_path).unwrap_or_else(|e| {
         panic!(
             "capture {}: cassette {}: {e}",
             capture.id,

@@ -2913,6 +2913,7 @@ dependencies = [
  "degenbot-eventhub",
  "degenbot-math",
  "degenbot-pools",
+ "degenbot-rpc",
  "futures-util",
  "hashbrown 0.17.1",
  "parking_lot 0.13.0",
@@ -2926,6 +2927,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "zstd",
 ]
 
 [[package]]

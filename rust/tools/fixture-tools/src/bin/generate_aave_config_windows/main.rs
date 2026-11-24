@@ -72,7 +72,7 @@ use degenbot_db::sql_ledger::LedgerDb;
 use degenbot_db::DegenbotDb;
 use degenbot_fixture_tools::{ledger, paths};
 use degenbot_rpc::cassette::{
-    rfc3339_utc, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
+    rfc3339_utc, write_artifact, Cassette, CassetteProvenance, CassetteSpan, RecordingTransport,
 };
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use degenbot_rpc::provider::AlloyProvider;
@@ -497,11 +497,12 @@ fn main() -> std::process::ExitCode {
     if check {
         let mut drifted = 0usize;
         for a in &pass1 {
+            let cassette_check = [(
+                cassette_home.join(format!("{}.json", a.name)),
+                a.cassette.as_slice(),
+            )];
+            drifted += paths::report_cassette_drift(&cassette_check);
             let checks = [
-                (
-                    cassette_home.join(format!("{}.json", a.name)),
-                    a.cassette.as_slice(),
-                ),
                 (
                     golden_home.join(format!("{}.statement-ledger.json", a.name)),
                     a.ledger.as_bytes(),
@@ -528,7 +529,7 @@ fn main() -> std::process::ExitCode {
         std::fs::create_dir_all(&cassette_home).expect("create cassette home");
         std::fs::create_dir_all(&golden_home).expect("create golden home");
         for a in &pass1 {
-            std::fs::write(cassette_home.join(format!("{}.json", a.name)), &a.cassette)
+            write_artifact(cassette_home.join(format!("{}.json", a.name)), &a.cassette)
                 .expect("write cassette");
             std::fs::write(
                 golden_home.join(format!("{}.statement-ledger.json", a.name)),

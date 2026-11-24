@@ -132,7 +132,7 @@ fn seeded_db(dir: &Path, chain_id: i64, file_name: &str) -> std::path::PathBuf {
 /// Replay one scenario's committed cassette through the chunk loop and gate
 /// BOTH goldens byte-for-byte.
 fn replay_and_gate(scenario: &Scenario, chain_id: i64) -> std::path::PathBuf {
-    let bytes = std::fs::read(cassette_path(scenario.name))
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(scenario.name))
         .unwrap_or_else(|e| panic!("{}: committed cassette must exist: {e}", scenario.name));
     verify_cassette_bytes(&bytes)
         .unwrap_or_else(|e| panic!("{}: drift gate RED: {e}", scenario.name));
@@ -239,7 +239,8 @@ fn wave2_generated_captures_replay_to_the_committed_goldens() {
                     0,
                     "the truncated Mint log must decode-skip (no phantom pool)"
                 );
-                let bytes = std::fs::read(cassette_path(scenario.name)).unwrap();
+                let bytes =
+                    degenbot_rpc::cassette::read_artifact(cassette_path(scenario.name)).unwrap();
                 let cassette = Cassette::from_json_bytes(&bytes).unwrap();
                 let raw_window = cassette
                     .entries

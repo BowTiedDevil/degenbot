@@ -218,7 +218,8 @@ fn table_rows<'a>(
 
 #[test]
 fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
-    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path())
+        .expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -315,7 +316,8 @@ fn probe_a_mutated_verification_answer_rolls_the_chunk_back() {
 
 #[test]
 fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
-    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path())
+        .expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
@@ -410,7 +412,8 @@ fn probe_b_dropped_log_turns_the_run_outcome_and_dump_red() {
 
 #[test]
 fn probe_c_mutated_apply_input_turns_the_dump_golden_red() {
-    let bytes = std::fs::read(cassette_path()).expect("the committed cassette must exist");
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path())
+        .expect("the committed cassette must exist");
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     let cassette = Cassette::from_json_bytes(&bytes).unwrap();
     let chain_id = i64::try_from(cassette.chain_id).unwrap();

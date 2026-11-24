@@ -709,7 +709,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../tests/fixtures/cassettes")
             .join(file);
-        let bytes = std::fs::read(&path)
+        let bytes = crate::cassette::read_artifact(&path)
             .unwrap_or_else(|e| panic!("cassette corpus missing at {}: {e}", path.display()));
         verify_cassette_bytes(&bytes).expect("committed corpus must pass the drift gate");
         Cassette::from_json_bytes(&bytes).unwrap()

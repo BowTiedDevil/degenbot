@@ -396,7 +396,7 @@ struct ReplayRun {
 /// and return the serving snapshot + end-state handle.
 fn replay_and_gate(name: &str, expect: &WindowExpectations) -> ReplayRun {
     let seed = read_seed(name);
-    let bytes = std::fs::read(cassette_path(name))
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name))
         .unwrap_or_else(|e| panic!("{name}: committed cassette must exist: {e}"));
     verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{name}: drift gate RED: {e}"));
     let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
@@ -543,7 +543,7 @@ fn mutate_one_eth_call(cassette: &mut Cassette, key_marker: &str, new_word: u64)
 fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // ── the committed surfaces (pinned before any replay) ────────────────
     for expect in WINDOWS {
-        let bytes = std::fs::read(cassette_path(expect.name)).unwrap();
+        let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(expect.name)).unwrap();
         verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{}: {e}", expect.name));
         let cassette = Cassette::from_json_bytes(&bytes).unwrap();
         let calls = cassette
@@ -656,8 +656,10 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // ── W1: a single aToken upgrade; mutate the answer, one asset moves ──
     let w1 = WINDOWS[1].name;
     let w1_seed = read_seed(w1);
-    let mut w1_cassette =
-        Cassette::from_json_bytes(&std::fs::read(cassette_path(w1)).unwrap()).unwrap();
+    let mut w1_cassette = Cassette::from_json_bytes(
+        &degenbot_rpc::cassette::read_artifact(cassette_path(w1)).unwrap(),
+    )
+    .unwrap();
     let mutated = mutate_one_eth_call(
         &mut w1_cassette,
         "0x366ae337897223aea70e3ebe1862219386f20593",
@@ -681,8 +683,10 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // ── W4: mutate ONE of the 120 vToken answers -> exactly that asset ───
     let w4 = WINDOWS[3].name;
     let w4_seed = read_seed(w4);
-    let mut w4_cassette =
-        Cassette::from_json_bytes(&std::fs::read(cassette_path(w4)).unwrap()).unwrap();
+    let mut w4_cassette = Cassette::from_json_bytes(
+        &degenbot_rpc::cassette::read_artifact(cassette_path(w4)).unwrap(),
+    )
+    .unwrap();
     // The GHO vToken implementation at the W4 block (the recorded 6->5 answer).
     let w4_mutated = mutate_one_eth_call(
         &mut w4_cassette,
@@ -721,8 +725,10 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
         ledger_statement_count(&w2_committed_ledger, "v_gho_discount_token = NULL") > 0,
         "W2 committed: the GHO rev-4 upgrade runs the discount-deprecation clear"
     );
-    let mut w2_cassette =
-        Cassette::from_json_bytes(&std::fs::read(cassette_path(w2)).unwrap()).unwrap();
+    let mut w2_cassette = Cassette::from_json_bytes(
+        &degenbot_rpc::cassette::read_artifact(cassette_path(w2)).unwrap(),
+    )
+    .unwrap();
     // The GHO vToken impl at the W2 block (the recorded rev-4 answer):
     // flipping it to 3 must suppress the deprecation side effect.
     let w2_mutated = mutate_one_eth_call(
@@ -752,7 +758,7 @@ fn wave4_upgrade_span_replays_to_the_committed_goldens() {
     // ── the deprecation upgrade INTERIOR to a chunk, a GHO borrow after
     //    it in the same chunk (the per-tx revision re-resolve pin) ─────────
     let w6 = WINDOWS[5].name;
-    let w6_bytes = std::fs::read(cassette_path(w6)).unwrap();
+    let w6_bytes = degenbot_rpc::cassette::read_artifact(cassette_path(w6)).unwrap();
     // The committed corpus records the deprecated-zero path for the
     // post-upgrade borrow: NO getDiscountPercent call exists after the
     // in-chunk upgrade. Pin the absence, the deprecation clear in the

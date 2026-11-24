@@ -354,7 +354,7 @@ struct ReplayRun {
 /// seeded harness DB + statement ledger, gate BOTH goldens byte-for-byte,
 /// and return the serving snapshot + end-state handle.
 fn replay_and_gate(name: &str, seed: &ScenarioSeed) -> ReplayRun {
-    let bytes = std::fs::read(cassette_path(name))
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name))
         .unwrap_or_else(|e| panic!("{name}: committed cassette must exist: {e}"));
     verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{name}: drift gate RED: {e}"));
     let cassette = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
@@ -425,7 +425,7 @@ fn replay_probe(
     pre_seed_user: Option<&str>,
     replace_cassette: Option<Cassette>,
 ) -> ReplayRun {
-    let bytes = std::fs::read(cassette_path(name))
+    let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name))
         .unwrap_or_else(|e| panic!("{name}: committed cassette must exist: {e}"));
     verify_cassette_bytes(&bytes).unwrap_or_else(|e| panic!("{name}: drift gate RED: {e}"));
     let parsed = Cassette::from_json_bytes(&bytes).expect("a valid v1 cassette");
@@ -603,7 +603,7 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     // ── the committed recorded-RPC shapes (pinned before any replay) ─────
     let expected = expected_eth_calls();
     for (name, calls) in &expected {
-        let bytes = std::fs::read(cassette_path(name)).unwrap();
+        let bytes = degenbot_rpc::cassette::read_artifact(cassette_path(name)).unwrap();
         let cassette = Cassette::from_json_bytes(&bytes).unwrap();
         assert_eq!(
             &recorded_eth_calls(&cassette),
@@ -679,7 +679,7 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     );
     // The FIXTURE label (not live behavior) is machine-gated off the
     // committed provenance.
-    let s3_bytes = std::fs::read(cassette_path(s3_name)).unwrap();
+    let s3_bytes = degenbot_rpc::cassette::read_artifact(cassette_path(s3_name)).unwrap();
     let s3_cassette = Cassette::from_json_bytes(&s3_bytes).unwrap();
     let source = &s3_cassette.provenance.source;
     assert!(
@@ -719,7 +719,7 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     // memo's block lane never serves the stale pre-upgrade memo across the
     // block key), and the end state diverges from the committed golden —
     // the loud failure the boundary probe demonstrates.
-    let s2_bytes = std::fs::read(cassette_path(s2_name)).unwrap();
+    let s2_bytes = degenbot_rpc::cassette::read_artifact(cassette_path(s2_name)).unwrap();
     let mut mutated = Cassette::from_json_bytes(&s2_bytes).unwrap();
     // The block-1002 pin is the hash its own recorded header states.
     let pinned_1002 = heights_by_hash(&mutated)

@@ -33,10 +33,17 @@ fn manifest_flag() -> PathBuf {
 
 /// One `cargo tree` spawn covering every named member, resolved at the
 /// workspace manifest.
+///
+/// `-e normal` is what the published contract means: a dev-dependency is not
+/// shipped, and the opt-in fixture lanes that enable a C-build codec from a
+/// test target (ADR-084 D3's documented residual) must not read as a product
+/// edge.
 fn batched_cargo_tree(members: &[String]) -> String {
     let mut command = Command::new("cargo");
     command
         .arg("tree")
+        .arg("--edges")
+        .arg("normal")
         .arg("--manifest-path")
         .arg(manifest_flag());
     for member in members {
@@ -51,10 +58,13 @@ fn batched_cargo_tree(members: &[String]) -> String {
     String::from_utf8(out.stdout).expect("cargo tree output is utf8")
 }
 
-/// `cargo tree` of `member` resolved at the workspace manifest (default features).
+/// `cargo tree` of `member` resolved at the workspace manifest (default
+/// features, normal edges only — see [`batched_cargo_tree`]).
 fn cargo_tree_of(member: &str) -> String {
     let out = Command::new("cargo")
         .arg("tree")
+        .arg("--edges")
+        .arg("normal")
         .arg("--manifest-path")
         .arg(manifest_flag())
         .arg("-p")

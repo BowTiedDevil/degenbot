@@ -4,7 +4,7 @@
     {
       "id": "pool_update_chunk_26102622-26102626",
       "kind": "pool_update",
-      "cassette": "tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json",
+      "cassette": "tests/fixtures/cassettes/pool_update_chunk_26102622-26102626.json.zst",
       "span": {
         "from_block": 26102622,
         "to_block": 26102626
@@ -24,7 +24,7 @@
     {
       "id": "aave_update_chunk_26130440-26130445",
       "kind": "aave_update",
-      "cassette": "tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json",
+      "cassette": "tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json.zst",
       "span": {
         "from_block": 26130440,
         "to_block": 26130445
@@ -43,7 +43,7 @@
     {
       "id": "aave_config_chunk_19091050-19091059",
       "kind": "aave_update",
-      "cassette": "tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json",
+      "cassette": "tests/fixtures/cassettes/aave_config_chunk_19091050-19091059.json.zst",
       "span": {
         "from_block": 19091050,
         "to_block": 19091059

@@ -97,7 +97,7 @@ fn surface_capture<'a>(surface: &'a ReplaySurface, id: &str) -> &'a ReplayCaptur
 
 fn load_cassette(capture: &ReplayCapture) -> Cassette {
     let path = repo_root().join(&capture.cassette);
-    let bytes = std::fs::read(&path)
+    let bytes = degenbot_rpc::cassette::read_artifact(&path)
         .unwrap_or_else(|e| panic!("capture {}: cassette {}: {e}", capture.id, path.display()));
     verify_cassette_bytes(&bytes).expect("the committed cassette must pass the drift gate");
     Cassette::from_json_bytes(&bytes).unwrap()

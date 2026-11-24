@@ -776,7 +776,7 @@ mod tests {
         use degenbot_rpc::cassette::{verify_cassette_bytes, Cassette};
 
         let path = cassette_path();
-        let bytes = std::fs::read(&path)
+        let bytes = degenbot_rpc::cassette::read_artifact(&path)
             .unwrap_or_else(|e| panic!("the committed cassette {}: {e}", path.display()));
         verify_cassette_bytes(&bytes).expect("the committed cassette passes its drift gate");
         let cassette = Cassette::from_json_bytes(&bytes).expect("a valid cassette");
@@ -905,8 +905,9 @@ mod tests {
         );
 
         // The corpus on disk was never touched: the mutation lived in memory.
-        let after =
-            alloy::primitives::keccak256(std::fs::read(cassette_path()).expect("cassette read"));
+        let after = alloy::primitives::keccak256(
+            degenbot_rpc::cassette::read_artifact(cassette_path()).expect("cassette read"),
+        );
         assert_eq!(after, before, "the committed cassette must not be mutated");
 
         // Nothing was written and the restart cursor did not move.

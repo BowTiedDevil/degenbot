@@ -83,7 +83,10 @@ degenbot-simulation.workspace = true
 # the source imports (no facade re-export). `degenbot-rpc` depends on `degenbot-pools`,
 # so a top-level tool package naming both is what keeps the publish graph acyclic
 # (see the header note).
-degenbot-rpc.workspace = true
+# `cassette-artifacts` is the recorders' and drift gates' lane: every cassette
+# here is written through `cassette::write_artifact` and read back through
+# `read_artifact`, so the committed artifacts are `.json.zst` packages.
+degenbot-rpc = { workspace = true, features = ["cassette-artifacts"] }
 degenbot-pools.workspace = true
 
 # The pool-registration params carry a `hashbrown::HashMap` (the map type

@@ -186,7 +186,7 @@ degenbot-cli-core.workspace = true
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.
-degenbot-rpc = { workspace = true, features = ["test-utils"] }
+degenbot-rpc = { workspace = true, features = ["test-utils", "cassette-artifacts"] }
 
 # Seam-C test seam: InMemorySpanExporter. Same version lock as
 # degenbot-bot (tracing-opentelemetry 0.33 <-> opentelemetry(-sdk) 0.32).

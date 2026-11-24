@@ -56,6 +56,17 @@ batching → config-dispatch batching/memoization → fetch pipelining → dead-
 is re-ranked against it, and each fix is gated by unchanged golden dumps plus ledger
 counter drift gates.
 
+**D7 — A cassette's committed artifact is a size-minimized package.** The artifact
+codec lives in the cassette module alone (`write_artifact` / `read_artifact` /
+`verify_artifact`, behind the non-default `cassette-artifacts` feature), so every
+recorder writes `<name>.json.zst` and every replay suite and drift gate reads
+through the same seam instead of choosing its own packaging. The package is
+transport, not format: the gate compares the DECODED canonical bytes, so a zstd
+library that frames the same content differently is not drift, and D4's negative
+probes stay red through the package. Recorded receipt and trace payloads are highly
+redundant — the wave-4 capture measured 107 MB canonical, past a git host's
+per-file limit, 19.0 MB packed.
+
 ## Considered options
 
 - **Typed-seam golden transcripts only** (`ChunkInputs` → write-set): kept as a
