@@ -2745,6 +2745,7 @@ dependencies = [
  "degenbot-abi",
  "degenbot-core",
  "degenbot-execution",
+ "degenbot-pools",
  "proptest",
  "serde",
  "serde_json",

@@ -156,6 +156,7 @@ fn pool_refusal_to_none(refusal: &ObjectRefusal) -> Option<PySessionObject> {
         | ObjectRefusal::UnknownPathIdentity { .. }
         | ObjectRefusal::NoPathOwner
         | ObjectRefusal::UnroutablePath { .. }
+        | ObjectRefusal::UnsupportedPathCapability { .. }
         | ObjectRefusal::PathCapacityReached { .. } => None,
     }
 }

@@ -205,6 +205,9 @@ mod executor_ab_probe;
 mod test_harness;
 #[cfg(test)]
 mod tests;
+/// The static compose-capability refusal and its fact vocabulary (ADR-107 D3),
+/// re-exported so a driver shell crosses the refusal as typed data.
+pub use degenbot_executor::compose_capability::{ComposeCapabilityKind, ComposeCapabilityRefusal};
 #[cfg(any(test, feature = "test-fixtures"))]
 pub use degenbot_ingestion::IngestEvent;
 pub use diagnostic::{

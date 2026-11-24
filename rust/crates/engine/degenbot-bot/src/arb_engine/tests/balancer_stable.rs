@@ -31,9 +31,58 @@ fn balancer_stable_params(
         rate_provider: None,
     }
 }
+/// ADR-107 D10: a homogeneous Balancer-stable route is refused at the
+/// registration door with the structured unsupported-capability refusal, and
+/// the route never reaches the registry or an eager solve.
+#[test]
+fn balancer_stable_route_refuses_at_registration() {
+    let mut engine = ArbitrageEngine::new();
+    let pool_a = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_balancer_stable_pool(&balancer_stable_params(
+            Address::from([0xd1u8; 20]),
+            1000,
+            2000,
+        ))
+        .expect("balancer stable registration");
+    let pool_b = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_balancer_stable_pool(&balancer_stable_params(
+            Address::from([0xd2u8; 20]),
+            1000,
+            1950,
+        ))
+        .expect("balancer stable registration");
+    let refusal = refused_registration(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: pool_a,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: pool_b,
+                zero_for_one: false,
+            },
+        ],
+    );
+    assert_eq!(refusal.kind(), ComposeCapabilityKind::Family);
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::BalancerStable)
+    );
+    assert_eq!(refusal.hop(), Some(0), "the refusal names the first hop");
+    assert!(
+        engine.cycle.path_resolved.is_empty(),
+        "a refused route resolves nothing"
+    );
+}
+
 #[test]
 fn balancer_stable_finds_profitable_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     // Pool A: 1000 token0 / 2000 token1 (amp=200 — stable curve)
     let pool_a = engine
         .core
@@ -55,26 +104,16 @@ fn balancer_stable_finds_profitable_arb() {
         ))
         .expect("balancer stable registration");
     // Path: token0 → token1 (pool A) → token0 (pool B)
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::BalancerStable, true),
+            (pool_b, HopType::BalancerStable, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
-    assert!(
-        !results.is_empty(),
-        "should find profitable Balancer stable arb"
     );
-    let r = results.values().next().unwrap();
+    let r = ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+        .result
+        .expect("a profitable Balancer stable cycle solves");
     assert!(
         !r.optimal_input.is_zero(),
         "optimal input should be non-zero"
@@ -83,7 +122,7 @@ fn balancer_stable_finds_profitable_arb() {
 }
 #[test]
 fn balancer_stable_unprofitable_path_returns_none() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     // Two identical pools — no arb possible.
     let pool_a = engine
         .core
@@ -103,29 +142,23 @@ fn balancer_stable_unprofitable_path_returns_none() {
             2000,
         ))
         .expect("balancer stable registration");
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::BalancerStable, true),
+            (pool_b, HopType::BalancerStable, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
+    );
     assert!(
-        results.is_empty(),
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none(),
         "identical stable pools should not produce an arb"
     );
 }
 #[test]
 fn balancer_stable_mixed_with_v2_finds_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let one_e18 = U256::from(10u64).pow(U256::from(18u64));
     // V2 pool: 1000/2000, 0.3% fee
     let v2 = engine.register_v2_pool(
@@ -146,24 +179,18 @@ fn balancer_stable_mixed_with_v2_finds_arb() {
         ))
         .expect("balancer stable registration");
     // V2 → Balancer stable path
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: v2,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: bs,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (v2, HopType::V2, true),
+            (bs, HopType::BalancerStable, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
+    );
     assert!(
-        !results.is_empty(),
-        "should find V2+Balancer-stable mixed arb"
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_some(),
+        "V2+Balancer-stable mixed arb solves"
     );
 }
 #[test]
@@ -198,7 +225,7 @@ fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
         })
         .expect("test setup: V3 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-    let path_id = register_path(
+    let refusal = refused_registration(
         &mut engine,
         vec![
             PoolHop {
@@ -210,13 +237,15 @@ fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
                 zero_for_one: false,
             },
         ],
-    )
-    .expect("path registers (resolve succeeds per-arm)");
-    let resolved = &engine.cycle.path_resolved[&path_id];
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::BalancerStable)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert_eq!(refusal.arm(), Some(degenbot_pools::Arm::Settlement));
     assert!(
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
-            .result
-            .is_none(),
-        "Balancer stable + concentrated liquidity must not solve"
+        engine.cycle.path_resolved.is_empty(),
+        "the refused route resolved nothing"
     );
 }

@@ -146,6 +146,28 @@ impl HopType {
     pub const fn as_tag(self) -> &'static str {
         self.registered_family().tag()
     }
+
+    /// The capability family this hop declares (ADR-059 D1), the key of the
+    /// declaration table admission reads.
+    ///
+    /// A projection of its own, not a read of [`Self::registered_family`]:
+    /// the registry vocabulary erases the Aerodrome species bit that separates
+    /// the constant-product family from the Solidly-stable one, and this hop
+    /// set never erases it.
+    #[must_use]
+    pub const fn capability_family(self) -> crate::Family {
+        use crate::Family;
+
+        match self {
+            Self::V2 => Family::V2,
+            Self::V3 => Family::V3,
+            Self::V4 => Family::V4,
+            Self::SolidlyStable => Family::SolidlyStable,
+            Self::BalancerWeighted => Family::BalancerWeighted,
+            Self::BalancerStable => Family::BalancerStable,
+            Self::CurveStableswap => Family::CurveStableswap,
+        }
+    }
 }
 
 /// A taxonomy identity whose structure the mixed solver has no hop engine for

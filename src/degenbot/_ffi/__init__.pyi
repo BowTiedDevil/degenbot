@@ -229,6 +229,15 @@ class UnknownStrategyError(StrategyHostError):
     The named strategy is not registered on the host: the operator named a driver the host never admitted.
     """
 
+class UnsupportedPathCapabilityError(ValueError):
+    """
+    The path is permanently outside settlement command composition (ADR-107): a hop family declares no command composition for the arm, the mixed solver has no composition row for the route's family set, or the hop sequence has no command-stream producer.
+    """
+
+    family: str | None
+    hop: int | None
+    kind: UnsupportedCapabilityKind
+
 class UnsupportedPoolFamilyError(RuntimeError):
     """
     A construction route refused a pool whose factory no rung serves (no built-in DEX variant preset, no identity selector answered, or CREATE2 verification failed). Loud typed abort under the loud-abort rule (ADR-055 D4) — never a silent skip.
@@ -4599,6 +4608,35 @@ class SwapRefusalKind:
     def __int__(self, /) -> int: ...
     def __ne__(self, value: object, /) -> bool: ...
 
+@final
+class UnsupportedCapabilityKind:
+    """
+    The static compose-capability refusal vocabulary on the Python surface — the
+    core's closed `ComposeCapabilityKind` arm set verbatim, so the shell
+    re-classifies nothing.
+    """
+
+    Family: Final[UnsupportedCapabilityKind]
+    """
+    The family declares no command composition for the arm.
+    """
+    MissingDeclaration: Final[UnsupportedCapabilityKind]
+    """
+    The declaration table has no cell for the family on the arm (fail closed).
+    """
+    RouteShape: Final[UnsupportedCapabilityKind]
+    """
+    The hop sequence is outside the encoder's shape key.
+    """
+    SolverComposition: Final[UnsupportedCapabilityKind]
+    """
+    The mixed solver has no composition row for the route's family set.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
+
 def build_path_graph(
     database_path: str,
     chain_id: SupportsIndex,
@@ -5342,6 +5380,8 @@ __all__ = [
     "TickMapIntakeInconsistentError",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
+    "UnsupportedCapabilityKind",
+    "UnsupportedPathCapabilityError",
     "UnsupportedPoolFamilyError",
     "VerificationMismatchError",
     "VerificationRpcError",

@@ -35,6 +35,8 @@ from degenbot._ffi import (
     SwapMathOverflowError,
     SwapNotComputableError,
     TickMapIntakeInconsistentError,
+    UnsupportedCapabilityKind,
+    UnsupportedPathCapabilityError,
     UnsupportedPoolFamilyError,
 )
 from degenbot.exceptions.arbitrage import (
@@ -156,6 +158,8 @@ __all__ = (
     "UnknownPool",
     "UnknownPoolId",
     "Unprofitable",
+    "UnsupportedCapabilityKind",
+    "UnsupportedPathCapabilityError",
     "UnsupportedPoolFamilyError",
     "VerificationMismatchError",
     "VerificationRpcError",

@@ -315,6 +315,7 @@ mod _ffi {
     #[pymodule_export]
     use crate::bot::engine::{
         session_phase_next, PyArbEngine, PyBuildFailureKind, PyCrawlReceiptStream, PyCrawlSession,
+        PyUnsupportedCapabilityKind,
     };
 
     // The core Session-end ranking over the stable fact spellings: the Python
@@ -757,6 +758,13 @@ mod _ffi {
             m.add(
                 "PathRegistryFullError",
                 py.get_type::<crate::bot::engine::PathRegistryFullError>(),
+            )?;
+            // The settlement path-registration capability refusal (ADR-107 D7):
+            // typed, with the static-check kind and the offending hop's family
+            // and index riding as attributes.
+            m.add(
+                "UnsupportedPathCapabilityError",
+                py.get_type::<crate::bot::engine::UnsupportedPathCapabilityError>(),
             )?;
             // Strategy-host operator refusals: typed so an unknown or
             // unconfigured strategy is classifiable by type, not message.

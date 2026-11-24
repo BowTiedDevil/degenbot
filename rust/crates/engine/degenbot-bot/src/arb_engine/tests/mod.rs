@@ -17,11 +17,12 @@ use crate::arb_engine::test_harness::{
     finalize_for_test, has_logs_this_block, hop_projection_count, last_solved_block,
     merge_detached_for_test, process_updates, run_test_cycle,
 };
-use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
+use crate::arb_engine::{ArbitrageEngine, BlockMetadata, PathRegistrationError};
 use ::degenbot_pools::solve::{
     HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 use alloy::primitives::{aliases::U112, Address, U256};
+use degenbot_executor::compose_capability::{ComposeCapabilityKind, ComposeCapabilityRefusal};
 use degenbot_pools::RegisterV3PoolParams;
 use degenbot_pools::RegisterV4PoolParams;
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -61,6 +62,61 @@ fn assert_functional_solve_parity(
         ),
         "path {path_id} functional solve result diverged"
     );
+}
+
+/// Resolve a hop list straight off the core, WITHOUT the settlement path
+/// registry: ADR-107 makes a solve-only family unregistrable, so its solver
+/// evidence runs on a resolved path the engine deliberately will not hold.
+fn resolve_unregistered(
+    engine: &ArbitrageEngine,
+    hops: &[(u64, HopType, bool)],
+) -> ResolvedMixedPath {
+    let core = engine
+        .core
+        .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+    let refs: Vec<::degenbot_pools::solve::MixedPoolRef> = hops
+        .iter()
+        .map(
+            |&(pool_key, hop_type, zero_for_one)| ::degenbot_pools::solve::MixedPoolRef {
+                hop_type,
+                pool_key,
+                zero_for_one,
+            },
+        )
+        .collect();
+    let mut resolved = ResolvedMixedPath::default();
+    let deficits = degenbot_substrate::resolve::resolve_hops(
+        &core,
+        &refs,
+        &mut resolved,
+        &degenbot_substrate::resolve::HopProjectionCache::new(),
+        None,
+        false,
+    );
+    assert!(deficits.is_empty(), "test setup: every hop must resolve");
+    resolved
+}
+
+/// Register a route the settlement arm cannot compose and return the typed
+/// refusal, asserting the door created no registry entry (ADR-107 D1).
+fn refused_registration(
+    engine: &mut ArbitrageEngine,
+    hops: Vec<PoolHop>,
+) -> ComposeCapabilityRefusal {
+    let before = path_count(engine);
+    match register_path(engine, hops) {
+        Err(PathRegistrationError::UnsupportedCapability(refusal)) => {
+            assert_eq!(
+                path_count(engine),
+                before,
+                "a refused route must create no registry entry"
+            );
+            assert_eq!(refusal.kind(), ComposeCapabilityKind::Family);
+            refusal
+        }
+        Err(other) => panic!("expected an unsupported-capability refusal, got {other:?}"),
+        Ok(_registration) => panic!("the route registered"),
+    }
 }
 
 /// Common scaffolding: a 3-path V2→V2 engine (same live-corpus-shaped

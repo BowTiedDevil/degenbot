@@ -140,15 +140,23 @@ fn engine_hops(
 }
 
 /// The engine's registration refusal, restated in the session registry's
-/// refusal vocabulary. The unroutable case keeps the engine's own reason
+/// refusal vocabulary. The malformed-path case keeps the engine's own reason
 /// verbatim, because it names the hop and the structural fault and re-wording
-/// it would only lose that.
+/// it would only lose that; the capability case carries the engine's typed
+/// refusal whole, because that taxonomy is the classification a consumer
+/// branches on (ADR-107 D7).
 fn refusal(error: PathRegistrationError, hops: &PathIdentity) -> ObjectRefusal {
     match error {
         PathRegistrationError::Invalid(reason) => ObjectRefusal::UnroutablePath {
             hops: hops.clone(),
             reason,
         },
+        PathRegistrationError::UnsupportedCapability(refusal) => {
+            ObjectRefusal::UnsupportedPathCapability {
+                hops: hops.clone(),
+                refusal,
+            }
+        }
         PathRegistrationError::RegistryFull { cap, registered } => {
             ObjectRefusal::PathCapacityReached { cap, registered }
         }

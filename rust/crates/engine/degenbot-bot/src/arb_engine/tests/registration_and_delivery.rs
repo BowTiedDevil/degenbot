@@ -1,5 +1,81 @@
 use super::*;
 use crate::arb_engine::solve_cycle::{ClampReport, ClampStatus};
+/// ADR-107 D10: a route over fully supported families that the encoder's shape
+/// key has no producer for is refused at admission — the C4 class, which a
+/// family-roster check alone cannot see — instead of registering, solving every
+/// cycle, and degrading downstream.
+#[test]
+fn register_path_refuses_a_supported_route_outside_the_encoder_shape_key() {
+    let mut engine = ArbitrageEngine::new();
+    let v2_a = engine.register_v2_pool(
+        Address::from([0x31u8; 20]),
+        usdc(1_500_000),
+        weth(800),
+        GAMMA_03,
+        FEE_DENOM_03,
+    );
+    let v2_b = engine.register_v2_pool(
+        Address::from([0x32u8; 20]),
+        weth(1_000),
+        usdc(2_000_000),
+        GAMMA_03,
+        FEE_DENOM_03,
+    );
+    let v3 = |engine: &ArbitrageEngine, address: Address| {
+        engine.register_v3_pool(&RegisterV3PoolParams {
+            address,
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            sqrt_price_x96: U256::from(1u64) << 96,
+            tick: 0,
+            liquidity: 1_000_000,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            tick_data_block: None,
+            ..Default::default()
+        })
+    };
+    let v3_a = v3(&engine, Address::from([0x33u8; 20]));
+    let v3_b = v3(&engine, Address::from([0x34u8; 20]));
+    let before = path_count(&engine);
+    let error = register_path(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: v2_a,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: v3_a,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: v2_b,
+                zero_for_one: false,
+            },
+            PoolHop {
+                pool_id: v3_b,
+                zero_for_one: false,
+            },
+        ],
+    )
+    .expect_err("a four-hop mixed route has no producer");
+    match error {
+        PathRegistrationError::UnsupportedCapability(refusal) => {
+            assert_eq!(refusal.kind(), ComposeCapabilityKind::RouteShape);
+            assert_eq!(refusal.hop(), None, "a shape refusal names no single hop");
+            assert_eq!(refusal.family(), None);
+            assert!(
+                refusal.to_string().contains("4-hop"),
+                "the refusal names the sequence length: {refusal}"
+            );
+        }
+        other => panic!("expected the route-shape refusal, got {other:?}"),
+    }
+    assert_eq!(path_count(&engine), before, "no registry entry was created");
+}
 
 #[test]
 fn register_v2_and_v3_pools() {

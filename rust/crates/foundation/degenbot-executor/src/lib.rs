@@ -65,6 +65,7 @@
 
 use alloy::primitives::{keccak256, Address, U256};
 
+pub mod compose_capability;
 pub mod composers;
 pub mod config;
 pub mod discovery;

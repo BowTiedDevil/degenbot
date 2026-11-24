@@ -802,6 +802,42 @@ fn hop_prot(h: &HopInfo) -> Prot {
     }
 }
 
+/// The whole-route hop-sequence class [`facts_for`] dispatches on: the shape
+/// key the command stream has a producer for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ShapeClass {
+    /// Every hop is V2, at least two of them — the funding-branched any-N chain.
+    AllV2Chain,
+    /// A two- or three-hop sequence: the per-position families and the default
+    /// per-hop mix.
+    HopMix,
+}
+
+/// The shape key: the class a hop sequence belongs to, `None` when the encoder
+/// has no producer for it. Reads the hop protocols alone — the target-relative
+/// facts (the V4 `PoolManager` agreement, a per-pool fee/tick width) are not
+/// shape.
+pub(crate) fn shape_class(prots: &[Prot]) -> Option<ShapeClass> {
+    if prots.len() >= 2 && prots.iter().all(|prot| *prot == Prot::V2) {
+        return Some(ShapeClass::AllV2Chain);
+    }
+    (2..=3).contains(&prots.len()).then_some(ShapeClass::HopMix)
+}
+
+/// Whether the command-stream composer has a producer for this route's hop
+/// sequence — the amount- and target-independent half of ADR-107 D3's
+/// whole-route invariant, which settlement admission holds.
+///
+/// It reads the same shape key [`facts_for`] dispatches on, so "admissible
+/// shape" and "shape the producer is asked about" cannot drift apart. The
+/// target-relative facts [`facts_for`] also reads are deliberately absent:
+/// admission has no deployment, and a route one target declines is not
+/// globally unencodable (ADR-107 D6).
+#[must_use]
+pub fn route_shape_has_producer(path: &PathInfo) -> bool {
+    shape_class(&path.hops.iter().map(hop_prot).collect::<Vec<_>>()).is_some()
+}
+
 /// The single facts dispatcher (ADR-031 D6). Routes a path to its hop facts:
 ///
 /// - All-V2 (≥2 hops) → [`facts_of_all_v2`] (the funding-branched any-N family).
@@ -819,10 +855,10 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
     }) {
         return None;
     }
-    let n = path.hops.len();
     let prots: Vec<Prot> = path.hops.iter().map(hop_prot).collect();
-    if n >= 2 && prots.iter().all(|p| *p == Prot::V2) {
-        return facts_of_all_v2(path, inputs);
+    match shape_class(&prots)? {
+        ShapeClass::AllV2Chain => return facts_of_all_v2(path, inputs),
+        ShapeClass::HopMix => {}
     }
     // The terminal hop's terminal_form is the axis the merged v3v4[v2|v4] arm
     // routes on: a trailing V2 swap hands output to SELF directly (DirectHandoff),
@@ -833,12 +869,11 @@ pub(crate) fn facts_for(path: &PathInfo, inputs: &ComposerInputs<'_>) -> Option<
         [Prot::V2, Prot::V3] => facts_of_v2v3(path, inputs)?,
         [Prot::V3, Prot::V3] => facts_of_v3v3(path, inputs)?,
         [Prot::V3, Prot::V2] => facts_of_v3v2(path, inputs)?,
-        _ if (2..=3).contains(&n) => path
+        _ => path
             .hops
             .iter()
             .map(hop_facts)
             .collect::<Option<Vec<_>>>()?,
-        _ => return None,
     };
     if prots.len() == 3 && prots[0] == Prot::V3 && prots[1] == Prot::V4 {
         let form = match prots[2] {
@@ -1149,5 +1184,50 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// ADR-107 D3: the shape invariant admission reads IS the producer's own
+    /// shape key. `route_shape_has_producer` must agree with `facts_for` over
+    /// every protocol sequence, so the admission gate cannot drift from the
+    /// walker that answers "is there a producer?". The target-relative facts
+    /// `facts_for` also reads stay satisfied here (one `PoolManager`), which is
+    /// exactly the half admission does not consult: it has no deployment.
+    #[test]
+    fn route_shape_has_producer_is_the_facts_dispatcher_shape_key() {
+        static AMOUNTS: [u128; 5] = [1_000_000_000_000_000_000; 5];
+        let fams = [Prot::V2, Prot::V3, Prot::V4];
+        for n in 1usize..=5 {
+            for fidx in 0..fams.len().pow(u32::try_from(n).unwrap_or(0)) {
+                let prots: Vec<Prot> = (0..n)
+                    .map(|i| {
+                        fams[(fidx / fams.len().pow(u32::try_from(i).unwrap_or(0))) % fams.len()]
+                    })
+                    .collect();
+                let path = PathInfo::new(combo_hops(&prots));
+                let inputs = ComposerInputs {
+                    executor_address: EXEC,
+                    pool_manager_address: PM,
+                    weth_address: WETH,
+                    optimal_input: OPTIMAL,
+                    hop_outputs: &AMOUNTS[..n],
+                    consumed_inputs: &AMOUNTS[..n],
+                    opts: EncodeOptions::default(),
+                };
+                assert_eq!(
+                    route_shape_has_producer(&path),
+                    facts_for(&path, &inputs).is_some(),
+                    "{prots:?} ({n} hops): the admission shape key and the facts dispatcher disagree"
+                );
+            }
+        }
+        assert!(
+            !route_shape_has_producer(&PathInfo::new(combo_hops(&[
+                Prot::V2,
+                Prot::V3,
+                Prot::V2,
+                Prot::V4,
+            ]))),
+            "a mixed-family route past three hops has no producer"
+        );
     }
 }

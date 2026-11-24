@@ -1,10 +1,12 @@
 """``inspect_path`` hop projection: each hop's identity comes from the shared core.
 
-A Solidly hop has two registrations — an Aerodrome V2 pool and a Camelot
-``stable_swap`` V2 pool — and this file holds both beside the unchanged
-supported-family (V2) projection, so every exact-dict snapshot here is a
-regression on the fee CONVENTION as well as the address: the Solidly arms report
-the direction-selected CHARGED numerator, V2 keeps its retained gamma.
+The supported-family (V2) projection is pinned exactly: the address plus the
+retained gamma numerator the pool handle speaks.
+
+A Solidly hop (an Aerodrome V2 pool, a Camelot ``stable_swap`` V2 pool) cannot
+reach an inspected path at all: ADR-107 makes the settlement registry
+execution-only, so admission refuses the route before it is registered and the
+Solidly arms of the projection are unreachable through a registered path.
 """
 
 from __future__ import annotations
@@ -12,10 +14,13 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
+import pytest
+
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.exceptions import UnsupportedCapabilityKind, UnsupportedPathCapabilityError
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
@@ -83,12 +88,38 @@ def _registry(bot: Bot, *pools: UniswapV2Pool | AerodromeV2Pool) -> EngineRegist
 
 
 def test_inspect_path_hops_carry_their_registered_identities() -> None:
-    """A V2 hop and an Aerodrome Solidly hop each report their own identity.
+    """Each inspected hop reports the supported family's own identity.
 
-    The V2 hop is the supported-family projection (address + retained gamma
-    numerator). The Solidly hop answers with the Aerodrome identity's address
-    and its CHARGED fee numerator — the convention the pool handle's
-    ``(fee_numer, fee_denom)`` pair speaks — and no V3/V4-only keys.
+    The V2 hop answers with its address and the retained gamma numerator the
+    pool handle speaks (never the charged 3), and no V3/V4-only keys.
+    """
+    py_bot, weth, token = _pair()
+    volatile = _volatile_v2(py_bot, weth, token)
+
+    hops = _inspect_hops(_registry(py_bot, volatile), [(volatile, True), (volatile, False)])
+
+    assert hops == [
+        {
+            "type": "v2",
+            "address": get_checksum_address(V2_POOL),
+            "zero_for_one": True,
+            "fee": V2_FEE.denominator - V2_FEE.numerator,
+        },
+        {
+            "type": "v2",
+            "address": get_checksum_address(V2_POOL),
+            "zero_for_one": False,
+            "fee": V2_FEE.denominator - V2_FEE.numerator,
+        },
+    ]
+
+
+def test_a_solidly_hop_is_refused_before_it_can_be_inspected() -> None:
+    """Both Solidly registrations are refused at admission (ADR-107 D1).
+
+    An Aerodrome stable pool and a Camelot ``stable_swap`` pool are one
+    capability family with no settlement command composition, so the route is
+    refused at registration and no path exists for the projection to inspect.
     """
     py_bot, weth, token = _pair()
     volatile = _volatile_v2(py_bot, weth, token)
@@ -104,37 +135,6 @@ def test_inspect_path_hops_carry_their_registered_identities() -> None:
         state_block=18_000_000,
         py_bot=py_bot,
     )
-
-    hops = _inspect_hops(
-        _registry(py_bot, volatile, aero_pool), [(volatile, True), (aero_pool, True)]
-    )
-
-    assert hops == [
-        {
-            "type": "v2",
-            "address": get_checksum_address(V2_POOL),
-            "zero_for_one": True,
-            "fee": V2_FEE.denominator - V2_FEE.numerator,
-        },
-        {
-            "type": "aerodrome-v2",
-            "address": get_checksum_address(AERO_POOL),
-            "zero_for_one": True,
-            "fee": AERO_FEE.numerator,
-        },
-    ]
-
-
-def test_inspect_path_reports_a_camelot_stable_identity() -> None:
-    """A Camelot ``stable_swap`` V2 pool is a Solidly hop that reports its identity.
-
-    Its ``V2PoolIdentity`` carries a RETAINED ``FeeRatio`` per direction, so the
-    projection inverts: the fee is the direction-selected CHARGED numerator (3
-    for the token0→token1 0.3% fee) — never V2's 997 gamma, never the other
-    direction's 5.
-    """
-    py_bot, weth, token = _pair()
-    volatile = _volatile_v2(py_bot, weth, token)
     camelot = make_v2_pool(
         address=CAMELOT_POOL,
         token0=token,
@@ -149,20 +149,13 @@ def test_inspect_path_reports_a_camelot_stable_identity() -> None:
         state_block=18_000_000,
         py_bot=py_bot,
     )
+    registry = _registry(py_bot, volatile, aero_pool, camelot)
 
-    hops = _inspect_hops(_registry(py_bot, volatile, camelot), [(volatile, True), (camelot, True)])
-
-    assert hops == [
-        {
-            "type": "v2",
-            "address": get_checksum_address(V2_POOL),
-            "zero_for_one": True,
-            "fee": V2_FEE.denominator - V2_FEE.numerator,
-        },
-        {
-            "type": "aerodrome-v2",
-            "address": get_checksum_address(CAMELOT_POOL),
-            "zero_for_one": True,
-            "fee": CAMELOT_FEE_TOKEN0.numerator,
-        },
-    ]
+    for stable_hop in (aero_pool, camelot):
+        with pytest.raises(UnsupportedPathCapabilityError) as refusal_info:
+            registry.register_path([(volatile, True), (stable_hop, True)])
+        refusal = refusal_info.value
+        assert refusal.kind == UnsupportedCapabilityKind.Family
+        assert refusal.family == "solidly-stable"
+        assert refusal.hop == 1
+    assert registry.engine.path_count() == 0, "neither route was registered"

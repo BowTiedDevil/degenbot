@@ -20,6 +20,11 @@ degenbot-core.workspace = true
 # payloads) — the seam's Encode intake, which the command grammar consumes
 # (ADR-098 D1). The built-in executor depends on the seam, never the reverse.
 degenbot-execution.workspace = true
+# The pool taxonomy and its family capability declarations (ADR-059 D1/D2):
+# the static compose-capability evaluation (ADR-107 D3) reads the settlement
+# arm's declared tiers and the mixed solver's composition rows from here,
+# beside the command composition rules it reflects.
+degenbot-pools.workspace = true
 # The release manifest (`src/release.rs`) is committed JSON: deserialize it
 # strictly (`deny_unknown_fields`) and validate every cross-reference.
 serde = { version = "1", features = ["derive"] }

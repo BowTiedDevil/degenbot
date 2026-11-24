@@ -324,6 +324,27 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     ExceptionIsland {
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
+        name: "UnsupportedPathCapabilityError",
+        attributes: &[
+            ExceptionAttribute {
+                name: "family",
+                ty: AttributeType::OptionalStr,
+            },
+            ExceptionAttribute {
+                name: "hop",
+                ty: AttributeType::OptionalInt,
+            },
+            ExceptionAttribute {
+                name: "kind",
+                ty: AttributeType::ClassRef("UnsupportedCapabilityKind"),
+            },
+        ],
+        base: "ValueError",
+        message: "The path is permanently outside settlement command composition (ADR-107): a hop family declares no command composition for the arm, the mixed solver has no composition row for the route's family set, or the hop sequence has no command-stream producer.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
         name: "BootRefused",
         attributes: &[],
         base: "RuntimeError",
@@ -1131,6 +1152,21 @@ mod tests {
                     "TickMapIntakeInconsistentError",
                     "kind",
                     "BuildFailureKind".to_owned(),
+                ),
+                (
+                    "UnsupportedPathCapabilityError",
+                    "family",
+                    "str | None".to_owned()
+                ),
+                (
+                    "UnsupportedPathCapabilityError",
+                    "hop",
+                    "int | None".to_owned()
+                ),
+                (
+                    "UnsupportedPathCapabilityError",
+                    "kind",
+                    "UnsupportedCapabilityKind".to_owned()
                 ),
             ]
         );

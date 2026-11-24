@@ -147,26 +147,71 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
     let engine = ArbitrageEngine::with_core(Arc::clone(&core));
     (engine, aero_a, aero_b)
 }
+/// ADR-107 D10: a homogeneous Solidly route is refused at the registration
+/// door, before the registry and any eager solve.
 #[test]
-fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
-    let (mut engine, aero_a, aero_b) = solidly_arb_engine();
-    let path_id = register_path(
+fn solidly_route_refuses_at_registration() {
+    use degenbot_pools::RegisterAerodromeV2PoolParams;
+    let mut engine = ArbitrageEngine::new();
+    let aero = |address: Address| RegisterAerodromeV2PoolParams {
+        token0_decimals: 18,
+        token1_decimals: 18,
+        address,
+        token0: Address::from([0x01u8; 20]),
+        token1: Address::from([0x02u8; 20]),
+        factory: Address::from([0xfau8; 20]),
+        variant: DexVariant::AerodromeV2Stable,
+        stable: true,
+        fee: fee_fraction(3, 1000),
+        reserve0: (U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
+        reserve1: (U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64))).to::<U112>(),
+        update_block: 0,
+    };
+    let pool_a = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_aerodrome_pool(&aero(Address::from([0xd7u8; 20])))
+        .expect("test setup: Aerodrome registration");
+    let pool_b = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_aerodrome_pool(&aero(Address::from([0xd8u8; 20])))
+        .expect("test setup: Aerodrome registration");
+    let refusal = refused_registration(
         &mut engine,
         vec![
             PoolHop {
-                pool_id: aero_a,
+                pool_id: pool_a,
                 zero_for_one: true,
             },
             PoolHop {
-                pool_id: aero_b,
+                pool_id: pool_b,
                 zero_for_one: false,
             },
         ],
-    )
-    .expect("path registers");
-    let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::SolidlyStable)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert!(engine.cycle.path_resolved.is_empty());
+}
+
+#[test]
+fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
+    let (engine, aero_a, aero_b) = solidly_arb_engine();
+    // An all-Solidly route is unregistrable by design (ADR-107 D1); the
+    // family's solver evidence runs on a directly resolved path.
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (aero_a, HopType::SolidlyStable, true),
+            (aero_b, HopType::SolidlyStable, false),
+        ],
+    );
     let result =
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
             .result
             .expect("profitable path solves");
     assert!(!result.optimal_input.is_zero());
@@ -186,7 +231,7 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
     // so this asserts where the peak is, not its exact height.
     let max_reserve = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64));
     let grid_step = U256::from(10u64).pow(U256::from(18u64)); // 1 token
-    let grid_best_profit = grid_scan_best(resolved, max_reserve, grid_step);
+    let grid_best_profit = grid_scan_best(&resolved, max_reserve, grid_step);
     assert!(
         result.profit + grid_step >= grid_best_profit,
         "solver profit {} should be within one grid step of grid max {}",
@@ -267,24 +312,16 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
             init_hash: alloy::primitives::B256::ZERO,
         })
         .expect("test setup: V2 registration");
-    let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-    let path_id = register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: aero_id,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: v2_id,
-                zero_for_one: false,
-            },
+    let engine = ArbitrageEngine::with_core(Arc::clone(&core));
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (aero_id, HopType::SolidlyStable, true),
+            (v2_id, HopType::V2, false),
         ],
-    )
-    .expect("mixed path registers");
-    let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
+    );
     let result =
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
             .result
             .expect("profitable mixed path solves");
     assert!(!result.profit.is_zero());
@@ -292,7 +329,7 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
     // uses IntHopState::swap).
     let max_reserve = tokens(1000).to::<U256>();
     let grid_step = tokens(1).to::<U256>();
-    let grid_best = grid_scan_best(resolved, max_reserve, grid_step);
+    let grid_best = grid_scan_best(&resolved, max_reserve, grid_step);
     assert!(
         result.profit + grid_step >= grid_best,
         "mixed-path profit {} within one grid step of grid max {}",
@@ -302,26 +339,18 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
 }
 #[test]
 fn solve_solidly_unprofitable_path_returns_none() {
-    let (mut engine, aero_a, _aero_b) = solidly_arb_engine();
+    let (engine, aero_a, _aero_b) = solidly_arb_engine();
     // A round-trip through the SAME pool (token0→token1 then token1→token0)
     // is always unprofitable after fees — the Möbius precheck must early-out.
-    let path_id = register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: aero_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: aero_a,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (aero_a, HopType::SolidlyStable, true),
+            (aero_a, HopType::SolidlyStable, false),
         ],
-    )
-    .expect("path registers");
-    let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
+    );
     assert!(
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
             .result
             .is_none(),
         "round-trip through one pool is unprofitable"
@@ -389,7 +418,8 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
         })
         .expect("test setup: V3 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-    let path_id = register_path(
+    // ADR-107 D1: the route is refused at admission, before the registry.
+    let refusal = refused_registration(
         &mut engine,
         vec![
             PoolHop {
@@ -401,14 +431,16 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
                 zero_for_one: false,
             },
         ],
-    )
-    .expect("path registers (resolve is per-arm)");
-    let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    // Solidly + concentrated liquidity is out of scope (p): solve_path returns None.
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::SolidlyStable)
+    );
+    assert_eq!(refusal.arm(), Some(degenbot_pools::Arm::Settlement));
     assert!(
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
-            .result
-            .is_none()
+        engine.cycle.path_resolved.is_empty(),
+        "the refused route resolved nothing"
     );
 }
 

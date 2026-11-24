@@ -743,6 +743,17 @@ impl RegistrationAdmission {
             Err(PathRegistrationError::RegistryFull { .. }) => {
                 clock.answer(seq, RegistrationUnitOutcome::Cap, Some(hop_sig), None)
             }
+            // A permanent compose-capability refusal (ADR-107 D1) reports as
+            // a failed registration unit; the crawl's own stable negative
+            // memoization is the admission-telemetry task's scope.
+            Err(PathRegistrationError::UnsupportedCapability(refusal)) => clock.answer(
+                seq,
+                RegistrationUnitOutcome::RegisterFailed {
+                    detail: Some(refusal.to_string()),
+                },
+                Some(hop_sig),
+                None,
+            ),
             // A transient register failure is deliberately NEVER negatively
             // memoized: a raced build or a blip must stay retryable.
             Err(PathRegistrationError::Invalid(detail)) => clock.answer(

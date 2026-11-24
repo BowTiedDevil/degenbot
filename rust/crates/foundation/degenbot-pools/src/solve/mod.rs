@@ -90,7 +90,7 @@ pub use gas_floor::{path_gas_floor_wei, GasFloorModel, HopGasProfile, MEASURED_G
 // consumer that only needs the solved amount reads `WalkSolution`, never the
 // kernel module beneath this door.
 pub use concentrated_liquidity::WalkSolution;
-pub use mixed::solve::{solve_path, solve_path_with_min_profit, SolveOutcome};
+pub use mixed::solve::{composes_families, solve_path, solve_path_with_min_profit, SolveOutcome};
 pub use mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType, MixedPath,
     MixedPathError, MixedPathErrorKind, MixedPoolRef, PoolHop, ResolvedHop, ResolvedMixedPath,

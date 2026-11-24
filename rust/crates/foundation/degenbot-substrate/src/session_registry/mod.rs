@@ -73,6 +73,7 @@ use std::sync::{Arc, OnceLock};
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_executor::compose_capability::ComposeCapabilityRefusal;
 use degenbot_pools::RegisteredPoolFamily;
 
 /// Canonical identity of one session's pool object.
@@ -381,13 +382,29 @@ pub enum ObjectRefusal {
     NoPathOwner,
     /// The path-identity owner refused the route: the hop shape cannot be
     /// routed. The owner's own reason, kept verbatim so the diagnosis does not
-    /// get re-worded in transit.
+    /// get re-worded in transit. A MALFORMED-path fact — an unregistered hop, a
+    /// structurally unroutable one, or a route too short to be a path.
     #[error("the path-identity owner refused {hops}: {reason}")]
     UnroutablePath {
         /// The route the request named.
         hops: PathIdentity,
         /// The owner's reason for the refusal.
         reason: String,
+    },
+    /// The path-identity owner refused a well-formed route because it is
+    /// permanently outside the arm's command composition (ADR-107 D1).
+    ///
+    /// Distinct from [`Self::UnroutablePath`]: nothing about this route is
+    /// malformed, and the remedy is a different family or a different route
+    /// shape, not a corrected hop. The owner's static refusal rides whole, so a
+    /// consumer branches on the family, the hop index, or the route reason
+    /// instead of parsing prose.
+    #[error("the path-identity owner refused {hops} as uncomposable: {refusal}")]
+    UnsupportedPathCapability {
+        /// The route the request named.
+        hops: PathIdentity,
+        /// The owner's static compose-capability refusal.
+        refusal: ComposeCapabilityRefusal,
     },
     /// The path-identity owner's registered-path capacity is reached. A benign
     /// stop signal for discovery, not a fault: the route is refused and the

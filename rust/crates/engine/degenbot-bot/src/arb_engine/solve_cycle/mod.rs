@@ -104,6 +104,7 @@ use ::degenbot_pools::solve::{
 use alloy::primitives::U256;
 use dashmap::DashMap;
 use degenbot_core::diag;
+use degenbot_executor::compose_capability;
 use degenbot_pools::AffectedKey;
 use degenbot_substrate::resolve::resolve_hops;
 use degenbot_substrate::resolve::HopProjectionCache;
@@ -1380,22 +1381,43 @@ impl SolveCycle {
         // exists there. The engine never constructs pools (ADR-006 D3), so
         // hop_type is derived, not caller-supplied.
         let (pool_refs, hop_descs) = self.resolve_hop_refs(hops)?;
+        let hop_types: Vec<HopType> = pool_refs.iter().map(|pool_ref| pool_ref.hop_type).collect();
+        // ADR-107 D1/D4: compose capability is a static fact about the hop
+        // families, so it is refused here — before the resolve, before the
+        // registry commit, and before any eager solve. The family gate runs
+        // ahead of the whole-route gate because it is the cheaper fact and it
+        // names the offending hop.
+        compose_capability::assess_families(degenbot_pools::Arm::Settlement, &hop_types)
+            .map_err(PathRegistrationError::UnsupportedCapability)?;
         // resolve BEFORE storing so an unroutable hop rejects the
         // registration loudly and leaves no half-registered state behind.
         let mut resolved = ResolvedMixedPath::default();
-        let deficits = {
+        let (deficits, path_info) = {
             let core = self
                 .core
                 .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-            resolve_hops(
+            let deficits = resolve_hops(
                 &core,
                 &pool_refs,
                 &mut resolved,
                 &self.hop_projection_cache,
                 Some(&mut self.hop_projection_count),
                 self.concentrated_liquidity_projection_memo,
-            )
+            );
+            // The SAME projection the composer, the apply-time relevance
+            // derivation, and the inline-sim hook read (ADR-107 D3): the
+            // whole-route gate must judge the representation the producer
+            // consumes, not a second one invented here.
+            let path_info = degenbot_substrate::path_info::build_path_info(&core, &pool_refs);
+            (deficits, path_info)
         };
+        let path_info = path_info.map_err(|error| {
+            PathRegistrationError::Invalid(format!(
+                "register_path: {error} (the family capability declaration and the encoder roster disagree)"
+            ))
+        })?;
+        compose_capability::assess_route(&hop_types, &path_info)
+            .map_err(PathRegistrationError::UnsupportedCapability)?;
         if let Some(unroutable) = deficits
             .iter()
             .find(|d| d.reason.is_structurally_unroutable())

@@ -18,10 +18,15 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
+from degenbot.constants import ZERO_ADDRESS
+from degenbot.exceptions import UnsupportedCapabilityKind, UnsupportedPathCapabilityError
 from degenbot.utils.bytes import to_0x_hex
 from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
+from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
+from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
@@ -145,6 +150,92 @@ def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
     assert registry.engine.pool_id_for_pool("v3", address) is None
     # And the registry holds no per-family identity map or claim table.
     assert not any(name.endswith(("_keys", "_inflight", "_claims")) for name in vars(registry))
+
+
+def test_register_path_refuses_a_route_without_a_command_producer() -> None:
+    """A supported-family route the encoder has no producer for raises the typed
+    capability refusal (ADR-107 D7): a four-hop V2/V3 mix is outside the shape
+    key, so admission refuses it before the registry, and the classification
+    crosses as data (`kind` / `family` / `hop`), never as message text.
+    """
+    py_bot = Bot()
+    weth = make_erc20(
+        py_bot,
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        name="Wrapped Ether",
+        symbol="WETH",
+        decimals=18,
+    )
+    token_a = make_erc20(
+        py_bot,
+        "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        name="Token A",
+        symbol="A",
+        decimals=18,
+    )
+    v2_a = make_v2_pool(
+        "0x2100000000000000000000000000000000000000",
+        token0=weth,
+        token1=token_a,
+        factory=ZERO_ADDRESS,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=800 * 10**18,
+        reserves_token1=1_600_000 * 10**18,
+        py_bot=py_bot,
+    )
+    v2_b = make_v2_pool(
+        "0x2200000000000000000000000000000000000000",
+        token0=token_a,
+        token1=weth,
+        factory=ZERO_ADDRESS,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=1_500_000 * 10**18,
+        reserves_token1=800 * 10**18,
+        py_bot=py_bot,
+    )
+    v3_a = make_v3_pool(
+        "0x2300000000000000000000000000000000000000",
+        token0=weth,
+        token1=token_a,
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=500,
+        tick_spacing=10,
+        sqrt_price_x96=1 << 96,
+        tick=0,
+        liquidity=1_000_000,
+        py_bot=py_bot,
+    )
+    v3_b = make_v3_pool(
+        "0x2400000000000000000000000000000000000000",
+        token0=token_a,
+        token1=weth,
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=500,
+        tick_spacing=10,
+        sqrt_price_x96=1 << 96,
+        tick=0,
+        liquidity=1_000_000,
+        py_bot=py_bot,
+    )
+    engine = ArbitrageEngine(py_bot=py_bot)
+    hops = [
+        (v2_a._py_pool.engine_pool_id, True),
+        (v2_b._py_pool.engine_pool_id, True),
+        (v3_a._py_pool.engine_pool_id, False),
+        (v3_b._py_pool.engine_pool_id, False),
+    ]
+    with pytest.raises(UnsupportedPathCapabilityError) as refusal_info:
+        engine.register_path(hops)
+
+    refusal = refusal_info.value
+    assert isinstance(refusal, ValueError), "the legacy catch keeps working"
+    assert refusal.kind == UnsupportedCapabilityKind.RouteShape
+    assert refusal.family is None, "a route-level refusal names no single family"
+    assert refusal.hop is None
+    assert "4-hop" in str(refusal)
+    assert engine.path_count() == 0, "a refused route creates no registry entry"
 
 
 def test_bot_none_without_engine_raises() -> None:

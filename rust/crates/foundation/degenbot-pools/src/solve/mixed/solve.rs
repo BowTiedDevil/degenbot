@@ -225,6 +225,10 @@ pub(crate) struct FamilyRow {
     allowed: Option<&'static [HopType]>,
     /// A family the path must contain for this row to match.
     required: Option<HopType>,
+    /// Whether this row REFUSES the family set it matches: the solve-only
+    /// families' `allowed: None` catch-alls. The verdict lives on the row, so
+    /// the set a row refuses and the set it registers cannot drift apart.
+    refuses: bool,
     /// The family's path-level solve entry.
     pub(crate) solve: NamedFn<SolveFn>,
     /// The family's `ResolvedHop -> Option<HopMath>` projection.
@@ -254,6 +258,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(v2_to_math),
         lines: named_fn!(v2_hop_lines),
         label: "v2",
+        refuses: false,
     },
     // Concentrated liquidity: every hop V3/V4 → the all-concentrated-liquidity walk.
     FamilyRow {
@@ -263,6 +268,7 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(concentrated_liquidity_to_math),
         lines: named_fn!(concentrated_liquidity_hop_lines),
         label: "concentrated_liquidity",
+        refuses: false,
     },
     // Solidly accept row: V2 ∪ Solidly with ≥1 Solidly hop. A lone Solidly
     // path is the arm's own len<2 concern, not the dispatch's.
@@ -273,11 +279,13 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(solidly_to_math),
         lines: named_fn!(solidly_hop_lines),
         label: "solidly",
+        refuses: false,
     },
     // Solidly refusal row: Solidly beside a concentrated liquidity hop (or a second non-V2 family).
     FamilyRow {
         allowed: None,
         required: Some(HopType::SolidlyStable),
+        refuses: true,
         solve: named_fn!(refuse_path),
         to_math: named_fn!(refuse_to_math),
         lines: named_fn!(refuse_lines),
@@ -291,10 +299,12 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(weighted_to_math),
         lines: named_fn!(weighted_hop_lines),
         label: "weighted",
+        refuses: false,
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::BalancerWeighted),
+        refuses: true,
         solve: named_fn!(refuse_path),
         to_math: named_fn!(refuse_to_math),
         lines: named_fn!(refuse_lines),
@@ -308,10 +318,12 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(stable_to_math),
         lines: named_fn!(balancer_stable_hop_lines),
         label: "balancer_stable",
+        refuses: false,
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::BalancerStable),
+        refuses: true,
         solve: named_fn!(refuse_path),
         to_math: named_fn!(refuse_to_math),
         lines: named_fn!(refuse_lines),
@@ -325,10 +337,12 @@ static FAMILY_DISPATCH: &[FamilyRow] = &[
         to_math: named_fn!(curve_to_math),
         lines: named_fn!(curve_hop_lines),
         label: "curve_stableswap",
+        refuses: false,
     },
     FamilyRow {
         allowed: None,
         required: Some(HopType::CurveStableswap),
+        refuses: true,
         solve: named_fn!(refuse_path),
         to_math: named_fn!(refuse_to_math),
         lines: named_fn!(refuse_lines),
@@ -345,6 +359,7 @@ static WALKABLE_ROW: FamilyRow = FamilyRow {
     to_math: named_fn!(refuse_to_math),
     lines: named_fn!(refuse_lines),
     label: "walkable",
+    refuses: false,
 };
 
 /// The gate-only `ReserveCap` pseudo-family's row. `ReserveCap` is not a hop
@@ -358,6 +373,7 @@ pub(crate) static RESERVE_CAP_ROW: FamilyRow = FamilyRow {
     to_math: named_fn!(refuse_to_math),
     lines: named_fn!(reserve_cap_hop_lines),
     label: "reserve_cap",
+    refuses: false,
 };
 
 /// Classify a path by the SET of hop families it contains — the dispatch key.
@@ -372,6 +388,20 @@ fn family_row(families: &BTreeSet<HopType>) -> &'static FamilyRow {
                     .is_none_or(|allowed| families.iter().all(|f| allowed.contains(f)))
         })
         .unwrap_or(&WALKABLE_ROW)
+}
+
+/// Whether the mixed solver has an accepting composition row for this hop
+/// family set — the static, amount-independent composition fact admission
+/// reads (ADR-107 D3).
+///
+/// The row selection IS the verdict: a set reaching a refusal row has no
+/// engine for that pairing, while one reaching an accept row (or the walkable
+/// default) composes. This answers a question the encoder's per-hop roster
+/// cannot: every hop family here may be individually representable and the
+/// SET still unsolvable.
+#[must_use]
+pub fn composes_families(families: &BTreeSet<HopType>) -> bool {
+    !family_row(families).refuses
 }
 
 /// The row a SINGLE hop family selects — the per-hop analogue of
@@ -927,6 +957,98 @@ mod gate_tests {
         None
     }
 
+    /// ADR-107 D3: the static composition fact admission reads. The refusal
+    /// rows and the accept rows are the whole verdict, so this pins both sides:
+    /// a set the solver composes, and the sets it refuses.
+    #[test]
+    fn composes_families_matches_the_dispatch_rows() {
+        let set =
+            |families: &[HopType]| -> BTreeSet<HopType> { families.iter().copied().collect() };
+
+        for families in [
+            vec![HopType::V2],
+            vec![HopType::V3],
+            vec![HopType::V4],
+            vec![HopType::V3, HopType::V4],
+            vec![HopType::V2, HopType::V3],
+            vec![HopType::V2, HopType::V3, HopType::V4],
+            vec![HopType::V2, HopType::SolidlyStable],
+            vec![HopType::V2, HopType::BalancerWeighted],
+            vec![HopType::V2, HopType::BalancerStable],
+            vec![HopType::V2, HopType::CurveStableswap],
+        ] {
+            assert!(
+                composes_families(&set(&families)),
+                "{families:?} composes in the dispatch table"
+            );
+        }
+
+        for families in [
+            vec![HopType::SolidlyStable, HopType::V3],
+            vec![HopType::BalancerWeighted, HopType::V3],
+            vec![HopType::BalancerStable, HopType::BalancerWeighted],
+            vec![HopType::CurveStableswap, HopType::V4],
+            vec![
+                HopType::V2,
+                HopType::BalancerStable,
+                HopType::BalancerWeighted,
+            ],
+        ] {
+            assert!(
+                !composes_families(&set(&families)),
+                "{families:?} is refused by the dispatch table"
+            );
+        }
+
+        for &family in &[
+            HopType::SolidlyStable,
+            HopType::BalancerWeighted,
+            HopType::BalancerStable,
+            HopType::CurveStableswap,
+        ] {
+            assert!(
+                composes_families(&set(&[HopType::V2, family])),
+                "{family:?} composes beside V2"
+            );
+            assert!(
+                !composes_families(&set(&[HopType::V3, family])),
+                "{family:?} is refused beside concentrated liquidity"
+            );
+        }
+
+        assert_eq!(
+            FAMILY_DISPATCH.iter().filter(|row| row.refuses).count(),
+            4,
+            "the four solve-only families own exactly one refusal row each"
+        );
+    }
+
+    /// ADR-059 D1 + ADR-107 D3: [`HopType::capability_family`] is the
+    /// declaration table's key, so a hop's solve branch and its declared
+    /// composition verdict cannot be keyed by two different families.
+    #[test]
+    fn capability_family_is_the_declaration_table_key() {
+        use crate::{capabilities, Arm, ENCODER_FAMILIES};
+
+        for &hop in HopType::ALL {
+            let family = hop.capability_family();
+            let caps = capabilities(Arm::Settlement, family)
+                .expect("every solver family owns a settlement declaration row");
+            assert!(family.is_solver(), "{hop:?} projects onto a solver family");
+            assert_eq!(
+                caps.compose,
+                ENCODER_FAMILIES.contains(&family),
+                "{hop:?}: compose must track the encoder roster"
+            );
+        }
+
+        assert_eq!(
+            HopType::SolidlyStable.capability_family(),
+            crate::Family::SolidlyStable,
+            "the species bit survives the hop projection"
+        );
+    }
+
     /// Teeth for [`entry_identity_mismatch`]: the seeded cross-wire
     /// `to_math: named_fn!(weighted_to_math)` in the V2 row must fail the
     /// identity comparison, naming the offending field. Built from the same
@@ -937,6 +1059,7 @@ mod gate_tests {
         let cross_wired = FamilyRow {
             allowed: Some(&[HopType::V2]),
             required: None,
+            refuses: false,
             solve: named_fn!(solve_exact_v2_entry),
             to_math: named_fn!(weighted_to_math), // the seeded cross-wire
             lines: named_fn!(v2_hop_lines),

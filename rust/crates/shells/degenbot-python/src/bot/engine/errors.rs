@@ -411,3 +411,89 @@ pub(crate) fn refusal_err<T: PyTypeInfo>(
         built.unwrap_or_else(|_error| PyErr::new::<T, _>(message))
     })
 }
+
+// The settlement path-registration capability refusal (ADR-107 D7). A route
+// outside static command composition is refused at registration: it is not a
+// malformed path, not an unencodable pool family, and not a capacity stop, so
+// it gets its own type instead of sharing the legacy ValueError. The
+// classification crosses as DATA — `kind` says which static check refused,
+// `family` and `hop` name the offending hop when a hop-anchored check does.
+create_exception!(
+    degenbot._ffi,
+    UnsupportedPathCapabilityError,
+    pyo3::exceptions::PyValueError,
+    "The path is permanently outside settlement command composition: a hop family declares no command composition for the arm, the mixed solver has no composition row for the route's family set, or the hop sequence has no command-stream producer. Typed attributes: `kind` is an `UnsupportedCapabilityKind` member, `family` the offending family label (`None` when the refusal names a whole family set), `hop` its route index (`None` for a route-level refusal)."
+);
+
+/// The static compose-capability refusal vocabulary on the Python surface — the
+/// core's closed `ComposeCapabilityKind` arm set verbatim, so the shell
+/// re-classifies nothing.
+#[pyclass(
+    name = "UnsupportedCapabilityKind",
+    eq,
+    eq_int,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyUnsupportedCapabilityKind {
+    /// The declaration table has no cell for the family on the arm (fail closed).
+    MissingDeclaration,
+    /// The family declares no command composition for the arm.
+    Family,
+    /// The mixed solver has no composition row for the route's family set.
+    SolverComposition,
+    /// The hop sequence is outside the encoder's shape key.
+    RouteShape,
+}
+
+impl PyUnsupportedCapabilityKind {
+    /// The ONE read of the core's closed compose-capability vocabulary.
+    #[must_use]
+    pub fn read(kind: degenbot_bot::arb_engine::ComposeCapabilityKind) -> Self {
+        use degenbot_bot::arb_engine::ComposeCapabilityKind;
+
+        match kind {
+            ComposeCapabilityKind::MissingDeclaration => Self::MissingDeclaration,
+            ComposeCapabilityKind::Family => Self::Family,
+            ComposeCapabilityKind::SolverComposition => Self::SolverComposition,
+            ComposeCapabilityKind::RouteShape => Self::RouteShape,
+        }
+    }
+}
+
+/// The ONE stamped builder for the compose-capability refusal: the attributes
+/// are the contract, so a consumer reads the refusal instead of parsing the
+/// message (the [`refusal_err`] precedent).
+pub(crate) fn unsupported_capability_err(
+    refusal: &degenbot_bot::arb_engine::ComposeCapabilityRefusal,
+) -> PyErr {
+    let message = format!("unsupported path capability: {refusal}");
+    let kind = PyUnsupportedCapabilityKind::read(refusal.kind());
+    let family = refusal.family().map(degenbot_pools::Family::label);
+    let hop = refusal.hop();
+    Python::attach(|py| {
+        let built = (|| -> pyo3::PyResult<PyErr> {
+            let instance =
+                UnsupportedPathCapabilityError::type_object(py).call1((message.clone(),))?;
+            instance.setattr("kind", Bound::new(py, kind)?)?;
+            let family_arg: Bound<'_, PyAny> = match family {
+                Some(label) => match label.into_pyobject(py) {
+                    Ok(rendered) => rendered.into_any(),
+                    Err(error) => match error {},
+                },
+                None => py.None().into_bound(py),
+            };
+            instance.setattr("family", family_arg)?;
+            let hop_arg: Bound<'_, PyAny> = match hop {
+                Some(index) => index.into_pyobject(py)?.into_any(),
+                None => py.None().into_bound(py),
+            };
+            instance.setattr("hop", hop_arg)?;
+            Ok(PyErr::from_value(instance))
+        })();
+        built.unwrap_or_else(|_error| PyErr::new::<UnsupportedPathCapabilityError, _>(message))
+    })
+}

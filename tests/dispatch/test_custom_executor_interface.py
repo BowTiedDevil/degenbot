@@ -97,6 +97,11 @@ WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 POOL_MANAGER = "0x000000000004444C5DC75cB358380d2e3dE08a90"
 
+#: A second `PoolManager` no session deployment settles against: a route whose
+#: hops sit under it is compose-capable but not target-composable for the
+#: built-in deployment (ADR-107's target-relative half).
+FOREIGN_POOL_MANAGER = "0x0000000000000000000000000000000000012345"
+
 #: A dead port: the production-path sim fails before any provider call, so a
 #: dial would fail loudly instead of reaching a chain.
 _DEAD_RPC_URL = "http://127.0.0.1:1"
@@ -944,15 +949,20 @@ def _v4_pool_id(currency0: str, currency1: str, fee: int, tick_spacing: int, hoo
 
 
 @pytest.fixture
-def unsupported_shape_engine_and_path() -> tuple[ArbitrageEngine, int]:
-    """A real engine + a registered four-hop all-V4 path the built-in declines.
+def foreign_manager_engine_and_path() -> tuple[ArbitrageEngine, int]:
+    """A real engine + a registered two-hop all-V4 path the built-in declines.
 
-    The built-in `cmd_executor` grammar produces the any-N all-V2 family and the
-    2/3-hop mixes; a four-hop all-V4 path has no producer, so the built-in
-    deployment answers `ComposeError::Unsupported` — a routine capability
-    decline. That is what makes the walk's decline arm observable from Python:
-    over the two-hop V2 fixture the built-in accepts composition and the
-    first-compatible walk stops before any foreign adapter is examined.
+    The route is compose-CAPABLE: two hops is a shape the built-in grammar has a
+    producer for, and the V4 family declares settlement composition (ADR-107
+    D1), so admission registers it. What the built-in deployment cannot do is
+    settle these hops: they sit under a `PoolManager` that is not the session's,
+    and the built-in emits one `V4Unlock` against the session's manager, so it
+    answers `ComposeError::Unsupported` for the route — a routine capability
+    decline, and exactly the boundary ADR-107 draws between arm-level admission
+    and target-relative composition. That decline is what makes the walk's
+    advance arm observable from Python: over the two-hop V2 fixture the built-in
+    accepts composition and the first-compatible walk stops before any foreign
+    adapter is examined.
 
     Offline: `make_erc20` + `make_v4_pool` build the pools in process, and the
     scripted solver row supplies the amounts, so the path never has to solve.
@@ -965,12 +975,10 @@ def unsupported_shape_engine_and_path() -> tuple[ArbitrageEngine, int]:
     for token0, token1, fee, tick_spacing in (
         (weth, usdc, 500, 10),
         (usdc, weth, 3000, 60),
-        (weth, usdc, 100, 1),
-        (usdc, weth, 10_000, 200),
     ):
         pool = make_v4_pool(
             pool_id=_v4_pool_id(token0.address, token1.address, fee, tick_spacing, ZERO_ADDRESS),
-            pool_manager_address=POOL_MANAGER,
+            pool_manager_address=FOREIGN_POOL_MANAGER,
             token0=token0,
             token1=token1,
             fee=fee,
@@ -987,7 +995,11 @@ def unsupported_shape_engine_and_path() -> tuple[ArbitrageEngine, int]:
         )
         asyncio.run(registry.register_v4_pool(pool))
         pools.append(pool)
-    path_id, _created = registry.register_path([(pool, True) for pool in pools])
+    path_id, created = registry.register_path([(pool, True) for pool in pools])
+    # ADR-107: admission proves compose capability, never target acceptance. The
+    # route registers here and the built-in still declines it at composition.
+    assert created, "the two-hop all-V4 route is compose-capable, so it registers"
+    assert registry.engine.path_count() == 1, "the engine holds the registered route"
     return registry.engine, path_id
 
 
@@ -1080,19 +1092,23 @@ class TestWalkClassification:
     """A decline advances the walk to the next target; a violation ends it.
 
     Both tests drive the same walk — the built-in deployment (which declines this
-    shape), then `DEPLOYMENT_ID`, then `HEALTHY_DEPLOYMENT_ID` — so the two
-    verdicts are distinguished by the production lane alone: the routine
+    route at composition: its hops sit under a foreign `PoolManager`), then
+    `DEPLOYMENT_ID`, then `HEALTHY_DEPLOYMENT_ID` — so the two verdicts are
+    distinguished by the production lane alone: the routine
     `ComposeError::Unsupported` (a Python `UnsupportedPath`) lets the path move
     on, and `ComposeError::Validation` stops it where it stands.
+
+    The route itself is admitted: a two-hop all-V4 path is compose-capable, so
+    the built-in's refusal is target-relative, never a registration fact.
     """
 
     async def test_a_declined_path_leaves_the_walk_to_the_next_deployment(
         self,
-        unsupported_shape_engine_and_path: tuple[ArbitrageEngine, int],
+        foreign_manager_engine_and_path: tuple[ArbitrageEngine, int],
     ) -> None:
         """`UnsupportedPath` declines the target; the walk examines the next one."""
-        engine, path_id = unsupported_shape_engine_and_path
-        declining = DecliningComposer("this contract cannot encode a four-hop V4 path")
+        engine, path_id = foreign_manager_engine_and_path
+        declining = DecliningComposer("this contract cannot settle a foreign PoolManager")
         healthy = BuilderComposer(compose_execute)
 
         executor = _executor(
@@ -1116,7 +1132,7 @@ class TestWalkClassification:
             target_selection="first_compatible",
         )
 
-        batch = await _one_batch(executor, path_id=path_id, hops=4)
+        batch = await _one_batch(executor, path_id=path_id, hops=2)
         by_deployment = {record.candidate_id.deployment_id: record for record in batch.records}
 
         assert declining.calls == 1, "the declining deployment was examined"
@@ -1126,7 +1142,8 @@ class TestWalkClassification:
         )
 
         # The built-in leads the registry and answers its own routine refusal for
-        # this shape, so the walk had two declines to pass before the producer.
+        # this route (a foreign PoolManager it cannot settle), so the walk had two
+        # declines to pass before the producer.
         builtin = by_deployment[builtin_deployment_id()]
         assert _bucket(builtin) == "encode-failed", (
             f"a capability refusal is the routine bucket, never an exception: {builtin.simulate!r}"
@@ -1135,13 +1152,17 @@ class TestWalkClassification:
             f"{by_deployment[DEPLOYMENT_ID].simulate!r}"
         )
         assert by_deployment[HEALTHY_DEPLOYMENT_ID].candidate_id.path_id == path_id
+        assert engine.path_count() == 1, (
+            "the built-in's composition decline is target-relative: the route stays "
+            "registered (ADR-107 D6)"
+        )
 
     async def test_a_validation_violation_ends_the_walk(
         self,
-        unsupported_shape_engine_and_path: tuple[ArbitrageEngine, int],
+        foreign_manager_engine_and_path: tuple[ArbitrageEngine, int],
     ) -> None:
         """`ComposeError::Validation` is hard: the walk stops at the violating target."""
-        engine, path_id = unsupported_shape_engine_and_path
+        engine, path_id = foreign_manager_engine_and_path
         violating = CountingComposer(abi_encode_call(DECOY, []))
         healthy = BuilderComposer(compose_execute)
 
@@ -1166,7 +1187,7 @@ class TestWalkClassification:
             target_selection="first_compatible",
         )
 
-        batch = await _one_batch(executor, path_id=path_id, hops=4)
+        batch = await _one_batch(executor, path_id=path_id, hops=2)
         by_deployment = {record.candidate_id.deployment_id: record for record in batch.records}
 
         assert violating.calls == 1, "the violating deployment was examined once"

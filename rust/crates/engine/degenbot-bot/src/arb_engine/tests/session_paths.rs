@@ -20,13 +20,15 @@ use std::sync::Arc;
 use crate::arb_engine::path_objects::EnginePathObjects;
 use crate::arb_engine::{EngineDriver, EngineRetune, EngineStages, PathRegistrationError};
 use crate::bot_core::Bot;
-use degenbot_core::fee::fee_ratio;
-use degenbot_pools::RegisterV2PoolParams;
+use degenbot_core::fee::{fee_fraction, fee_ratio};
+use degenbot_executor::compose_capability::{ComposeCapabilityKind, ComposeCapabilityRefusal};
+use degenbot_pools::{Arm, Family, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
 use degenbot_substrate::session_registry::{
     ObjectRefusal, PathObject, PoolIdentity, SessionObjectRegistry,
 };
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::EpochDelta;
+use degenbot_uniswap::dex_identity::DexVariant;
 use parking_lot::Mutex;
 
 /// Canonical identity is session-scoped; the chain only has to be stable.
@@ -93,6 +95,52 @@ impl Session {
                 .is_ok(),
             "the first path-identity owner installed wins"
         );
+    }
+
+    /// The session with two live Aerodrome-stable pools (the Solidly family)
+    /// registered in BOTH the engine's `BotState` and the session's pool
+    /// registry: a well-formed route the settlement arm can never compose.
+    fn with_two_solidly_pools() -> Self {
+        let engine = ArbitrageEngine::new();
+        for (address, reserve0, reserve1) in [
+            (pool_a(), usdc(1_000_000), weth(100)),
+            (pool_b(), usdc(2_000_000), weth(100)),
+        ] {
+            let _ = engine
+                .core
+                .write_at(LockSite::Solver)
+                .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                    token0_decimals: 18,
+                    token1_decimals: 18,
+                    address,
+                    token0: Address::from([0x01u8; 20]),
+                    token1: Address::from([0x02u8; 20]),
+                    factory: Address::from([0xfau8; 20]),
+                    variant: DexVariant::AerodromeV2Stable,
+                    stable: true,
+                    fee: fee_fraction(3, 1000),
+                    reserve0,
+                    reserve1,
+                    update_block: 0,
+                })
+                .expect("aerodrome stable registration");
+        }
+        let engine = Arc::new(Mutex::new(engine));
+        let stages = EngineStages::new(Arc::clone(&engine), Arc::new(EpochDelta::new(0u64)));
+        let registry = SessionObjectRegistry::new(CHAIN_ID);
+        for address in [pool_a(), pool_b()] {
+            let _ = registry.get_or_create_pool(
+                PoolIdentity::for_address_family("aerodrome-v2", address)
+                    .expect("the family tag names an address-keyed identity"),
+            );
+        }
+        let session = Self {
+            engine,
+            stages,
+            registry,
+        };
+        session.install_path_owner();
+        session
     }
 
     /// The `usdc -> weth -> usdc` route over the two registered pools.
@@ -268,6 +316,75 @@ fn a_path_over_an_unvalidated_pool_is_a_typed_refusal() {
     assert_eq!(session.stages.path_count(), 0);
     assert_eq!(session.registry.path_count(), 0);
     assert_eq!(session.stages.path_dedups(), 0);
+}
+
+/// ADR-107 D7: a well-formed route outside the settlement arm's command
+/// composition crosses the session-registry seam with its typed reason instead
+/// of being flattened into the malformed-path refusal, and it creates no
+/// object and no registry entry.
+#[test]
+fn an_uncomposable_route_is_a_typed_capability_refusal() {
+    let session = Session::with_two_solidly_pools();
+    let route = [
+        (
+            PoolIdentity::for_address_family("aerodrome-v2", pool_a()).expect("address identity"),
+            true,
+        ),
+        (
+            PoolIdentity::for_address_family("aerodrome-v2", pool_b()).expect("address identity"),
+            false,
+        ),
+    ];
+
+    let refusal = session
+        .registry
+        .get_or_create_path(&route)
+        .expect_err("the Solidly family declares no settlement composition");
+    let ObjectRefusal::UnsupportedPathCapability {
+        hops: refused_hops,
+        refusal: typed,
+    } = refusal
+    else {
+        panic!("a capability refusal must not flatten into {refusal:?}");
+    };
+
+    // The session names the route it refused, and the owner's classification
+    // crosses whole: which static check refused, which family, which hop.
+    assert_eq!(refused_hops.hops().len(), route.len());
+    assert_eq!(
+        typed,
+        ComposeCapabilityRefusal::Family {
+            arm: Arm::Settlement,
+            hop: 0,
+            family: Family::SolidlyStable,
+        }
+    );
+    assert_eq!(typed.kind(), ComposeCapabilityKind::Family);
+    assert_eq!(typed.family(), Some(Family::SolidlyStable));
+    assert_eq!(typed.hop(), Some(0));
+
+    // Neither the engine nor the session grew: no path, no dedup accounting,
+    // no object.
+    assert_eq!(session.stages.path_count(), 0);
+    assert_eq!(session.registry.path_count(), 0);
+    assert_eq!(session.stages.path_dedups(), 0);
+}
+
+/// The malformed-path refusal keeps its own variant: a route too short to be a
+/// path is unroutable, never a capability fact.
+#[test]
+fn a_malformed_route_stays_the_unroutable_refusal() {
+    let session = Session::with_two_pools();
+    let refusal = session
+        .registry
+        .get_or_create_path(&[(PoolIdentity::v2(pool_a()), true)])
+        .expect_err("one hop is not a path");
+    assert!(
+        matches!(refusal, ObjectRefusal::UnroutablePath { .. }),
+        "a malformed route stays unroutable, got {refusal:?}"
+    );
+    assert_eq!(session.stages.path_count(), 0);
+    assert_eq!(session.registry.path_count(), 0);
 }
 
 /// The adapter is a VIEW over the engine's `PathRegistry`, not a second

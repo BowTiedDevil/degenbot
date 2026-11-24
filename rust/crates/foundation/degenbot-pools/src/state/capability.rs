@@ -305,6 +305,23 @@ impl Family {
         Self::CurveStableswap,
     ];
 
+    /// The family's stable label — its capability vocabulary name, which the
+    /// identity layer owns (the registry's kebab tag spells the *registry*
+    /// family, one per registered family, and this vocabulary is finer).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+            Self::V4 => "v4",
+            Self::SolidlyStable => "solidly-stable",
+            Self::BalancerWeighted => "balancer-weighted",
+            Self::BalancerStable => "balancer-stable",
+            Self::CurveStableswap => "curve-stableswap",
+            Self::LfjBinned => "lfj-binned",
+        }
+    }
+
     /// Whether this is one of the [`Self::SOLVER`] families.
     #[must_use]
     pub const fn is_solver(self) -> bool {

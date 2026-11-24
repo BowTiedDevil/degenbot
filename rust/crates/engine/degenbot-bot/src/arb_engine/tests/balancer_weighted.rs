@@ -55,9 +55,53 @@ fn balancer_weighted_8020_params(
         update_block: 0,
     }
 }
+/// ADR-107 D10: a homogeneous Balancer-weighted route is refused at the
+/// registration door, before the registry and any eager solve.
+#[test]
+fn balancer_weighted_route_refuses_at_registration() {
+    let mut engine = ArbitrageEngine::new();
+    let pool_a = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_balancer_weighted_pool(&balancer_weighted_5050_params(
+            Address::from([0xd3u8; 20]),
+            1000,
+            2000,
+        ))
+        .expect("balancer weighted registration");
+    let pool_b = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_balancer_weighted_pool(&balancer_weighted_5050_params(
+            Address::from([0xd4u8; 20]),
+            1000,
+            1950,
+        ))
+        .expect("balancer weighted registration");
+    let refusal = refused_registration(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: pool_a,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: pool_b,
+                zero_for_one: false,
+            },
+        ],
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::BalancerWeighted)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert!(engine.cycle.path_resolved.is_empty());
+}
+
 #[test]
 fn balancer_weighted_5050_finds_profitable_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let one = U256::from(10u64).pow(U256::from(18u64));
     let _ = one; // reserved for future reserve-scale assertions
                  // Pool A: 1000 token0 / 2000 token1 (50/50 — reduces to constant product)
@@ -81,26 +125,16 @@ fn balancer_weighted_5050_finds_profitable_arb() {
         ))
         .expect("balancer weighted registration");
     // Path: token0 → token1 (pool A) → token0 (pool B)
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::BalancerWeighted, true),
+            (pool_b, HopType::BalancerWeighted, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
-    assert!(
-        !results.is_empty(),
-        "should find profitable 50/50 weighted arb"
     );
-    let r = results.values().next().unwrap();
+    let r = ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+        .result
+        .expect("a profitable 50/50 weighted cycle solves");
     assert!(
         !r.optimal_input.is_zero(),
         "optimal input should be non-zero"
@@ -109,7 +143,7 @@ fn balancer_weighted_5050_finds_profitable_arb() {
 }
 #[test]
 fn balancer_weighted_8020_finds_profitable_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     // 80/20 pools with a mispricing to create an arb cycle.
     let pool_a = engine
         .core
@@ -129,26 +163,16 @@ fn balancer_weighted_8020_finds_profitable_arb() {
             195_000,
         ))
         .expect("balancer weighted registration");
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::BalancerWeighted, true),
+            (pool_b, HopType::BalancerWeighted, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
-    assert!(
-        !results.is_empty(),
-        "should find profitable 80/20 weighted arb"
     );
-    let r = results.values().next().unwrap();
+    let r = ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+        .result
+        .expect("a profitable 80/20 weighted cycle solves");
     assert!(!r.optimal_input.is_zero());
     assert!(!r.profit.is_zero());
 }
@@ -227,26 +251,17 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
             .core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver),
     );
-    let bw_path = register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: bw_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: bw_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (bw_a, HopType::BalancerWeighted, true),
+            (bw_b, HopType::BalancerWeighted, false),
         ],
-    )
-    .unwrap();
-    // resolve + solve the bw path specifically
-    let resolved = &engine.cycle.path_resolved[&bw_path];
+    );
     let bw_result =
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
             .result
-            .expect("bw path should solve");
+            .expect("the weighted path should solve");
     // The two profits should be in the same ballpark (within 1% of each
     // other — the Balancer weighted solve uses golden-section search, not
     // the exact Möbius closed form, so there's small search imprecision).
@@ -265,7 +280,7 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
 }
 #[test]
 fn balancer_weighted_mixed_with_v2_finds_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let one_e18 = U256::from(10u64).pow(U256::from(18u64));
     // V2 pool: token0/token1, 1000/2000 in 18dp, 0.3% fee
     let v2 = engine.register_v2_pool(
@@ -300,23 +315,20 @@ fn balancer_weighted_mixed_with_v2_finds_arb() {
         .register_balancer_weighted_pool(&bw_params)
         .expect("balancer weighted registration");
     // V2 → Balancer weighted path
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: v2,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: bw,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (v2, HopType::V2, true),
+            (bw, HopType::BalancerWeighted, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
+    );
     // V2+Balancer-weighted is all-V2-or-weighted with no concentrated liquidity — should solve
-    assert!(!results.is_empty(), "should find V2+Balancer-weighted arb");
+    assert!(
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_some(),
+        "should find V2+Balancer-weighted arb"
+    );
 }
 #[test]
 fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
@@ -352,7 +364,7 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
         })
         .expect("test setup: V3 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-    let path_id = register_path(
+    let refusal = refused_registration(
         &mut engine,
         vec![
             PoolHop {
@@ -364,14 +376,15 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
                 zero_for_one: false,
             },
         ],
-    )
-    .expect("path registers (resolve succeeds per-arm)");
-    let resolved = &engine.cycle.path_resolved[&path_id];
-    // Balancer weighted + concentrated liquidity is out of scope — solve_path returns None.
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::BalancerWeighted)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert_eq!(refusal.arm(), Some(degenbot_pools::Arm::Settlement));
     assert!(
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
-            .result
-            .is_none(),
-        "Balancer weighted + concentrated liquidity must not solve"
+        engine.cycle.path_resolved.is_empty(),
+        "the refused route resolved nothing"
     );
 }

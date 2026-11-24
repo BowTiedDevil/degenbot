@@ -38,6 +38,7 @@
 //! `dedups`), `note_dedup`, `set_cap`, and `canonical_path` move no identity,
 //! so they move no revision.
 use ::degenbot_pools::solve::{HopType, MixedPath, MixedPoolRef};
+use degenbot_executor::compose_capability::ComposeCapabilityRefusal;
 use degenbot_substrate::session_registry::{PathIdentity, PathObject};
 use hashbrown::HashMap;
 use std::sync::Arc;
@@ -55,6 +56,12 @@ pub enum PathRegistrationError {
     /// legacy `String` form (the `PyO3` mapping surfaces it verbatim as a
     /// `ValueError`).
     Invalid(String),
+    /// ADR-107 D1: the route is permanently outside settlement command
+    /// composition, so the registry refuses it instead of spending a resolve
+    /// and a solve on every dirty cycle. Distinct from [`Self::Invalid`] (a
+    /// malformed path), [`Self::RegistryFull`] (capacity), and a target's
+    /// post-solve decline (which never mutates registration).
+    UnsupportedCapability(ComposeCapabilityRefusal),
     /// PRG-4: the registered-path cap is reached. A BENIGN stop signal, not
     /// an error condition — the crawl catches it and stops discovery (it
     /// replaces the Python `DiscoveryCrawlComplete` pre-count unwind).
@@ -69,6 +76,10 @@ impl std::fmt::Display for PathRegistrationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Invalid(msg) => f.write_str(msg),
+            Self::UnsupportedCapability(refusal) => write!(
+                f,
+                "unsupported compose capability at registration: {refusal}"
+            ),
             Self::RegistryFull { cap, registered } => write!(
                 f,
                 "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"

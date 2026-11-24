@@ -313,13 +313,18 @@ fn snapshot_reason_detail(reason: &SnapshotLoadReason) -> &str {
 }
 
 /// Map the typed path-registration refusal: a full registry is the benign
-/// `PathRegistryFullError` stop signal; every `Invalid` refusal keeps the
-/// legacy `ValueError` with its verbatim message.
+/// `PathRegistryFullError` stop signal, a route outside static command
+/// composition is the typed `UnsupportedPathCapabilityError` (ADR-107 D7), and
+/// every `Invalid` refusal keeps the legacy `ValueError` with its verbatim
+/// message.
 pub(crate) fn map_path_registration_err(
     err: degenbot_bot::arb_engine::PathRegistrationError,
 ) -> pyo3::PyErr {
     match err {
         degenbot_bot::arb_engine::PathRegistrationError::Invalid(msg) => PyValueError::new_err(msg),
+        degenbot_bot::arb_engine::PathRegistrationError::UnsupportedCapability(refusal) => {
+            crate::bot::engine::unsupported_capability_err(&refusal)
+        }
         degenbot_bot::arb_engine::PathRegistrationError::RegistryFull { cap, registered } => {
             PathRegistryFullError::new_err(format!(
                 "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"
@@ -555,6 +560,67 @@ mod tests {
     /// Exact class identity: the raise is THIS class, not a subclass.
     fn exact<T: PyTypeInfo>(err: &PyErr) -> bool {
         Python::attach(|py| err.value(py).get_type().is(py.get_type::<T>()))
+    }
+
+    /// ADR-107 D7: the compose-capability refusal crosses as its own typed
+    /// exception with the static-check kind and the offending hop's family and
+    /// index as structured attributes — no caller parses the message.
+    #[test]
+    fn unsupported_capability_refusal_carries_its_structured_data() {
+        let hop_refusal = map_path_registration_err(
+            degenbot_bot::arb_engine::PathRegistrationError::UnsupportedCapability(
+                degenbot_bot::arb_engine::ComposeCapabilityRefusal::Family {
+                    arm: degenbot_pools::Arm::Settlement,
+                    hop: 2,
+                    family: degenbot_pools::Family::CurveStableswap,
+                },
+            ),
+        );
+        Python::attach(|py| {
+            assert!(
+                hop_refusal
+                    .is_instance_of::<crate::bot::engine::UnsupportedPathCapabilityError>(py),
+                "expected the typed capability refusal, got: {hop_refusal}"
+            );
+            let instance = hop_refusal.value(py);
+            let kind: crate::bot::engine::PyUnsupportedCapabilityKind =
+                instance.getattr("kind").unwrap().extract().unwrap();
+            assert_eq!(
+                kind,
+                crate::bot::engine::PyUnsupportedCapabilityKind::Family
+            );
+            let family: Option<String> = instance.getattr("family").unwrap().extract().unwrap();
+            assert_eq!(family.as_deref(), Some("curve-stableswap"));
+            let hop: Option<usize> = instance.getattr("hop").unwrap().extract().unwrap();
+            assert_eq!(hop, Some(2));
+        });
+        assert_eq!(
+            message(&hop_refusal),
+            "unsupported path capability: hop 2 (curve-stableswap pool) declares no settlement command composition"
+        );
+
+        let route_refusal = map_path_registration_err(
+            degenbot_bot::arb_engine::PathRegistrationError::UnsupportedCapability(
+                degenbot_bot::arb_engine::ComposeCapabilityRefusal::RouteShape { hop_count: 4 },
+            ),
+        );
+        Python::attach(|py| {
+            let instance = route_refusal.value(py);
+            let kind: crate::bot::engine::PyUnsupportedCapabilityKind =
+                instance.getattr("kind").unwrap().extract().unwrap();
+            assert_eq!(
+                kind,
+                crate::bot::engine::PyUnsupportedCapabilityKind::RouteShape
+            );
+            let family: Option<String> = instance.getattr("family").unwrap().extract().unwrap();
+            assert_eq!(family, None, "a route-level refusal names no family");
+            let hop: Option<usize> = instance.getattr("hop").unwrap().extract().unwrap();
+            assert_eq!(hop, None);
+        });
+        assert_eq!(
+            message(&route_refusal),
+            "unsupported path capability: no command-stream producer for a 4-hop route"
+        );
     }
 
     /// The stamped `kind` / `detail` attributes off a raised refusal.

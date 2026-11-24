@@ -54,9 +54,53 @@ fn curve_stable_params(
         data_provider: None,
     }
 }
+/// ADR-107 D10: a homogeneous Curve route is refused at the registration
+/// door, before the registry and any eager solve.
+#[test]
+fn curve_stable_route_refuses_at_registration() {
+    let mut engine = ArbitrageEngine::new();
+    let pool_a = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_curve_pool(&curve_stable_params(
+            Address::from([0xd5u8; 20]),
+            1000,
+            2000,
+        ))
+        .expect("curve registration");
+    let pool_b = engine
+        .core
+        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+        .register_curve_pool(&curve_stable_params(
+            Address::from([0xd6u8; 20]),
+            1000,
+            1950,
+        ))
+        .expect("curve registration");
+    let refusal = refused_registration(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: pool_a,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: pool_b,
+                zero_for_one: false,
+            },
+        ],
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::CurveStableswap)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert!(engine.cycle.path_resolved.is_empty());
+}
+
 #[test]
 fn curve_stable_finds_profitable_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let pool_a = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -75,27 +119,16 @@ fn curve_stable_finds_profitable_arb() {
             1950,
         ))
         .expect("curve registration");
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::CurveStableswap, true),
+            (pool_b, HopType::CurveStableswap, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
-    eprintln!("results: {}", results.len());
-    assert!(
-        !results.is_empty(),
-        "should find profitable Curve stableswap arb"
     );
-    let r = results.values().next().unwrap();
+    let r = ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+        .result
+        .expect("a profitable Curve stableswap cycle solves");
     assert!(
         !r.optimal_input.is_zero(),
         "optimal input should be non-zero"
@@ -104,7 +137,7 @@ fn curve_stable_finds_profitable_arb() {
 }
 #[test]
 fn curve_stable_unprofitable_path_returns_none() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let pool_a = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -123,29 +156,23 @@ fn curve_stable_unprofitable_path_returns_none() {
             2000,
         ))
         .expect("curve registration");
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: pool_a,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: pool_b,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (pool_a, HopType::CurveStableswap, true),
+            (pool_b, HopType::CurveStableswap, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
+    );
     assert!(
-        results.is_empty(),
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none(),
         "identical Curve pools should not produce an arb"
     );
 }
 #[test]
 fn curve_stable_mixed_with_v2_finds_arb() {
-    let mut engine = ArbitrageEngine::new();
+    let engine = ArbitrageEngine::new();
     let one_e18 = U256::from(10u64).pow(U256::from(18u64));
     let v2 = engine.register_v2_pool(
         Address::from([0xa5u8; 20]),
@@ -163,22 +190,19 @@ fn curve_stable_mixed_with_v2_finds_arb() {
             1500,
         ))
         .expect("curve registration");
-    register_path(
-        &mut engine,
-        vec![
-            PoolHop {
-                pool_id: v2,
-                zero_for_one: true,
-            },
-            PoolHop {
-                pool_id: cs,
-                zero_for_one: false,
-            },
+    let resolved = resolve_unregistered(
+        &engine,
+        &[
+            (v2, HopType::V2, true),
+            (cs, HopType::CurveStableswap, false),
         ],
-    )
-    .unwrap();
-    let results = engine.cycle.solve_all(&engine.registry);
-    assert!(!results.is_empty(), "should find V2+Curve mixed arb");
+    );
+    assert!(
+        ::degenbot_pools::solve::solve_path(&resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_some(),
+        "should find V2+Curve mixed arb"
+    );
 }
 #[test]
 fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
@@ -212,7 +236,7 @@ fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
         })
         .expect("test setup: V3 registration");
     let mut engine = ArbitrageEngine::with_core(Arc::clone(&core));
-    let path_id = register_path(
+    let refusal = refused_registration(
         &mut engine,
         vec![
             PoolHop {
@@ -224,14 +248,16 @@ fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
                 zero_for_one: false,
             },
         ],
-    )
-    .expect("path registers (resolve succeeds per-arm)");
-    let resolved = &engine.cycle.path_resolved[&path_id];
+    );
+    assert_eq!(
+        refusal.family(),
+        Some(degenbot_pools::Family::CurveStableswap)
+    );
+    assert_eq!(refusal.hop(), Some(0));
+    assert_eq!(refusal.arm(), Some(degenbot_pools::Arm::Settlement));
     assert!(
-        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
-            .result
-            .is_none(),
-        "Curve + concentrated liquidity must not solve"
+        engine.cycle.path_resolved.is_empty(),
+        "the refused route resolved nothing"
     );
 }
 /// A minimal tracing capture layer: records (name, span id, parent id)

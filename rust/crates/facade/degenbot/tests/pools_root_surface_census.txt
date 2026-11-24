@@ -29,6 +29,14 @@
 # `ConcentratedLiquidityPathOutcome` — the per-hop crossed-ticks /
 # bitmap-words census the gas model consumes, consumed by the gas
 # decomposition harness and the admission floor's crossing counts.
+# The 1097 -> 1101 review is ADR-107 D3's static compose-capability
+# evaluation: Family::label (the capability vocabulary's own stable name, read
+# by the structured refusal's rendering), HopType::capability_family (the
+# solver hop set's projection onto the declaration table's key),
+# solve::composes_families (the mixed solver's dispatch verdict for a family
+# SET — the authority admission reads), and that door item's re-export. Each has
+# a named out-of-crate consumer: degenbot-executor's evaluator and the driver
+# shells that render its refusal.
 # The 1053 -> 1073 review is the recorded hook charge (F2): the
 # `state::v4_hook_fee` vocabulary (HookFeeRecord / HookFeeReading /
 # charge_is_hook_carried / direction_slot / the refresh constant and
