@@ -1255,14 +1255,7 @@ async fn run_aave_update_driver(
                 ),
                 progress.clone(),
             );
-            let r = process::persist_chunk(
-                chunk_tx.conn(),
-                &mut resolution,
-                market_id,
-                chain_id,
-                chunk_end,
-                projection_anchor,
-            )?;
+            let mut r = process::persist_chunk(chunk_tx.conn(), &mut resolution, chain_id)?;
             // Pre-commit verification: the chain truth was acquired above, in
             // resolution. The comparison reads the (uncommitted) rows this
             // transaction just wrote and issues no RPC, so it catches
@@ -1310,6 +1303,18 @@ async fn run_aave_update_driver(
                     });
                 }
             }
+            // Verification must see zeroed rows before cleanup deletes them:
+            // chain truth was acquired from the pre-persistence row set.
+            let finalize_started = Instant::now();
+            r.projection_cursor = process::finalize_chunk(
+                chunk_tx.conn(),
+                &resolution,
+                market_id,
+                chain_id,
+                chunk_end,
+                projection_anchor,
+            )?;
+            r.apply_time += finalize_started.elapsed();
             // The success path: commit, measure the hold, observe the
             // lock-hold + stage telemetry, report the committed chunk.
             chunk_tx.commit(&r, is_final)?;

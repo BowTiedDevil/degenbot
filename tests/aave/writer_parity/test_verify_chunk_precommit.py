@@ -196,3 +196,51 @@ def test_verify_chunk_pass_commits_and_advances_stamp(tmp_path: Path) -> None:
             "(verification passed, the chunk should have committed)"
         )
         assert report["chunks_committed"] == 1
+
+
+def test_verify_chunk_commits_touched_zero_balance_position_cleanup(
+    tmp_path: Path,
+) -> None:
+    on_chain_index = 1000000000000000000000000000
+    fixture_log = make_user_e_mode_set_log(
+        user_address=USER_ADDRESS,
+        category_id=1,
+    )
+
+    with (
+        seeded_db(tmp_path, name="rust") as (rust_path, rust_session),
+        mock_rpc_server(
+            logs=[fixture_log],
+            block_number=FIXTURE_BLOCK,
+            eth_call_responses={
+                _SCALED_BALANCE_OF_SELECTOR: _encode_uint256(0),
+                _GET_PREVIOUS_INDEX_SELECTOR: _encode_uint256(on_chain_index),
+            },
+        ) as rpc_url,
+    ):
+        seed_asset_and_user(rust_session)
+        _seed_debt_position(
+            rust_session,
+            balance="0",
+            last_index=str(on_chain_index),
+        )
+        rust_session.commit()
+
+        report = run_aave_update(
+            database_path=str(rust_path),
+            chain_id=1,
+            market_id=1,
+            to_block=FIXTURE_BLOCK,
+            chunk_size=100,
+            rpc_url=rpc_url,
+            cancel_handle=CancelHandle(),
+            verify_chunk=True,
+        )
+
+        assert report["chunks_committed"] == 1
+        assert _load_market(rust_session) == FIXTURE_BLOCK
+        remaining = rust_session.execute(
+            "SELECT COUNT(*) FROM aave_v3_debt_positions WHERE id = 1"
+        ).fetchone()
+        assert remaining is not None
+        assert remaining[0] == 0

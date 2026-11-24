@@ -1,8 +1,7 @@
-//! The driver's per-transaction log grouping and the chunk's one write stage:
-//! `persist_chunk` applies the resolved deltas, flushes the deferred reserve
-//! data, cleans the zeroed positions, journals the projection unit, and stamps
-//! the chunk end — all on the caller's `Transaction`. The per-transaction loop
-//! that resolves those deltas lives in `run::resolver`, outside the transaction.
+//! The driver's per-transaction log grouping and chunk write stages. `persist_chunk`
+//! applies resolved deltas before verification; `finalize_chunk` cleans verified
+//! zero-balance rows, journals the resulting projection, and stamps the chunk end.
+//! Resolution lives in `run::resolver`, outside the transaction.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -170,12 +169,7 @@ pub(super) fn guard_terminal_transaction_identity(
     Ok(())
 }
 
-/// Persist one chunk's resolved deltas under the caller's write transaction,
-/// then flush the deferred reserve-data writes, clean the zeroed positions and
-/// stamp the cursor last (the restart invariant).
-///
-/// This is the chunk's whole write surface: no acquisition, no decode, no
-/// identity resolution (ADR-105 D4).
+/// Apply one chunk's resolved deltas and flush its deferred reserve-data writes.
 ///
 /// # Errors
 ///
@@ -184,16 +178,40 @@ pub(super) fn guard_terminal_transaction_identity(
 pub(super) fn persist_chunk(
     conn: &Connection,
     resolution: &mut ChunkResolution,
-    market_id: i64,
     chain_id: i64,
-    chunk_end: u64,
-    anchor: CursorAnchor,
 ) -> Result<ChunkCoreReport, RunError> {
     let apply_started = Instant::now();
     let mut substrate =
         std::mem::replace(&mut resolution.substrate, ChunkSubstrate::lazy(chain_id));
     crate::run::apply_canonical_deltas_on_conn(conn, &resolution.deltas, &mut substrate)?;
     substrate.flush_reserve_data_updates(conn)?;
+    let apply_time = apply_started.elapsed();
+    resolution.substrate = substrate;
+    Ok(ChunkCoreReport {
+        events_applied: resolution.deltas.len(),
+        touched_user_addresses: resolution.touched_user_addresses.clone(),
+        deltas: resolution.deltas.clone(),
+        decode_compute_time: resolution.decode_compute_time,
+        apply_time,
+        projection_cursor: None,
+    })
+}
+
+/// Delete verified zero-balance rows, commit the resulting projection state,
+/// and stamp the chunk cursor last.
+///
+/// # Errors
+///
+/// Returns [`RunError::Db`] on any write failure; the caller drops the
+/// transaction, rolling the whole chunk back.
+pub(super) fn finalize_chunk(
+    conn: &Connection,
+    resolution: &ChunkResolution,
+    market_id: i64,
+    chain_id: i64,
+    chunk_end: u64,
+    anchor: CursorAnchor,
+) -> Result<Option<ProjectionCursor>, RunError> {
     DegenbotDb::delete_zero_balance_positions_on_conn(conn, market_id)?;
     let projection_cursor = commit_projection_unit_on_conn(
         conn,
@@ -206,16 +224,7 @@ pub(super) fn persist_chunk(
     )?;
     let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
     DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
-    let apply_time = apply_started.elapsed();
-    resolution.substrate = substrate;
-    Ok(ChunkCoreReport {
-        events_applied: resolution.deltas.len(),
-        touched_user_addresses: resolution.touched_user_addresses.clone(),
-        deltas: resolution.deltas.clone(),
-        decode_compute_time: resolution.decode_compute_time,
-        apply_time,
-        projection_cursor,
-    })
+    Ok(projection_cursor)
 }
 
 /// Journal the chunk's canonical deltas and advance the market's exact cursor
@@ -316,117 +325,6 @@ mod tests {
             transaction_index: Some(0),
             log_index: Some(log_index),
             removed: false,
-        }
-    }
-
-    #[test]
-    fn process_chunk_clears_zero_balance_positions_at_end_of_chunk() {
-        // The live chunk path's end-of-chunk zero-balance cleanup - the same
-        // substrate call the
-        // batched entrypoint makes, riding the chunk's uncommitted transaction
-        // so a rollback reverts it too. With an EMPTY chunk (no logs) the only
-        // observable writes are the cleanup + the stamp.
-        let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
-        {
-            let conn = db.lock();
-            conn.execute(
-                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
-                 VALUES (1, 1, 'mainnet', 1, NULL)",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO erc20_tokens (id, chain, address) VALUES (1, 1, '0xu1')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO aave_v3_assets \
-                    (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
-                     v_token_id, v_token_revision, liquidity_index, liquidity_rate, \
-                     borrow_index, borrow_rate) \
-                 VALUES (1, 1, 1, 1, 1, 1, 1, '0', '0', '1', '0')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO aave_v3_users \
-                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
-                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
-                 VALUES (1, 1, '0xuser1', 0, 0, NULL, NULL, '0')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO aave_v3_users \
-                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
-                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
-                 VALUES (2, 1, '0xuser2', 0, 0, NULL, NULL, '0')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO aave_v3_collateral_positions \
-                    (id, user_id, asset_id, balance, last_index) VALUES (1, 1, 1, '0', NULL)",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO aave_v3_collateral_positions \
-                    (id, user_id, asset_id, balance, last_index) VALUES (2, 2, 1, '42', NULL)",
-                [],
-            )
-            .unwrap();
-        }
-
-        // A dead-URL provider: the empty chunk never RPCs (mirrors the
-        // dummy-provider precedent in config_dispatch.rs).
-        let provider = degenbot_core::runtime::get_runtime()
-            .block_on(degenbot_rpc::provider::AlloyProvider::new(
-                "http://127.0.0.1:1",
-                1,
-            ))
-            .expect("a dead-URL provider constructs without contact");
-
-        let mut resolution = degenbot_core::runtime::get_runtime()
-            .block_on(crate::updater::run::resolver::ChunkResolver::new().resolve(
-                &provider,
-                crate::updater::run::seed::ChunkSeed::empty(1),
-                1,
-                1,
-                Address::ZERO,
-                &[],
-                3_000,
-                3_000,
-            ))
-            .unwrap();
-        {
-            let mut guard = db.lock();
-            let tx = guard.transaction().unwrap();
-            persist_chunk(&tx, &mut resolution, 1, 1, 3_000, CursorAnchor::Unchanged).unwrap();
-            tx.commit().unwrap();
-        }
-
-        {
-            let conn = db.lock();
-            let count = |pid: i64| -> i64 {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM aave_v3_collateral_positions WHERE id = ?1",
-                    rusqlite::params![pid],
-                    |r| r.get(0),
-                )
-                .unwrap()
-            };
-            assert_eq!(count(1), 0, "the zero-balance position is cleared");
-            assert_eq!(count(2), 1, "the nonzero position stays");
-            let stamp: Option<i64> = conn
-                .query_row(
-                    "SELECT last_update_block FROM aave_v3_markets WHERE id = 1",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(stamp, Some(3_000), "the chunk stamp still advances");
         }
     }
 
