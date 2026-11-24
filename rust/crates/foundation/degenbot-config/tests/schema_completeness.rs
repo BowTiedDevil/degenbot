@@ -80,6 +80,32 @@ const TEST_HARNESS_KEYS: &[&str] = &[
     // (`degenbot-simulation/tests/evm2_phantom_parity.rs`): narrows the
     // corpus to matching path ids, never read by the engine.
     "DEGENBOT_PHANTOM_PATH",
+    // The ADR-107 D10 cutover certification replays
+    // (`degenbot-bot/src/arb_engine/tests/path_admission_replay.rs`,
+    // `degenbot-bot/src/arb_engine/crawl/unit/tests/path_admission_replay.rs`,
+    // `degenbot-arbitrage/tests/release_binding/admission_replay.rs`): the
+    // expected old/new values and report paths each leg asserts against. They
+    // steer a measurement, never the bot.
+    "DEGENBOT_ADMISSION_REPLAY_OUT",
+    "DEGENBOT_ALL_TARGETS_EXPECT_SERIES_LINES",
+    "DEGENBOT_ALL_TARGETS_REPLAY_OUT",
+    "DEGENBOT_CRAWL_EXPECT_BUILD_ENTRIES",
+    "DEGENBOT_CRAWL_EXPECT_CONTROL_REGISTERED",
+    "DEGENBOT_CRAWL_EXPECT_CONTROL_STAGES",
+    "DEGENBOT_CRAWL_EXPECT_CONTROL_VERIFY",
+    "DEGENBOT_CRAWL_EXPECT_FIRST_REGISTERED",
+    "DEGENBOT_CRAWL_EXPECT_FIRST_STAGES",
+    "DEGENBOT_CRAWL_EXPECT_FIRST_VERIFY",
+    "DEGENBOT_CRAWL_EXPECT_RESIGHT_REGISTERED",
+    "DEGENBOT_CRAWL_EXPECT_RESIGHT_REGISTERED_ANY",
+    "DEGENBOT_CRAWL_EXPECT_RESIGHT_STAGES",
+    "DEGENBOT_CRAWL_EXPECT_RESIGHT_VERIFY",
+    "DEGENBOT_REPLAY_EXPECT_HOOK_REFUSED",
+    "DEGENBOT_REPLAY_EXPECT_INLINE_CANDIDATES",
+    "DEGENBOT_REPLAY_EXPECT_NO_ENCODER_ARM",
+    "DEGENBOT_REPLAY_EXPECT_REGISTERED_PATHS",
+    "DEGENBOT_REPLAY_EXPECT_SOLVE_EVALUATIONS",
+    "DEGENBOT_REPLAY_EXPECT_UNSUPPORTED_ADMISSIONS",
 ];
 
 /// Retired env names: the env layer refuses each of them at the config boundary

@@ -136,7 +136,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) | Typed event-hub intake — a permanent head claim, an engine-owned session stream, and no named-channel seam | accepted (implemented) |
 | [105](ADR-105-block-anchored-event-sourced-chain-state.md) | Block-anchored event-sourced chain state — exact lineage, position-aware projections, total receipt ownership | accepted (implemented; exact simulation transport, execution-aware BLOCKHASH, seed/resolution, diagnostics, replay authority, deliberate number/tag lanes, and deferred choices are recorded in the ADR) |
 | [106](ADR-106-pinned-snapshot-atomic-backup.md) | Pinned-snapshot atomic backup — one read-pinned image copy, verified, atomically published; zero knobs | implemented |
-| [107](ADR-107-compose-capable-path-admission.md) | Compose-capable path admission — execution-only registry, target-relative execution | proposed |
+| [107](ADR-107-compose-capable-path-admission.md) | Compose-capable path admission — execution-only registry, target-relative execution | accepted (implemented) |
 
 ## Historical — provenance only
 

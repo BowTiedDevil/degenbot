@@ -648,6 +648,8 @@ fn every_parity_row_is_exercised() {
     );
 }
 
+mod path_admission_replay;
+
 // ── the rows ───────────────────────────────────────────────────────────────
 
 #[tokio::test]

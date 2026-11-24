@@ -82,6 +82,9 @@ degenbot-order-index = { workspace = true, optional = true }
 # both consumer paths (the `degenbot` umbrella + the `degenbot_rs` cdylib)
 # enable it.
 order-index = ["dep:degenbot-order-index"]
+# ADR-107 D10 certification lane: compiles the bot's real Prometheus instrument
+# set so the all-targets-declined replay can scrape the production pipeline.
+otel-replay = ["degenbot-bot/otel"]
 
 
 [dev-dependencies]

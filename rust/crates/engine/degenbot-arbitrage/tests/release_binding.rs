@@ -468,6 +468,9 @@ fn direct_production_adapter_retains_release_capability_policy() {
 
 // ── paths and candidates ─────────────────────────────────────────────────
 
+#[path = "release_binding/admission_replay.rs"]
+mod admission_replay;
+
 fn two_v2_hops() -> PathInfo {
     PathInfo::new(vec![
         HopInfo::V2(degenbot_execution::V2HopInfo {

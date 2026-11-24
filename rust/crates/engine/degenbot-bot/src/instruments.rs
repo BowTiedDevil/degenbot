@@ -192,11 +192,14 @@ pub struct PipelineInstruments {
     /// PROMETHEUS NAME COUPLING (ADR-107 D9): renders as
     /// `degenbot_selection_all_targets_declined_total`.
     all_targets_declined: Counter<u64>,
-    /// Inline-arm candidates the hook could not simulate, by closed `reason`
-    /// class (`no_encoder_arm` | `hook_refused`). The pairing with
+    /// Inline-arm candidates the hook could not simulate. The pairing with
     /// [`Self::candidates_found`] is what an operator reads: candidates that
     /// entered the inline arm but produced no payload land HERE instead of
-    /// vanishing between the candidate count and the verdict counter.
+    /// vanishing between the candidate count and the verdict counter. No class
+    /// dimension rides it: the bounded outcome class is the hook's refusal,
+    /// whose dynamic causes include an unregistered pool between solve and
+    /// dispatch, the u128 projection overflow, a target `PoolManager` mismatch,
+    /// and other genuine refusals (ADR-107 D8).
     inline_sim_degrades: Counter<u64>,
     /// Solver concentrated-liquidity-hop self-corrections (input/forward clamp + output align).
     clamps_applied: Counter<u64>,
@@ -624,7 +627,7 @@ impl PipelineInstruments {
                 .build(),
             inline_sim_degrades: meter
                 .u64_counter("degenbot.sim.degrades")
-                .with_description("Inline-sim candidates left un-simulated by closed reason class")
+                .with_description("Inline-sim candidates the hook left un-simulated")
                 .build(),
             clamps_applied: meter
                 .u64_counter("degenbot.solver.clamps")
@@ -1217,10 +1220,9 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("class", class.as_str())]);
     }
 
-    /// One inline-sim degrade, by its closed reason class.
-    pub fn count_inline_sim_degrade(&self, reason: &str) {
-        self.inline_sim_degrades
-            .add(1, &[KeyValue::new("reason", reason.to_owned())]);
+    /// One inline-sim degrade: the hook produced no payload.
+    pub fn count_inline_sim_degrade(&self) {
+        self.inline_sim_degrades.add(1, &[]);
     }
 
     /// One dispatch fan-out's storage selection: `mode` is the representation it
@@ -1652,9 +1654,7 @@ impl PipelineInstruments {
             }
             CensusEvent::CandidatesEntered { n, arm } => self.count_candidates_found(arm, n),
             CensusEvent::AllTargetsDeclined { class } => self.count_all_targets_declined(class),
-            CensusEvent::InlineSimDegraded { reason } => {
-                self.count_inline_sim_degrade(reason.as_str());
-            }
+            CensusEvent::InlineSimDegraded => self.count_inline_sim_degrade(),
             CensusEvent::SolverClampApplied => self.count_clamp(),
             CensusEvent::EngineError { kind } => self.count_error(kind),
             CensusEvent::PathSimulated { secs } => self.observe_simulate_duration(secs),

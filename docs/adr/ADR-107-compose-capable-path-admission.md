@@ -1,9 +1,15 @@
 # ADR-107: Compose-capable path admission — execution-only registry, target-relative execution
 
-**Status: proposed.** Extends ADR-059's family capability declarations and
-ADR-098's target-relative execution model. Supersedes the downstream-only
-observability stance established by `be29986f1`; it does not alter ADR-090's
-hook execution policy or ADR-099's release commitments.
+**Status: accepted (implemented).** (2026-11-24; ergo tasks `XUGAFQ`,
+`AWOBBU`, `HCRBX7` shipped the rule; certification `EIXMQP` measured every
+mandatory leg — admission, solve, inline sim, crawl build/verify, and the
+all-targets-declined walk — over one corpus on both binaries.) Extends ADR-059's family capability
+declarations and ADR-098's target-relative execution model. Supersedes the
+downstream-only observability stance established by `be29986f1`; it does not
+alter ADR-090's hook execution policy or ADR-099's release commitments. The
+implemented shape and the certification replay are recorded in
+[Implemented shape and certification](#implemented-shape-and-certification-2026-11-24);
+the census above is the PRE-cutover state kept as provenance.
 
 ## Context
 
@@ -314,13 +320,15 @@ Two baseline facts the census adds, neither reported by any current series:
   pool-kind filter never offered these families, so no ranking input moves.
 - **Cycle counts**: `degenbot_engine_registered_paths` and the per-cycle
   solved-path counts fall by the refused set. No other counter changes shape.
-- **Telemetry**: one series value disappears
-  (`...{reason="no_encoder_arm"}`) and one bounded value appears
+- **Telemetry**: the degrade classification disappears with its class
+  (`...{reason="no_encoder_arm"}`, and the `reason` dimension with it — the one
+  bounded outcome class left is the hook's refusal) and one bounded value appears
   (`degenbot_registration_skips_total{reason="unsupported-capability"}`) as a
   new `REGISTRATION_OUTCOMES` member (`registration_ledger.rs:124`) beside
   `V4HookRejected` — a vocabulary member, not a new label dimension.
-  `hook_refused` keeps its remaining meaning: an unregistered pool between solve
-  and dispatch, or the u128 projection overflow.
+  `degenbot_sim_degrades_total` keeps its remaining meaning, the hook's own
+  refusal: an unregistered pool between solve and dispatch, the u128 projection
+  overflow, a target `PoolManager` mismatch, and other genuine hook refusals.
 - **Already-registered unsupported paths**: none survive a cutover. The registry
   is process-local identity only, rebuilt at boot, so the new binary admits the
   new rule from its first block: no persisted path state to migrate and no
@@ -475,8 +483,14 @@ persisted path migration exists.
 
 Once unsupported families cannot reach inline simulation,
 `SimDegradeReason::NoEncoderArm` and its now-unreachable handling are retired.
-Admission-refusal outcomes replace dashboard and operator dependencies on that
-reason. No compatibility switch or retirement tripwire remains.
+The class existed to name "this path can never be assembled"; admission now
+answers that before the path enters the registry, so the inline seam's
+`simulate_path` returning `None` has one bounded outcome class — the hook's
+refusal — whose dynamic causes are listed in D9. The single-variant classifier, the census field, and the metric's
+`reason` dimension are all retired with it; the span keeps
+`simulate.error_reason=hook_refused` as diagnostic detail. Admission-refusal
+outcomes replace dashboard and operator dependencies on that reason. No
+compatibility switch or retirement tripwire remains.
 
 ### D9 — Telemetry measures refused work and residual target waste
 
@@ -498,9 +512,10 @@ cutover:
   spans, not unbounded metric labels.
 
 The pipeline census remains the sole event-to-metric authority under ADR-043
-and ADR-083. The `hook_refused` class also loses the whole-route shape declines
-it absorbs today (C4), so retiring `NoEncoderArm` requires the shape invariant
-to land with it rather than after it.
+and ADR-083. The degrade counter also loses the whole-route shape declines it
+absorbed before the cutover (C4): those are admission refusals now, so retiring
+`NoEncoderArm` required the shape invariant to land with it rather than after
+it.
 
 ### D10 — Certification covers admission, parity, and measured savings
 
@@ -600,3 +615,68 @@ registry mutation.
 Adding a route over existing supported families requires no admission wiring.
 Adding a family remains explicit end-to-end work; a boolean declaration without
 solver, command, and mixed-route evidence is insufficient.
+
+## Implemented shape and certification (2026-11-24)
+
+The decision landed without a flag, in four commits and one certification task:
+`XUGAFQ` (the static evaluator + typed registration refusal), `AWOBBU` (early
+crawl refusal, stable memos, admission telemetry), `HCRBX7` (all-targets-declined
+visibility), `EIXMQP` (this certification: the degrade retirement, the operator
+documentation, and the matched replay).
+
+The implemented seams:
+
+- `degenbot-executor::compose_capability` — `assess_families` (the ADR-059
+  declaration, fail-closed on a missing row) and `assess_route` (the mixed
+  solver's family-set row, then the encoder's whole-route shape key). The doors
+  call those two fact levels at the stage that first holds their inputs — the
+  family level pre-build in the crawl and at registration, the route level
+  post-build in the crawl and at registration — so the shared pieces are the two
+  evaluations, not one combined entry point.
+- `degenbot-bot` admission — `register_path` evaluates the evaluator before
+  registry commit and eager solve and returns
+  `PathRegistrationError::UnsupportedCapability(ComposeCapabilityRefusal)`;
+  the crawl answers the same refusal pre-build (memoized per `PreBuildIdentity`)
+  and post-build (memoized per hop signature).
+- Telemetry — `degenbot_registration_skips_total{reason="unsupported-capability"}`
+  as a bounded `REGISTRATION_OUTCOMES` member, and
+  `degenbot_selection_all_targets_declined_total{class}` emitted once per path
+  whose every offered target declined.
+- Retirement — `SimDegradeReason` (and `of_hops`), the census event's class
+  field, and the degrade counter's `reason` dimension are gone. The inline seam
+  keeps one bounded outcome class, the hook's refusal, which its span records as
+  `simulate.error_reason=hook_refused` and whose dynamic causes are an
+  unregistered pool between solve and dispatch, the u128 projection overflow, a
+  target PoolManager mismatch, and other genuine hook refusals.
+- Drivers — `UnsupportedPathCapabilityError` with a typed
+  `UnsupportedCapabilityKind` reaches Python through the thin mapper and the
+  regenerated stubs; no driver parses rendered error text.
+
+Certification replay: `docs/architecture/path-admission-replay-evidence.md`. Over
+one fixed corpus on the pre-implementation commit `3a36a098c` and the final tree,
+every leg asserts its old/new expectations through explicit environment inputs:
+
+- admission, solve and inline sim: registered paths 10 → 4, inline-arm
+  candidates 8 → 4, per-path solve gate evaluations 10 → 4, `no_encoder_arm`
+  degrades 3 → the series absent (3/8 = 0.375 of inline candidates
+  pre-cutover), `hook_refused` degrades 2 → 1, unsupported admissions refused at
+  the door 0 → 6;
+- supported-path parity: four profitable rows (V2+V3, V2+V4, all-V2 4-hop, the
+  compose-capable V2 pair) with asserted, byte-identical `optimal_input`,
+  `profit`, `hop_outputs` and identical inline-sim outcomes in both binaries;
+- crawl build/verify: build-stage entries 2 → 1, completed pool verifications
+  1 → 0 (the old re-sighting joins the completion its first sighting already
+  made — `VerifyLifecycle` runs at most once per pool), registrations 2 → 0,
+  with the re-sighting answered at stage 1 by the pool fact,
+  and the supported control unchanged (5 stages, 1 verify, 1 registration) in
+  both;
+- all targets declined: the series is absent pre-cutover and carries exactly one
+  `{class="capability"}` fact post-cutover, while the candidate keeps its own
+  encode-failed refusal and its registration.
+
+Two items stay outside the replay and are stated in the evidence document rather
+than converted into zero-valued measurements: a crawl-level four-hop out-of-shape
+candidate (its fixture needs V3 tick reads the crawl fixture does not serve; the
+refusal itself is proven at the registration door) and a live production RPC
+scrape (the corpus is synthetic and in-process, which is what makes it
+reproducible).

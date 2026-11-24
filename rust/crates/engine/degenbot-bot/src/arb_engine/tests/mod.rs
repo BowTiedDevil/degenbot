@@ -200,6 +200,7 @@ mod curve_and_spans;
 mod deferred_rerecord;
 mod detached_merge;
 mod lane_unify;
+mod path_admission_replay;
 mod paths_reorg_and_locking;
 mod registration_and_delivery;
 mod session_paths;

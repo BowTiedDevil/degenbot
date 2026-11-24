@@ -156,16 +156,17 @@ pub enum CensusEvent {
     AllTargetsDeclined { class: DeclineClass },
     /// One inline-sim degrade: the installed hook produced NO payload for a
     /// clamp-admitted candidate, so the path left the inline arm un-simulated.
-    /// `reason` is the closed class the engine seam can name — see
-    /// [`SimDegradeReason`](crate::arb_engine::SimDegradeReason).
     ///
     /// This is the counterpart of [`CensusEvent::CandidatesEntered`] on the
     /// inline arm, not a `SimulateVerdict`: a sim that never ran HAS no verdict,
     /// so without this event the only trace of a degrade is the arithmetic
-    /// difference between the candidate count and the verdict counter.
-    InlineSimDegraded {
-        reason: crate::arb_engine::SimDegradeReason,
-    },
+    /// difference between the candidate count and the verdict counter. It
+    /// carries no class dimension: the bounded outcome class is the hook's
+    /// refusal, whose dynamic causes (an unregistered pool between solve and
+    /// dispatch, the u128 projection overflow, a target `PoolManager` mismatch,
+    /// other genuine refusals) belong to the hook, not to admission. A route no
+    /// command arm can compose never gets here at all (ADR-107 D1/D8).
+    InlineSimDegraded,
     /// One solver concentrated-liquidity-hop correction (input/forward clamp
     /// or output align).
     SolverClampApplied,

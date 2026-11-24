@@ -1758,12 +1758,13 @@ _Avoid_: "dispatch" (the retired grab file), "run_bin".
 **Inline-sim degrade**:
 
 The inline sim arm's NAMED no-payload outcome: `simulate_path` returned `None`, so the
-candidate left that arm un-simulated. Its span carries `simulate.verdict=degraded` plus
-the class (`SimDegradeReason`): `no_encoder_arm` (a hop family with no command-stream
-encoder arm can never be assembled) or `hook_refused` (the hook produced nothing: an
-unregistered pool, the u128 projection overflow, or a route whose hop families all
-compose while the encoder has no producer for the route's shape). Counted once per
-degrade at `degenbot_sim_degrades_total{reason}`.
+candidate left that arm un-simulated. It is a HOOK outcome, never a capability fact: a
+route no command-stream arm can compose is refused at admission and never reaches this
+seam (ADR-107 D1/D8). Its span carries `simulate.verdict=degraded` plus
+`simulate.error_reason=hook_refused`, the one bounded outcome class here; its dynamic
+causes include an unregistered pool between solve and dispatch, the u128 projection
+overflow, a target PoolManager mismatch, and other genuine hook refusals. Counted once
+per degrade at `degenbot_sim_degrades_total`, with no class dimension.
 
 _Avoid_: "sim failure" (a sim that RAN and reverted), "sim skip" (an assembly-stage
 verdict about a row, never a sim outcome).

@@ -561,7 +561,7 @@ fn solver_instruments_render_with_verdict_labels() {
     p.count_simulate_verdict("profitable");
     p.count_simulate_verdict("profitable");
     p.count_simulate_verdict("not_profitable");
-    p.count_inline_sim_degrade("no_encoder_arm");
+    p.count_inline_sim_degrade();
 
     let text = metrics::render(&registry);
     for family in [
@@ -598,16 +598,19 @@ fn solver_instruments_render_with_verdict_labels() {
     );
 
     // The degrade family is the counterpart of the verdict counters: a sim the
-    // hook refused has no verdict, so it is counted by its class instead.
+    // hook refused has no verdict, so it is counted here instead. One cause
+    // remains, so the series carries no class label (ADR-107 D8).
     let degraded = text
         .lines()
-        .find(|l| {
-            l.starts_with("degenbot_sim_degrades_total") && l.contains("reason=\"no_encoder_arm\"")
-        })
+        .find(|l| l.starts_with("degenbot_sim_degrades_total"))
         .expect("degrade series missing");
     assert!(
         degraded.ends_with('1'),
-        "expected 1 no-encoder-arm degrade, got: {degraded}"
+        "expected 1 degraded sim, got: {degraded}"
+    );
+    assert!(
+        !degraded.contains("reason="),
+        "the degrade series carries no class label, got: {degraded}"
     );
 }
 
