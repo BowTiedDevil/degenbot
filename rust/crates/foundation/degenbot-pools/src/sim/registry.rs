@@ -7,6 +7,7 @@ use crate::families::concentrated_liquidity::state_mutation::ConcentratedLiquidi
 use crate::sim::tick_fetch::{
     FetchedTickWord, TickWordFingerprint, TickWordKey, TickWordMergeTarget, TickWordReader,
 };
+use crate::solve::HopType;
 use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::state::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::state::balancer_weighted_state::{
@@ -177,6 +178,128 @@ impl PoolEntry {
             // roadmap-only binned identity, which has no `PoolEntry` variant.
             None => panic!("a PoolEntry variant has no identity-layer family row"),
         }
+    }
+
+    /// The solver hop engine that owns this registered pool (ADR-059 D1).
+    ///
+    /// The ONE projection from a registered entry onto the mixed solver's hop
+    /// taxonomy: the engine's registration door derives each hop's family
+    /// through it, and a consumer holding a constructed pool (the crawl's
+    /// capability gate) reads it rather than re-deriving the species bits.
+    ///
+    /// It lives here, not on `RegisteredPoolFamily`, because the registry
+    /// vocabulary erases the two flags that decide it — an Aerodrome pair's
+    /// `stable` and a Camelot V2 entry's `stable_swap` — and only the entry
+    /// holds them (ADR-107 C7: the V2 DB table hosts both reserve-pair
+    /// species).
+    #[must_use]
+    pub const fn hop_type(&self) -> HopType {
+        match self {
+            Self::V2(pair) => {
+                if pair.0.stable_swap {
+                    HopType::SolidlyStable
+                } else {
+                    HopType::V2
+                }
+            }
+            Self::AerodromeV2(pair) => {
+                if pair.0.stable {
+                    HopType::SolidlyStable
+                } else {
+                    HopType::V2
+                }
+            }
+            Self::V3(..) => HopType::V3,
+            Self::V4(..) => HopType::V4,
+            Self::Curve(..) => HopType::CurveStableswap,
+            Self::BalancerWeighted(..) => HopType::BalancerWeighted,
+            Self::BalancerStable(..) => HopType::BalancerStable,
+        }
+    }
+}
+
+#[cfg(test)]
+mod hop_type_tests {
+    use super::{HopType, PoolEntry};
+    use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
+    use crate::state::state_history::{ReorgJournal, V2BlockDelta};
+    use crate::state::v2_state::{V2PoolIdentity, V2PoolState};
+    use alloy::primitives::{aliases::U112, Address};
+    use degenbot_core::fee::{fee_fraction, fee_ratio};
+
+    fn v2_entry(stable_swap: bool) -> PoolEntry {
+        PoolEntry::V2(Box::new((
+            V2PoolIdentity {
+                address: Address::repeat_byte(0x11),
+                token0: Address::repeat_byte(0x01),
+                token1: Address::repeat_byte(0x02),
+                fee_token0: fee_ratio(997, 1_000),
+                fee_token1: fee_ratio(997, 1_000),
+                factory: Address::repeat_byte(0xfa),
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Volatile,
+                stable_swap,
+                token0_decimals: None,
+                token1_decimals: None,
+            },
+            V2PoolState {
+                reserve0: U112::from(1_000_000u64),
+                reserve1: U112::from(2_000_000u64),
+                update_block: 1,
+                state_nonce: 0,
+                journal: ReorgJournal::<V2BlockDelta>::new(1),
+            },
+        )))
+    }
+
+    fn aerodrome_entry(stable: bool) -> PoolEntry {
+        PoolEntry::AerodromeV2(Box::new((
+            AerodromeV2PoolIdentity {
+                address: Address::repeat_byte(0xae),
+                token0: Address::repeat_byte(0x01),
+                token1: Address::repeat_byte(0x02),
+                factory: Address::repeat_byte(0xaf),
+                variant: if stable {
+                    degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Stable
+                } else {
+                    degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile
+                },
+                stable,
+                fee: fee_fraction(3, 1_000),
+                token0_decimals: 18,
+                token1_decimals: 18,
+            },
+            AerodromeV2PoolState {
+                reserve0: U112::from(1_000_000u64),
+                reserve1: U112::from(2_000_000u64),
+                update_block: 1,
+                state_nonce: 0,
+                journal: ReorgJournal::<V2BlockDelta>::new(1),
+            },
+        )))
+    }
+
+    /// The registry family cannot name the two reserve-pair species: one
+    /// `RegisteredPoolFamily::V2` row covers a constant-product pair and a
+    /// solidly-stable one. The hop projection is the one place that reads the
+    /// flags, so a solve branch cannot be chosen from the family tag alone.
+    #[test]
+    fn hop_type_reads_the_species_the_registry_family_erases() {
+        assert_eq!(
+            v2_entry(false).registered_family(),
+            v2_entry(true).registered_family(),
+            "one registry family"
+        );
+        assert_eq!(v2_entry(false).hop_type(), HopType::V2);
+        assert_eq!(v2_entry(true).hop_type(), HopType::SolidlyStable);
+
+        assert_eq!(
+            aerodrome_entry(false).registered_family(),
+            aerodrome_entry(true).registered_family()
+        );
+        assert_eq!(aerodrome_entry(false).hop_type(), HopType::V2);
+        assert_eq!(aerodrome_entry(true).hop_type(), HopType::SolidlyStable);
     }
 }
 

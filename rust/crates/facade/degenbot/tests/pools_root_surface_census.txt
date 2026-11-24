@@ -24,6 +24,13 @@
 # `ConcentratedLiquidityPathSim` joins the concentrated-liquidity door so the
 # degenbot-simulation phantom-fidelity rig names the path-level sim at the
 # root (ADR-084 D2), its only out-of-crate consumer.
+# The 1101 -> 1102 review is ADR-107 D4's earliest-stage capability refusal:
+# `PoolEntry::hop_type` — the ONE projection from a registered entry onto the
+# mixed solver's hop taxonomy. Its out-of-crate consumers are the engine's
+# registration door (`solve_cycle`'s hop-family derivation) and the crawl
+# admission's constructed-hop capability gate, which has no other way to read
+# the two species flags (an Aerodrome pair's `stable`, a Camelot entry's
+# `stable_swap`) the registry family tag erases.
 # The 1029 -> 1038 review is the walk-census vocabulary: the V4 projection
 # fix's `RangeExitKind` / `SwapWalkCensus` (and their accessors) plus
 # `ConcentratedLiquidityPathOutcome` — the per-hop crossed-ticks /

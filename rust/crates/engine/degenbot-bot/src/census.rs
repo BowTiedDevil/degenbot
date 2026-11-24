@@ -366,6 +366,10 @@ fn coarse_label(outcome: &RegistrationOutcome) -> &'static str {
         | RegistrationOutcome::BuildV3Refused
         | RegistrationOutcome::BuildV4Refused => "pool-build-error",
         RegistrationOutcome::RegisterFailed => "register-fail",
+        // ADR-107 D9: the cutover's replacement series value — one bounded
+        // member beside `register-fail`, not a new label dimension. The
+        // family, hop, and route detail stays in the structured log.
+        RegistrationOutcome::UnsupportedCapability => "unsupported-capability",
         RegistrationOutcome::Registered
         | RegistrationOutcome::PathRejected
         | RegistrationOutcome::Refused(_) => "other",
@@ -414,6 +418,10 @@ mod tests {
             (RegistrationOutcome::BuildV3Refused, "pool-build-error"),
             (RegistrationOutcome::BuildV4Refused, "pool-build-error"),
             (RegistrationOutcome::RegisterFailed, "register-fail"),
+            (
+                RegistrationOutcome::UnsupportedCapability,
+                "unsupported-capability",
+            ),
         ];
         for (outcome, expected) in cases {
             assert_eq!(

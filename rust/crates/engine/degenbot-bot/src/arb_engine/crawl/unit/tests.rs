@@ -39,7 +39,7 @@ use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::{ConstructionIo, DbConstruction, NoDb, RpcConstruction};
 use crate::bot_core::registration_ledger::{
     PipelineReport, PoolStanding, PreBuildIdentity, RegistrationLedgerHandle, RegistrationOutcome,
-    RegistrationUnitOutcome, StandingDisposition,
+    RegistrationUnitOutcome, StandingDisposition, UnregistrableRecord,
 };
 use crate::bot_core::verification_retry::RetryPolicy;
 use crate::bot_core::{Bot, ConstructionRefusal, ConstructionRoute, VerifyLifecycle};
@@ -49,10 +49,13 @@ use crate::bot_core::{Bot, ConstructionRefusal, ConstructionRoute, VerifyLifecyc
 const USDC: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
 const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
 const DAI: Address = address!("6B175474E89094C44Da98b954EedeAC495271d0F");
+const USDT: Address = address!("dAC17F958D2ee523a2206206994597C13D831ec7");
 const V3_FACTORY: Address = address!("1111111111111111111111111111111111111111");
 const V3_POOL: Address = address!("2222222222222222222222222222222222222222");
 const V4_PM: Address = address!("3333333333333333333333333333333333333333");
 const V4_POOL_ID: [u8; 32] = [0xcd; 32];
+const V3_POOL_DAI: Address = address!("4444444444444444444444444444444444444444");
+const V3_POOL_USDT: Address = address!("5555555555555555555555555555555555555555");
 const BLOCK: u64 = 18_000_000;
 
 /// The fixture chain (mainnet — the presets are mainnet's).
@@ -373,6 +376,61 @@ fn set_v4(rpc: &mut FakeRpc) {
     rpc.set(V4_PM, b"getTickBitmap(bytes32,int16)", uint_word(0, 256));
 }
 
+/// The Camelot solidly-stable pair's reads: the shared volatile/stable factory
+/// resolves the preset, and the pool's own `stableSwap()` picks the species
+/// (which the V2 DB table cannot name — ADR-107 C7).
+fn set_camelot_stable(rpc: &mut FakeRpc, token0: Address, token1: Address) {
+    let dex = dex_identity::CAMELOT_V2_STABLE;
+    let pool = v2_address(&dex, token0, token1);
+    rpc.set(pool, b"factory()", addr_word(dex.factory));
+    rpc.set(pool, b"token0()", addr_word(token0));
+    rpc.set(pool, b"token1()", addr_word(token1));
+    rpc.set(pool, b"stableSwap()", enc(DynSolValue::Bool(true)));
+    rpc.set(pool, b"FEE_DENOMINATOR()", uint_word(100_000, 256));
+    rpc.set(pool, b"token0FeePercent()", uint_word(300, 256));
+    rpc.set(pool, b"token1FeePercent()", uint_word(300, 256));
+    rpc.set(
+        pool,
+        b"getReserves()",
+        reserves_word(1_500_000_000_000, 800_000_000_000_000_000),
+    );
+}
+
+fn camelot_stable_hop() -> DiscoveredHop {
+    DiscoveredHop::V2 {
+        address: v2_address(&dex_identity::CAMELOT_V2_STABLE, USDC, WETH),
+    }
+}
+
+/// The four-token cycle USDC → USDT → DAI → WETH → USDC over two V2 pairs and
+/// two V3 pools: every hop family declares composition and no command-stream
+/// producer expresses four mixed hops (ADR-107 C4).
+fn four_hop_rpc() -> FakeRpc {
+    let mut rpc = FakeRpc::new();
+    set_v2(&mut rpc, &dex_identity::UNISWAP_V2, USDC, WETH);
+    set_v3(&mut rpc, V3_POOL_DAI, WETH, DAI);
+    set_v2(&mut rpc, &dex_identity::SUSHISWAP_V2, DAI, USDT);
+    set_v3(&mut rpc, V3_POOL_USDT, USDT, USDC);
+    rpc
+}
+
+fn four_hop_hops() -> Vec<DiscoveredHop> {
+    vec![
+        DiscoveredHop::V2 {
+            address: v2_address(&dex_identity::UNISWAP_V2, USDC, WETH),
+        },
+        DiscoveredHop::V3 {
+            address: V3_POOL_DAI,
+        },
+        DiscoveredHop::V2 {
+            address: v2_address(&dex_identity::SUSHISWAP_V2, DAI, USDT),
+        },
+        DiscoveredHop::V3 {
+            address: V3_POOL_USDT,
+        },
+    ]
+}
+
 /// The closed USDC→WETH→USDC cycle over a Uniswap V2 pair and a V3 pool.
 fn cycle_rpc() -> FakeRpc {
     let mut rpc = FakeRpc::new();
@@ -560,7 +618,7 @@ fn assert_parity(case: &str, receipt: &CrawlReceipt) {
 }
 
 /// The cases these tests exercise — every table row must appear here.
-const EXERCISED: [&str; 11] = [
+const EXERCISED: [&str; 15] = [
     "registered_cycle",
     "duplicate_cycle",
     "memoized_build_refusal",
@@ -570,8 +628,12 @@ const EXERCISED: [&str; 11] = [
     "pinned_direction_mismatch",
     "policy_denied",
     "policy_denied_memoized",
-    "cap_stop",
+    "unsupported_family_post_build",
+    "unsupported_family_memoized",
+    "unsupported_route_shape",
+    "unsupported_route_shape_memoized",
     "register_fail",
+    "cap_stop",
 ];
 
 #[test]
@@ -799,11 +861,12 @@ async fn the_cap_stop_answers_at_the_register_stage() {
     assert_eq!(harness.stages.path_count(), 0);
 }
 
+/// A sub-2-hop candidate is MALFORMED, not uncomposable: the shape key is
+/// defined over well-formed routes, so capability assessment passes it through
+/// and registration answers its arity fault — the transient register failure,
+/// never memoized and never reported as unsupported capability.
 #[tokio::test]
-async fn an_unroutable_hop_list_is_a_transient_register_failure() {
-    // A one-hop "cycle" over a pool whose two tokens are the same: the cycle
-    // closes, so it reaches registration — which refuses a < 2-hop path. That is
-    // the transient register failure (never memoized, never a cap stop).
+async fn a_sub_two_hop_candidate_is_a_transient_register_failure() {
     let pool = v2_address(&dex_identity::UNISWAP_V2, USDC, USDC);
     let mut rpc = FakeRpc::new();
     rpc.set(
@@ -815,20 +878,34 @@ async fn an_unroutable_hop_list_is_a_transient_register_failure() {
     rpc.set(pool, b"token1()", addr_word(USDC));
     rpc.set(pool, b"getReserves()", reserves_word(1, 1));
     let harness = Harness::new(rpc);
-    let unit = CrawlUnit {
-        seq: 0,
-        hops: vec![DiscoveredHop::V2 { address: pool }],
-        directions: None,
-    };
-    let receipt = harness.run(&unit).await.unwrap();
+    let receipt = harness
+        .run(&CrawlUnit {
+            seq: 0,
+            hops: vec![DiscoveredHop::V2 { address: pool }],
+            directions: None,
+        })
+        .await
+        .unwrap();
     assert_parity("register_fail", &receipt);
-    assert_eq!(receipt.split.len(), 5);
+    assert_eq!(
+        receipt.split.len(),
+        5,
+        "only the register stage answers a malformed candidate"
+    );
     assert!(
         !harness
             .ledger
-            .with(|ledger| ledger.path_rejected(&[receipt.hop_sig.clone().unwrap()].concat())),
+            .with(|ledger| ledger.path_rejected(&receipt.hop_sig.clone().unwrap_or_default())),
         "a transient register failure is never negatively memoized"
     );
+    let key = PreBuildIdentity::Address(pool);
+    assert!(
+        harness
+            .ledger
+            .with(|ledger| ledger.unregistrable_record(Some(&key)).is_none()),
+        "a malformed candidate never classifies its pool as unregistrable"
+    );
+    assert_eq!(harness.stages.path_count(), 0);
 }
 
 // ── R1: the edge kind is equivalent to the on-chain probe ──────────────────
@@ -1640,5 +1717,339 @@ async fn a_policy_denial_rejects_and_memoizes_through_the_direct_adapter() {
         RegistrationUnitOutcome::Reject { detail } => assert_eq!(*detail, None),
         other => panic!("expected a memoized reject, got {other:?}"),
     }
+    assert_eq!(harness.stages.path_count(), 0);
+}
+
+// ── the capability gates (ADR-107 D4) ─────────────────────────────────────
+
+/// The bounded capability refusal a receipt carries, when it carries one.
+fn capability_skip(receipt: &CrawlReceipt) -> Option<&Option<String>> {
+    match &receipt.outcome {
+        RegistrationUnitOutcome::Skip {
+            label,
+            counts_as_skip,
+            detail,
+        } => {
+            assert_eq!(
+                label.as_label(),
+                RegistrationOutcome::UnsupportedCapability.as_str(),
+                "the refusal keeps the bounded unsupported-capability vocabulary"
+            );
+            assert!(*counts_as_skip, "a capability refusal is a counted skip");
+            Some(detail)
+        }
+        _ => None,
+    }
+}
+
+/// A constructed hop whose family declares no settlement composition is refused
+/// at the earliest stage that knows the family — after construction, before the
+/// verify lifecycle or any registration — and the pool is memoized as
+/// unregistrable, so a later route through it spends nothing.
+///
+/// The Camelot solidly-stable pair lives in the V2 DB table, which is why the
+/// family is only knowable post-build (ADR-107 C7: the graph vocabulary is
+/// `PoolKind::{V2,V3,V4}`). Its `SolidlyStable` hop is the live refusal today.
+#[tokio::test]
+async fn an_unsupported_built_family_refuses_before_verify_and_memoizes_the_pool() {
+    let mut rpc = FakeRpc::new();
+    set_camelot_stable(&mut rpc, USDC, WETH);
+    set_v3(&mut rpc, V3_POOL, USDC, WETH);
+    let harness = Harness::new(rpc);
+
+    let receipt = harness
+        .run(&CrawlUnit {
+            seq: 0,
+            hops: vec![camelot_stable_hop(), v3_hop()],
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert_parity("unsupported_family_post_build", &receipt);
+    let detail = capability_skip(&receipt).expect("a capability skip");
+    assert!(
+        detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("solidly-stable")),
+        "the structured refusal names the offending family in the log detail: {detail:?}"
+    );
+    assert_eq!(
+        receipt.answering_stage(),
+        Some(UnitStage::Eligibility),
+        "the refusal answers right after construction"
+    );
+    assert_eq!(
+        harness.verify().verified_pool_count(),
+        0,
+        "a refused candidate spends no verify work"
+    );
+    assert_eq!(harness.stages.path_count(), 0, "and registers no path");
+
+    let key = PreBuildIdentity::Address(match camelot_stable_hop() {
+        DiscoveredHop::V2 { address } => address,
+        _ => unreachable!(),
+    });
+    assert_eq!(
+        harness
+            .ledger
+            .with(|ledger| ledger.unregistrable_record(Some(&key)).cloned()),
+        Some(crate::bot_core::registration_ledger::UnregistrableRecord {
+            outcome: RegistrationOutcome::UnsupportedCapability,
+            counts_as_skip: true,
+        }),
+        "the refused pool is a stable pool fact"
+    );
+
+    // A later, differently-shaped route through the same pool answers at the
+    // memo stage: no second construction, no second evaluation.
+    let later = harness
+        .run(&CrawlUnit {
+            seq: 1,
+            hops: vec![v3_hop(), camelot_stable_hop()],
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert_parity("unsupported_family_memoized", &later);
+    assert_eq!(
+        later.split.len(),
+        1,
+        "the pool fact answered before any build or eligibility work"
+    );
+    assert!(
+        capability_skip(&later).is_some_and(Option::is_none),
+        "the memoized record carries the fact, not the first refusal's text"
+    );
+    assert_eq!(harness.stages.path_count(), 0);
+
+    // One bounded admission outcome for the mixed candidate, no registered
+    // path, no solve-eligible count — the report reads the census label.
+    let report = fold(std::slice::from_ref(&receipt));
+    assert_eq!(report.skip_count, 1, "one bounded skip");
+    assert_eq!(report.path_count, 0, "no registered path");
+    assert_eq!(
+        report
+            .skip_reasons
+            .get(RegistrationOutcome::UnsupportedCapability.as_str()),
+        Some(&1),
+        "the breakdown carries the bounded label"
+    );
+    assert!(report.fold_identities_hold());
+}
+
+/// A pool that already completed its verify lifecycle still acquires the
+/// permanent capability refusal: verification and composition answer different
+/// questions, so the refusal SUPERSEDES the verified standing (the ledger holds
+/// ONE standing per key, resolved by evidence) and the pool becomes memoizable.
+/// The displaced standing is reported where it happens, and the next candidate
+/// through that pool answers at the pre-build memo with no further work.
+#[tokio::test]
+async fn a_capability_refusal_supersedes_a_verified_standing_and_then_memoizes() {
+    let mut rpc = FakeRpc::new();
+    set_camelot_stable(&mut rpc, USDC, WETH);
+    set_v3(&mut rpc, V3_POOL, USDC, WETH);
+    let harness = Harness::new(rpc);
+
+    let key = PreBuildIdentity::Address(match camelot_stable_hop() {
+        DiscoveredHop::V2 { address } => address,
+        _ => unreachable!(),
+    });
+    // An operator-driven verify lifecycle already ran over the pool.
+    assert_eq!(
+        harness
+            .ledger
+            .with(|ledger| ledger.memoize_verified_pool(key)),
+        Ok(StandingDisposition::Settled)
+    );
+    assert_eq!(
+        harness.ledger.with(|ledger| ledger.verified_pool_count()),
+        1
+    );
+
+    let receipt = harness
+        .run(&CrawlUnit {
+            seq: 0,
+            hops: vec![camelot_stable_hop(), v3_hop()],
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert_parity("unsupported_family_post_build", &receipt);
+    assert_eq!(
+        harness
+            .ledger
+            .with(|ledger| ledger.pool_standing(&key).cloned()),
+        Some(PoolStanding::Unregistrable(UnregistrableRecord {
+            outcome: RegistrationOutcome::UnsupportedCapability,
+            counts_as_skip: true,
+        })),
+        "the permanent refusal is evidence that outranks the verified standing"
+    );
+    assert_eq!(
+        harness.ledger.with(|ledger| ledger.verified_pool_count()),
+        0,
+        "the displaced verified standing is gone"
+    );
+
+    // The next, differently-shaped candidate through that pool spends nothing.
+    let later = harness
+        .run(&CrawlUnit {
+            seq: 1,
+            hops: vec![v3_hop(), camelot_stable_hop()],
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert_parity("unsupported_family_memoized", &later);
+    assert_eq!(
+        later.split.len(),
+        1,
+        "the pool fact answered at the memo stage"
+    );
+    assert_eq!(harness.verify().verified_pool_count(), 0);
+    assert_eq!(harness.stages.path_count(), 0);
+}
+
+/// ADR-107 C7: today's DB graph yields `PoolKind::{V2,V3,V4}` only, and every
+/// one of those families declares settlement composition, so no discovered
+/// family can be refused in production. This drives the PRODUCTION
+/// pre-construction stage with the taxonomy a future graph family would carry —
+/// the real evaluator, no fabricated edge and no second capability registry —
+/// and proves the refusal lands before any construction or I/O, settles the
+/// pool as a fact, and answers a later candidate from that fact.
+#[tokio::test]
+async fn the_pre_build_family_gate_refuses_a_future_graph_family_before_any_build() {
+    use crate::arb_engine::crawl::admission::PreBuildHop;
+
+    let harness = Harness::new(FakeRpc::new());
+    let solidly = PreBuildHop {
+        identity: Some(PreBuildIdentity::Address(USDC)),
+        hop_type: degenbot_pools::solve::HopType::SolidlyStable,
+    };
+
+    let receipt = harness
+        .admission
+        .pre_build_refusal(0, std::slice::from_ref(&solidly))
+        .expect("a solve-only family is refused before construction");
+    assert_eq!(receipt.kind(), "skip");
+    assert_eq!(receipt.refusal_tag(), Some("unsupported-capability"));
+    assert_eq!(
+        receipt.answering_stage(),
+        Some(UnitStage::Memo),
+        "the pre-construction stage answered: no build, verify, register, or solve"
+    );
+    assert_eq!(receipt.hop_sig, None, "no direction-resolved signature yet");
+    assert_eq!(harness.stages.path_count(), 0);
+    assert_eq!(
+        harness.ledger.with(|ledger| ledger
+            .unregistrable_record(Some(&PreBuildIdentity::Address(USDC)))
+            .cloned()),
+        Some(crate::bot_core::registration_ledger::UnregistrableRecord {
+            outcome: RegistrationOutcome::UnsupportedCapability,
+            counts_as_skip: true,
+        }),
+        "the refused hop's pre-build identity is the memo key"
+    );
+
+    // A later candidate through that same identity answers from the memo — the
+    // pool fact, whatever taxonomy the new edge would carry — before any build.
+    let supported_route = [
+        PreBuildHop {
+            identity: Some(PreBuildIdentity::Address(USDC)),
+            hop_type: degenbot_pools::solve::HopType::V2,
+        },
+        PreBuildHop {
+            identity: Some(PreBuildIdentity::Address(WETH)),
+            hop_type: degenbot_pools::solve::HopType::V3,
+        },
+    ];
+    let memoized = harness
+        .admission
+        .pre_build_refusal(1, &supported_route)
+        .expect("the pool fact answers before the taxonomy is consulted");
+    assert_eq!(memoized.split.len(), 1);
+    assert_eq!(
+        memoized.refusal_tag(),
+        Some("unsupported-capability"),
+        "the memo answers the bounded label, without the first refusal's text"
+    );
+
+    // A candidate whose hops hold no refused fact proceeds to construction.
+    let fresh = [
+        PreBuildHop {
+            identity: Some(PreBuildIdentity::Address(WETH)),
+            hop_type: degenbot_pools::solve::HopType::V2,
+        },
+        PreBuildHop {
+            identity: Some(PreBuildIdentity::Address(DAI)),
+            hop_type: degenbot_pools::solve::HopType::V3,
+        },
+    ];
+    assert_eq!(harness.admission.pre_build_refusal(2, &fresh), None);
+}
+
+/// A four-hop mixed V2/V3 route: every hop family declares composition, and the
+/// command stream has no producer for the sequence (ADR-107 C4). The refusal
+/// lands after construction and before verify, and it memoizes the EXACT hop
+/// signature — a different route through the same pools is evaluated on its own.
+#[tokio::test]
+async fn a_route_without_a_producer_refuses_and_memoizes_its_signature() {
+    let harness = Harness::new(four_hop_rpc());
+    let unit = CrawlUnit {
+        seq: 0,
+        hops: four_hop_hops(),
+        directions: None,
+    };
+    let receipt = harness.run(&unit).await.unwrap();
+    assert_parity("unsupported_route_shape", &receipt);
+    let detail = capability_skip(&receipt).expect("a capability skip");
+    assert!(
+        detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("4-hop")),
+        "the structured refusal names the route shape: {detail:?}"
+    );
+    assert_eq!(receipt.answering_stage(), Some(UnitStage::Eligibility));
+    assert_eq!(harness.verify().verified_pool_count(), 0);
+    assert_eq!(harness.stages.path_count(), 0);
+    let sig = receipt
+        .hop_sig
+        .clone()
+        .expect("the candidate held a direction-resolved signature");
+    assert!(
+        harness.ledger.with(|ledger| ledger.path_rejected(&sig)),
+        "the exact hop signature is rejected"
+    );
+
+    // The same route re-sighted: the rejected-path memo answers, before verify.
+    let again = harness
+        .run(&CrawlUnit {
+            seq: 1,
+            hops: four_hop_hops(),
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert_parity("unsupported_route_shape_memoized", &again);
+    assert_eq!(again.answering_stage(), Some(UnitStage::Eligibility));
+
+    // The reverse cycle over the same four pools is a different route with a
+    // different signature: evaluated independently, so it answers with the
+    // bounded refusal rather than the memo's generic deny.
+    let mut reversed = four_hop_hops();
+    reversed.reverse();
+    let other = harness
+        .run(&CrawlUnit {
+            seq: 2,
+            hops: reversed,
+            directions: None,
+        })
+        .await
+        .unwrap();
+    assert!(capability_skip(&other).is_some(), "{:?}", other.outcome);
+    assert_ne!(
+        other.hop_sig, receipt.hop_sig,
+        "a different route is a different signature"
+    );
     assert_eq!(harness.stages.path_count(), 0);
 }

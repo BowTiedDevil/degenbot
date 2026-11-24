@@ -3,7 +3,9 @@
 //! One candidate path, from the identity a discovery edge carried to the
 //! engine's registered path, in one order:
 //!
-//! 1. **memo** — the ledger's stable-refusal memo, asked pre-build per hop;
+//! 1. **memo** — the pre-construction facts: the ledger's stable-refusal memo
+//!    per hop, then the ADR-107 D4 family capability of each discovered hop
+//!    (a solve-only family answers here, before any construction);
 //! 2. **build** — each hop through [`Bot::construct_pool`] (the route,
 //!    identity, get-or-register, refusal fold), single-flighted per pool
 //!    ([`CrawlFlights`]), so concurrent candidates share one construction;
@@ -19,9 +21,10 @@
 //! # The stage order is a typestate
 //!
 //! Each stage either answers the candidate with its one [`CrawlReceipt`] or
-//! hands the next state on: `UnitRun` (nothing known but the clock) → `Built`
-//! (every hop constructed and registered) → `Eligible` (the gate admitted the
-//! candidate's hop signature). The eligibility gate is the only producer of
+//! hands the next state on: `UnitRun` (nothing known but the clock) →
+//! `Capable` (every discovered family composes) → `Built` (every hop
+//! constructed and registered) → `Eligible` (the gate admitted the candidate's
+//! hop signature). The eligibility gate is the only producer of
 //! `Eligible` and the register stage takes nothing else, so the order cannot be
 //! reordered or half-run by a later edit, and `Eligible` holds the admitted
 //! signature as a value: a run that reaches registration without one has no
@@ -62,13 +65,18 @@ use std::time::Instant;
 use alloy::primitives::Address;
 use degenbot_core::op_warn;
 use degenbot_db::snapshot::TickMapDb;
+use degenbot_execution::PathInfo;
+use degenbot_executor::compose_capability::{self, ComposeCapabilityRefusal};
 use degenbot_pathfinding::directions::{
     resolve_directions, DirectionError, DirectionHop, DirectionToken,
 };
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::PoolHop;
+use degenbot_pools::solve::{HopType, MixedPoolRef};
+use degenbot_pools::Arm;
 use degenbot_pools::{BuildFailure, RegisterRefusal, RegisteredPoolFamily};
 use degenbot_rpc::abi::{ContractRead, IPoolIdentity};
+use degenbot_substrate::path_info::build_path_info;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::PoolLookup;
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -86,8 +94,8 @@ use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::{
     BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PathStanding, PolicyVerdict,
-    PreBuildIdentity, RefusalKind, RegistrationLedger, RegistrationLedgerHandle,
-    RegistrationOutcome, RegistrationUnitOutcome,
+    PoolStanding, PreBuildIdentity, RefusalKind, RegistrationLedger, RegistrationLedgerHandle,
+    RegistrationOutcome, RegistrationUnitOutcome, UnregistrableRecord,
 };
 use crate::bot_core::VerifyLifecycle;
 use crate::bot_core::{
@@ -161,6 +169,22 @@ impl DiscoveredHop {
         }
     }
 
+    /// The solver hop type the edge's DB-table family names, known PRE-build.
+    ///
+    /// `PoolKind::V2` names the DB table, never the registered family: an
+    /// Aerodrome or Camelot pair lives in that one table and lands in the
+    /// `SolidlyStable` hop, so the pre-build family fact is the TABLE's family
+    /// (all compose-capable) and the constructed family is assessed again after
+    /// the build (`RegistrationAdmission::assess_built_candidate`).
+    #[must_use]
+    pub const fn hop_type(self) -> HopType {
+        match self {
+            Self::V2 { .. } => HopType::V2,
+            Self::V3 { .. } => HopType::V3,
+            Self::V4 { .. } => HopType::V4,
+        }
+    }
+
     /// The identity a build flight and the negative memos key on — known before
     /// any build (the typed spelling of the Python adapter's
     /// `RegistrationLedger::pool_memo_key`).
@@ -191,6 +215,36 @@ impl DiscoveredHop {
                     None => [0; 32],
                 },
             },
+        }
+    }
+}
+
+/// One discovered hop's PRE-BUILD facts: the identity the pool memos key on and
+/// the solver hop type the edge's family names.
+///
+/// Both are known from the discovery edge, before any construction — which is
+/// what makes the ADR-107 D4 family refusal the earliest stage that has the
+/// facts to answer it. It is also the seam a FUTURE graph family is proven
+/// through: today's graph yields `PoolKind::{V2,V3,V4}` only (ADR-107 C7), so
+/// no discovered family can be refused in production, and the refusal is
+/// driven through this value instead of a fabricated edge or a second
+/// capability registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreBuildHop {
+    /// The identity a pool memo keys on (`None` when the edge carries none —
+    /// a hashless V4 hop).
+    pub identity: Option<PreBuildIdentity>,
+    /// The family the edge names.
+    pub hop_type: HopType,
+}
+
+impl PreBuildHop {
+    /// The facts one discovered edge carries.
+    #[must_use]
+    pub const fn of(hop: DiscoveredHop) -> Self {
+        Self {
+            identity: hop.pre_build_identity(),
+            hop_type: hop.hop_type(),
         }
     }
 }
@@ -366,12 +420,14 @@ impl RegistrationAdmission {
     ) -> Result<CrawlReceipt, CrawlAbort> {
         // The candidate's progress IS its type: each stage answers the unit or
         // hands the next state on, so the register stage cannot be reached with
-        // a run the eligibility gate did not admit.
-        let run = match self.memo_stage(seq, hops, UnitRun::new()) {
+        // a run the eligibility gate did not admit, and no stage can be reached
+        // before the facts it reads exist.
+        let pre_build: Vec<PreBuildHop> = hops.iter().copied().map(PreBuildHop::of).collect();
+        let capable = match self.capability_stage(seq, &pre_build, UnitRun::new()) {
             StageAnswer::Answered(receipt) => return Ok(receipt),
-            StageAnswer::Continue(run) => run,
+            StageAnswer::Continue(capable) => capable,
         };
-        let built = match self.build_stage(seq, hops, run, db).await? {
+        let built = match self.build_stage(seq, hops, capable, db).await? {
             StageAnswer::Answered(receipt) => return Ok(receipt),
             StageAnswer::Continue(built) => built,
         };
@@ -383,22 +439,45 @@ impl RegistrationAdmission {
         Ok(self.register_stage(seq, eligible))
     }
 
-    /// The MEMO stage: a hop whose stable build refusal is already a pool fact
-    /// answers the WHOLE path — no other hop of it can produce a different
-    /// candidate.
-    fn memo_stage(
+    /// The PRE-CONSTRUCTION stage: the ledger's stable pool refusals, then the
+    /// ADR-107 D4 family capability of each discovered hop.
+    ///
+    /// Both facts are known before any build, so a hop whose family declares no
+    /// settlement composition is refused before construction, Verify lifecycle
+    /// work, registration, or solving. A pool fact answers the WHOLE path — no
+    /// other hop of it can produce a different candidate.
+    fn capability_stage(
         &self,
         seq: u64,
-        hops: &[DiscoveredHop],
+        hops: &[PreBuildHop],
         mut run: UnitRun,
-    ) -> StageAnswer<UnitRun> {
+    ) -> StageAnswer<Capable> {
+        if let Some(receipt) = self.pre_build_answer(seq, hops, &mut run.clock) {
+            return StageAnswer::Answered(receipt);
+        }
+        StageAnswer::Continue(Capable { clock: run.clock })
+    }
+
+    /// The pre-construction answer for one candidate, or `None` when every
+    /// pre-build fact admits it (having lapped the stage into `clock`).
+    ///
+    /// The family evaluation is `assess_families` — the SAME static evaluator
+    /// the engine's registration door consumes (ADR-107 D3), never a second
+    /// registry. Today's graph cannot produce a family it refuses (ADR-107 C7),
+    /// so this entry is the rule a future graph family meets; `pre_build_refusal`
+    /// is the seam its refusal is proven through.
+    fn pre_build_answer(
+        &self,
+        seq: u64,
+        hops: &[PreBuildHop],
+        clock: &mut StageClock,
+    ) -> Option<CrawlReceipt> {
         for hop in hops {
-            let key = hop.pre_build_identity();
             let memoized = self
                 .ledger
-                .with(|ledger| ledger.unregistrable_record(key.as_ref()).cloned());
+                .with(|ledger| ledger.unregistrable_record(hop.identity.as_ref()).cloned());
             if let Some(record) = memoized {
-                return StageAnswer::Answered(run.clock.answer(
+                return Some(clock.answer(
                     seq,
                     skip(record.outcome, record.counts_as_skip, None),
                     None,
@@ -406,8 +485,70 @@ impl RegistrationAdmission {
                 ));
             }
         }
-        run.clock.lap();
-        StageAnswer::Continue(run)
+        let hop_types: Vec<HopType> = hops.iter().map(|hop| hop.hop_type).collect();
+        if let Err(refusal) = compose_capability::assess_families(Arm::Settlement, &hop_types) {
+            let identity = refusal
+                .hop()
+                .and_then(|index| hops.get(index))
+                .and_then(|hop| hop.identity);
+            self.memoize_capability_refusal(&refusal, identity);
+            return Some(clock.answer(seq, capability_skip(&refusal), None, None));
+        }
+        clock.lap();
+        None
+    }
+
+    /// The pre-build family answer for one candidate taxonomy — the production
+    /// stage above, driven with a hop taxonomy the current DB graph cannot
+    /// yield (ADR-107 C7). `None` when the candidate may be built.
+    #[cfg(test)]
+    pub(crate) fn pre_build_refusal(&self, seq: u64, hops: &[PreBuildHop]) -> Option<CrawlReceipt> {
+        self.pre_build_answer(seq, hops, &mut StageClock::new())
+    }
+
+    /// Settle the hop a capability refusal names as unregistrable — the pool
+    /// fact ADR-107 D4 memoizes for a family refusal, keyed by the identity the
+    /// proving stage holds.
+    ///
+    /// A pool already settled `Verified` is SUPERSEDED, not skipped:
+    /// verification and composition answer different questions, and a static
+    /// composition fact is evidence that no candidate path through this pool can
+    /// ever register, while a verify lifecycle says nothing about composition.
+    /// Leaving `Verified` in place would re-evaluate the same refusal on every
+    /// later candidate; the displaced standing is reported where it happens.
+    fn memoize_capability_refusal(
+        &self,
+        refusal: &ComposeCapabilityRefusal,
+        identity: Option<PreBuildIdentity>,
+    ) {
+        let Some(identity) = identity else {
+            return;
+        };
+        let record = UnregistrableRecord {
+            outcome: RegistrationOutcome::UnsupportedCapability,
+            counts_as_skip: true,
+        };
+        let displaced = self.ledger.with(|ledger| {
+            match ledger.memoize_unregistrable(
+                identity,
+                record.outcome.clone(),
+                record.counts_as_skip,
+            ) {
+                Ok(_) => None,
+                Err(_conflict) => {
+                    ledger.supersede_pool(identity, PoolStanding::Unregistrable(record))
+                }
+            }
+        });
+        if let Some(displaced) = displaced {
+            op_warn!(
+                domain = state,
+                pool = %identity,
+                displaced = ?displaced,
+                refusal = %refusal,
+                "a permanent capability refusal supersedes the pool's settled standing"
+            );
+        }
     }
 
     /// The BUILD stage: each hop through the one construction door,
@@ -416,9 +557,10 @@ impl RegistrationAdmission {
         &self,
         seq: u64,
         hops: &[DiscoveredHop],
-        mut run: UnitRun,
+        capable: Capable,
         db: Option<&dyn TickMapDb>,
     ) -> Result<StageAnswer<Built>, CrawlAbort> {
+        let mut clock = capable.clock;
         let head = match self.io.get_block_number().await {
             Ok(head) => head,
             // The head read is build I/O: a failure classifies as a transient
@@ -430,7 +572,7 @@ impl RegistrationAdmission {
                     PoolKind::V2,
                     Some(format!("chain head read: {err}")),
                 );
-                return Ok(StageAnswer::Answered(run.clock.answer(
+                return Ok(StageAnswer::Answered(clock.answer(
                     seq,
                     skip(refusal.outcome, refusal.counts_as_skip, refusal.detail),
                     None,
@@ -458,7 +600,7 @@ impl RegistrationAdmission {
                     ..
                 }
             ) {
-                return Ok(StageAnswer::Answered(run.clock.answer(
+                return Ok(StageAnswer::Answered(clock.answer(
                     seq,
                     skip(RegistrationOutcome::V4NoHash, true, None),
                     None,
@@ -496,7 +638,7 @@ impl RegistrationAdmission {
                                 }
                             }
                         }
-                        return Ok(StageAnswer::Answered(run.clock.answer(
+                        return Ok(StageAnswer::Answered(clock.answer(
                             seq,
                             skip(refusal.outcome, refusal.counts_as_skip, refusal.detail),
                             None,
@@ -510,9 +652,9 @@ impl RegistrationAdmission {
             .iter()
             .filter(|hop| matches!(hop, DiscoveredHop::V4 { .. }))
             .count();
-        run.clock.lap();
+        clock.lap();
         Ok(StageAnswer::Continue(Built {
-            clock: run.clock,
+            clock,
             pool_ids,
             v4_hops,
         }))
@@ -557,7 +699,7 @@ impl RegistrationAdmission {
 
         if let Some(sig) = &candidate_sig {
             // A deterministic deny already recorded for this signature:
-            // answering from the memo keeps the policy from re-running.
+            // answering from the memo keeps the static facts from re-running.
             if self.ledger.with(|ledger| ledger.path_rejected(sig)) {
                 return Ok(StageAnswer::Answered(clock.answer(
                     seq,
@@ -565,6 +707,15 @@ impl RegistrationAdmission {
                     Some(sig.clone()),
                     None,
                 )));
+            }
+        }
+
+        // ADR-107 D4: the constructed candidate's static composition facts,
+        // answered here — after construction, before the Verify lifecycle, the
+        // registry commit, or any eager solve.
+        if let Some(sig) = &candidate_sig {
+            if let Some(receipt) = self.capability_answer(seq, &mut clock, sig, &facts) {
+                return Ok(StageAnswer::Answered(receipt));
             }
         }
 
@@ -743,17 +894,14 @@ impl RegistrationAdmission {
             Err(PathRegistrationError::RegistryFull { .. }) => {
                 clock.answer(seq, RegistrationUnitOutcome::Cap, Some(hop_sig), None)
             }
-            // A permanent compose-capability refusal (ADR-107 D1) reports as
-            // a failed registration unit; the crawl's own stable negative
-            // memoization is the admission-telemetry task's scope.
-            Err(PathRegistrationError::UnsupportedCapability(refusal)) => clock.answer(
-                seq,
-                RegistrationUnitOutcome::RegisterFailed {
-                    detail: Some(refusal.to_string()),
-                },
-                Some(hop_sig),
-                None,
-            ),
+            // A permanent compose-capability refusal (ADR-107 D1). The
+            // post-build gate above already answers this before the Verify
+            // lifecycle, so a refusal arriving here is the engine's own door
+            // speaking last: it reports through the same bounded outcome rather
+            // than as a transient register failure.
+            Err(PathRegistrationError::UnsupportedCapability(refusal)) => {
+                clock.answer(seq, capability_skip(&refusal), Some(hop_sig), None)
+            }
             // A transient register failure is deliberately NEVER negatively
             // memoized: a raced build or a blip must stay retryable.
             Err(PathRegistrationError::Invalid(detail)) => clock.answer(
@@ -909,6 +1057,119 @@ impl RegistrationAdmission {
         } else {
             ReservePairArm::V2
         })
+    }
+
+    /// The post-build capability answer for one direction-resolved candidate:
+    /// `Some(receipt)` when a static composition fact refuses it (ADR-107 D4),
+    /// with the memos the proving stage can key on settled.
+    ///
+    /// A hop-anchored (family) refusal is a POOL fact: no candidate path through
+    /// that pool can compose, so the memo keys on the hop's identity. A
+    /// whole-route refusal keys on the constructed hop signature, so a
+    /// re-sighting answers from the rejected-path memo instead of re-projecting
+    /// the route.
+    ///
+    /// A candidate shorter than two hops is MALFORMED, not uncomposable: the
+    /// shape key is defined over well-formed routes, so assessing one would
+    /// relabel a structural arity fault as permanent capability and
+    /// negative-memoize a pool that never had a route to judge. Such a candidate
+    /// passes through to registration, which owns the arity refusal
+    /// ([`PathRegistrationError::Invalid`], a transient register failure that is
+    /// never memoized).
+    fn capability_answer(
+        &self,
+        seq: u64,
+        clock: &mut StageClock,
+        sig: &HopSignature,
+        facts: &[RegisteredHopFacts],
+    ) -> Option<CrawlReceipt> {
+        if sig.len() < 2 {
+            return None;
+        }
+        let hop_types: Vec<HopType> = facts.iter().map(|facts| facts.hop_type).collect();
+        match self.assess_built_candidate(sig, &hop_types) {
+            Some(Ok(())) => None,
+            Some(Err(refusal)) => {
+                if let Some(index) = refusal.hop() {
+                    self.memoize_capability_refusal(
+                        &refusal,
+                        facts
+                            .get(index)
+                            .and_then(RegisteredHopFacts::pre_build_identity),
+                    );
+                } else {
+                    let settled = self
+                        .ledger
+                        .with(|ledger| ledger.memoize_rejected_path(sig.clone()));
+                    if let Err(conflict) = settled {
+                        op_warn!(
+                            domain = state,
+                            path = ?sig,
+                            conflict = %conflict,
+                            "a route capability refusal contradicts a completed registration"
+                        );
+                    }
+                }
+                op_warn!(
+                    domain = state,
+                    route = %refusal,
+                    hop = ?refusal.hop(),
+                    family = ?refusal.family(),
+                    families = ?refusal.families(),
+                    "a constructed candidate is permanently outside settlement command composition"
+                );
+                Some(clock.answer(seq, capability_skip(&refusal), Some(sig.clone()), None))
+            }
+            // The route projection is unreadable: the family gate proved a
+            // command arm for every hop, so this is a state fact the pipeline
+            // just produced — the same rejection `registered_hops` answers.
+            None => Some(clock.answer(
+                seq,
+                reject(Some(
+                    "a built route has no command-stream projection".to_owned(),
+                )),
+                Some(sig.clone()),
+                None,
+            )),
+        }
+    }
+
+    /// The built candidate's static composition verdict (ADR-107 D3's second
+    /// fact level): the families the pools actually registered under, then the
+    /// whole-route `PathInfo` the composer reads.
+    ///
+    /// `None` means the route has no command-stream projection — a state fact
+    /// the caller answers as a rejection, because the family evaluation above
+    /// already proved a command arm for every hop.
+    fn assess_built_candidate(
+        &self,
+        hop_sig: &[(u64, bool)],
+        hop_types: &[HopType],
+    ) -> Option<Result<(), ComposeCapabilityRefusal>> {
+        if let Err(refusal) = compose_capability::assess_families(Arm::Settlement, hop_types) {
+            return Some(Err(refusal));
+        }
+        let path_info = self.route_path_info(hop_sig, hop_types)?;
+        Some(compose_capability::assess_route(hop_types, &path_info))
+    }
+
+    /// The whole-route `PathInfo` for one direction-resolved candidate — the
+    /// SAME projection the composer, the apply-time relevance derivation, and
+    /// the inline-sim hook read (ADR-107 D3), built from the directions the
+    /// candidate actually resolved.
+    fn route_path_info(&self, hop_sig: &[(u64, bool)], hop_types: &[HopType]) -> Option<PathInfo> {
+        let pools: Vec<MixedPoolRef> = hop_sig
+            .iter()
+            .zip(hop_types.iter())
+            .map(|(&(pool_key, zero_for_one), &hop_type)| MixedPoolRef {
+                hop_type,
+                pool_key,
+                zero_for_one,
+            })
+            .collect();
+        let state = self.bot.state_arc();
+        let guard = state.read_at(LockSite::Registration);
+        build_path_info(&guard, &pools).ok()
     }
 
     /// The registered state-side facts for every built hop.
@@ -1072,6 +1333,16 @@ struct UnitRun {
     clock: StageClock,
 }
 
+/// A candidate whose every discovered family declares settlement command
+/// composition: the ONE state the build stage accepts.
+///
+/// The pre-build family gate is the only producer of `Capable`, so a candidate
+/// whose family cannot compose has no spelling that reaches construction.
+struct Capable {
+    /// The stage clock, carried across the stage boundary.
+    clock: StageClock,
+}
+
 impl UnitRun {
     fn new() -> Self {
         Self {
@@ -1190,6 +1461,17 @@ fn reject(detail: Option<String>) -> RegistrationUnitOutcome {
     RegistrationUnitOutcome::Reject { detail }
 }
 
+/// The bounded capability refusal: a counted skip carrying the
+/// `unsupported-capability` vocabulary member (ADR-107 D9), with the
+/// structured refusal — family, hop, route reason — in the log-only detail.
+fn capability_skip(refusal: &ComposeCapabilityRefusal) -> RegistrationUnitOutcome {
+    skip(
+        RegistrationOutcome::UnsupportedCapability,
+        true,
+        Some(refusal.to_string()),
+    )
+}
+
 /// The candidate's stage clock: one running mark, lapped at each stage boundary.
 struct StageClock {
     split: StageSplit,
@@ -1265,6 +1547,18 @@ mod tests {
             RegistrationAdmission::register_stage;
         let signature: fn(&Eligible) -> &HopSignature = admitted_signature;
         let _ = (register, signature);
+    }
+
+    /// The pre-construction gate answers with the candidate's receipt or hands
+    /// the `Capable` state on — the ONE state the build stage takes. The
+    /// coercion is the assertion: it stops compiling if the stage widens back to
+    /// a pre-family `UnitRun`.
+    #[test]
+    fn the_pre_build_gate_answers_or_hands_on_a_capable_candidate() {
+        type CapabilityAnswer = StageAnswer<Capable>;
+        let gate: fn(&RegistrationAdmission, u64, &[PreBuildHop], UnitRun) -> CapabilityAnswer =
+            RegistrationAdmission::capability_stage;
+        let _ = gate;
     }
 
     /// The eligibility gate either answers with the candidate's receipt or hands

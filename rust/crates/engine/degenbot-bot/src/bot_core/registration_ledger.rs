@@ -27,8 +27,11 @@
 //! The caller owns the resolution, and only EVIDENCE outranks a settled
 //! standing: a completed verify lifecycle runs over a registered pool, so it
 //! retracts a settled stable refusal
-//! ([`RegistrationLedger::supersede_pool`]); the engine's path registry holds
-//! the signature, so a completed registration retracts a settled policy deny
+//! ([`RegistrationLedger::supersede_pool`]); a static compose-capability
+//! refusal proves no candidate path through the pool can ever register, so it
+//! retracts a completed verify lifecycle (verification answers a different
+//! question); the engine's path registry holds the signature, so a completed
+//! registration retracts a settled policy deny
 //! ([`RegistrationLedger::supersede_path`]). Each retraction is reported where
 //! it happens, so a reversal is never silent.
 //!
@@ -108,6 +111,12 @@ pub enum RegistrationOutcome {
     BuildV4Refused,
     /// A transient register failure.
     RegisterFailed,
+    /// A COMPOSE-CAPABILITY refusal (ADR-107 D1): the candidate's family or
+    /// whole-route shape is permanently outside settlement command
+    /// composition, so no retry can register it. The structured refusal —
+    /// family, hop, route reason — rides the log detail; this tag is the one
+    /// bounded label the census reports.
+    UnsupportedCapability,
     /// A refusal classified through the one refusal vocabulary (ADR-077).
     ///
     /// The carried [`RefusalKind`] holds the family/phase tags and the
@@ -121,7 +130,7 @@ pub enum RegistrationOutcome {
 /// Every BOUNDED outcome, in declaration order — the vocabulary a
 /// cross-language consumer enumerates. The refusal arm's kind tags are the
 /// separate [`REFUSAL_KIND_TAGS`] set.
-pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 13] = [
+pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 14] = [
     RegistrationOutcome::Registered,
     RegistrationOutcome::Dup,
     RegistrationOutcome::PathCap,
@@ -135,6 +144,7 @@ pub const REGISTRATION_OUTCOMES: [RegistrationOutcome; 13] = [
     RegistrationOutcome::BuildV3Refused,
     RegistrationOutcome::BuildV4Refused,
     RegistrationOutcome::RegisterFailed,
+    RegistrationOutcome::UnsupportedCapability,
 ];
 
 impl RegistrationOutcome {
@@ -155,6 +165,7 @@ impl RegistrationOutcome {
             Self::BuildV3Refused => "build-v3-refused",
             Self::BuildV4Refused => "build-v4-refused",
             Self::RegisterFailed => "register-fail",
+            Self::UnsupportedCapability => "unsupported-capability",
             Self::Refused(kind) => kind.tag(),
         }
     }
@@ -1950,6 +1961,7 @@ mod tests {
                 "build-v3-refused",
                 "build-v4-refused",
                 "register-fail",
+                "unsupported-capability",
             ]
         );
         for outcome in REGISTRATION_OUTCOMES {

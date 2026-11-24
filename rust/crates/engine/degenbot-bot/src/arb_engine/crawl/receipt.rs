@@ -24,7 +24,8 @@ use crate::bot_core::registration_ledger::{
 /// receipt's split is truncated at the stage that answered it.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnitStage {
-    /// The ledger's memos answered before any construction work started.
+    /// The pre-construction facts answered: the ledger's stable pool memos and
+    /// the discovered families' compose capability (ADR-107 D4).
     Memo,
     /// Pool construction (the build flight).
     Build,

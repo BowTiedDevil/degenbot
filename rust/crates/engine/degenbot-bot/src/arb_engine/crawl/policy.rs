@@ -191,6 +191,10 @@ pub struct HopComposition {
 pub struct RegisteredHopFacts {
     /// The structural family the pool registered under.
     pub family: RegisteredPoolFamily,
+    /// The solver hop engine that owns the pool — the capability gate's input
+    /// (ADR-107 D1), read from the entry so a species bit (an Aerodrome pair's
+    /// `stable`, a Camelot entry's `stable_swap`) is never re-derived here.
+    pub hop_type: degenbot_pools::solve::HopType,
     /// The contract-address families' address (`None` for a V4 pool).
     pub address: Option<Address>,
     /// A V4 pool's `(PoolManager, pool_id)` (`None` for the address-keyed
@@ -224,6 +228,7 @@ pub fn registered_hop_facts(state: &BotState, pool_id: u64) -> Option<Registered
     let entry = state.pool_entry(pool_id)?;
     let mut facts = RegisteredHopFacts {
         family: entry.registered_family(),
+        hop_type: entry.hop_type(),
         address: None,
         v4: None,
         token0: Address::ZERO,
@@ -266,6 +271,21 @@ pub fn registered_hop_facts(state: &BotState, pool_id: u64) -> Option<Registered
 }
 
 impl RegisteredHopFacts {
+    /// The identity the registration memos key on — the pre-build key the hop's
+    /// own address (or V4 pool id) spells, for the ONE key space the ledger's
+    /// standings, the build flights, and the capability gate share.
+    #[must_use]
+    pub fn pre_build_identity(
+        &self,
+    ) -> Option<crate::bot_core::registration_ledger::PreBuildIdentity> {
+        use crate::bot_core::registration_ledger::PreBuildIdentity;
+        match (self.address, self.v4) {
+            (Some(address), _) => Some(PreBuildIdentity::Address(address)),
+            (None, Some((_, pool_id))) => Some(PreBuildIdentity::V4(pool_id)),
+            (None, None) => None,
+        }
+    }
+
     /// The identity the direction resolver and the operator surface render for
     /// this hop.
     #[must_use]

@@ -1,5 +1,5 @@
 {
-  "about": "The crawl unit's outcome table \u2014 the contract BOTH drivers assert. Each row is one scenario the Rust unit (crawl/unit/tests.rs) and the Python unit (tests/arbitrage/test_crawl_unit_parity.py, driving _registration_unit) drive over its own fixture of the same shape: the unit kind, the summary breakdown tag (null = the outcome records no breakdown entry), and the stage that answered the unit (build_paths.py's UNIT_STAGES).",
+  "about": "The crawl unit's outcome table — the contract BOTH drivers assert. Each row is one scenario the Rust unit (crawl/unit/tests.rs) and the Python unit (tests/arbitrage/test_crawl_unit_parity.py, driving _registration_unit) drive over its own fixture of the same shape: the unit kind, the summary breakdown tag (null = the outcome records no breakdown entry), and the stage that answered the unit (build_paths.py's UNIT_STAGES).",
   "rows": [
     {
       "case": "registered_cycle",
@@ -65,6 +65,34 @@
       "about": "the same denied path re-sighted: the rejected-path memo answers without re-running the policy"
     },
     {
+      "case": "unsupported_family_post_build",
+      "kind": "skip",
+      "tag": "unsupported-capability",
+      "stage": "eligibility",
+      "about": "a constructed hop whose family declares no settlement composition (a Camelot solidly-stable pair out of the V2 DB table): refused before verify or registration, and the pool is memoized unregistrable"
+    },
+    {
+      "case": "unsupported_family_memoized",
+      "kind": "skip",
+      "tag": "unsupported-capability",
+      "stage": "memo",
+      "about": "a later route through that same pool identity: the pool fact answers at the memo stage, before any build"
+    },
+    {
+      "case": "unsupported_route_shape",
+      "kind": "skip",
+      "tag": "unsupported-capability",
+      "stage": "eligibility",
+      "about": "a four-hop mixed V2/V3 route over compose-capable families with no command-stream producer: refused after construction, memoizing the exact hop signature as rejected"
+    },
+    {
+      "case": "unsupported_route_shape_memoized",
+      "kind": "reject",
+      "tag": null,
+      "stage": "eligibility",
+      "about": "the same refused route re-sighted: the rejected-path memo answers"
+    },
+    {
       "case": "cap_stop",
       "kind": "cap",
       "tag": "path-cap",
@@ -76,7 +104,7 @@
       "kind": "register-fail",
       "tag": "register-fail",
       "stage": "register",
-      "about": "a structurally unroutable hop list: a transient register failure, never memoized"
+      "about": "a structurally unroutable hop list (a sub-2-hop candidate): a transient register failure, never memoized and never classified as unsupported capability"
     }
   ]
 }

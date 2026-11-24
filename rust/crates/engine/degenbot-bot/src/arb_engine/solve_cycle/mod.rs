@@ -1281,56 +1281,8 @@ impl SolveCycle {
         rx.into_iter().collect()
     }
     fn derive_hop_type(core: &BotState, pool_id: u64) -> Option<HopType> {
-        // Aerodrome stable pools route to the Solidly solve branch; volatile
-        // Aerodrome is constant-product and routes to the V2 (Möbius) branch
-        // (matching the Python `arbitrage.solvers.solidly_stable` classification:
-        // `AerodromeV2Pool(stable=True)` → `SolidlyStableHop`, else
-        // `ConstantProductHop`).
-        if let Some(id) = core.pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_id) {
-            return Some(if id.stable {
-                HopType::SolidlyStable
-            } else {
-                HopType::V2
-            });
-        }
-        // Camelot stable_swap pools route to the Solidly solve branch;
-        // volatile Camelot is constant-product (V2). Same Python-faithful
-        // classification as Aerodrome.
-        if let Some(id) = core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id) {
-            return Some(if id.stable_swap {
-                HopType::SolidlyStable
-            } else {
-                HopType::V2
-            });
-        }
-        if core
-            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
-            .is_some()
-        {
-            Some(HopType::V3)
-        } else if core
-            .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
-            .is_some()
-        {
-            Some(HopType::V4)
-        } else if core
-            .pool_slice::<degenbot_pools::BalancerWeightedPoolState>(pool_id)
-            .is_some()
-        {
-            Some(HopType::BalancerWeighted)
-        } else if core
-            .pool_slice::<degenbot_pools::BalancerStablePoolState>(pool_id)
-            .is_some()
-        {
-            Some(HopType::BalancerStable)
-        } else if core
-            .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
-            .is_some()
-        {
-            Some(HopType::CurveStableswap)
-        } else {
-            None
-        }
+        core.pool_entry(pool_id)
+            .map(degenbot_pools::PoolEntry::hop_type)
     }
     pub(crate) fn register_path(
         &mut self,
