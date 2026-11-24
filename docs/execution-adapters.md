@@ -655,7 +655,13 @@ the first deployment whose adapter accepts the path.
 
 - A path an adapter cannot encode — `ComposeError::Unsupported`, the routine
   capability decline — advances to the next target. Nothing is suppressed or
-  failed.
+  failed. A path EVERY examined target declines is reported once, as a
+  path-level fact (`DeploymentFanOutOutcome::all_declined`): one entry per
+  path, whatever the target count, carrying each examined target's own refusal
+  and a bounded class (`capability` when every target wanted capability,
+  `capital-policy` when any answer was the caller's funding policy). The census
+  counts it at `degenbot_selection_all_targets_declined_total{class}`;
+  registration and the next walk are unchanged (ADR-107 D6/D9).
 - A hard encoding failure (`ComposeError::Encode`) ends the walk for that
   candidate: another target would not make an encoding bug disappear.
 - Acceptance happens once. The accepted `TransactionRequest` travels to

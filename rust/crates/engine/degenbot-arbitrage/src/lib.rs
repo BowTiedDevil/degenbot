@@ -274,7 +274,9 @@ pub use pool_divergence::{
     diverging_pool_keys, hop_pool_key, is_solver_calc_failure, PoolDivergence, PoolDivergenceKey,
     POOL_DIVERGENCE_DECAY_BLOCKS,
 };
-pub use selection::{PreparedEncoding, SelectedCandidates, TargetSelection};
+pub use selection::{
+    AllTargetsDeclined, PreparedEncoding, SelectedCandidates, TargetDecline, TargetSelection,
+};
 pub use simulator::{
     compose_transaction, compute_priority_fee, execute_gas_limit, fits_int128,
     simulate_in_process_with_db, simulate_path_on_evm, simulate_path_on_evm_in_span,

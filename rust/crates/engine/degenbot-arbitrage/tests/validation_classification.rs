@@ -368,6 +368,11 @@ fn a_validation_failure_is_a_hard_encode_failure_not_a_capability_decline() {
         vec![CandidateId::new(7, deployment_b())],
         "the walk stopped at the violating target"
     );
+    assert!(
+        outcome.all_declined.is_empty(),
+        "a declared-interface violation never exhausts a walk: {:?}",
+        outcome.all_declined
+    );
 
     let lane_a = outcome.lane(deployment_a()).expect("lane A");
     assert_eq!(

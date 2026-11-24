@@ -317,7 +317,13 @@ deployment whose composition accepts it:
 - **Composition decides.** `ComposeError::Unsupported` is the routine capability
   decline: the walk advances to the next target and nothing is suppressed,
   failed, or reclassified. A path every target declines has no selected
-  deployment — each examined candidate keeps its own `encode-failed` refusal.
+  deployment — each examined candidate keeps its own `encode-failed` refusal,
+  and the path reports ONE fact of its own
+  (`DeploymentFanOutOutcome::all_declined`), counted once at
+  `degenbot_selection_all_targets_declined_total{class}` with the closed
+  `capability` | `capital-policy` class. The path, its targets, and each
+  adapter's own words ride the structured log; registration, path standing, and
+  the next walk are untouched (ADR-107 D6/D9).
 - **Composed once.** The accepted `TransactionRequest` travels to simulation on
   the candidate (`PreparedEncoding::Accepted`), so an adapter's `encode` callback
   runs exactly once per examined target — never once for selection and again for

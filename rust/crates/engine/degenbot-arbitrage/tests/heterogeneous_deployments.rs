@@ -25,9 +25,9 @@ use degenbot_arbitrage::{
     SimulationDeployment, SolveStep, TargetSelection,
 };
 use degenbot_execution::{
-    AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
-    ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpecs, TransactionRequest,
-    V2HopInfo,
+    AssessError, CandidateId, ComposeError, ComposerInputs, DeclineClass, DeploymentId,
+    ExecutionAdapter, ExecutionObservation, ExecutionResult, FeePolicy, PathInfo, ProbeSpecs,
+    TransactionRequest, V2HopInfo, ZeroCapitalDeficit,
 };
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::PathSuppression;
@@ -80,8 +80,12 @@ fn v2_path() -> PathInfo {
 }
 
 fn candidate(deployment: DeploymentId) -> DispatchCandidate {
+    candidate_on_path(7, deployment)
+}
+
+fn candidate_on_path(path_id: u64, deployment: DeploymentId) -> DispatchCandidate {
     DispatchCandidate {
-        candidate_id: CandidateId::new(7, deployment),
+        candidate_id: CandidateId::new(path_id, deployment),
         optimal_input: OPTIMAL_INPUT,
         engine_profit: 1,
         steps: Box::new([SolveStep {
@@ -709,6 +713,9 @@ enum ComposeAnswer {
     /// Refuse for want of capability — the routine decline a first-compatible
     /// walk advances past.
     Unsupported,
+    /// Refuse on the caller's capital policy: the typed deficit another target
+    /// cannot lend the path its way out of.
+    InsolventCapital(ZeroCapitalDeficit),
     /// Fail a primitive encoding step.
     HardEncode,
 }
@@ -759,6 +766,9 @@ impl ExecutionAdapter for CountedAdapter {
             ComposeAnswer::Unsupported => Err(ComposeError::unsupported(
                 "this contract has no producer for this path",
             )),
+            ComposeAnswer::InsolventCapital(deficit) => {
+                Err(ComposeError::InsolventZeroCapital(deficit))
+            }
             ComposeAnswer::HardEncode => {
                 Err(ComposeError::encode("optimal_input does not fit int128"))
             }
@@ -980,6 +990,11 @@ fn a_capability_decline_advances_and_the_accepted_request_is_simulated_once() {
         "the walk examined both targets: {:?}",
         outcome.retired
     );
+    assert!(
+        outcome.all_declined.is_empty(),
+        "the accepting target's path is not an all-declined walk: {:?}",
+        outcome.all_declined
+    );
 
     let lane_a = outcome.lane(deployment_a()).expect("lane A");
     assert!(lane_a.gas_profitable.is_empty());
@@ -1063,6 +1078,23 @@ fn every_target_declining_selects_nothing_and_keeps_each_refusal() {
     );
     assert!(survivor_ids(&outcome).is_empty(), "no selected success");
     assert!(outcome.retired.is_empty(), "all targets were examined");
+    assert_eq!(
+        outcome.all_declined.len(),
+        1,
+        "one path-level fact, whatever the target count"
+    );
+    let fact = &outcome.all_declined[0];
+    assert_eq!(fact.path_id, 7);
+    assert_eq!(fact.declined_targets(), 2);
+    assert_eq!(fact.class(), DeclineClass::Capability);
+    assert_eq!(
+        fact.declines
+            .iter()
+            .map(|decline| decline.deployment_id)
+            .collect::<Vec<_>>(),
+        vec![deployment_a(), deployment_b()],
+        "the fact names the examined targets in walk order"
+    );
 
     for deployment in [deployment_a(), deployment_b()] {
         let lane = outcome
@@ -1084,6 +1116,182 @@ fn every_target_declining_selects_nothing_and_keeps_each_refusal() {
             "each refusal is attributed to its own candidate"
         );
     }
+}
+
+/// One fact per PATH, never one per target: two paths offered two declining
+/// targets each report two facts, and a second identical fan-out walks the same
+/// ground — an all-declined walk changes nothing about the next one.
+#[test]
+fn an_all_declined_walk_reports_one_fact_per_path_and_repeats_identically() {
+    let calls_a = calls_arc();
+    let calls_b = calls_arc();
+    let registry = DeploymentRegistry::new(vec![
+        counted_deployment(
+            deployment_a(),
+            CountedAdapter::new(
+                TARGET_A,
+                prepay_selector(),
+                PREPAY_A,
+                GROSS_A,
+                ComposeAnswer::Unsupported,
+                &calls_a,
+            ),
+        ),
+        counted_deployment(
+            deployment_b(),
+            CountedAdapter::new(
+                TARGET_B,
+                settle_selector(),
+                U256::ZERO,
+                GROSS_B,
+                ComposeAnswer::Unsupported,
+                &calls_b,
+            ),
+        ),
+    ])
+    .expect("two distinct identities compose a valid registry");
+    let candidates = || {
+        vec![
+            candidate_on_path(7, deployment_a()),
+            candidate_on_path(7, deployment_b()),
+            candidate_on_path(8, deployment_a()),
+            candidate_on_path(8, deployment_b()),
+        ]
+    };
+
+    let first = run_fanout_with(&registry, candidates(), TargetSelection::FirstCompatible)
+        .expect("every candidate names a registered deployment");
+    assert_eq!(
+        first
+            .all_declined
+            .iter()
+            .map(|fact| (fact.path_id, fact.declined_targets()))
+            .collect::<Vec<_>>(),
+        vec![(7, 2), (8, 2)],
+        "one fact per declined path, in the solver's path order"
+    );
+    assert_eq!(
+        (compositions(&calls_a), compositions(&calls_b)),
+        (2, 2),
+        "each target composed once per path"
+    );
+    assert!(
+        first.retired.is_empty(),
+        "every offered target was examined"
+    );
+    assert!(survivor_ids(&first).is_empty(), "nothing was selected");
+
+    let second = run_fanout_with(&registry, candidates(), TargetSelection::FirstCompatible)
+        .expect("the second fan-out is independent of the first");
+    assert_eq!(
+        second.all_declined, first.all_declined,
+        "an all-declined walk leaves the next one unchanged"
+    );
+    assert_eq!(
+        (compositions(&calls_a), compositions(&calls_b)),
+        (4, 4),
+        "the second walk composes each target once again, exactly as the first"
+    );
+
+    let explicit =
+        run_fanout_with(&registry, candidates(), TargetSelection::AllTargets).expect("fan-out");
+    assert!(
+        explicit.all_declined.is_empty(),
+        "the explicit fan-out has no path-level outcome: {:?}",
+        explicit.all_declined
+    );
+    assert_eq!(
+        explicit
+            .lanes
+            .iter()
+            .map(|lane| lane.outcome.candidate_count)
+            .collect::<Vec<_>>(),
+        vec![2, 2],
+        "each target keeps one candidate per path, never one per path id"
+    );
+}
+
+/// A routine capital-policy refusal is the same routine class for the WALK (no
+/// target can fund the path) and a different class for the FACT: an insolvency
+/// is never reported as capability exhaustion.
+#[test]
+fn an_insolvent_walk_reports_capital_policy_not_capability_exhaustion() {
+    let deficit = ZeroCapitalDeficit {
+        asset: WETH,
+        required: 1_000,
+        available: 250,
+    };
+    let build = |answer_a: ComposeAnswer, answer_b: ComposeAnswer| {
+        let calls_a = calls_arc();
+        let calls_b = calls_arc();
+        let registry = DeploymentRegistry::new(vec![
+            counted_deployment(
+                deployment_a(),
+                CountedAdapter::new(
+                    TARGET_A,
+                    prepay_selector(),
+                    PREPAY_A,
+                    GROSS_A,
+                    answer_a,
+                    &calls_a,
+                ),
+            ),
+            counted_deployment(
+                deployment_b(),
+                CountedAdapter::new(
+                    TARGET_B,
+                    settle_selector(),
+                    U256::ZERO,
+                    GROSS_B,
+                    answer_b,
+                    &calls_b,
+                ),
+            ),
+        ])
+        .expect("two distinct identities compose a valid registry");
+        let outcome = run_fanout_with(
+            &registry,
+            vec![candidate(deployment_a()), candidate(deployment_b())],
+            TargetSelection::FirstCompatible,
+        )
+        .expect("every candidate names a registered deployment");
+        assert_eq!(
+            (compositions(&calls_a), compositions(&calls_b)),
+            (1, 1),
+            "a routine refusal advances the walk to the next target"
+        );
+        outcome
+    };
+
+    let all_insolvent = build(
+        ComposeAnswer::InsolventCapital(deficit),
+        ComposeAnswer::InsolventCapital(deficit),
+    );
+    assert_eq!(all_insolvent.all_declined.len(), 1);
+    assert_eq!(
+        all_insolvent.all_declined[0].class(),
+        DeclineClass::CapitalPolicy
+    );
+
+    let mixed = build(
+        ComposeAnswer::Unsupported,
+        ComposeAnswer::InsolventCapital(deficit),
+    );
+    assert_eq!(mixed.all_declined.len(), 1);
+    let fact = &mixed.all_declined[0];
+    assert_eq!(
+        fact.declines
+            .iter()
+            .map(|decline| decline.class)
+            .collect::<Vec<_>>(),
+        vec![DeclineClass::Capability, DeclineClass::CapitalPolicy],
+        "each examined target keeps its own answer"
+    );
+    assert_eq!(
+        fact.class(),
+        DeclineClass::CapitalPolicy,
+        "a capital-policy refusal anywhere means the walk did not exhaust on capability"
+    );
 }
 
 /// The two policies differ ONLY by which targets are examined: the winning
@@ -1162,6 +1370,11 @@ fn the_policies_differ_only_by_which_targets_are_examined() {
     assert_eq!(
         survivor_ids(&first),
         vec![CandidateId::new(7, deployment_a())]
+    );
+    assert!(
+        first.all_declined.is_empty(),
+        "an accepting target is never an all-declined walk: {:?}",
+        first.all_declined
     );
 
     let all_result = &all.lane(deployment_a()).expect("lane A").gas_profitable[0];
@@ -1244,6 +1457,11 @@ fn a_hard_encode_failure_is_not_a_capability_decline() {
     assert_eq!(lane_b.candidate_count, 0);
     assert!(lane_b.gas_profitable.is_empty());
     assert_eq!(outcome.retired, vec![CandidateId::new(7, deployment_b())]);
+    assert!(
+        outcome.all_declined.is_empty(),
+        "a hard encode failure ends the walk without exhausting it: {:?}",
+        outcome.all_declined
+    );
 }
 
 /// A transaction aimed away from the deployment's declared target is that
@@ -1427,6 +1645,21 @@ fn the_policy_spellings_are_closed() {
         "first_compatible",
         "the default multi-target policy is ordered first-compatible"
     );
+}
+
+/// The all-declined fact's metric label is a closed two-value set: the class
+/// vocabulary IS the label set, so no per-path value can reach a metric.
+#[test]
+fn the_decline_classes_are_the_closed_metric_value_set() {
+    assert_eq!(
+        DeclineClass::ALL.map(DeclineClass::as_str),
+        ["capability", "capital-policy"]
+    );
+    let unique: std::collections::HashSet<&'static str> = DeclineClass::ALL
+        .iter()
+        .map(|class| class.as_str())
+        .collect();
+    assert_eq!(unique.len(), DeclineClass::ALL.len());
 }
 
 /// Span-field capture for the fan-out's lane spans: field values per span id —

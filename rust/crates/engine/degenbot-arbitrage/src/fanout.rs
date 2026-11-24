@@ -42,6 +42,14 @@
 //! target's candidate survives the pre-sim policy, and a lane's refusals stay
 //! that lane's rows either way.
 //!
+//! A path every examined target declined keeps every candidate's own lane row
+//! and reports ONE path-level fact
+//! ([`DeploymentFanOutOutcome::all_declined`]): the census counts it by its
+//! bounded [`DeclineClass`](degenbot_execution::DeclineClass), and the path,
+//! its targets, and each adapter's own words ride the structured log
+//! (ADR-107 D6/D9). It mutates no registry, no standing, and no memo, so the
+//! next walk is identical.
+//!
 //! # Call shape
 //!
 //! Both entries take one named [`FanOutInputs`] — registry, block, block number,
@@ -85,6 +93,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use degenbot_core::op_info;
 use degenbot_execution::{CandidateId, DeploymentId};
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
@@ -100,7 +109,7 @@ use crate::dispatch::{
     DispatchOutcome,
 };
 use crate::identity::{duplicate_candidate_id, DispatchRefusal};
-use crate::selection::{select_first_compatible, FanOutEntry, TargetSelection};
+use crate::selection::{select_first_compatible, AllTargetsDeclined, FanOutEntry, TargetSelection};
 use crate::{FeeOnTransferRegistry, PoolDivergence};
 
 // The entries' side of the walk's interface ([`crate::selection::FanOutEntry`]):
@@ -157,6 +166,15 @@ pub struct DeploymentFanOutOutcome {
     /// that entered execution. Empty under [`TargetSelection::AllTargets`], where
     /// every candidate is examined.
     pub retired: Vec<CandidateId>,
+    /// The paths whose ordered first-compatible walk examined every target
+    /// offered to them and had every one of them decline routinely (ADR-107
+    /// D6/D9) — one fact per path, never one per target.
+    ///
+    /// The fact is about the WALK, not about standing: registration, path
+    /// standing, and the next walk are unchanged, and each examined candidate
+    /// still carries its own refusal. Empty under
+    /// [`TargetSelection::AllTargets`], where a path has no outcome of its own.
+    pub all_declined: Vec<AllTargetsDeclined>,
 }
 
 impl DeploymentFanOutOutcome {
@@ -357,13 +375,36 @@ fn fan_out_over<Entry: FanOutEntry>(
     // `FirstCompatible` narrows it to the candidates its ordered walk examined
     // (each carrying the deployment's own Encode decision, so a selected target
     // is never composed twice) and reports the rest as retired.
-    let (examined, retired) = match target_selection {
-        TargetSelection::AllTargets => (entries, Vec::new()),
+    let (examined, retired, all_declined) = match target_selection {
+        TargetSelection::AllTargets => (entries, Vec::new(), Vec::new()),
         TargetSelection::FirstCompatible => {
             let selection = select_first_compatible(entries, deployments);
-            (selection.examined, selection.retired)
+            (
+                selection.examined,
+                selection.retired,
+                selection.all_declined,
+            )
         }
     };
+
+    // The exhausted walks report their ONE path-level fact each (ADR-107
+    // D6/D9): the metric carries the folded class, the log carries the path,
+    // the examined targets, and each target's own words. Nothing here touches
+    // registration, path standing, or a memo, so the next walk is unchanged.
+    for fact in &all_declined {
+        let class = fact.class();
+        op_info!(
+            domain = exec,
+            path_id = fact.path_id,
+            class = class.as_str(),
+            targets = fact.declined_targets(),
+            declines = ?fact.declines,
+            "no offered target could compose the path"
+        );
+        degenbot_bot::instruments::record(
+            degenbot_bot::instruments::CensusEvent::AllTargetsDeclined { class },
+        );
+    }
 
     // Partition by target. The order inside a lane is the caller's order (the
     // assembly's cap-ordered candidate list), so a lane's survivors keep the
@@ -402,6 +443,7 @@ fn fan_out_over<Entry: FanOutEntry>(
     Ok(DeploymentFanOutOutcome {
         lanes: outcomes,
         retired,
+        all_declined,
     })
 }
 

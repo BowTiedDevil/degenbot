@@ -38,9 +38,9 @@ use degenbot_arbitrage::{
     SimulationBlock, SimulationDeployment, TargetSelection,
 };
 use degenbot_execution::{
-    AssessError, CandidateId, ComposeError, ComposerInputs, DeploymentId, ExecutionAdapter,
-    ExecutionObservation, ExecutionResult, ExecutionStatus, FeePolicy, HopInfo, PathInfo,
-    ProbeSpecs, TransactionRequest, V4HopInfo,
+    AssessError, CandidateId, ComposeError, ComposerInputs, DeclineClass, DeploymentId,
+    ExecutionAdapter, ExecutionObservation, ExecutionResult, ExecutionStatus, FeePolicy, HopInfo,
+    PathInfo, ProbeSpecs, TransactionRequest, V4HopInfo,
 };
 use degenbot_executor::composers::{
     config_for_options, encode_cmd_stream, encode_execute_call, resolve_axes, EncodeContext,
@@ -1813,6 +1813,122 @@ fn an_all_targets_fanout_keeps_the_declining_lane_isolated() {
         lane_3.fail_buckets.buckets()
     );
     assert_eq!(lane_3.gas_profitable.len(), 1);
+}
+
+/// The canonical compose-capable / target-declined case through the REAL
+/// built-in adapter: a pure-V4 route whose hops name a `PoolManager` this bound
+/// session does not hold is still compose-capable — its families and its shape
+/// have producers — yet this target declines it. The walk reports ONE
+/// path-level fact of the `capability` class beside the candidate's own
+/// refusal, off the production emission path rather than a scripted decline
+/// (ADR-107 D6/D9).
+#[test]
+fn a_foreign_pool_manager_declines_at_the_builtin_target_as_one_path_fact() {
+    let registry = registry_production();
+    let bound = BoundCmdExecutor::bind(
+        binding(EXECUTOR_V1),
+        &declared_answers(&committed_manifest()),
+        None,
+        &registry,
+    )
+    .expect("the built-in deployment binds to the release this build ships");
+    let deployments = DeploymentRegistry::new(vec![Arc::new(
+        bound
+            .injected(deployment_id_v1())
+            .expect("the release's own artifact"),
+    )])
+    .expect("a one-entry registry");
+
+    let foreign_manager = Address::repeat_byte(0x99);
+    let mut path = v4v4_weth_terminal();
+    for hop in &mut path.hops {
+        let HopInfo::V4(v4) = hop else {
+            panic!("the fixture route is pure V4");
+        };
+        v4.pool_manager_address = foreign_manager;
+    }
+
+    let outputs = [OPTIMAL_INPUT, OPTIMAL_INPUT];
+    let consumed = [OPTIMAL_INPUT - 1, OPTIMAL_INPUT - 1];
+    let answer = deployments
+        .get(deployment_id_v1())
+        .expect("registered")
+        .adapter()
+        .encode(&path, &combo_inputs(&outputs, &consumed));
+    assert!(
+        matches!(&answer, Err(ComposeError::Unsupported(_))),
+        "a foreign PoolManager is the routine capability decline, never a hard \
+         encode failure: {answer:?}"
+    );
+
+    let outcome = run_fanout(
+        &deployments,
+        TargetSelection::FirstCompatible,
+        vec![candidate(path.clone(), deployment_id_v1(), &outputs)],
+    );
+
+    assert_eq!(
+        outcome.all_declined.len(),
+        1,
+        "one path-level fact for the exhausted walk"
+    );
+    let fact = &outcome.all_declined[0];
+    assert_eq!(fact.path_id, 7);
+    assert_eq!(fact.class(), DeclineClass::Capability);
+    assert_eq!(fact.declined_targets(), 1, "the one examined target");
+    assert_eq!(
+        fact.declines
+            .iter()
+            .map(|decline| (decline.deployment_id, decline.class))
+            .collect::<Vec<_>>(),
+        vec![(deployment_id_v1(), DeclineClass::Capability)],
+        "the fact names the target that declined and how"
+    );
+    assert!(
+        fact.declines[0].detail.contains("no producer"),
+        "the fact carries the adapter's own words: {:?}",
+        fact.declines[0].detail
+    );
+    assert!(
+        outcome.retired.is_empty(),
+        "a decline retires no target: {:?}",
+        outcome.retired
+    );
+
+    let lane = outcome.lane(deployment_id_v1()).expect("the built-in lane");
+    assert!(
+        lane.gas_profitable.is_empty() && lane.gas_unprofitable.is_empty(),
+        "a declined candidate is simulated by no one"
+    );
+    assert_eq!(lane.exception_count, 0, "a decline is never an exception");
+    assert_eq!(
+        lane.fail_buckets.buckets().get("encode-failed").copied(),
+        Some(1),
+        "the candidate keeps its own routine refusal: {:?}",
+        lane.fail_buckets.buckets()
+    );
+    assert_eq!(
+        lane.failures
+            .iter()
+            .map(|failure| failure.candidate_id)
+            .collect::<Vec<_>>(),
+        vec![CandidateId::new(7, deployment_id_v1())],
+        "the refusal belongs to the examined target's own candidate"
+    );
+
+    let repeat = run_fanout(
+        &deployments,
+        TargetSelection::FirstCompatible,
+        vec![candidate(path, deployment_id_v1(), &outputs)],
+    );
+    assert_eq!(
+        repeat.all_declined, outcome.all_declined,
+        "an all-declined walk changes nothing about the next one"
+    );
+    assert_eq!(
+        repeat.retired, outcome.retired,
+        "nor does it retire a target the first walk examined"
+    );
 }
 
 /// The single-target path is unchanged: one production deployment, one

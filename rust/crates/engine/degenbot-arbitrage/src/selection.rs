@@ -18,7 +18,10 @@
 //! routine case — no target can lend a path the entry capital the policy
 //! withholds — and the walk carries the deficit's data into the candidate's own
 //! record. Every target declining is that path having no selected deployment, not
-//! an error: each examined candidate keeps its own refusal.
+//! an error: each examined candidate keeps its own refusal, and the walk reports
+//! ONE path-level fact ([`AllTargetsDeclined`]) so the remaining post-solve
+//! waste is visible (ADR-107 D6/D9) without turning a session's deployment list
+//! into registry standing.
 //!
 //! [`TargetSelection::AllTargets`] is the explicit fan-out: every registered
 //! deployment is offered every path and each runs its own independent
@@ -51,7 +54,9 @@
 
 use std::collections::HashMap;
 
-use degenbot_execution::{CandidateId, ComposeError, DeploymentId, TransactionRequest};
+use degenbot_execution::{
+    CandidateId, ComposeError, DeclineClass, DeploymentId, TransactionRequest,
+};
 
 use crate::candidate::DispatchCandidate;
 use crate::deployment::DeploymentRegistry;
@@ -150,6 +155,78 @@ impl PreparedEncoding {
     const fn stops_walk(&self) -> bool {
         !matches!(self, Self::Declined(_) | Self::InsolventZeroCapital(_))
     }
+
+    /// This target's routine refusal, if it is one: the class the path-level
+    /// fact folds and the detail the structured log carries.
+    #[must_use]
+    fn decline(&self, deployment_id: DeploymentId) -> Option<TargetDecline> {
+        let (class, detail) = match self {
+            Self::Declined(detail) => (DeclineClass::Capability, detail.clone()),
+            Self::InsolventZeroCapital(deficit) => {
+                (DeclineClass::CapitalPolicy, deficit.to_string())
+            }
+            Self::Accepted(_) | Self::Failed(_) => return None,
+        };
+        Some(TargetDecline {
+            deployment_id,
+            class,
+            detail,
+        })
+    }
+}
+
+/// One examined target's routine refusal, in walk order.
+///
+/// The path, deployment, and adapter detail stay here — record and log data for
+/// an operator — while the metric carries only the folded
+/// [`DeclineClass`](degenbot_execution::DeclineClass).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetDecline {
+    /// The deployment that refused the path.
+    pub deployment_id: DeploymentId,
+    /// How it refused.
+    pub class: DeclineClass,
+    /// The adapter's own words.
+    pub detail: String,
+}
+
+/// One path whose ordered first-compatible walk examined EVERY target offered
+/// to it and had every one of them decline routinely — the exhausted walk, and
+/// the one case where a path ends with no selected deployment (ADR-107 D6).
+///
+/// ONE fact per path, whatever the target count: a path- or target-keyed value
+/// never becomes a metric label, and each examined candidate still carries its
+/// own [`PreparedEncoding`] record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllTargetsDeclined {
+    /// The path the walk covered.
+    pub path_id: u64,
+    /// The examined targets in walk order, each with its own refusal.
+    pub declines: Vec<TargetDecline>,
+}
+
+impl AllTargetsDeclined {
+    /// The targets the walk examined — the count this fact covers.
+    #[must_use]
+    pub fn declined_targets(&self) -> usize {
+        self.declines.len()
+    }
+
+    /// The bounded class of the exhausted walk: `Capability` only when EVERY
+    /// examined target wanted capability, so an insolvency never masquerades as
+    /// capability exhaustion.
+    #[must_use]
+    pub fn class(&self) -> DeclineClass {
+        if self
+            .declines
+            .iter()
+            .all(|decline| decline.class == DeclineClass::Capability)
+        {
+            DeclineClass::Capability
+        } else {
+            DeclineClass::CapitalPolicy
+        }
+    }
 }
 
 /// What one first-compatible walk produced.
@@ -168,6 +245,10 @@ pub struct SelectedCandidates<T = DispatchCandidate> {
     /// a hard encode error ended the walk. Never composed, never simulated, and
     /// they produce no record.
     pub retired: Vec<CandidateId>,
+    /// The paths whose every offered target declined routinely, one fact each.
+    /// A path with an accepted target, a hard failure, or a candidate the walk
+    /// never examined is absent — its outcome belongs to the candidate.
+    pub all_declined: Vec<AllTargetsDeclined>,
 }
 
 impl<T> Default for SelectedCandidates<T> {
@@ -175,6 +256,7 @@ impl<T> Default for SelectedCandidates<T> {
         Self {
             examined: Vec::new(),
             retired: Vec::new(),
+            all_declined: Vec::new(),
         }
     }
 }
@@ -251,11 +333,12 @@ pub(crate) fn select_first_compatible<T: FanOutEntry>(
         });
 
         let mut walk = group.into_iter();
+        let offered = walk.len();
+        let mut declines: Vec<TargetDecline> = Vec::new();
         let mut decided = false;
         for mut candidate in walk.by_ref() {
-            let Some(deployment) =
-                deployments.get(candidate.candidate().candidate_id.deployment_id())
-            else {
+            let deployment_id = candidate.candidate().candidate_id.deployment_id();
+            let Some(deployment) = deployments.get(deployment_id) else {
                 selected.retired.push(candidate.candidate().candidate_id);
                 continue;
             };
@@ -264,11 +347,19 @@ pub(crate) fn select_first_compatible<T: FanOutEntry>(
                 &candidate.candidate().to_simulate_path(),
             ));
             decided = prepared.stops_walk();
+            declines.extend(prepared.decline(deployment_id));
             candidate.candidate_mut().prepared = Some(prepared);
             selected.examined.push(candidate);
             if decided {
                 break;
             }
+        }
+        // The walk examined every target it was offered and each refused
+        // routinely: the path's own fact, never a per-target one.
+        if !decided && declines.len() == offered {
+            selected
+                .all_declined
+                .push(AllTargetsDeclined { path_id, declines });
         }
         // Whatever the walk did not reach is retired: an accepted target ends
         // the path's walk, and so does a hard encode error.

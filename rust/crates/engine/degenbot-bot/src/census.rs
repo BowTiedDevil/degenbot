@@ -19,6 +19,8 @@
 //! sets, so an event payload that could not be `&'static` is that gate's
 //! refusal arriving at compile time.
 
+use degenbot_execution::DeclineClass;
+
 use crate::bot_core::registration_ledger::{
     OutcomeLabel, RegistrationOutcome, RegistrationUnitOutcome,
 };
@@ -143,6 +145,15 @@ pub enum CensusEvent {
     /// adds its pre-filter batch size; the inline/streaming arm adds one per
     /// candidate at the inline-sim seam).
     CandidatesEntered { n: u64, arm: &'static str },
+    /// One solved path whose ordered first-compatible walk examined EVERY
+    /// target offered to it and had every one of them decline routinely
+    /// (ADR-107 D6/D9): the path selected no deployment.
+    ///
+    /// One fact per PATH, never one per target, and `class` is the closed
+    /// [`DeclineClass`] set: the path, its deployments, and each adapter's own
+    /// words ride the structured log beside the emit, so no unbounded value
+    /// reaches a label.
+    AllTargetsDeclined { class: DeclineClass },
     /// One inline-sim degrade: the installed hook produced NO payload for a
     /// clamp-admitted candidate, so the path left the inline arm un-simulated.
     /// `reason` is the closed class the engine seam can name — see
@@ -383,6 +394,7 @@ mod tests {
         LifecyclePrecondition, OutcomeLabel, RefusalKind, RegistrationOutcome, RegistrationPhase,
         RegistrationUnitOutcome,
     };
+    use degenbot_execution::DeclineClass;
 
     fn skip_of(label: RegistrationOutcome) -> RegistrationUnitOutcome {
         RegistrationUnitOutcome::Skip {
@@ -446,6 +458,24 @@ mod tests {
             }),
             Some("other")
         );
+    }
+
+    /// ADR-107 D9: the all-targets-declined fact reports ONE path-level event
+    /// whose payload is the closed decline-class set — the two values the
+    /// metric may carry, and nothing per path or per target.
+    #[test]
+    fn every_decline_class_reports_its_all_targets_declined_fact() {
+        for class in DeclineClass::ALL {
+            crate::instruments::record(CensusEvent::AllTargetsDeclined { class });
+        }
+        let reported: Vec<&'static str> = super::test_probe::take()
+            .into_iter()
+            .filter_map(|event| match event {
+                CensusEvent::AllTargetsDeclined { class } => Some(class.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reported, vec!["capability", "capital-policy"]);
     }
 
     /// Which unit outcomes report a skip fact at all: both dedup producers

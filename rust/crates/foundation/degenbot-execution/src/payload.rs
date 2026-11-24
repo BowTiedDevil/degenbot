@@ -117,6 +117,39 @@ impl std::fmt::Display for ZeroCapitalDeficit {
     }
 }
 
+/// The closed class of a ROUTINE composition refusal: the answer a
+/// target-selection walk advances past, as opposed to the hard
+/// [`ComposeError::Encode`] / [`ComposeError::Validation`] verdicts that end it
+/// for that candidate.
+///
+/// It names what a refusal SAYS about the pair (path, target), never how many
+/// targets declined. A path every offered target refused reports one fact
+/// classified here, so a capital-policy answer never reads as an absent
+/// producer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DeclineClass {
+    /// [`ComposeError::Unsupported`]: this target has no producer for the path.
+    Capability,
+    /// [`ComposeError::InsolventZeroCapital`]: the caller's capital policy
+    /// cannot fund the path, at this target or any other.
+    CapitalPolicy,
+}
+
+impl DeclineClass {
+    /// Every member, in the order a refusal lists them.
+    pub const ALL: [Self; 2] = [Self::Capability, Self::CapitalPolicy];
+
+    /// This class's metric value. The set is closed, so a path, a pool, or a
+    /// deployment never becomes a label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Capability => "capability",
+            Self::CapitalPolicy => "capital-policy",
+        }
+    }
+}
+
 /// Failure modes for the Encode part (payload composition).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ComposeError {

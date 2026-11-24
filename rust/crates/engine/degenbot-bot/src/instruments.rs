@@ -16,6 +16,7 @@
 
 use std::sync::OnceLock;
 
+use degenbot_execution::DeclineClass;
 use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use opentelemetry::KeyValue;
 
@@ -181,6 +182,16 @@ pub struct PipelineInstruments {
     /// at the inline-sim seam, so the total candidate rate no longer
     /// under-reports by the inline arm's share.
     candidates_found: Counter<u64>,
+    /// Solved paths whose ordered first-compatible walk examined every
+    /// offered target and had every one of them decline routinely, by closed
+    /// `class` (`capability` | `capital-policy`). One increment per PATH, so a
+    /// path with three declining targets counts once: the pairing with
+    /// [`Self::candidates_found`] answers how much solved work reached no
+    /// deployment at all.
+    ///
+    /// PROMETHEUS NAME COUPLING (ADR-107 D9): renders as
+    /// `degenbot_selection_all_targets_declined_total`.
+    all_targets_declined: Counter<u64>,
     /// Inline-arm candidates the hook could not simulate, by closed `reason`
     /// class (`no_encoder_arm` | `hook_refused`). The pairing with
     /// [`Self::candidates_found`] is what an operator reads: candidates that
@@ -604,6 +615,12 @@ impl PipelineInstruments {
             candidates_found: meter
                 .u64_counter("degenbot.candidates.found")
                 .with_description("Candidates entering a simulation arm by arm")
+                .build(),
+            all_targets_declined: meter
+                .u64_counter("degenbot.selection.all_targets_declined")
+                .with_description(
+                    "Solved paths whose first-compatible walk had every offered target decline routinely, by closed decline class",
+                )
                 .build(),
             inline_sim_degrades: meter
                 .u64_counter("degenbot.sim.degrades")
@@ -1192,6 +1209,14 @@ impl PipelineInstruments {
         self.candidates_found.add(n, &[KeyValue::new("arm", arm)]);
     }
 
+    /// One path whose ordered first-compatible walk examined every offered
+    /// target and had every one of them decline routinely: ONE increment per
+    /// path, whatever the target count, by the folded closed decline class.
+    pub fn count_all_targets_declined(&self, class: DeclineClass) {
+        self.all_targets_declined
+            .add(1, &[KeyValue::new("class", class.as_str())]);
+    }
+
     /// One inline-sim degrade, by its closed reason class.
     pub fn count_inline_sim_degrade(&self, reason: &str) {
         self.inline_sim_degrades
@@ -1626,6 +1651,7 @@ impl PipelineInstruments {
                 });
             }
             CensusEvent::CandidatesEntered { n, arm } => self.count_candidates_found(arm, n),
+            CensusEvent::AllTargetsDeclined { class } => self.count_all_targets_declined(class),
             CensusEvent::InlineSimDegraded { reason } => {
                 self.count_inline_sim_degrade(reason.as_str());
             }

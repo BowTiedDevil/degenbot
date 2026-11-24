@@ -88,6 +88,7 @@ const FROZEN_NAMES: &[&str] = &[
     "degenbot.reorg.recovery_dropped",
     "degenbot.reorg.unwound_pools",
     "degenbot.reorg.windows",
+    "degenbot.selection.all_targets_declined",
     "degenbot.sim.degrades",
     "degenbot.sim.error_reason",
     "degenbot.simulate.duration",
