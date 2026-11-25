@@ -113,6 +113,7 @@ The updater distinguishes retryable transport failure, unsupported/incomplete no
 
 - `degenbot-core`: chain coordinates and dependency-neutral identity.
 - `degenbot-rpc`: live and recorded acquisition, exact reads, headers, receipts, traces, and cassette transport.
+- `degenbot-decoders`: neutral Aave event-log topic and payload recognition — the signature, the indexed fields, and every decoded field, for both operation events and non-operation reports. Emitter roles, operation ownership, whether a market tracks an emitter, and which revision introduced a report stay with `degenbot-aave`; the decoder leaf never depends on it.
 - `degenbot-aave`: ownership, resolution, reduction, delta meaning, and per-market projection driver.
 - `degenbot-db`: constraints, cursors, journals, checkpoints, and atomic storage primitives.
 - `degenbot-substrate`: `Epoch`, live `StateView`, and existing pool journals.
@@ -232,7 +233,12 @@ decision, so the ADR can be read against code instead of intent.
   keep the failure classes distinct.
 - **D12** — the module homes are as listed; no Python projection implementation
   exists, and the primitive projections and generated stubs are the only Python
-  surface.
+  surface. `degenbot_decoders::aave_event_decoder` decodes the operation events
+  and `degenbot_decoders::aave_report_decoder` decodes the non-operation reports
+  by signature alone: recognition is revision- and emitter-agnostic (a later
+  compatible revision carrying a known report decodes identically), and an
+  unknown topic fails closed at that neutral boundary instead of becoming a
+  catch-all variant.
 - **D13** — the replay bench and the scoped suites are the acceptance surfaces;
   their deterministic counters have ONE committed home (`replay_surface` below), and
   Appendix E's cases exist as named tests.

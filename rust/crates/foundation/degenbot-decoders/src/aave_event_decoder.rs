@@ -227,7 +227,7 @@ pub const ERC20_TRANSFER_TOPIC: B256 =
 /// Extract an `Address` from `topics[idx]` (an indexed `address` arg occupies
 /// a full 32-byte topic word; `Address::from_word` right-aligns the 20-byte
 /// payload). Returns `None` if `topics` has no `idx`.
-fn topic_address(topics: &[B256], idx: usize) -> Option<Address> {
+pub(crate) fn topic_address(topics: &[B256], idx: usize) -> Option<Address> {
     topics.get(idx).copied().map(Address::from_word)
 }
 
@@ -245,14 +245,14 @@ fn topic_b256(topics: &[B256], idx: usize) -> Option<B256> {
 /// Extract a `uint8` (or `uint8`-typed enum like `InterestRateMode`) from the
 /// low byte of `topics[idx]` (uint8 is sign-extended to uint256 in the topic
 /// word). Returns `None` if `topics` has no `idx`.
-fn topic_u8(topics: &[B256], idx: usize) -> Option<u8> {
+pub(crate) fn topic_u8(topics: &[B256], idx: usize) -> Option<u8> {
     let w = topics.get(idx)?;
     Some(w.0[31])
 }
 
 /// Extract a `uint16` from the low 2 bytes of `topics[idx]` (uint16 is
 /// sign-extended to uint256 in the topic word; takes bytes 30..32).
-fn topic_u16(topics: &[B256], idx: usize) -> Option<u16> {
+pub(crate) fn topic_u16(topics: &[B256], idx: usize) -> Option<u16> {
     let w = topics.get(idx)?;
     Some(u16::from_be_bytes([w.0[30], w.0[31]]))
 }
@@ -260,7 +260,7 @@ fn topic_u16(topics: &[B256], idx: usize) -> Option<u16> {
 /// Extract an `Address` from the data word at byte offset `word_idx * 32`
 /// (an `address` is right-aligned in its 32-byte word; bytes 12..32 of the
 /// word). Returns `None` if the data is too short.
-fn data_address(data: &[u8], word_idx: usize) -> Option<Address> {
+pub(crate) fn data_address(data: &[u8], word_idx: usize) -> Option<Address> {
     let start = word_idx.checked_mul(32)?;
     let end = start.checked_add(32)?;
     let word = data.get(start..end)?;
@@ -269,7 +269,7 @@ fn data_address(data: &[u8], word_idx: usize) -> Option<Address> {
 
 /// Extract a `U256` from the data word at byte offset `word_idx * 32`.
 /// Returns `None` if the data is too short.
-fn data_u256(data: &[u8], word_idx: usize) -> Option<U256> {
+pub(crate) fn data_u256(data: &[u8], word_idx: usize) -> Option<U256> {
     let start = word_idx.checked_mul(32)?;
     let end = start.checked_add(32)?;
     let word: [u8; 32] = data.get(start..end)?.try_into().ok()?;
@@ -277,7 +277,7 @@ fn data_u256(data: &[u8], word_idx: usize) -> Option<U256> {
 }
 
 /// Extract a `uint8` from byte 31 of data word `word_idx`.
-fn data_u8(data: &[u8], word_idx: usize) -> Option<u8> {
+pub(crate) fn data_u8(data: &[u8], word_idx: usize) -> Option<u8> {
     let start = word_idx.checked_mul(32)?;
     Some(*data.get(start.checked_add(31)?)?)
 }
@@ -290,7 +290,7 @@ fn data_bool(data: &[u8], word_idx: usize) -> Option<bool> {
 /// Extract the `topics` slice from a `Log` (alloy exposes `log.topics()`
 /// returning `&[B256]`). Returns `None` if the log has no topics (a log
 /// without even the topic0 hash is malformed for non-anonymous events).
-fn log_topics(log: &Log) -> Option<&[B256]> {
+pub(crate) fn log_topics(log: &Log) -> Option<&[B256]> {
     let topics = log.topics();
     if topics.is_empty() {
         None

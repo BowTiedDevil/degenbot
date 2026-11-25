@@ -49,6 +49,13 @@
 //!   [`aave_event_decoder::decode_aave_log`] returns a `DecodedAaveEvent`;
 //!   pure leaf — emits raw `Address`/`U256` fields; id resolution is the
 //!   orchestrator's job.
+//! - [`aave_report_decoder`] — the 25 Aave V3 non-operation reports (Pool
+//!   flash-loan/deficit/isolation/position-manager statements, scaled-token
+//!   fee/allowance/`Initialized` reports, GHO dependency links, and stkAAVE
+//!   emission/delegation/rewards accounting). The dispatch fn
+//!   [`aave_report_decoder::decode_aave_report_log`] returns a
+//!   `DecodedAaveReport` and fails closed on every unrecognized topic; emitter
+//!   roles and revision policy stay in `degenbot-aave` (ADR-105 D12).
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
 //! - [`uniswap_tick_range`] — the shared Uniswap V3 tick bounds
@@ -56,6 +63,7 @@
 //!   helper every V3/V4 int24-tick decoder applies to its decoded tick.
 
 pub mod aave_event_decoder;
+pub mod aave_report_decoder;
 pub mod pool_created_decoder;
 pub mod revert;
 pub mod uniswap_tick_range;
