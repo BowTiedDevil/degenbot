@@ -1612,6 +1612,14 @@ _Avoid_: block-tagged `latest`-style reads for intra-transaction state.
 The total assignment of every receipt log to exactly one protocol operation, recognized non-operation role, or `OutOfScope`. An unrecognized log where the protocol model expects coverage is invalid rather than `OutOfScope`.
 _Avoid_: transaction-local log indices as global identity; silently ignoring unrecognized logs.
 
+**Decoded receipt log** (`DecodedReceiptLog`):
+One receipt log born with the decoder's answer for that same log, in the receipt's order. Receipt ownership and the market's token census read these pairs rather than two lists that must line up, so one log's event can never be read against another log's position and a decode list can never silently shorten the receipt.
+_Avoid_: two parallel slices described as aligned by index; zipping a decode list onto logs after the fact.
+
+**Log frame layout** (`LogFrameLayout`):
+The call-tree frames of one traced transaction that can consume a receipt position, flattened in depth-first entry order with every frame whose whole subtree emitted no log removed once. The attribution search and the reconstruction that replays it both walk this single layout, so they cannot disagree about which frames take part, and each retained frame keeps the original trace path the tracer stated.
+_Avoid_: skipping zero-log-subtree frames inside each walk; renumbering children around a dropped frame; a second, differently filtered tree for the replay direction.
+
 **Checkpoint replay**:
 Restoring the nearest retained checkpoint preceding a reorg's common ancestor and reapplying canonical deltas forward. A reorg beyond retained evidence requires explicit recovery, not inverse protocol semantics.
 _Avoid_: separate inverse-SQL implementations for forward protocol operations.

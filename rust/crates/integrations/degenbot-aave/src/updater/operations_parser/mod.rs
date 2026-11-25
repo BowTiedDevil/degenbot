@@ -73,6 +73,7 @@ mod tests;
 #[cfg(test)]
 mod receipt_repro;
 
+use ownership::DecodedReceiptLog;
 pub use ownership::{
     LogOwner, NonOperationRole, OutOfScope, OwnershipCensus, OwnershipRefusal, ReceiptOwnership,
 };
@@ -262,7 +263,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
     /// [`ParseError::Substrate`].
     fn market_tokens(
         &mut self,
-        decoded: &[Option<DecodedAaveEvent>],
+        decoded: &[DecodedReceiptLog<'_>],
     ) -> Result<BTreeMap<Address, TokenType>, ParseError> {
         let mut tokens: BTreeMap<Address, TokenType> =
             self.substrate.market_token_census().into_iter().collect();
@@ -272,8 +273,8 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         if self.substrate.has_prefetched_assets() {
             return Ok(tokens);
         }
-        for decoded in decoded.iter().flatten() {
-            let emitter = match decoded {
+        for event in decoded.iter().filter_map(DecodedReceiptLog::decoded) {
+            let emitter = match event {
                 DecodedAaveEvent::ScaledTokenMint(ev) => ev.token_address,
                 DecodedAaveEvent::ScaledTokenBurn(ev) => ev.token_address,
                 DecodedAaveEvent::ScaledTokenBalanceTransfer(ev) => ev.token_address,
@@ -358,33 +359,33 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         // market's scaled events read the same decode. A token event emitted by a
         // series this market does not track is another market's (or an
         // underlying's) movement: out of scope, never an operation source.
-        let decoded: Vec<Option<DecodedAaveEvent>> = events
+        let decoded: Vec<DecodedReceiptLog<'a>> = events
             .iter()
-            .map(|ev| aave_event_decoder::decode_aave_log(ev))
+            .map(|ev| DecodedReceiptLog::new(ev, aave_event_decoder::decode_aave_log(ev)))
             .collect();
         let tokens = self.market_tokens(&decoded)?;
         let mut scaled_events: Vec<ScaledTokenEvent<'a>> = Vec::new();
-        for (ev, decoded) in events.iter().zip(&decoded) {
-            match decoded {
+        for receipt_log in &decoded {
+            match receipt_log.decoded() {
                 Some(DecodedAaveEvent::ScaledTokenMint(m))
                     if tokens.contains_key(&m.token_address) =>
                 {
-                    scaled_events.push(self.decode_mint_event(ev, m)?);
+                    scaled_events.push(self.decode_mint_event(receipt_log.log(), m)?);
                 }
                 Some(DecodedAaveEvent::ScaledTokenBurn(b))
                     if tokens.contains_key(&b.token_address) =>
                 {
-                    scaled_events.push(self.decode_burn_event(ev, b)?);
+                    scaled_events.push(self.decode_burn_event(receipt_log.log(), b)?);
                 }
                 Some(DecodedAaveEvent::ScaledTokenBalanceTransfer(bt))
                     if tokens.contains_key(&bt.token_address) =>
                 {
-                    scaled_events.push(self.decode_balance_transfer_event(ev, bt)?);
+                    scaled_events.push(self.decode_balance_transfer_event(receipt_log.log(), bt)?);
                 }
                 Some(DecodedAaveEvent::Erc20Transfer(t))
                     if tokens.contains_key(&t.token_address) =>
                 {
-                    if let Some(s) = self.decode_transfer_event(ev, t)? {
+                    if let Some(s) = self.decode_transfer_event(receipt_log.log(), t)? {
                         scaled_events.push(s);
                     }
                 }
@@ -403,7 +404,6 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         // recognized role, or deliberately out of scope, before any operation
         // exists. The parse then claims into it and closes it.
         let mut receipt = ReceiptOwnership::classify(
-            events,
             &decoded,
             &scaled_events,
             &ownership,

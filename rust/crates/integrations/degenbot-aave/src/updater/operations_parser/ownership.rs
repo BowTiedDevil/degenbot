@@ -282,6 +282,33 @@ pub enum OwnershipRefusal {
     },
 }
 
+/// One receipt log paired with the decoder's answer for it.
+///
+/// The ownership census is a function of the pair, so the log and its decode are
+/// born together: no census can read one log's event against another log's index,
+/// and no receipt can be classified against a decode list of a different length.
+#[derive(Debug, Clone)]
+pub(super) struct DecodedReceiptLog<'a> {
+    log: &'a Log,
+    decoded: Option<DecodedAaveEvent>,
+}
+
+impl<'a> DecodedReceiptLog<'a> {
+    pub(super) fn new(log: &'a Log, decoded: Option<DecodedAaveEvent>) -> Self {
+        Self { log, decoded }
+    }
+
+    /// The receipt log itself.
+    pub(super) fn log(&self) -> &'a Log {
+        self.log
+    }
+
+    /// The decoder's answer for THIS log, when the decoder named it.
+    pub(super) fn decoded(&self) -> Option<&DecodedAaveEvent> {
+        self.decoded.as_ref()
+    }
+}
+
 /// One transaction's receipt, with every log classified before any operation
 /// exists.
 #[derive(Debug)]
@@ -292,10 +319,10 @@ pub struct ReceiptOwnership {
 impl ReceiptOwnership {
     /// Classify every log of `receipt`.
     ///
-    /// `decoded` is aligned with `receipt` (one entry per log, in the receipt's
-    /// order); `scaled` holds the market's decoded scaled-token events and
-    /// `movements` their pairing; `tokens` names the emitters this market tracks
-    /// and `pool` is the market's Pool contract.
+    /// Each entry pairs one receipt log with the decoder's answer for that same
+    /// log, in the receipt's order; `scaled` holds the market's decoded
+    /// scaled-token events and `movements` their pairing; `tokens` names the
+    /// emitters this market tracks and `pool` is the market's Pool contract.
     ///
     /// A log Aave's vocabulary names is an operation's, unless its own role says it
     /// carries no operation; a token event from an emitter this market does not
@@ -307,18 +334,18 @@ impl ReceiptOwnership {
     /// [`OwnershipRefusal::UnrecognizedLog`] when a market contract emits a log the
     /// decoder cannot name.
     pub(super) fn classify(
-        receipt: &[&Log],
-        decoded: &[Option<DecodedAaveEvent>],
+        receipt: &[DecodedReceiptLog<'_>],
         scaled: &[ScaledTokenEvent<'_>],
         movements: &EventOwnership,
         tokens: &BTreeMap<Address, TokenType>,
         pool: Address,
     ) -> Result<Self, OwnershipRefusal> {
         let mut slots = BTreeMap::new();
-        for (log, decoded) in receipt.iter().zip(decoded) {
+        for receipt_log in receipt {
+            let log = receipt_log.log();
             let log_index = log_idx_value(log);
             let emitter = log.address();
-            let slot = match decoded {
+            let slot = match receipt_log.decoded() {
                 Some(event) => {
                     if let Some(token) = token_emitter(event) {
                         if !tokens.contains_key(&token) {
@@ -834,6 +861,14 @@ mod tests {
         }
     }
 
+    /// The captured receipt as the census reads it: every log paired with the
+    /// decoder's answer for that same log.
+    fn undecoded<'a>(logs: &[&'a Log]) -> Vec<DecodedReceiptLog<'a>> {
+        logs.iter()
+            .map(|log| DecodedReceiptLog::new(log, None))
+            .collect()
+    }
+
     /// Two operations claiming one log is contradictory evidence about what that
     /// log is: the ledger refuses instead of letting the second claim win.
     #[test]
@@ -1012,9 +1047,9 @@ mod tests {
             (debt_token, TokenType::Vtoken),
             (discount_strategy, TokenType::GhoDiscount),
         ]);
+        let receipt = undecoded(&logs.iter().collect::<Vec<_>>());
         let ownership = ReceiptOwnership::classify(
-            &logs.iter().collect::<Vec<_>>(),
-            &[None, None, None, None],
+            &receipt,
             &[],
             &EventOwnership::default(),
             &tokens,
@@ -1354,11 +1389,9 @@ mod tests {
             max_slashable_log,
         ];
         let tokens = BTreeMap::from([(discount_token, TokenType::GhoDiscount)]);
+        let receipt = undecoded(&logs.iter().collect::<Vec<_>>());
         let ownership = ReceiptOwnership::classify(
-            &logs.iter().collect::<Vec<_>>(),
-            &[
-                None, None, None, None, None, None, None, None, None, None, None,
-            ],
+            &receipt,
             &[],
             &EventOwnership::default(),
             &tokens,
@@ -1451,8 +1484,7 @@ mod tests {
             removed: false,
         };
         let ownership = ReceiptOwnership::classify(
-            &[&log],
-            &[None],
+            &undecoded(&[&log]),
             &[],
             &EventOwnership::default(),
             &BTreeMap::new(),
@@ -1508,8 +1540,7 @@ mod tests {
             removed: false,
         };
         let ownership = ReceiptOwnership::classify(
-            &[&log],
-            &[None],
+            &undecoded(&[&log]),
             &[],
             &EventOwnership::default(),
             &BTreeMap::new(),

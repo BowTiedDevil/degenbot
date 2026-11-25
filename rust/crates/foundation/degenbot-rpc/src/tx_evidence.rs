@@ -766,12 +766,17 @@ pub fn join_receipt_trace(
         });
     }
 
-    let mut arena = Arena::default();
-    let root = arena.push(traced.root());
+    let layout = LogFrameLayout::of(traced.root());
     let mut solver = Solver {
         receipt: receipt.logs(),
-        arena: &arena.frames,
+        layout: &layout,
         solutions: HashMap::new(),
+    };
+    let Some(root) = layout.root else {
+        return Ok(JoinedTransaction {
+            tx: *receipt.tx(),
+            logs: Vec::new(),
+        });
     };
     match solver.count(root, 0) {
         0 => {
@@ -799,7 +804,7 @@ pub fn join_receipt_trace(
             JoinedLog {
                 log,
                 log_ref,
-                call: solver.arena[frame].call.clone(),
+                call: solver.layout.frames[frame].call.clone(),
             }
         })
         .collect();
@@ -817,15 +822,34 @@ struct Frame {
     subtree_logs: usize,
 }
 
-/// The call tree flattened in depth-first entry order, so a frame's children are
-/// arena indices and its subtree's log count is already known.
-#[derive(Default)]
-struct Arena {
+/// The frames that can consume a receipt position, flattened in depth-first
+/// entry order.
+///
+/// A frame whose whole subtree emitted no log consumes no receipt position, so it
+/// is dropped once here instead of being skipped by every walk: the attribution
+/// search and the reconstruction that replays it both read this one layout, so
+/// they cannot disagree about which frames take part. A retained frame keeps the
+/// [`CallRef`] the tracer stated — its ORIGINAL trace path — so dropping a frame
+/// never renames its descendants, and a filtered child list keeps the surviving
+/// children in execution order.
+struct LogFrameLayout {
     frames: Vec<Frame>,
+    root: Option<usize>,
 }
 
-impl Arena {
-    fn push(&mut self, call: &TraceCall) -> usize {
+impl LogFrameLayout {
+    /// The layout of the tree under a root: empty when the whole tree emitted no
+    /// log, so a transaction with no logs joins to no positions.
+    fn of(root: &TraceCall) -> Self {
+        let mut layout = Self {
+            frames: Vec::new(),
+            root: None,
+        };
+        layout.root = layout.push(root);
+        layout
+    }
+
+    fn push(&mut self, call: &TraceCall) -> Option<usize> {
         let index = self.frames.len();
         self.frames.push(Frame {
             call: call.call().clone(),
@@ -835,16 +859,22 @@ impl Arena {
         });
         let mut children = Vec::with_capacity(call.children().len());
         for child in call.children() {
-            children.push(self.push(child));
+            if let Some(child) = self.push(child) {
+                children.push(child);
+            }
         }
         let subtree_logs = call.logs().len()
             + children
                 .iter()
                 .map(|child| self.frames[*child].subtree_logs)
                 .sum::<usize>();
+        if subtree_logs == 0 {
+            self.frames.truncate(index);
+            return None;
+        }
         self.frames[index].children = children;
         self.frames[index].subtree_logs = subtree_logs;
-        index
+        Some(index)
     }
 }
 
@@ -856,7 +886,7 @@ impl Arena {
 /// join needs, and two means the evidence names no single attribution.
 struct Solver<'a> {
     receipt: &'a [Log],
-    arena: &'a [Frame],
+    layout: &'a LogFrameLayout,
     solutions: HashMap<(usize, usize), u8>,
 }
 
@@ -882,7 +912,7 @@ impl Solver<'_> {
 
     fn table(&mut self, frame: usize, start: usize) -> Option<FrameTable> {
         let (logs_len, subtree_logs, children) = {
-            let entry = &self.arena[frame];
+            let entry = &self.layout.frames[frame];
             (entry.logs.len(), entry.subtree_logs, entry.children.clone())
         };
         let end = start.checked_add(subtree_logs)?;
@@ -893,7 +923,7 @@ impl Solver<'_> {
         cumulative.push(0);
         for child in &children {
             let previous = *cumulative.last()?;
-            cumulative.push(previous + self.arena[*child].subtree_logs);
+            cumulative.push(previous + self.layout.frames[*child].subtree_logs);
         }
         let span = end - start + 1;
         let mut finish = vec![vec![0u8; span]; children.len() + 1];
@@ -903,10 +933,6 @@ impl Solver<'_> {
                 if index == children.len() && position == end {
                     continue;
                 }
-                if index < children.len() && self.arena[children[index]].subtree_logs == 0 {
-                    finish[index][position - start] = finish[index + 1][position - start];
-                    continue;
-                }
                 let own = position.saturating_sub(start + cumulative[index]);
                 let mut total = 0u8;
                 if own < logs_len && position < end && self.matches(frame, own, position) {
@@ -914,7 +940,7 @@ impl Solver<'_> {
                 }
                 if index < children.len() {
                     let child = children[index];
-                    let next = position + self.arena[child].subtree_logs;
+                    let next = position + self.layout.frames[child].subtree_logs;
                     if next <= end && self.count(child, position) > 0 {
                         total = cap(total + finish[index + 1][next - start]);
                     }
@@ -927,7 +953,7 @@ impl Solver<'_> {
 
     /// Whether the frame's `own`-th log is the receipt log at `position`.
     fn matches(&self, frame: usize, own: usize, position: usize) -> bool {
-        let traced = &self.arena[frame].logs[own];
+        let traced = &self.layout.frames[frame].logs[own];
         let receipt = &self.receipt[position];
         traced.address == receipt.address()
             && traced.topics == receipt.topics()
@@ -941,17 +967,13 @@ impl Solver<'_> {
             return;
         };
         let (logs_len, children) = {
-            let entry = &self.arena[frame];
+            let entry = &self.layout.frames[frame];
             (entry.logs.len(), entry.children.clone())
         };
-        let end = start + self.arena[frame].subtree_logs;
+        let end = start + self.layout.frames[frame].subtree_logs;
         let mut index = 0;
         let mut position = start;
         while position < end {
-            if index < children.len() && self.arena[children[index]].subtree_logs == 0 {
-                index += 1;
-                continue;
-            }
             let own = position.saturating_sub(start + table.cumulative[index]);
             let takes_own = own < logs_len
                 && position < end
@@ -964,7 +986,7 @@ impl Solver<'_> {
                 let child = children[index];
                 let child_start = position;
                 self.place(child, child_start, out);
-                position += self.arena[child].subtree_logs;
+                position += self.layout.frames[child].subtree_logs;
                 index += 1;
             }
         }

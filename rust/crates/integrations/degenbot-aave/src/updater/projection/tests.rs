@@ -815,6 +815,19 @@ fn captured_rev1_self_transfer_nets_to_zero_before_a_later_burn() {
         generation,
     )
     .unwrap();
+    assert_eq!(
+        transfer.effect.subjects(),
+        vec![collateral(2013)],
+        "a self-transfer names one subject, not the same position twice"
+    );
+    assert_eq!(
+        transfer.effect.movements().unwrap(),
+        (
+            vec![(collateral(2013), I256::ZERO)],
+            Some(U256::from(1_000_955_936_137_119_386_869_988_567_u128)),
+        ),
+        "the self-transfer is one zero movement reconciled to the burn's index"
+    );
     view.apply(&transfer).unwrap();
     assert_eq!(
         view.require_position_state(collateral(2013)).unwrap(),

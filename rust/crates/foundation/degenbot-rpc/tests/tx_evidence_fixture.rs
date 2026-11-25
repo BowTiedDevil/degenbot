@@ -11,12 +11,13 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
+use alloy::rpc::types::Log;
 use degenbot_core::canonical_head::{ChainAnchor, TxRef};
 use degenbot_rpc::tx_evidence::{
     join_receipt_trace, ReceiptRefusal, ReceiptTransaction, TraceJoinRefusal, TracedTransaction,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// The committed complete-receipt capture.
 const RECEIPT: &str = concat!(
@@ -365,5 +366,144 @@ fn a_trace_from_another_chain_cannot_join_this_receipt() {
             receipt: Box::new(*receipt.tx()),
             trace: Box::new(other),
         }
+    );
+}
+
+/// One generated call-tree frame: the receipt-log positions it emits itself, plus
+/// its sub-calls in execution order.
+struct GeneratedFrame {
+    logs: Vec<usize>,
+    children: Vec<GeneratedFrame>,
+}
+
+impl GeneratedFrame {
+    fn parent(logs: Vec<usize>, children: Vec<GeneratedFrame>) -> Self {
+        Self { logs, children }
+    }
+
+    fn leaf() -> Self {
+        Self::parent(Vec::new(), Vec::new())
+    }
+
+    fn chain(self) -> Self {
+        Self::parent(Vec::new(), vec![self])
+    }
+
+    fn carrier(position: usize) -> Self {
+        Self::parent(vec![position], Vec::new())
+    }
+
+    fn json(&self, logs: &[Log]) -> Value {
+        let own: Vec<Value> = self
+            .logs
+            .iter()
+            .map(|position| {
+                let log = &logs[*position];
+                json!({
+                    "address": log.address().to_string(),
+                    "topics": log.topics().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    "data": format!("0x{}", alloy::hex::encode(log.data().data.as_ref())),
+                })
+            })
+            .collect();
+        let calls: Vec<Value> = self.children.iter().map(|child| child.json(logs)).collect();
+        json!({
+            "type": "CALL",
+            "to": logs.first().map_or_else(|| Address::ZERO.to_string(), |log| log.address().to_string()),
+            "logs": own,
+            "calls": calls,
+        })
+    }
+}
+
+fn generated_join(receipt_logs: &[Log], frame: &GeneratedFrame, tx: TxRef) -> Vec<(u64, Vec<u64>)> {
+    let receipt = ReceiptTransaction::new(tx, receipt_logs.to_vec())
+        .expect("a prefix of captured logs is still a complete receipt");
+    let traced = TracedTransaction::from_call_tracer_json(tx, &frame.json(receipt_logs))
+        .expect("a generated call tree over captured logs is a call tree");
+    assert_eq!(
+        traced.log_count(),
+        receipt.logs().len(),
+        "the generated tree states each receipt log once"
+    );
+    let joined = join_receipt_trace(&receipt, &traced)
+        .expect("zero-subtree frames never change log ownership");
+    positions(&joined)
+}
+
+#[test]
+fn generated_zero_log_frames_keep_the_original_call_paths() {
+    let (captured_receipt, _) = captured_at(ZERO_LOG_FRAME_RECEIPT, ZERO_LOG_FRAME_TRACE);
+    let logs = captured_receipt.logs();
+    let tx = *captured_receipt.tx();
+    let index = |position: usize| {
+        logs[position]
+            .log_index
+            .expect("a captured receipt log states its index")
+    };
+
+    let leading = GeneratedFrame::parent(
+        Vec::new(),
+        vec![
+            GeneratedFrame::leaf(),
+            GeneratedFrame::carrier(0),
+            GeneratedFrame::leaf().chain(),
+        ],
+    );
+    assert_eq!(
+        generated_join(&logs[..1], &leading, tx),
+        vec![(index(0), vec![1])],
+        "a leading zero-subtree frame is dropped without renumbering its siblings"
+    );
+
+    let interleaved = GeneratedFrame::parent(
+        Vec::new(),
+        vec![
+            GeneratedFrame::carrier(0),
+            GeneratedFrame::leaf(),
+            GeneratedFrame::carrier(1),
+            GeneratedFrame::carrier(2).chain(),
+        ],
+    );
+    assert_eq!(
+        generated_join(&logs[..3], &interleaved, tx),
+        vec![
+            (index(0), vec![0]),
+            (index(1), vec![2]),
+            (index(2), vec![3, 0]),
+        ],
+        "interleaved zero-subtree frames are dropped, not renumbered"
+    );
+
+    let trailing = GeneratedFrame::parent(
+        vec![0],
+        vec![GeneratedFrame::leaf(), GeneratedFrame::leaf().chain()],
+    );
+    assert_eq!(
+        generated_join(&logs[..1], &trailing, tx),
+        vec![(index(0), Vec::new())],
+        "trailing zero-subtree frames leave the root's own log at the root path"
+    );
+}
+
+#[test]
+fn a_generated_all_zero_log_tree_joins_to_no_positions() {
+    let (captured_receipt, _) = captured_at(ZERO_LOG_FRAME_RECEIPT, ZERO_LOG_FRAME_TRACE);
+    let tx = *captured_receipt.tx();
+    let tree = GeneratedFrame::parent(
+        Vec::new(),
+        vec![GeneratedFrame::leaf(), GeneratedFrame::leaf().chain()],
+    );
+    let receipt =
+        ReceiptTransaction::new(tx, Vec::new()).expect("an empty log list is a complete receipt");
+    let traced = TracedTransaction::from_call_tracer_json(tx, &tree.json(&[]))
+        .expect("a log-free call tree is still a call tree");
+
+    assert_eq!(traced.log_count(), 0);
+    let joined = join_receipt_trace(&receipt, &traced)
+        .expect("a transaction with no logs has no attribution to prove");
+    assert!(
+        joined.logs().is_empty(),
+        "no frame can own a position that does not exist"
     );
 }

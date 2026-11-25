@@ -403,6 +403,18 @@ mod tests {
     use tracing::span::{Attributes, Id, Record};
     use tracing::{Event, Level, Metadata, Subscriber};
 
+    /// The statement ledger is ONE process-global slot, and cargo runs this
+    /// binary's tests as threads of one process: a one-mint-chunk test holds this
+    /// guard for its whole ledger session instead of racing a sibling into
+    /// `LedgerArmed`. A panic inside one test poisons the mutex; a sibling still
+    /// runs rather than failing for the first one's abort.
+    fn ledger_session() -> std::sync::MutexGuard<'static, ()> {
+        static LEDGER_SESSION: Mutex<()> = Mutex::new(());
+        LEDGER_SESSION
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// The one-mint chunk's fixture: a REAL candidate set (a scaled-token mint on
     /// this market's aToken and a collateral-configuration change on its
     /// underlying) over the production seed, resolved while the connection guard
@@ -420,6 +432,7 @@ mod tests {
         use degenbot_core::canonical_head::ChainAnchor;
         use degenbot_rpc::tx_evidence::ReceiptTransaction;
         use rusqlite::params;
+        let _session = ledger_session();
         let (ledger, _state) = LedgerDb::open_for_writes(Path::new(":memory:")).unwrap();
         let a_token = Address::repeat_byte(0x32);
         let underlying = Address::repeat_byte(0x31);

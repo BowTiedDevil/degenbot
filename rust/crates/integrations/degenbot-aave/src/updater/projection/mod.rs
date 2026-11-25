@@ -513,6 +513,9 @@ impl DeltaEffect {
         match self {
             Self::ScaledBalance { subject, .. } => vec![*subject],
             Self::ScaledTransfer { from, to, .. } => {
+                if *to == Some(*from) {
+                    return vec![*from];
+                }
                 let mut subjects = vec![*from];
                 if let Some(to) = to {
                     subjects.push(*to);
