@@ -77,6 +77,13 @@
 //! `--check-seed <seed.json>...` is its seed twin, also fully offline: it decodes the
 //! committed seed, restores it into a fresh harness DB through the same codec, and
 //! requires the re-export to be byte-identical.
+//!
+//! `--cassette <cassette.json.zst> --delta <delta-stream.json>` extend that seed gate
+//! with its REPLAY half, still fully offline: after the byte-identical restore, the
+//! recorded run replays through the cassette replay transport and its canonical delta
+//! stream must match the committed one byte for byte. Both are explicit argv paths and
+//! accompany exactly one `--check-seed`; without them the gate stays the canonical-only
+//! restore check, so no path is ever inferred from the seed's name or home.
 
 // Run-once diagnostic tool: stdout/stderr reports ARE its interface, its
 // prose names CLI flags and updaters that pedantry would backtick, and the
@@ -86,22 +93,24 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use degenbot_aave::updater::aave_fetch::fetch_pool_logs;
 use degenbot_aave::updater::{
-    activate_aave_market_on_conn, fetch_activation_metadata_at, run_aave_update,
-    ActivationMetadata, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    activate_aave_market_on_conn, fetch_activation_metadata_at, run_aave_update, AaveChunkProgress,
+    ActivationMetadata, CanonicalDelta, ProgressSink, RunSpec, VerifyPolicy,
+    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_db::sql_ledger::{dump_aave_seed_json, restore_aave_seed_json};
 use degenbot_db::DegenbotDb;
 use degenbot_pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
 use degenbot_rpc::cassette::{
-    read_artifact, rfc3339_utc, verify_cassette_bytes, write_artifact, CassetteProvenance,
-    CassetteSpan, RecordingTransport,
+    read_artifact, rfc3339_utc, verify_cassette_bytes, write_artifact, Cassette,
+    CassetteProvenance, CassetteSpan, RecordingTransport,
 };
+use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use degenbot_rpc::chain_evidence::resolve_terminal_anchor;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
@@ -118,6 +127,14 @@ struct RecordArgs {
     out: Option<PathBuf>,
     seed_out: Option<PathBuf>,
     node: Option<String>,
+}
+
+/// The explicit restore -> replay inputs of one seed's gate: the recorded
+/// cassette the replay serves from, and the committed delta stream that replay
+/// must reproduce byte-for-byte.
+struct SeedReplay {
+    cassette: PathBuf,
+    delta: PathBuf,
 }
 
 struct RecordSpec {
@@ -158,6 +175,8 @@ fn parse_block(label: &str, raw: &str) -> Result<u64, String> {
 fn usage() -> String {
     "usage: record_updater_cassette --check <cassette.json[.zst]>...\n \
        or:  record_updater_cassette --check-seed <seed.json>...\n \
+       or:  record_updater_cassette --check-seed <seed.json> \
+       --cassette <cassette.json.zst> --delta <delta-stream.json>\n \
        or:  record_updater_cassette --kind pool --factory <addr> \
        --from <n> --to <n> --out <path>\n \
        or:  record_updater_cassette --kind aave --pool <addr> \
@@ -171,6 +190,8 @@ fn usage() -> String {
 fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
     let mut check_files = Vec::new();
     let mut seed_check_files = Vec::new();
+    let mut cassette = None;
+    let mut delta = None;
     let mut args = RecordArgs::default();
     let mut rest = flags;
     while let Some(arg) = rest.next() {
@@ -182,6 +203,8 @@ fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
             "--help" | "-h" => return Ok(Either::Help),
             "--check" => check_files.push(PathBuf::from(value("--check")?)),
             "--check-seed" => seed_check_files.push(PathBuf::from(value("--check-seed")?)),
+            "--cassette" => cassette = Some(PathBuf::from(value("--cassette")?)),
+            "--delta" => delta = Some(PathBuf::from(value("--delta")?)),
             "--kind" => args.kind_raw = value("--kind")?,
             "--factory" => args.factory_raw = value("--factory")?,
             "--pool" => args.pool_raw = value("--pool")?,
@@ -213,6 +236,35 @@ fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
             usage()
         ));
     }
+    let replay = match (cassette, delta) {
+        (None, None) => None,
+        (Some(cassette), Some(delta)) => Some(SeedReplay { cassette, delta }),
+        (Some(_), None) => {
+            return Err(format!(
+                "--cassette replays one restored seed; pass its --delta too\n{}",
+                usage()
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(format!(
+                "--delta commits one replay's delta stream; pass its --cassette too\n{}",
+                usage()
+            ));
+        }
+    };
+    if replay.is_some() && seed_check_files.is_empty() {
+        return Err(format!(
+            "--cassette/--delta extend --check-seed: they name one seed's replay inputs\n{}",
+            usage()
+        ));
+    }
+    if replay.is_some() && seed_check_files.len() != 1 {
+        return Err(format!(
+            "--cassette/--delta pair ONE seed with one cassette and one delta stream, got {} seeds\n{}",
+            seed_check_files.len(),
+            usage()
+        ));
+    }
     if !check_files.is_empty() {
         return Ok(Either::Check(check_files));
     }
@@ -220,7 +272,10 @@ fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
     // `just record-aave-cassette` wrapper supplies `--kind aave-run` on every
     // call, and `--check-seed` must still reach the gate.
     if !seed_check_files.is_empty() {
-        return Ok(Either::CheckSeed(seed_check_files));
+        return Ok(Either::CheckSeed {
+            seeds: seed_check_files,
+            replay,
+        });
     }
 
     let from_block = args.from_block.ok_or("--from <n> is required")?;
@@ -264,7 +319,13 @@ fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
 
 enum Either {
     Check(Vec<PathBuf>),
-    CheckSeed(Vec<PathBuf>),
+    /// The offline seed gate: the canonical restore check for every named seed,
+    /// plus the explicit restore -> replay -> committed-delta arm when the
+    /// replay inputs were supplied.
+    CheckSeed {
+        seeds: Vec<PathBuf>,
+        replay: Option<SeedReplay>,
+    },
     Help,
     Record(RecordSpec),
 }
@@ -317,14 +378,126 @@ fn check_seed(path: &Path) -> Result<usize, String> {
     Ok(committed.len())
 }
 
-fn run_check_seed(files: &[PathBuf]) -> ExitCode {
+/// The canonical deltas a replayed run reported, in the order it reported them.
+#[derive(Default)]
+struct DeltaSink {
+    deltas: Mutex<Vec<CanonicalDelta>>,
+}
+
+impl ProgressSink for DeltaSink {
+    fn report_chunk(&self, progress: &AaveChunkProgress) {
+        let mut deltas = self
+            .deltas
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        deltas.extend(progress.deltas.iter().cloned());
+    }
+}
+
+/// The seed gate's replay half for one committed seed: restore it
+/// byte-identically, replay the named cassette, and require the run's canonical
+/// delta stream to equal the named committed stream byte-for-byte. Every input
+/// is an explicit argv path; the arm infers nothing from the seed's name.
+fn check_seed_replay(path: &Path, replay: &SeedReplay) -> Result<String, String> {
+    let committed = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
+    let committed_deltas = std::fs::read_to_string(&replay.delta)
+        .map_err(|e| format!("read {}: {e}", replay.delta.display()))?;
+
+    let dir = tempfile::TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
+    let db_path = dir.path().join("seed-replay.db");
+    let (db, _state) =
+        DegenbotDb::open_for_writes(&db_path).map_err(|e| format!("db open: {e}"))?;
+    let market_id = {
+        let conn = db.lock();
+        restore_aave_seed_json(&conn, &committed).map_err(|e| format!("restore: {e}"))?;
+        let reexport = dump_aave_seed_json(&conn).map_err(|e| format!("re-export: {e}"))?;
+        if reexport != committed {
+            return Err("restore -> re-export drifted from the committed bytes".to_string());
+        }
+        drop(conn);
+        let markets = db
+            .fetch_active_aave_markets()
+            .map_err(|e| format!("market lookup: {e}"))?;
+        let [market] = markets.as_slice() else {
+            return Err(format!(
+                "the restored seed carries {} active markets; the replay arm pairs one seed with one market",
+                markets.len()
+            ));
+        };
+        market.id
+    };
+    drop(db);
+
+    let bytes = read_artifact(&replay.cassette)
+        .map_err(|e| format!("cassette {}: {e}", replay.cassette.display()))?;
+    verify_cassette_bytes(&bytes).map_err(|reason| format!("cassette drift: {reason}"))?;
+    let cassette =
+        Cassette::from_json_bytes(&bytes).map_err(|e| format!("cassette decode: {e}"))?;
+    let chain_id = i64::try_from(cassette.chain_id).map_err(|e| format!("chain id: {e}"))?;
+    let span = cassette.provenance.span;
+    let transport = CassetteReplayTransport::new(cassette);
+
+    let sink = Arc::new(DeltaSink::default());
+    let collector = Arc::clone(&sink);
+    std::thread::spawn(move || {
+        run_aave_update(
+            &db_path,
+            RunSpec {
+                chain_id,
+                market_id,
+                to_block: Some(span.to_block),
+                chunk_size: span.to_block - span.from_block + 1,
+                max_block_range: 10_000,
+                provider: transport.as_alloy_provider(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: collector,
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+    })
+    .join()
+    .map_err(|_| "replay worker thread panicked".to_string())?
+    .map_err(|e| format!("replay: {e}"))?;
+
+    let deltas = sink
+        .deltas
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let encoded: Vec<String> = deltas.iter().map(CanonicalDelta::encode).collect();
+    if encoded.is_empty() {
+        return Err("the replayed span reduced no canonical delta".to_string());
+    }
+    let produced = format!("{}.\n", encoded.join("\n"));
+    if produced != committed_deltas {
+        return Err(format!(
+            "restore -> replay drifted from the committed delta stream {}",
+            replay.delta.display()
+        ));
+    }
+    Ok(format!(
+        "seed gate green {} ({bytes} canonical bytes): restore -> replay reproduced the {count} canonical deltas committed in {delta}",
+        path.display(),
+        bytes = committed.len(),
+        count = encoded.len(),
+        delta = replay.delta.display(),
+    ))
+}
+
+fn run_check_seed(seeds: &[PathBuf], replay: Option<&SeedReplay>) -> ExitCode {
     let mut red = 0;
-    for path in files {
-        match check_seed(path) {
-            Ok(bytes) => println!(
-                "seed gate green {} ({bytes} canonical bytes, byte-identical re-export after restore)",
-                path.display()
-            ),
+    for path in seeds {
+        let verdict = match replay {
+            Some(replay) => check_seed_replay(path, replay),
+            None => check_seed(path).map(|bytes| {
+                format!(
+                    "seed gate green {} ({bytes} canonical bytes, byte-identical re-export after restore)",
+                    path.display()
+                )
+            }),
+        };
+        match verdict {
+            Ok(line) => println!("{line}"),
             Err(reason) => {
                 println!("SEED GATE RED {}: {reason}", path.display());
                 red += 1;
@@ -1115,7 +1288,7 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Either::Check(files) => run_check(&files),
-        Either::CheckSeed(files) => run_check_seed(&files),
+        Either::CheckSeed { seeds, replay } => run_check_seed(&seeds, replay.as_ref()),
         Either::Record(args) => match record(args).await {
             Ok(_) => ExitCode::SUCCESS,
             Err(msg) => {
@@ -1336,10 +1509,90 @@ mod tests {
     fn the_wrapper_seed_check_reaches_the_offline_gate() {
         let parsed =
             parse_args(argv(&["--kind", "aave-run", "--check-seed", "seed.json"])).unwrap();
-        let Either::CheckSeed(files) = parsed else {
+        let Either::CheckSeed { seeds, replay } = parsed else {
             panic!("seed check mode expected");
         };
-        assert_eq!(files, vec![PathBuf::from("seed.json")]);
+        assert_eq!(seeds, vec![PathBuf::from("seed.json")]);
+        assert!(
+            replay.is_none(),
+            "without explicit replay inputs the gate stays the canonical-only restore check"
+        );
+    }
+
+    #[test]
+    fn the_replay_inputs_are_explicit_argv_paths() {
+        let parsed = parse_args(argv(&[
+            "--kind",
+            "aave-run",
+            "--check-seed",
+            "seed.json",
+            "--cassette",
+            "capture.json.zst",
+            "--delta",
+            "capture.delta-stream.json",
+        ]))
+        .unwrap();
+        let Either::CheckSeed { seeds, replay } = parsed else {
+            panic!("seed check mode expected");
+        };
+        assert_eq!(seeds, vec![PathBuf::from("seed.json")]);
+        let replay = replay.expect("the explicit replay inputs reach the gate");
+        assert_eq!(replay.cassette, PathBuf::from("capture.json.zst"));
+        assert_eq!(replay.delta, PathBuf::from("capture.delta-stream.json"));
+    }
+
+    /// The replay arm pairs ONE seed with ONE cassette and ONE delta stream, so
+    /// every shape that could not name those inputs is refused before any DB or
+    /// file is touched.
+    #[test]
+    fn incomplete_or_ambiguous_replay_inputs_are_refused() {
+        let only_cassette = parse_args(argv(&[
+            "--check-seed",
+            "seed.json",
+            "--cassette",
+            "capture.json.zst",
+        ]));
+        let Err(error) = only_cassette else {
+            panic!("a cassette without its delta stream names no committed artifact");
+        };
+        assert!(error.contains("pass its --delta too"), "{error}");
+
+        let only_delta = parse_args(argv(&[
+            "--check-seed",
+            "seed.json",
+            "--delta",
+            "capture.delta-stream.json",
+        ]));
+        let Err(error) = only_delta else {
+            panic!("a delta stream without its cassette replays nothing");
+        };
+        assert!(error.contains("pass its --cassette too"), "{error}");
+
+        let no_seed = parse_args(argv(&[
+            "--delta",
+            "capture.delta-stream.json",
+            "--cassette",
+            "capture.json.zst",
+        ]));
+        let Err(error) = no_seed else {
+            panic!("the replay arm extends a seed check");
+        };
+        assert!(error.contains("extend --check-seed"), "{error}");
+
+        let two_seeds = parse_args(argv(&[
+            "--check-seed",
+            "first.json",
+            "--check-seed",
+            "second.json",
+            "--cassette",
+            "capture.json.zst",
+            "--delta",
+            "capture.delta-stream.json",
+        ]));
+        let Err(error) = two_seeds else {
+            panic!("one replay cannot serve two seeds");
+        };
+        assert!(error.contains("pair ONE seed"), "{error}");
     }
 
     /// A harness DB carrying one activated market — the substrate a seed dumps,
@@ -1447,6 +1700,8 @@ mod tests {
             "--kind aave-run",
             "--seed-out",
             "--check-seed",
+            "--cassette",
+            "--delta",
             "--check <cassette",
         ] {
             assert!(usage.contains(flag), "usage must name {flag}");

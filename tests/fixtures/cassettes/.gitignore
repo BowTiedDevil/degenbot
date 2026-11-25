@@ -2,3 +2,7 @@
 # artifact codec); a plain .json here is an unpackaged recording, regenerable
 # output that the reader prefers while it exists.
 *.json
+# The one .json artifact that is committed source, not regenerable output: the
+# recorder replay seed (degenbot.aave-seed/v1), the substrate rows a cassette
+# replay restores. The offline seed gate re-exports it byte-for-byte.
+!*.seed.json

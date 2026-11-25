@@ -979,6 +979,16 @@ check-aave-captures:
 # committed seed into a fresh harness DB and requires the re-export to be
 # byte-identical. The wrapper's `--kind aave-run` is ignored by that arm.
 #   just record-aave-cassette --check-seed tests/fixtures/cassettes/<name>.seed.json
+#
+# `--cassette <cassette.json.zst> --delta <delta-stream.json>` extend that seed
+# gate with its REPLAY half, still offline: after the byte-identical restore the
+# recorded run replays through the cassette replay transport and must reproduce
+# the committed canonical delta stream byte-for-byte. Both paths are explicit;
+# nothing is inferred from the seed name, and the arm pairs ONE seed with one
+# cassette and one delta stream.
+#   just record-aave-cassette --check-seed tests/fixtures/cassettes/<name>.seed.json \
+#       --cassette tests/fixtures/cassettes/<name>.json.zst \
+#       --delta tests/fixtures/sql_goldens/<name>.delta-stream.json
 record-aave-cassette *args:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --bin record_updater_cassette -- --kind aave-run {{ args }}
 

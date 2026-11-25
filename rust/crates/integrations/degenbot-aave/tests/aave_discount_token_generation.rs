@@ -13,7 +13,12 @@
 //! run misses the ledger loudly, never silently advancing the cursor over a
 //! mixed-generation chunk.
 
-#![expect(clippy::unwrap_used, clippy::panic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stderr,
+    clippy::panic
+)]
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -812,8 +817,47 @@ impl ProgressSink for DeltaCollector {
     }
 }
 
+/// The explicitly SYNTHETIC two-refresh fixture's committed canonical delta
+/// stream. The fixture is not a recording: its block hashes are generated
+/// (`synthetic_block_hash`) and its ledger is built in code, so the artifact's
+/// provenance is the test, not the chain. Only the two block heights and the two
+/// transaction hashes are real. Its seed is user and reserve-asset rows alone —
+/// the run creates the debt position and resolves both refreshes against it.
+const SYNTHETIC_DELTA_STREAM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/sql_goldens/aave_discount_refresh_synthetic.delta-stream.json"
+);
+
+fn regen_requested() -> bool {
+    std::env::var("REGENERATE_SQL_GOLDENS").is_ok_and(|v| v != "0")
+}
+
+fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
+    if regen_requested() {
+        std::fs::write(golden_path, produced).expect("write the regenerated golden");
+        eprintln!("regenerated {name} at {golden_path}");
+    } else {
+        let committed = std::fs::read_to_string(golden_path)
+            .unwrap_or_else(|e| panic!("the committed {name} golden must exist: {e}"));
+        assert_eq!(
+            produced, committed,
+            "{name} drift: regenerate-and-diff must be byte-identical \
+             (ADR-068 D4); if the chunk loop's delta surface legitimately \
+             changed, re-run with REGENERATE_SQL_GOLDENS=1"
+        );
+    }
+}
+
+/// The synthetic two-refresh fixture's canonical delta stream, pinned
+/// byte-for-byte, and the ordering the stream must keep: the journal stays
+/// chronological across the two refresh transactions, and each refresh signal is
+/// followed by its own observation then its recomputed discount — the sequencing
+/// the consolidation work must not disturb. No debt row is seeded: the run
+/// creates the position, so the refresh reads the pre-block balance it just
+/// observed.
 #[test]
-fn captured_rev1_discount_refreshes_stay_at_their_transaction_positions() {
+#[expect(clippy::too_many_lines)]
+fn synthetic_two_refresh_pins_the_committed_delta_stream_at_its_source_positions() {
     let early_block = 17_699_253;
     let late_block = 17_701_049;
     let db = warm_boot_db(Some(T0));
@@ -873,6 +917,54 @@ fn captured_rev1_discount_refreshes_stay_at_their_transaction_positions() {
         .position(|(_, tx)| tx == REFRESH_LATE_TX)
         .unwrap_or_else(|| panic!("missing late transaction in {positions:?}"));
     assert!(early < late, "journal order: {positions:?}");
+
+    let encoded: Vec<String> = deltas.iter().map(CanonicalDelta::encode).collect();
+    let produced = format!("{}.\n", encoded.join("\n"));
+    let lines: Vec<&str> = produced.lines().collect();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("effect=gho-refresh-discount{"))
+            .count(),
+        2,
+        "the fixture's two refresh signals travel as their own deltas:\n{produced}"
+    );
+    let refreshes: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.contains("effect=gho-refresh-discount{"))
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        refreshes.len(),
+        2,
+        "one signal per refresh transaction:\n{produced}"
+    );
+    let carries =
+        |index: usize, needle: &str| lines.get(index).is_some_and(|line| line.contains(needle));
+    let first = refreshes[0];
+    assert!(
+        carries(first + 1, "effect=stk-aave-balance-observed{"),
+        "the first refresh's NULL pre-state is observed at its own parent block:\n{produced}"
+    );
+    assert!(
+        carries(first + 2, "effect=gho-discount-refreshed{"),
+        "the observation is followed by its recomputed discount:\n{produced}"
+    );
+    let second = refreshes[1];
+    assert!(
+        !carries(second + 1, "effect=stk-aave-balance-observed{"),
+        "the second refresh reads the balance the first resolved, so it pays for no second          observation:\n{produced}"
+    );
+    assert!(
+        carries(second + 1, "effect=gho-discount-refreshed{"),
+        "the second signal is followed by its recomputed discount:\n{produced}"
+    );
+    check_or_regen(
+        "synthetic two-refresh canonical delta stream",
+        &produced,
+        SYNTHETIC_DELTA_STREAM,
+    );
 }
 
 /// A no-op `DiscountTokenUpdated(T0, T0)` is not a generation change: the

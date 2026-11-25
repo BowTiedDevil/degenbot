@@ -38,12 +38,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use alloy::primitives::B256;
+use alloy::primitives::{keccak256, B256};
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, NoProgress,
-    ProgressSink, RunError, RunSpec, VerifyPolicy,
+    run_aave_update, run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, CanonicalDelta,
+    NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
 };
-use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
+use degenbot_db::sql_ledger::{
+    dump_tables_golden_json, ledger_golden_json, restore_aave_seed_json, LedgerDb,
+};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{
     entry_digest, entry_key, verify_cassette_bytes, Cassette, CassetteEntry, CassetteResponse,
@@ -65,11 +67,16 @@ fn repo_root() -> PathBuf {
 /// the RPC counters, the SQL statement count, and the applied events the
 /// replay must reproduce — shared with `updater_replay_bench`.
 fn surface_capture() -> ReplayCapture {
+    surface_capture_of(AAVE_UPDATE_CAPTURE)
+}
+
+/// One governed capture's entry in the committed replay-surface authority.
+fn surface_capture_of(id: &str) -> ReplayCapture {
     let surface = ReplaySurface::load_committed(&repo_root())
         .expect("the committed replay-surface authority must load");
     surface
-        .capture(AAVE_UPDATE_CAPTURE)
-        .expect("the authority governs the aave capture")
+        .capture(id)
+        .unwrap_or_else(|error| panic!("the authority governs capture {id}: {error}"))
         .clone()
 }
 
@@ -88,6 +95,60 @@ const DUMP_GOLDEN_PATH: &str = concat!(
 /// The pinned span (the recorder's `--from/--to`).
 const SPAN_FROM: u64 = 26_130_440;
 const SPAN_TO: u64 = 26_130_445;
+
+/// The statement-ledger session is ONE process-global slot in degenbot-db, and
+/// cargo runs this binary's tests as threads of one process, so the two
+/// ledger-arming gates hold this guard for their whole session instead of
+/// racing into `LedgerArmed`. A panic inside one gate poisons the mutex; the
+/// other still runs rather than failing for the first one's abort.
+fn ledger_session() -> std::sync::MutexGuard<'static, ()> {
+    static LEDGER_SESSION: Mutex<()> = Mutex::new(());
+    LEDGER_SESSION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The GHO first-mint capture's id in the committed replay-surface authority.
+const AAVE_FIRST_MINT_CAPTURE: &str = "aave_gho_first_mint_17699253";
+
+/// The first-mint capture's committed replay seed (the recorder's
+/// `--seed-out`): the warm-boot substrate rows a replay restores.
+const FIRST_MINT_SEED_GOLDEN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/cassettes/aave_gho_first_mint_17699253.seed.json"
+);
+
+/// The first-mint capture's committed canonical delta stream.
+const FIRST_MINT_DELTA_GOLDEN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/sql_goldens/aave_gho_first_mint_17699253.delta-stream.json"
+);
+
+/// The first-mint capture's archive proof: the capture parent's position and
+/// GHO-discount pre-state, read from the node the cassette was recorded against.
+const FIRST_MINT_EVIDENCE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/aave_receipts/aave_gho_first_mint_17699253.evidence.json"
+);
+
+/// The first-mint capture's one-block span and the parent its seed reads.
+const FIRST_MINT_BLOCK: u64 = 17_699_253;
+const FIRST_MINT_PARENT: u64 = 17_699_252;
+
+/// stkAAVE — the discount token the refresh's parent-block `balanceOf` targets.
+const STK_AAVE: &str = "0x4da27a545c0c5B758a6BA100e3a049001de870f5";
+
+/// The GHO reserve's vToken: the debt leg whose `scaledBalanceOf` is the zero
+/// pre-state, and the emitter that answers both discount getters and its own
+/// `DEBT_TOKEN_REVISION`.
+const GHO_VTOKEN: &str = "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B";
+
+/// The GHO reserve's aToken: the collateral leg whose `ATOKEN_REVISION` the
+/// capture seeds.
+const GHO_ATOKEN: &str = "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977";
+
+/// `balanceOf(address)`'s selector (the one read the refresh pays for).
+const BALANCE_OF_SELECTOR: &str = "0x70a08231";
 
 /// The chunk's acquisition-surface composition (ADR-105 D2/D5), pinned
 /// per method below:
@@ -372,8 +433,453 @@ fn aave_chunk_delta_stream_matches_the_committed_golden() {
     check_or_regen("canonical delta stream", &produced, DELTA_STREAM_GOLDEN);
 }
 
+/// The first-mint capture's restored substrate: the committed seed's rows,
+/// restored through the case-preserving codec into a fresh harness DB. A replay
+/// starts from exactly the rows the recording read — no in-code literals here.
+fn restored_seed_db(seed_path: &str, dir: &Path, file_name: &str) -> (PathBuf, i64) {
+    let seed = std::fs::read_to_string(seed_path)
+        .unwrap_or_else(|e| panic!("the committed seed {seed_path} must exist: {e}"));
+    let path = dir.join(file_name);
+    let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
+    let market_id = {
+        {
+            let conn = db.lock();
+            restore_aave_seed_json(&conn, &seed)
+                .expect("the committed seed restores through the case-preserving codec");
+        }
+        let markets = db.fetch_active_aave_markets().unwrap();
+        let [market] = markets.as_slice() else {
+            panic!(
+                "the committed seed carries one active market, got {}",
+                markets.len()
+            );
+        };
+        market.id
+    };
+    (path, market_id)
+}
+
+/// The header hash a capture records for `number`.
+fn recorded_block_hash(cassette: &Cassette, number: u64) -> String {
+    let key = entry_key("eth_getBlockByNumber", &json!([number.to_string(), false]));
+    let entry = cassette
+        .entries
+        .get(&key)
+        .unwrap_or_else(|| panic!("the capture records the header at {number}"));
+    let CassetteResponse::Success { result } = &entry.response else {
+        panic!("the recorded header read at {number} is a success");
+    };
+    result["hash"]
+        .as_str()
+        .expect("the recorded header carries its hash")
+        .to_string()
+}
+
+/// The chunk reports' canonical delta stream, encoded the golden's way.
+fn delta_stream(chunks: &[AaveChunkProgress]) -> String {
+    let encoded: Vec<String> = chunks
+        .iter()
+        .flat_map(|chunk| chunk.deltas.iter().map(CanonicalDelta::encode))
+        .collect();
+    format!("{}.\n", encoded.join("\n"))
+}
+
+/// The first-mint capture's refresh surface: exactly ONE `balanceOf` call, to
+/// stkAAVE, pinned to the capture parent's block hash. The refresh reads the
+/// stkAAVE balance at the block BEFORE the borrow, so a second read — or a read
+/// at the span block — is a different discount seed, not a cheaper one.
+#[test]
+fn first_mint_cassette_pays_for_one_parent_block_stk_aave_balance_read() {
+    let capture = surface_capture_of(AAVE_FIRST_MINT_CAPTURE);
+    let cassette = capture_cassette(&capture);
+    assert_eq!(cassette.provenance.span.from_block, FIRST_MINT_BLOCK);
+    assert_eq!(cassette.provenance.span.to_block, FIRST_MINT_BLOCK);
+
+    let balance_reads: Vec<&String> = cassette
+        .entries
+        .keys()
+        .filter(|key| key.contains(BALANCE_OF_SELECTOR))
+        .collect();
+    assert_eq!(
+        balance_reads.len(),
+        1,
+        "the refresh pays for exactly one balanceOf read, got {balance_reads:?}"
+    );
+    let key = balance_reads[0];
+    assert!(
+        key.starts_with("[\"eth_call\""),
+        "the one balance read is an eth_call: {key}"
+    );
+    assert!(
+        key.contains(&STK_AAVE.to_lowercase()),
+        "the one balance read targets stkAAVE: {key}"
+    );
+    let parent_hash = recorded_block_hash(&cassette, FIRST_MINT_PARENT).to_lowercase();
+    assert!(
+        key.contains(&parent_hash),
+        "the one balance read is pinned to the capture parent's block hash {parent_hash}: {key}"
+    );
+    let CassetteResponse::Success { result } = &cassette.entries[key].response else {
+        panic!("the recorded balanceOf answers with a success");
+    };
+    let zero_word = format!("0x{}", "0".repeat(64));
+    assert_eq!(
+        result.as_str(),
+        Some(zero_word.as_str()),
+        "the archive's pre-block stkAAVE balance is zero: the debt position is created in-span"
+    );
+}
+
+/// The first-mint capture's committed delta stream: the real borrow block
+/// replays from its committed seed over its committed cassette and reduces the
+/// committed canonical deltas byte-for-byte. The stream is where the GHO
+/// discount reasoning is pinned — after the refresh signal, its parent-block
+/// observation then the recomputed discount — and where the reserve
+/// configuration delta and the borrow's debt movement prove the same chunk
+/// carries both families. A bare refresh signal (no observation, no refresh)
+/// fails here rather than passing as a cheaper shape.
+#[test]
+#[expect(clippy::too_many_lines)]
+fn first_mint_delta_stream_matches_the_committed_golden() {
+    let capture = surface_capture_of(AAVE_FIRST_MINT_CAPTURE);
+    let events = capture
+        .aave_applied()
+        .expect("the authority states the first-mint capture's applied events")
+        .events_applied;
+    let cassette = capture_cassette(&capture);
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let transport = CassetteReplayTransport::new(cassette);
+    let provider = transport.as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = restored_seed_db(FIRST_MINT_SEED_GOLDEN, dir.path(), "first-mint.db");
+    // The ledger wrapper IS the run's DB handle, so the statement count the
+    // authority states rides the same replayed chunk (ADR-068 D3).
+    let _ledger_session = ledger_session();
+    let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
+    let sink = Arc::new(ProgressCollector::default());
+    let report = run_aave_update_on_db(
+        ledger.db(),
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(FIRST_MINT_BLOCK),
+            chunk_size: FIRST_MINT_BLOCK - FIRST_MINT_PARENT,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed first mint must commit cleanly");
+    assert_eq!(report.chunks_committed, 1);
+    assert_eq!(report.total_events_applied, events);
+
+    let records = ledger.records().expect("the capture session is armed");
+    assert_eq!(
+        records.len(),
+        capture.sql.statements,
+        "statement count drifted - an N+1 regression added or removed a statement per chunk apply"
+    );
+
+    // The reserve the run resolved is the row the seed restored: its
+    // case-preserving address is what the replay's lookup matched, so a codec
+    // that lowercased the seed could not have served this chunk.
+    {
+        let conn = ledger.db().lock();
+        let underlying: String = conn
+            .query_row("SELECT address FROM erc20_tokens WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .expect("the restored seed carries the reserve's erc20 row");
+        assert_eq!(
+            underlying, GHO,
+            "the restored reserve keeps the checksummed address the recording names"
+        );
+    }
+
+    let served = transport.served_snapshot();
+    assert_eq!(
+        served.requests, served.served,
+        "every request must be a served ledger entry - a fixture gap is a loud error, not a silent miss"
+    );
+    assert_eq!(
+        served.served, capture.rpc.round_trips,
+        "RPC round-trip count drifted - the first-mint fetch surface added or removed a read"
+    );
+    assert_eq!(
+        served.response_bytes, capture.rpc.response_bytes,
+        "served response bytes drifted - the first-mint corpus's recorded answers changed shape"
+    );
+
+    let chunks = sink.chunks.lock().unwrap().clone();
+    let produced = delta_stream(&chunks);
+    let lines: Vec<&str> = produced.lines().collect();
+    let position = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("the first-mint stream carries {needle}:\n{produced}"))
+    };
+    let refresh = position("effect=gho-refresh-discount{");
+    assert_eq!(
+        position("effect=stk-aave-balance-observed{"),
+        refresh + 1,
+        "the balance observation is the refresh signal's next delta:\n{produced}"
+    );
+    assert_eq!(
+        position("effect=gho-discount-refreshed{"),
+        refresh + 2,
+        "the recomputed discount follows its observation:\n{produced}"
+    );
+    assert_eq!(
+        produced
+            .matches("effect=stk-aave-balance-observed{")
+            .count(),
+        1,
+        "one refresh signal, one observation:\n{produced}"
+    );
+    let reserve_config = position("effect=reserve-data-updated{");
+    assert!(
+        reserve_config < refresh,
+        "the reserve configuration delta precedes the refresh:\n{produced}"
+    );
+    let borrow = position("effect=scaled-balance{aave_v3_debt_positions:");
+    assert!(
+        borrow < refresh,
+        "the borrow's debt movement precedes the refresh its mint signal triggers:\n{produced}"
+    );
+
+    check_or_regen(
+        "first-mint canonical delta stream",
+        &produced,
+        FIRST_MINT_DELTA_GOLDEN,
+    );
+}
+
+/// The archive proof the capture is seeded from: every proof call is the
+/// capture parent's, its selector is keccak of the getter it names, and its
+/// answer is the value the committed seed carries. `scaledBalanceOf` is the zero
+/// pre-state that makes the in-span position creation truthful. The proof is an
+/// independent read: it never derives from the recording it corroborates.
+#[test]
+#[expect(clippy::too_many_lines)]
+fn first_mint_evidence_pins_the_capture_parent_pre_state_the_seed_carries() {
+    let evidence: Value = serde_json::from_str(
+        &std::fs::read_to_string(FIRST_MINT_EVIDENCE).expect("the committed evidence must exist"),
+    )
+    .expect("the evidence is a JSON document");
+    let seed: Value = serde_json::from_str(
+        &std::fs::read_to_string(FIRST_MINT_SEED_GOLDEN).expect("the committed seed must exist"),
+    )
+    .expect("the seed is a JSON document");
+
+    assert_eq!(
+        evidence["schema"],
+        json!("degenbot.aave_capture_evidence/v1")
+    );
+    assert_eq!(
+        evidence["provenance"]["capture_parent"],
+        json!(FIRST_MINT_PARENT)
+    );
+    assert_eq!(
+        evidence["provenance"]["capture_block"],
+        json!(FIRST_MINT_BLOCK)
+    );
+    let capture = surface_capture_of(AAVE_FIRST_MINT_CAPTURE);
+    let cassette = capture_cassette(&capture);
+    assert_eq!(
+        evidence["provenance"]["capture_parent_hash"],
+        json!(recorded_block_hash(&cassette, FIRST_MINT_PARENT)),
+        "the evidence names the parent header the cassette records"
+    );
+    assert_eq!(
+        evidence["provenance"]["capture_block_hash"],
+        json!(recorded_block_hash(&cassette, FIRST_MINT_BLOCK)),
+        "the evidence names the span header the cassette records"
+    );
+
+    let calls = evidence["calls"]
+        .as_array()
+        .expect("the evidence carries its proof calls");
+    let call = |name: &str| {
+        calls
+            .iter()
+            .find(|call| call["name"] == json!(name))
+            .unwrap_or_else(|| panic!("the evidence proves {name}"))
+    };
+    for call in calls {
+        assert_eq!(
+            call["block"],
+            json!(FIRST_MINT_PARENT),
+            "every proof call reads the capture parent"
+        );
+        let signature = call["signature"]
+            .as_str()
+            .expect("a proof call names its getter");
+        let selector = call["selector"]
+            .as_str()
+            .expect("a proof call carries its selector");
+        assert_eq!(
+            selector,
+            format!(
+                "0x{}",
+                alloy::hex::encode(&keccak256(signature.as_bytes()).0[..4])
+            ),
+            "the selector IS the named getter's: {signature}"
+        );
+    }
+
+    let seed_cell = |table: &str, column: &str| -> Value {
+        let table_doc = seed["tables"]
+            .as_array()
+            .expect("the seed carries its tables")
+            .iter()
+            .find(|doc| doc["table"] == json!(table))
+            .unwrap_or_else(|| panic!("the seed carries {table}"));
+        let columns = table_doc["columns"]
+            .as_array()
+            .expect("the table names its columns");
+        let index = columns
+            .iter()
+            .position(|name| name == &json!(column))
+            .unwrap_or_else(|| panic!("{table} carries {column}"));
+        table_doc["rows"]
+            .as_array()
+            .expect("the table carries rows")[0][index]
+            .clone()
+    };
+
+    let erc20_address = |id: u64| -> String {
+        let table_doc = seed["tables"]
+            .as_array()
+            .expect("the seed carries its tables")
+            .iter()
+            .find(|doc| doc["table"] == json!("erc20_tokens"))
+            .unwrap_or_else(|| panic!("the seed carries erc20_tokens"));
+        let columns = table_doc["columns"]
+            .as_array()
+            .expect("the table names its columns");
+        let column = |name: &str| {
+            columns
+                .iter()
+                .position(|entry| entry == &json!(name))
+                .unwrap_or_else(|| panic!("erc20_tokens carries {name}"))
+        };
+        let (id_index, address_index) = (column("id"), column("address"));
+        table_doc["rows"]
+            .as_array()
+            .expect("the table carries rows")
+            .iter()
+            .find(|row| row[id_index].as_u64() == Some(id))
+            .unwrap_or_else(|| panic!("the seed carries the erc20 row {id}"))[address_index]
+            .as_str()
+            .expect("an erc20 row's address is a string")
+            .to_string()
+    };
+    // The proof's targets are the reserve's OWN scaled tokens, taken from the
+    // seed's FK graph rather than restated: a substituted target cannot agree
+    // with both the seed and the evidence.
+    let debt_token_address = erc20_address(
+        seed_cell("aave_gho_tokens", "v_token_id")
+            .as_u64()
+            .expect("the seed's GHO vToken id is an integer"),
+    );
+    let collateral_token_address = erc20_address(
+        seed_cell("aave_v3_assets", "a_token_id")
+            .as_u64()
+            .expect("the seed's aToken id is an integer"),
+    );
+    assert_eq!(
+        debt_token_address, GHO_VTOKEN,
+        "the seed's GHO vToken is the capture's debt token"
+    );
+    assert_eq!(
+        collateral_token_address, GHO_ATOKEN,
+        "the seed's GHO aToken is the capture's collateral token"
+    );
+    for name in [
+        "scaledBalanceOf",
+        "getDiscountToken",
+        "getDiscountRateStrategy",
+        "DEBT_TOKEN_REVISION",
+    ] {
+        assert_eq!(
+            call(name)["target"],
+            json!(debt_token_address),
+            "the evidence reads {name} on the GHO vToken the seed seeds"
+        );
+    }
+    assert_eq!(
+        call("ATOKEN_REVISION")["target"],
+        json!(collateral_token_address),
+        "the evidence reads ATOKEN_REVISION on the GHO aToken the seed seeds"
+    );
+
+    let zero_word = format!("0x{}", "0".repeat(64));
+    assert_eq!(
+        call("scaledBalanceOf")["returned"],
+        json!(zero_word),
+        "the debt leg has no scaled balance before the borrow"
+    );
+    assert_eq!(
+        call("getDiscountToken")["returned"],
+        json!(format!(
+            "0x{}{}",
+            "0".repeat(24),
+            STK_AAVE[2..].to_lowercase()
+        )),
+        "the discount token is the stkAAVE the seed seeds"
+    );
+    assert_eq!(
+        call("getDiscountToken")["returned"],
+        json!(format!(
+            "0x{}{}",
+            "0".repeat(24),
+            seed_cell("aave_gho_tokens", "v_gho_discount_token")
+                .as_str()
+                .expect("the seed's discount token is an address")[2..]
+                .to_lowercase()
+        )),
+        "the proof and the seed name one discount token"
+    );
+    assert_eq!(
+        call("getDiscountRateStrategy")["returned"],
+        json!(format!(
+            "0x{}{}",
+            "0".repeat(24),
+            seed_cell("aave_gho_tokens", "v_gho_discount_rate_strategy")
+                .as_str()
+                .expect("the seed's rate strategy is an address")[2..]
+                .to_lowercase()
+        )),
+        "the proof and the seed name one discount rate strategy"
+    );
+    let revision = |column: &str| {
+        seed_cell("aave_v3_assets", column)
+            .as_u64()
+            .unwrap_or_else(|| panic!("the seed's {column} is an integer"))
+    };
+    assert_eq!(
+        call("ATOKEN_REVISION")["returned"],
+        json!(format!("0x{:064x}", revision("a_token_revision"))),
+        "the reserve's aToken revision is the seeded one"
+    );
+    assert_eq!(
+        call("DEBT_TOKEN_REVISION")["returned"],
+        json!(format!("0x{:064x}", revision("v_token_revision"))),
+        "the reserve's debt-token revision is the seeded one"
+    );
+}
+
 fn committed_cassette() -> Cassette {
-    let capture = surface_capture();
+    capture_cassette(&surface_capture())
+}
+
+/// One governed capture's committed cassette package.
+fn capture_cassette(capture: &ReplayCapture) -> Cassette {
     let path = repo_root().join(&capture.cassette);
     let bytes = degenbot_rpc::cassette::read_artifact(&path)
         .unwrap_or_else(|e| panic!("capture {}: cassette {}: {e}", capture.id, path.display()));
@@ -681,6 +1187,7 @@ fn aave_chunk_ledger_and_db_dump_match_the_committed_goldens() {
 
     // The ledger wrapper IS the run's DB handle - the trace hooks ride the
     // connection the chunk loop actually uses (ADR-068 D3).
+    let _ledger_session = ledger_session();
     let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
     let report = run_aave_update_on_db(
         ledger.db(),

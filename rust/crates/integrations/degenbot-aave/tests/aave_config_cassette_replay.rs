@@ -55,8 +55,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveChunkProgress, NoProgress, ProgressSink, RunSpec,
-    VerifyPolicy,
+    run_aave_update, run_aave_update_on_db, AaveChunkProgress, CanonicalDelta, NoProgress,
+    ProgressSink, RunSpec, VerifyPolicy,
 };
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
@@ -383,6 +383,64 @@ fn committed_discount_calls(cassette: &Cassette) -> Vec<String> {
         .filter(|k| k.contains(REPEAT_BURN_USER))
         .cloned()
         .collect()
+}
+
+/// The config-era capture's committed canonical delta stream (ADR-105 D7,
+/// D13): the chained fact-dependence the span reduces — one user's three
+/// variable-debt GHO burns, each with the discount refresh its mint/burn
+/// signal triggers. The stream is the journal's vocabulary, so it is pinned
+/// byte-for-byte: a semantic change to an effect's identity or position shows
+/// up here rather than only in row values.
+const DELTA_STREAM_GOLDEN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/sql_goldens/aave_config_chunk_19091050-19091059.delta-stream.json"
+);
+
+/// The config-era capture's canonical delta stream, replayed offline from its
+/// committed cassette over the in-code substrate: the chunk's deltas are
+/// byte-identical to the committed stream, so the discount refreshes keep the
+/// exact source positions the fact-dependence argument depends on.
+#[test]
+fn aave_config_chunk_delta_stream_matches_the_committed_golden() {
+    let cassette = committed_cassette();
+    let chain_id = i64::try_from(cassette.chain_id).unwrap();
+    let provider = CassetteReplayTransport::new(cassette).as_alloy_provider();
+
+    let dir = TempDir::new().unwrap();
+    let (path, market_id) = seeded_db(dir.path(), "config-delta-stream.db");
+    let sink = Arc::new(ProgressCollector::default());
+    run_aave_update(
+        &path,
+        RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(SPAN_TO),
+            chunk_size: SPAN_TO - SPAN_FROM + 1,
+            max_block_range: 10_000,
+            provider,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: sink.clone(),
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        },
+    )
+    .expect("the replayed config chunk must commit cleanly");
+
+    let chunks = sink.chunks.lock().unwrap().clone();
+    let encoded: Vec<String> = chunks
+        .iter()
+        .flat_map(|chunk| chunk.deltas.iter().map(CanonicalDelta::encode))
+        .collect();
+    assert!(
+        !encoded.is_empty(),
+        "the config span reduces at least one canonical delta"
+    );
+    let produced = format!("{}.\n", encoded.join("\n"));
+    check_or_regen(
+        "config chunk canonical delta stream",
+        &produced,
+        DELTA_STREAM_GOLDEN,
+    );
 }
 
 #[test]

@@ -22,6 +22,25 @@
       }
     },
     {
+      "id": "aave_gho_first_mint_17699253",
+      "kind": "aave_update",
+      "cassette": "tests/fixtures/cassettes/aave_gho_first_mint_17699253.json.zst",
+      "span": {
+        "from_block": 17699253,
+        "to_block": 17699253
+      },
+      "rpc": {
+        "round_trips": 14,
+        "response_bytes": 31845
+      },
+      "sql": {
+        "statements": 54
+      },
+      "applied": {
+        "events_applied": 5
+      }
+    },
+    {
       "id": "aave_update_chunk_26130440-26130445",
       "kind": "aave_update",
       "cassette": "tests/fixtures/cassettes/aave_update_chunk_26130440-26130445.json.zst",

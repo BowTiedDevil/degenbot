@@ -1,0 +1,63 @@
+{
+  "schema": "degenbot.aave_capture_evidence/v1",
+  "provenance": {
+    "source": "live reth archive node, eth_call at the capture parent",
+    "node": "http://host.containers.internal:8545",
+    "client_version": "reth/v2.11.0-b9abbcc/x86_64-unknown-linux-gnu",
+    "captured_for": "aave_gho_first_mint_17699253: the capture parent's stkAAVE-balance and GHO-discount pre-state, plus the reserve's scaled-token revisions",
+    "capture_parent": 17699252,
+    "capture_parent_hash": "0x60bef44f1c51b93ed63ccc471a343a54eb731430494eacc6fdd0331282ae35a1",
+    "capture_block": 17699253,
+    "capture_block_hash": "0xe6361f93e332c5179020850884ee0ef6ef785c2e4446d4d0350adb667ded577e",
+    "user": "0xb9cdf9c22f204118af35d3293fe57a356dd9c8c8",
+    "transaction_hash": "0x97858017903ffbe793a4c5789293f170719f5a9d918db52e31e7f74e1129dd75"
+  },
+  "calls": [
+    {
+      "name": "scaledBalanceOf",
+      "signature": "scaledBalanceOf(address)",
+      "selector": "0x1da24f3e",
+      "target": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+      "target_role": "gho_vtoken (debt leg)",
+      "argument": "0xb9cdf9c22f204118af35d3293fe57a356dd9c8c8",
+      "block": 17699252,
+      "returned": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "getDiscountToken",
+      "signature": "getDiscountToken()",
+      "selector": "0xefe3de14",
+      "target": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+      "target_role": "gho_vtoken",
+      "block": 17699252,
+      "returned": "0x0000000000000000000000004da27a545c0c5b758a6ba100e3a049001de870f5"
+    },
+    {
+      "name": "getDiscountRateStrategy",
+      "signature": "getDiscountRateStrategy()",
+      "selector": "0xfe49b794",
+      "target": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+      "target_role": "gho_vtoken",
+      "block": 17699252,
+      "returned": "0x0000000000000000000000004c38ec4d1d2068540dfc11dfa4de41f733ddf812"
+    },
+    {
+      "name": "ATOKEN_REVISION",
+      "signature": "ATOKEN_REVISION()",
+      "selector": "0x0bd7ad3b",
+      "target": "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977",
+      "target_role": "gho_atoken",
+      "block": 17699252,
+      "returned": "0x0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    {
+      "name": "DEBT_TOKEN_REVISION",
+      "signature": "DEBT_TOKEN_REVISION()",
+      "selector": "0xb9a7b622",
+      "target": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+      "target_role": "gho_vtoken",
+      "block": 17699252,
+      "returned": "0x0000000000000000000000000000000000000000000000000000000000000001"
+    }
+  ]
+}
