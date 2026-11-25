@@ -84,8 +84,10 @@ const TEST_HARNESS_KEYS: &[&str] = &[
     // (`degenbot-bot/src/arb_engine/tests/path_admission_replay.rs`,
     // `degenbot-bot/src/arb_engine/crawl/unit/tests/path_admission_replay.rs`,
     // `degenbot-arbitrage/tests/release_binding/admission_replay.rs`): the
-    // expected old/new values and report paths each leg asserts against. They
+    // expected old/new values and report paths each leg asserts against, plus
+    // the replay's process-role selector (isolated child vs harness). They
     // steer a measurement, never the bot.
+    "DEGENBOT_ADMISSION_REPLAY_MODE",
     "DEGENBOT_ADMISSION_REPLAY_OUT",
     "DEGENBOT_ALL_TARGETS_EXPECT_SERIES_LINES",
     "DEGENBOT_ALL_TARGETS_REPLAY_OUT",

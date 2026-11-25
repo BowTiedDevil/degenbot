@@ -15,6 +15,7 @@ copy of the source and must produce an observed nonzero exit. The env overrides
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import tomllib
@@ -25,6 +26,7 @@ SCRIPT = REPO_ROOT / "scripts" / "hooks" / "ci-parity.sh"
 MANIFEST = REPO_ROOT / "scripts" / "hooks" / "ci-parity-manifest.txt"
 PREK_TOML = REPO_ROOT / "prek.toml"
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+UV_VYPER_STEP = "Install uv (executor vyper toolchain)"
 
 # The sed extraction ci-parity.sh uses to read prek.toml's pre-push entry
 # strings. Kept byte-identical to the script's copy; the parser backstop below
@@ -86,6 +88,30 @@ def _hook_line_for(entry: str) -> str:
         if line.lstrip().startswith("{ id = ") and f'entry = "{entry}"' in line:
             return line
     msg = f"no hook in prek.toml runs {entry!r}"
+    raise AssertionError(msg)
+
+
+def _ci_step(source: Path, name: str) -> str:
+    """`source`'s named step as its `- name` and `uses` lines, action pin included.
+
+    Deriving the anchor from the workflow keeps a pin-only bump of the action
+    from invalidating a probe: the mutation still replaces the step the
+    workflow actually declares.
+    """
+    lines = source.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines[:-1]):
+        if line.strip() == f"- name: {name}" and lines[index + 1].strip().startswith("uses:"):
+            return f"{line}\n{lines[index + 1]}"
+    msg = f"{source} declares no `- name: {name}` step with a `uses:` line"
+    raise AssertionError(msg)
+
+
+def _ci_line(source: Path, needle: str) -> str:
+    """The first `source` line containing `needle`, verbatim (any pin included)."""
+    for line in source.read_text(encoding="utf-8").splitlines():
+        if needle in line:
+            return line
+    msg = f"{source} has no line containing {needle!r}"
     raise AssertionError(msg)
 
 
@@ -306,8 +332,7 @@ def test_a_job_missing_a_tool_its_recipe_needs_fails(tmp_path: Path) -> None:
     mutated = _mutate(
         tmp_path,
         CI_YML,
-        "      - name: Install uv (executor vyper toolchain)\n"
-        "        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7",
+        _ci_step(CI_YML, UV_VYPER_STEP),
         "      - name: Provision nothing\n        run: echo skipped",
     )
 
@@ -321,17 +346,41 @@ def test_a_job_missing_a_tool_its_recipe_needs_fails(tmp_path: Path) -> None:
 
 def test_a_wrong_install_action_tool_fails(tmp_path: Path) -> None:
     """`taiki-e/install-action` counts only when it installs nextest itself."""
+    nextest = _ci_line(CI_YML, "tool: nextest@")
     mutated = _mutate(
         tmp_path,
         CI_YML,
-        "          tool: nextest@0.9.152",
-        "          tool: cargo-binstall",
+        nextest,
+        re.sub(r"nextest@\S+", "cargo-binstall", nextest),
     )
 
     result = _run_ci_parity(CI=str(mutated))
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert "cargo-nextest" in result.stderr
+
+
+def test_a_sha_only_action_pin_bump_keeps_the_anchor(tmp_path: Path) -> None:
+    """A pin bump is not a wiring change: the toolchain probe still anchors."""
+    anchor = _ci_step(CI_YML, UV_VYPER_STEP)
+    fresh_sha = "deadbeef" * 5
+    repinned = re.sub(r"@[0-9a-f]{40}", f"@{fresh_sha}", anchor)
+    assert repinned != anchor, "the anchor must carry the pin this test bumps"
+    bumped = _mutate(tmp_path, CI_YML, anchor, repinned)
+    assert _ci_step(bumped, UV_VYPER_STEP) == repinned
+
+    mutated = _mutate(
+        tmp_path,
+        bumped,
+        _ci_step(bumped, UV_VYPER_STEP),
+        "      - name: Provision nothing\n        run: echo skipped",
+    )
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "tier3-oracle" in result.stderr
+    assert "uv" in result.stderr
 
 
 def test_a_recipe_a_job_runs_without_a_row_fails(tmp_path: Path) -> None:

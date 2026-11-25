@@ -10,6 +10,9 @@
 //! The corpus is fixed here, never discovered: the crawl's DB path graph names
 //! only V2/V3/V4 (ADR-107 C7), so the solve-only families reach admission
 //! through the direct `register_path` door — the live guard ADR-107 D4 names.
+//!
+//! The run owns its process: the watched families have to describe this replay
+//! alone, so a co-runner's samples can never enter the assertions.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -27,9 +30,15 @@ use crate::arb_engine::inline_sim::{InlineSimRequest, InlineSimulator};
 use crate::arb_engine::lifecycle::{latest_results, path_count, register_path};
 use crate::arb_engine::test_harness::run_test_cycle;
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata, SimulatedPathResult};
+use crate::instruments::PipelineInstruments;
 use degenbot_pools::AffectedKey;
 
 const REPLAY_BLOCK: u64 = 100;
+const REPLAY_MODE_ENV: &str = "DEGENBOT_ADMISSION_REPLAY_MODE";
+const REPLAY_MODE_ISOLATED: &str = "isolated";
+const REPLAY_TEST_SUFFIX: &str = "::path_admission_replay::path_admission_replay";
+const CO_RUNNER_SOLVE_SAMPLES: usize = 117;
+const SOLVE_EVALUATIONS_SERIES: &str = "degenbot_solve_path_duration_seconds_count";
 const T0: Address = Address::new([0x01; 20]);
 const T1: Address = Address::new([0x02; 20]);
 const V4_POOL_MANAGER: Address = Address::new([0x40; 20]);
@@ -430,6 +439,14 @@ impl InlineSimulator for ReplayHook {
     }
 }
 
+fn record_co_runner_solve_samples() {
+    let meter = crate::metrics::try_global_meter().expect("the replay metrics pipeline is running");
+    let instruments = PipelineInstruments::new(&meter);
+    for _ in 0..CO_RUNNER_SOLVE_SAMPLES {
+        instruments.observe_per_path_solve_duration(0.001);
+    }
+}
+
 fn scrape(addr: std::net::SocketAddr) -> String {
     use std::io::{Read as _, Write as _};
     crate::metrics::flush_global_metrics();
@@ -523,16 +540,93 @@ const WATCHED: [&str; 7] = [
     "degenbot_selection_all_targets_declined_total",
 ];
 
-#[test]
-fn path_admission_replay() {
+fn init_replay_metrics() -> std::net::SocketAddr {
     let init = crate::metrics::init_global_metrics_with_addr(
         "127.0.0.1:0".parse().expect("ephemeral endpoint"),
     )
     .expect("the replay owns the process metrics pipeline");
-    let addr = match &init {
+    match &init {
         crate::metrics::MetricsInit::Started { endpoint }
         | crate::metrics::MetricsInit::AlreadyRunning { endpoint } => endpoint.addr(),
-    };
+    }
+}
+
+fn replay_binary() -> std::process::Command {
+    std::process::Command::new(std::env::current_exe().expect("test executable path"))
+}
+
+fn replay_test_name() -> String {
+    let output = replay_binary()
+        .arg("--list")
+        .output()
+        .expect("the test binary lists its own tests");
+    let listing = String::from_utf8_lossy(&output.stdout);
+    listing
+        .lines()
+        .filter_map(|line| line.strip_suffix(": test"))
+        .find(|name| name.ends_with(REPLAY_TEST_SUFFIX))
+        .expect("the test binary lists the admission replay test")
+        .to_owned()
+}
+
+fn run_isolated_replay() {
+    let name = replay_test_name();
+    let output = replay_binary()
+        .args(["--exact", name.as_str(), "--nocapture", "--test-threads=1"])
+        .env(REPLAY_MODE_ENV, REPLAY_MODE_ISOLATED)
+        .output()
+        .expect("the isolated replay process runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "the isolated replay failed with {}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "the isolated process ran no replay test: {stdout}"
+    );
+    println!("{stdout}");
+}
+
+/// The watched families must describe the replay alone. This control assembles
+/// the co-runner the isolation exists for: the same program, a dirty
+/// process-global registry, and no isolation. That run has to fail while the
+/// isolated child passes — the only difference between the two is the foreign
+/// samples, so a green in-process run means the replay stopped reading the
+/// process-global sum, and a failure in both means the difference was not the
+/// contamination.
+#[test]
+fn path_admission_capture_fixture_is_process_global_contamination_free() {
+    let addr = init_replay_metrics();
+    record_co_runner_solve_samples();
+    assert!(
+        series_sum(&scrape(addr), SOLVE_EVALUATIONS_SERIES, |_| true) >= CO_RUNNER_SOLVE_SAMPLES,
+        "the co-runner samples never reached the process-global registry"
+    );
+
+    let in_process = std::panic::catch_unwind(path_admission_replay_body);
+    assert!(
+        in_process.is_err(),
+        "the in-process replay passed with foreign samples in the registry"
+    );
+
+    run_isolated_replay();
+}
+
+#[test]
+fn path_admission_replay() {
+    match std::env::var(REPLAY_MODE_ENV).as_deref() {
+        Ok(REPLAY_MODE_ISOLATED) => path_admission_replay_body(),
+        Ok(other) => panic!("{REPLAY_MODE_ENV}={other} is not a replay mode"),
+        Err(std::env::VarError::NotPresent) => run_isolated_replay(),
+        Err(std::env::VarError::NotUnicode(_)) => panic!("{REPLAY_MODE_ENV} must be valid UTF-8"),
+    }
+}
+
+fn path_admission_replay_body() {
+    let addr = init_replay_metrics();
 
     let mut corpus = corpus();
     let mut out: Vec<String> = Vec::new();
@@ -669,9 +763,7 @@ fn path_admission_replay() {
         env_usize("DEGENBOT_REPLAY_EXPECT_NO_ENCODER_ARM"),
         "no_encoder_arm degrades (0 means the series is absent)"
     );
-    let solve_evaluations = series_sum(&text, "degenbot_solve_path_duration_seconds_count", |_| {
-        true
-    });
+    let solve_evaluations = series_sum(&text, SOLVE_EVALUATIONS_SERIES, |_| true);
     assert_eq!(
         solve_evaluations,
         env_usize("DEGENBOT_REPLAY_EXPECT_SOLVE_EVALUATIONS"),
