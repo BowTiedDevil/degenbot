@@ -27,7 +27,9 @@ use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_int
 use hashbrown::HashMap;
 
 use crate::solve::bounded_brent::{minimize_scalar_bounded, DEFAULT_MAXFUN};
-use crate::solve::concentrated_liquidity::{ConcentratedLiquidityPathSim, IntV3TickRangeSequence};
+use crate::solve::concentrated_liquidity::{
+    ConcentratedLiquidityPathSim, IntV3TickRangeHop, IntV3TickRangeSequence,
+};
 use crate::solve::runtime::SolveRuntimeConfig;
 
 const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -523,5 +525,143 @@ fn refine_window_matches_brent_helper_on_stress_books() {
         );
     } else {
         println!("refine-undersample: {checked} stress paths match the Brent helper exactly");
+    }
+}
+
+fn captured_anchor_sequences(path_id: u64) -> Vec<IntV3TickRangeSequence> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/concentrated_liquidity_capture_offline.jsonl");
+    let content = std::fs::read_to_string(fixture).unwrap();
+    let row = content
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|row| row["path_id"].as_u64() == Some(path_id) && !row["golden"].is_null())
+        .unwrap();
+    sequences_from_capture_row(&row)
+}
+
+fn sequences_from_capture_row(row: &serde_json::Value) -> Vec<IntV3TickRangeSequence> {
+    let seqs: Vec<IntV3TickRangeSequence> = row["hops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hop| {
+            let ranges = hop
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| IntV3TickRangeHop {
+                    liquidity: item["liquidity"].as_str().unwrap().parse().unwrap(),
+                    sqrt_price_x96: item["sqrt_price_x96"].as_str().unwrap().parse().unwrap(),
+                    sqrt_price_lower_x96: item["sqrt_price_lower_x96"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                    sqrt_price_upper_x96: item["sqrt_price_upper_x96"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                    gamma_numer: item["gamma_numer"].as_u64().unwrap(),
+                    fee_denom: item["fee_denom"].as_u64().unwrap(),
+                    zero_for_one: item["zero_for_one"].as_bool().unwrap(),
+                    word_boundary_prices: item["word_boundary_prices"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|value| value.as_str().unwrap().parse().unwrap())
+                        .collect(),
+                })
+                .collect();
+            IntV3TickRangeSequence::new(ranges).unwrap()
+        })
+        .collect();
+    seqs
+}
+
+fn truncate_sequences(
+    seqs: &[IntV3TickRangeSequence],
+    limits: &[usize],
+) -> Vec<IntV3TickRangeSequence> {
+    seqs.iter()
+        .enumerate()
+        .map(|(hop, seq)| {
+            let take = limits.get(hop).copied().unwrap_or(seq.ranges.len());
+            IntV3TickRangeSequence::new(seq.ranges[..take].to_vec()).unwrap()
+        })
+        .collect()
+}
+
+fn assert_mobius_matches_brent(label: &str, seqs: &[IntV3TickRangeSequence]) {
+    let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
+    let walk =
+        crate::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
+            &refs,
+            &SolveRuntimeConfig::default(),
+        );
+    let walk_solution = walk.result.as_ref().unwrap();
+    let repeated =
+        crate::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
+            &refs,
+            &SolveRuntimeConfig::default(),
+        );
+    assert_eq!(
+        walk.result, repeated.result,
+        "{label}: nondeterministic solve"
+    );
+    let sim = ConcentratedLiquidityPathSim::new(&refs, None);
+    let exact = sim.output(walk_solution.optimal_input);
+    assert_eq!(
+        walk_solution.hop_outputs, exact.hop_outputs,
+        "{label}: hop outputs diverged"
+    );
+    assert_eq!(
+        walk_solution.profit,
+        exact.final_output - walk_solution.optimal_input,
+        "{label}: profit diverged from exact path output"
+    );
+    let (brent_x, brent_profit) = brent_helper_run(&sim);
+    let gap = brent_profit.saturating_sub(walk_solution.profit);
+    let gap_bps = 10_000.0 * u256_to_f64(gap) / u256_to_f64(brent_profit);
+    assert!(
+        gap_bps < 10.0,
+        "{label}: Mobius forfeited {gap_bps:.2} bps to production Brent: walk_x={} walk_profit={} brent_x={brent_x} brent_profit={brent_profit}",
+        walk_solution.optimal_input,
+        walk_solution.profit,
+    );
+}
+
+#[test]
+fn captured_anchor_path4_mobius_matches_brent() {
+    let full = captured_anchor_sequences(4);
+    let minimized = truncate_sequences(&full, &[5, 29]);
+    assert_mobius_matches_brent("path 4 minimized", &minimized);
+    assert_mobius_matches_brent("path 4 uncut", &full);
+}
+
+#[test]
+fn captured_anchor_path105_mobius_matches_brent() {
+    let full = captured_anchor_sequences(105);
+    assert_mobius_matches_brent("path 105 uncut", &full);
+}
+
+#[cfg(feature = "capture-fixtures")]
+#[test]
+fn golden_bearing_captures_mobius_match_brent() {
+    for file in [
+        "concentrated_liquidity_capture_offline.jsonl",
+        "heavy_concentrated_liquidity_solve_captures.jsonl",
+    ] {
+        let content =
+            crate::solve::fixtures::read_fixture(crate::solve::fixtures::fixture_path(file));
+        for row in crate::solve::fixtures::rows(&content) {
+            if row["golden"].is_null() {
+                continue;
+            }
+            let path_id = row["path_id"].as_u64().unwrap();
+            let seqs = sequences_from_capture_row(&row);
+            assert_mobius_matches_brent(&format!("{file} path {path_id}"), &seqs);
+        }
     }
 }

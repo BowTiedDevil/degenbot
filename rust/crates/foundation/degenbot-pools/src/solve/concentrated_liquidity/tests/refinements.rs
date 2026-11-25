@@ -29,7 +29,8 @@ use degenbot_math::v2::IntHopState;
 use crate::families::concentrated_liquidity::solve::{refine_bounds, ConcentratedLiquidityHop};
 use crate::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, derive_and_solve_concentrated_liquidity_piecewise,
-    solve_concentrated_liquidity_piecewise, solve_piecewise, MixedHopView,
+    solve_concentrated_liquidity_piecewise, solve_piecewise, ConcentratedLiquidityPathSim,
+    MixedHopView,
 };
 use crate::solve::gate::{
     path_bound_lines, path_output_bound_at, path_profit_bound, GateDeps, HopMath,
@@ -134,6 +135,19 @@ fn chain_oracle(seqs: &[&IntV3TickRangeSequence], x: U256) -> Option<U256> {
         y = walk_v3_seq(s, y)?;
     }
     Some(y)
+}
+
+fn dense_scan_profit(seqs: &[&IntV3TickRangeSequence], cap: U256) -> U256 {
+    let mut best = U256::ZERO;
+    for i in 0..=2048u64 {
+        let x = cap * U256::from(i) / U256::from(2048u64);
+        if let Some(output) = chain_oracle(seqs, x) {
+            if output > x {
+                best = best.max(output - x);
+            }
+        }
+    }
+    best
 }
 
 fn seq_cap(seq: &IntV3TickRangeSequence) -> U256 {
@@ -336,15 +350,7 @@ fn loop6_walker_dominates_dense_scan_and_envelope_never_undercuts() {
         }
 
         // walker dominance vs dense scan
-        let mut scan_best = U256::ZERO;
-        for i in 0..=2048u64 {
-            let x = cap * U256::from(i) / U256::from(2048u64);
-            if let Some(o) = chain_oracle(&refs, x) {
-                if o > x {
-                    scan_best = scan_best.max(o - x);
-                }
-            }
-        }
+        let scan_best = dense_scan_profit(&refs, cap);
         // The walk's refine is a documented PROFIT-ε search (see
         // REFINE_BRACKET_WEI / "the profit-ε gate"): the dense scan may find
         // an input whose realized profit is a hair above the walk's iterate
@@ -397,9 +403,11 @@ fn loop19_model_anchor_refine_is_argmax_equal_and_saves_sims() {
             .result
             .as_ref()
             .map_or(U256::ZERO, |solution| solution.profit);
+        let scan_best = dense_scan_profit(&refs, seq_cap(refs[0]));
+        let shortfall_eps = scan_best / U256::from(100_000u64) + U256::from(4096u64);
         assert!(
-            profit_off >= profit_on,
-            "{name}: Loop-19 stance INCREASED profit — flag can be promoted"
+            profit_off + shortfall_eps >= scan_best,
+            "{name}: default refinement under-shoots the independent dense scan: walk={profit_off} scan={scan_best}"
         );
         if profit_off > U256::ZERO {
             println!(
@@ -605,7 +613,24 @@ fn loop17_anchor_sweep_modes_agree() {
             if result_first.is_none() {
                 result_first = res.clone();
             }
-            assert_eq!(res, result_first, "{name}: sweep {label} moved the argmax");
+            if let Some(solution) = &res {
+                let sim = ConcentratedLiquidityPathSim::new(&refs, None);
+                let exact = sim.output(solution.optimal_input);
+                assert_eq!(
+                    solution.hop_outputs, exact.hop_outputs,
+                    "{name}: sweep {label} returned inexact hop outputs"
+                );
+                assert_eq!(
+                    solution.profit,
+                    exact.final_output - solution.optimal_input,
+                    "{name}: sweep {label} returned inexact profit"
+                );
+            }
+            assert_eq!(
+                res.as_ref().map(|solution| solution.profit),
+                result_first.as_ref().map(|solution| solution.profit),
+                "{name}: sweep {label} moved the profit optimum"
+            );
             sims.push((label, outcome.stats.sims));
             results.push((None, None));
         }

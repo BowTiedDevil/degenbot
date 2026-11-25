@@ -357,12 +357,13 @@ surfaced:
    with a windowed ternary search + dense sweep (`walk_refine_window`) —
    the two-layer discipline of `anchored_mobius_solve` generalized to windows.
 2. **The EVM floor staircase rules out pointwise direction tests.** The
-   discrete profit is flat to ±1 wei over tens of wei around the top, so
-   neither "argmax hugs the edge" nor pointwise edge-score comparisons are
-   reliable. The as-built direction test uses straddle probes at ±64 around
-   the right edge with +1-wei tolerance; on stop it refines the current
-   piece AND its forward neighbor (a peak straddling the edge is never
-   mis-attributed).
+   discrete profit can jog around a piece edge, so a local negative probe is
+   not evidence of the wider trend. The direction test starts with straddle
+   probes at ±64 around the right edge and doubles the forward span until the
+   observed score is non-negative or the path is exhausted. On stop it refines
+   the current piece AND its forward neighbor (a peak straddling the edge is
+   never mis-attributed). No fixed profit tolerance or smooth-curve direction
+   assumption is used.
 3. **One-piece steps, no hopscotch** in the transitional version: the walk
    visits consecutive pieces only, which by concavity cannot vault the
    peak. Exact anchors (`EHSWSX`) re-enable hopping past clearly-climbing

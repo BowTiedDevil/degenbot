@@ -908,8 +908,8 @@ fn solve_active_set_path_inner(
     /// AND over its immediate forward neighbor's window. Refinement of
     /// climbed-through pieces is skipped during the walk (their interior
     /// maxima cannot beat the walk's terminal region under concavity); the
-    /// neighbor refinement covers a peak straddling the edge that the ±1-wei
-    /// staircase-tolerant direction test could mis-attribute.
+    /// neighbor refinement covers a peak straddling the edge that the local
+    /// direction probe could mis-attribute.
     #[expect(
         clippy::too_many_arguments,
         reason = "walk-domain refinement carry (window pair + hint + recorder + neighbor switch + runtime stance) is coherent as a flat signature"
@@ -1005,16 +1005,13 @@ fn solve_active_set_path_inner(
         }
     }
 
-    use alloy::primitives::I256;
     if hops.is_empty() {
         return None;
     }
 
     let iteration_cap: usize = hops.iter().map(PieceView::piece_count).sum::<usize>() + 2;
-    // The anchor fixed-point re-entry is scoped to wide/deep books: below this
-    // many walk pieces the piecewise staircase stays effectively unimodal, the
-    // direction test is trustworthy, and the stance only perturbs equal-profit
-    // plateau tie-breaking (observed on the small synthetic corpora).
+    // The anchor fixed-point re-entry is scoped to wide/deep books; on the
+    // small synthetic corpora it only perturbs equal-profit plateau tie-breaking.
     let wide_book = iteration_cap >= REFINE_ADAPTIVE_MIN_TOTAL_PIECES;
     // Latched once the degenerate-leading-piece trigger fires, so the anchor
     // fixed-point chain can continue across the (non-degenerate) pieces it
@@ -1237,17 +1234,28 @@ fn solve_active_set_path_inner(
         // so the Möbius fold reuses prefix partials (byte-exact — see
         // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
         // within a solve.
-        // Direction test: straddle probes at ±64 around the window’s right
-        // edge, with +1-wei staircase tolerance. Climbing ⇒ advance one
-        // piece; falling or level ⇒ the peak is at or behind this edge —
-        // stop and refine this piece plus its forward neighbor.
+        // Direction comes only from observed scores. A negative local
+        // straddle is inconclusive, so widen the forward observation until it
+        // agrees or the path is exhausted instead of assigning a tolerance.
         let di_mk = Mark::start(tally);
         let back = xr.saturating_sub(U256::from(64u64)).max(x_l);
-        let fwd = xr.saturating_add(U256::from(64u64));
         let score_back =
             walk_profit_score(rec.eval_and_record(back, hops, tally).final_output, back);
-        let score_fwd = walk_profit_score(rec.eval_and_record(fwd, hops, tally).final_output, fwd);
-        let climbing = score_fwd + I256::ONE >= score_back;
+        let mut direction_span = U256::from(64u64);
+        let climbing = loop {
+            let fwd = xr.saturating_add(direction_span);
+            let outcome = rec.eval_and_record(fwd, hops, tally);
+            let score_fwd = walk_profit_score(outcome.final_output, fwd);
+            let forward_exhausted =
+                !outcome.facts.is_empty() && outcome.facts.iter().all(|facts| facts.bounded_tail);
+            if score_fwd >= score_back {
+                break true;
+            }
+            if forward_exhausted || fwd == U256::MAX {
+                break false;
+            }
+            direction_span = direction_span.saturating_mul(U256::from(2u64));
+        };
         let advance = if climbing {
             landed_beyond(hops, xr, &ks, tally)
         } else {
