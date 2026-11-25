@@ -58,9 +58,19 @@ fn anchor_of(trace: &Value) -> ChainAnchor {
     .expect("the captured header is a complete identity")
 }
 
-fn captured() -> (ReceiptTransaction, TracedTransaction) {
-    let receipt_document = json(RECEIPT);
-    let trace_document = json(TRACE);
+const ZERO_LOG_FRAME_RECEIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/aave_receipts/liquidation_receipt_zero_log_frames_16919479.json"
+);
+
+const ZERO_LOG_FRAME_TRACE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../../tests/fixtures/aave_receipts/liquidation_trace_zero_log_frames_16919479.json"
+);
+
+fn captured_at(receipt_path: &str, trace_path: &str) -> (ReceiptTransaction, TracedTransaction) {
+    let receipt_document = json(receipt_path);
+    let trace_document = json(trace_path);
     let anchor = anchor_of(&trace_document);
 
     let receipt = ReceiptTransaction::from_receipt_json(anchor, &receipt_document["receipt"])
@@ -76,6 +86,10 @@ fn captured() -> (ReceiptTransaction, TracedTransaction) {
     (receipt, traced)
 }
 
+fn captured() -> (ReceiptTransaction, TracedTransaction) {
+    captured_at(RECEIPT, TRACE)
+}
+
 fn call_path(joined: &[(u64, Vec<u64>)], log_index: u64) -> Vec<u64> {
     joined
         .iter()
@@ -83,6 +97,27 @@ fn call_path(joined: &[(u64, Vec<u64>)], log_index: u64) -> Vec<u64> {
         .unwrap_or_else(|| panic!("log {log_index} has no joined call"))
         .1
         .clone()
+}
+
+#[test]
+fn zero_log_frames_do_not_make_the_captured_attribution_ambiguous() {
+    let (receipt, traced) = captured_at(ZERO_LOG_FRAME_RECEIPT, ZERO_LOG_FRAME_TRACE);
+    assert_eq!(receipt.logs().len(), 19);
+    assert_eq!(traced.log_count(), 19);
+
+    let joined =
+        join_receipt_trace(&receipt, &traced).expect("zero-log frames do not change log ownership");
+    assert_eq!(joined.logs().len(), 19);
+    assert_eq!(call_path(&positions(&joined), 149), vec![0]);
+    assert_ne!(call_path(&positions(&joined), 161), vec![0]);
+}
+
+fn positions(joined: &degenbot_rpc::tx_evidence::JoinedTransaction) -> Vec<(u64, Vec<u64>)> {
+    joined
+        .logs()
+        .iter()
+        .map(|entry| (entry.log_ref().index(), entry.call().call_path().to_vec()))
+        .collect()
 }
 
 #[test]

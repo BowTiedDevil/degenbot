@@ -559,6 +559,9 @@ impl DeltaEffect {
                 };
                 let magnitude = I256::try_from(*scaled_amount).map_err(|_| overflow.clone())?;
                 let debit = magnitude.checked_neg().ok_or(overflow)?;
+                if *to == Some(*from) {
+                    return Ok((vec![(*from, I256::ZERO)], Some(*index)));
+                }
                 let mut movements = vec![(*from, debit)];
                 if let Some(to) = to {
                     movements.push((*to, magnitude));

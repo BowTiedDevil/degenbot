@@ -788,6 +788,61 @@ fn a_cross_chain_delta_is_not_forward() {
     );
 }
 
+#[test]
+fn captured_rev1_self_transfer_nets_to_zero_before_a_later_burn() {
+    let mut view = ProjectionView::new();
+    view.seed_position(
+        collateral(2013),
+        (
+            U256::from(7_628_455_795_u64),
+            Some(U256::from(1_000_927_056_707_315_939_445_428_028_u128)),
+        ),
+    );
+    let generation = GenerationRef::new(
+        GenerationEntity::ScaledToken {
+            asset_id: 4,
+            position: ScaledTokenPosition::Collateral,
+        },
+        1,
+    );
+    let transfer = reduce_scaled_transfer(
+        &view,
+        collateral(2013),
+        Some(collateral(2013)),
+        U256::from(7_628_455_394_u64),
+        U256::from(1_000_955_936_137_119_386_869_988_567_u128),
+        log_ref(16_642_437, 0, 7),
+        generation,
+    )
+    .unwrap();
+    view.apply(&transfer).unwrap();
+    assert_eq!(
+        view.require_position_state(collateral(2013)).unwrap(),
+        (
+            U256::from(7_628_455_795_u64),
+            Some(U256::from(1_000_955_936_137_119_386_869_988_567_u128)),
+        )
+    );
+
+    let burn = reduce_scaled_balance(
+        &view,
+        collateral(2013),
+        I256::try_from(-7_628_455_795_i64).unwrap(),
+        U256::from(1_000_977_813_023_928_519_697_792_296_u128),
+        log_ref(16_645_310, 0, 8),
+        generation,
+    )
+    .unwrap();
+    view.apply(&burn).unwrap();
+    assert_eq!(
+        view.require_position_state(collateral(2013)).unwrap(),
+        (
+            U256::ZERO,
+            Some(U256::from(1_000_977_813_023_928_519_697_792_296_u128)),
+        )
+    );
+}
+
 /// A transfer whose amount exceeds the signed balance domain is refused at the
 /// sender, not saturated into a negative delta that then overflows on negation.
 #[test]

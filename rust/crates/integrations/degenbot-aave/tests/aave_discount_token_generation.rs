@@ -19,7 +19,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use degenbot_aave::updater::{
-    run_aave_update_on_db, AaveUpdateReport, NoProgress, RunSpec, VerifyPolicy,
+    run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, CanonicalDelta, NoProgress,
+    ProgressSink, RunSpec, VerifyPolicy,
 };
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{
@@ -115,6 +116,8 @@ const BALANCE_OF_SELECTOR: &str = "0x70a08231";
 
 const TX_A: &str = "0xa17567fa201a78b66c43e6ab178559f8c1d5d308fe944c0bd2c39b5e585097dc";
 const TX_B: &str = "0xb17567fa201a78b66c43e6ab178559f8c1d5d308fe944c0bd2c39b5e585097dc";
+const REFRESH_EARLY_TX: &str = "0x97858017903ffbe793a4c5789293f170719f5a9d918db52e31e7f74e1129dd75";
+const REFRESH_LATE_TX: &str = "0x2d99b1e744cd78185373f40938646647a696321ed030e720ff13b75265b1bbfe";
 
 fn checksum(addr: &str) -> String {
     degenbot_core::address_utils::address_to_checksum_string(&addr.parse().unwrap())
@@ -518,17 +521,36 @@ impl Ledger {
 }
 
 fn run_update(db: &DegenbotDb, transport: &CassetteReplayTransport) -> AaveUpdateReport {
+    run_update_to(db, transport, CHUNK_END, 10)
+}
+
+fn run_update_to(
+    db: &DegenbotDb,
+    transport: &CassetteReplayTransport,
+    to_block: u64,
+    chunk_size: u64,
+) -> AaveUpdateReport {
+    run_update_with_progress(db, transport, to_block, chunk_size, Arc::new(NoProgress))
+}
+
+fn run_update_with_progress(
+    db: &DegenbotDb,
+    transport: &CassetteReplayTransport,
+    to_block: u64,
+    chunk_size: u64,
+    progress: Arc<dyn ProgressSink>,
+) -> AaveUpdateReport {
     run_aave_update_on_db(
         db,
         RunSpec {
             chain_id: CHAIN_ID,
             market_id: 1,
-            to_block: Some(CHUNK_END),
-            chunk_size: 10,
+            to_block: Some(to_block),
+            chunk_size,
             max_block_range: 10_000,
             provider: transport.as_alloy_provider(),
             cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
+            progress,
             verify: VerifyPolicy::default(),
             max_chunks: None,
         },
@@ -776,6 +798,81 @@ fn same_tx_rotation_refresh_uses_new_contract() {
         Some(1),
         "the refresh backfill hit the NEW token's balanceOf"
     );
+}
+
+#[derive(Default)]
+struct DeltaCollector(std::sync::Mutex<Vec<CanonicalDelta>>);
+
+impl ProgressSink for DeltaCollector {
+    fn report_chunk(&self, progress: &AaveChunkProgress) {
+        self.0
+            .lock()
+            .unwrap()
+            .extend(progress.deltas.iter().cloned());
+    }
+}
+
+#[test]
+fn captured_rev1_discount_refreshes_stay_at_their_transaction_positions() {
+    let early_block = 17_699_253;
+    let late_block = 17_701_049;
+    let db = warm_boot_db(Some(T0));
+    seed_gho_reserve_asset(&db);
+    seed_user(&db, 0, None);
+    {
+        let conn = db.lock();
+        conn.execute(
+            "UPDATE aave_v3_markets SET last_update_block = ?1 WHERE id = 1",
+            rusqlite::params![i64::try_from(early_block - 1).unwrap()],
+        )
+        .unwrap();
+    }
+    let mut ledger = Ledger::new(early_block, late_block);
+    ledger.add_main_passes(
+        Some(json!([
+            gho_vtoken_mint_log(REFRESH_EARLY_TX, early_block, 339),
+            gho_vtoken_mint_log(REFRESH_LATE_TX, late_block, 271),
+        ])),
+        json!([]),
+        Some(json!([])),
+    );
+    ledger.add_balance_of(T0, USER, early_block, 0);
+    ledger.add_balance_of(T0, USER, late_block, 909_764_547_577_110_203);
+    let transport = ledger.into_transport();
+
+    let collector = Arc::new(DeltaCollector::default());
+    let report = run_update_with_progress(
+        &db,
+        &transport,
+        late_block,
+        late_block - early_block + 1,
+        collector.clone(),
+    );
+    assert_eq!(report.chunks_committed, 1);
+
+    let deltas = collector.0.lock().unwrap();
+    let positions: Vec<(u64, String)> = deltas
+        .iter()
+        .map(|delta| {
+            (
+                delta.source().tx().anchor().number(),
+                alloy::hex::encode_prefixed(delta.source().tx().hash()),
+            )
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "journal blocks are chronological: {positions:?}"
+    );
+    let early = positions
+        .iter()
+        .position(|(_, tx)| tx == REFRESH_EARLY_TX)
+        .unwrap_or_else(|| panic!("missing early transaction in {positions:?}"));
+    let late = positions
+        .iter()
+        .position(|(_, tx)| tx == REFRESH_LATE_TX)
+        .unwrap_or_else(|| panic!("missing late transaction in {positions:?}"));
+    assert!(early < late, "journal order: {positions:?}");
 }
 
 /// A no-op `DiscountTokenUpdated(T0, T0)` is not a generation change: the

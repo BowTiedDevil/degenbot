@@ -212,11 +212,6 @@ pub(crate) async fn dispatch_config_events(
             // asset `ReserveInitialized` created. The VIEW advance is the
             // caller's, in canonical event order with the operations.
             let sealed = ctx.superseded_generation(&effect);
-            effect.project(ctx.substrate_mut())?;
-            if let Some(sealed) = sealed {
-                view.seal_generation(sealed);
-            }
-            ctx.repoint_pool(&effect)?;
             for (user_id, balance) in ctx.take_observations() {
                 ctx.substrate_mut()
                     .record_user_stk_aave_balance_by_id(user_id, Some(balance));
@@ -226,6 +221,11 @@ pub(crate) async fn dispatch_config_events(
                     DeltaEffect::StkAaveBalanceObserved { user_id, balance },
                 ));
             }
+            effect.project(ctx.substrate_mut())?;
+            if let Some(sealed) = sealed {
+                view.seal_generation(sealed);
+            }
+            ctx.repoint_pool(&effect)?;
             let delta = reduce_configuration(view, effect, source, generation)
                 .map_err(config_projection_error)?;
             deltas.push(delta);
@@ -894,6 +894,109 @@ mod tests {
             }
             other => panic!("expected DecodeShape, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn captured_rev1_stk_aave_burn_applies_its_parent_balance_observation_first() {
+        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let discount_token: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
+            .parse()
+            .unwrap();
+        let from_user: Address = "0x6b62909aD3F315833a5e5062b670034A3016910b"
+            .parse()
+            .unwrap();
+        let amount = U256::from(205_695_339_213_386_432_596_u128);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_markets (id, chain_id, name, active, last_update_block) \
+                 VALUES (1, 1, 'm', 1, NULL)",
+                [],
+            )
+            .unwrap();
+            seed_gho_row(&conn, Some(Address::repeat_byte(0xa0)));
+            conn.execute(
+                "UPDATE aave_gho_tokens SET v_gho_discount_token = ?1 WHERE id = 1",
+                params![checksum(&discount_token)],
+            )
+            .unwrap();
+        }
+        let conn = db.lock();
+        let parent = B256::repeat_byte(0xaa);
+        let key = eth_call_hash_key(
+            &address_arg_input("balanceOf(address)", &from_user),
+            &format!("0x{}", alloy::hex::encode(discount_token)),
+            &format!("{parent}"),
+        );
+        let transport = CassetteReplayTransport::new(test_cassette_values(vec![
+            ("[\"eth_chainId\",null]".to_string(), "\"0x1\"".to_string()),
+            (
+                header_key(17_699_304),
+                format!(
+                    "{{\"number\":\"17699304\",\"hash\":\"{parent}\",\"parentHash\":\"{}\"}}",
+                    B256::repeat_byte(0x9f)
+                ),
+            ),
+            (key, format!("\"0x{amount:064x}\"")),
+        ]));
+        let mut substrate = seed(&conn, &[from_user]);
+        let mut ctx = ChunkContext::for_chunk(
+            super::context::whole_range_span(),
+            transport.as_alloy_provider(),
+            1,
+            1,
+            Address::ZERO,
+            &mut substrate,
+        );
+        ctx.begin_transaction_at(17_699_305);
+        let log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    degenbot_decoders::aave_event_decoder::ERC20_TRANSFER_TOPIC,
+                    from_user.into_word(),
+                    Address::ZERO.into_word(),
+                ],
+                Bytes::from(amount.to_be_bytes::<32>().to_vec()),
+            ),
+            block_hash: None,
+            block_number: Some(17_699_305),
+            block_timestamp: None,
+            transaction_hash: Some(
+                "0x411a900563fd4bf5091a56651b22a0d621f0bd5d0319d05948a1510a6df12b1b"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(127),
+            log_index: Some(328),
+            removed: false,
+        };
+        let deltas = degenbot_core::runtime::get_runtime()
+            .block_on(dispatch_config_events(
+                &mut ctx,
+                &mut ProjectionView::new(),
+                &[&log],
+            ))
+            .unwrap();
+
+        assert_eq!(deltas.len(), 2);
+        assert!(matches!(
+            deltas[0].effect(),
+            crate::projection::DeltaEffect::StkAaveBalanceObserved { balance, .. }
+                if *balance == amount
+        ));
+        assert!(matches!(
+            deltas[1].effect(),
+            crate::projection::DeltaEffect::Configuration(
+                crate::projection::ConfigurationEffect::StkAaveTransfer { .. }
+            )
+        ));
+        assert_eq!(
+            ctx.substrate_mut()
+                .user_stk_aave_balance(&checksum(&from_user))
+                .unwrap(),
+            Some(Some(U256::ZERO))
+        );
     }
 
     /// A stkAAVE `Transfer` whose NULL-balance backfill reads a short

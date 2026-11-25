@@ -76,7 +76,6 @@ impl ChunkResolver {
         let mut substrate = seed.into_substrate();
         let mut touched_user_addresses: HashSet<Address> = HashSet::new();
         let mut chunk_deltas: Vec<CanonicalDelta> = Vec::new();
-        let mut pending_refreshes: Vec<(CanonicalDelta, i64)> = Vec::new();
         let mut decode_compute_time = Duration::ZERO;
         let chunk_span = ChunkSpan::new(chunk_start, chunk_end);
         let memo = std::mem::take(&mut self.memo);
@@ -149,26 +148,24 @@ impl ChunkResolver {
             chunk_deltas.extend(deltas.iter().cloned());
             for delta in &deltas {
                 if let DeltaEffect::GhoRefreshDiscount { position_id } = delta.effect() {
-                    pending_refreshes.push((delta.clone(), *position_id));
+                    let signal = delta.clone();
+                    let anchor = *signal.source().tx().anchor();
+                    let parent = self.parent_anchors.of(provider, anchor).await?;
+                    resolve_discount_refresh(
+                        &BlockReads::at(provider, parent),
+                        &signal,
+                        *position_id,
+                        &view,
+                        ctx.substrate_mut(),
+                        &mut chunk_deltas,
+                    )
+                    .await?;
                 }
             }
         }
         self.memo = ctx.take_memo();
         self.parent_anchors = ctx.take_parent_anchors();
         drop(ctx);
-        for (signal, position_id) in pending_refreshes {
-            let anchor = *signal.source().tx().anchor();
-            let parent = self.parent_anchors.of(provider, anchor).await?;
-            resolve_discount_refresh(
-                &BlockReads::at(provider, parent),
-                &signal,
-                position_id,
-                &view,
-                &mut substrate,
-                &mut chunk_deltas,
-            )
-            .await?;
-        }
         let checkpoint = if crate::projection::checkpoint_due(chunk_deltas.len()) {
             Some(crate::projection::CheckpointState::capture(
                 &view, &substrate,

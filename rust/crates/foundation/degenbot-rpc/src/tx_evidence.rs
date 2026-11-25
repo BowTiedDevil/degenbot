@@ -903,6 +903,10 @@ impl Solver<'_> {
                 if index == children.len() && position == end {
                     continue;
                 }
+                if index < children.len() && self.arena[children[index]].subtree_logs == 0 {
+                    finish[index][position - start] = finish[index + 1][position - start];
+                    continue;
+                }
                 let own = position.saturating_sub(start + cumulative[index]);
                 let mut total = 0u8;
                 if own < logs_len && position < end && self.matches(frame, own, position) {
@@ -944,6 +948,10 @@ impl Solver<'_> {
         let mut index = 0;
         let mut position = start;
         while position < end {
+            if index < children.len() && self.arena[children[index]].subtree_logs == 0 {
+                index += 1;
+                continue;
+            }
             let own = position.saturating_sub(start + table.cumulative[index]);
             let takes_own = own < logs_len
                 && position < end

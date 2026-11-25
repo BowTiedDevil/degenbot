@@ -87,9 +87,8 @@ pub enum NonOperationRole {
     /// The pool's `FlashLoan` report. A flash loan moves no scaled balance, so the
     /// market's projection deliberately emits no operation for one.
     FlashLoan,
-    /// A token allowance or credit-delegation report (`Approval`,
-    /// `BorrowAllowanceDelegated`). An allowance moves no balance, so the market's
-    /// projection deliberately reads neither.
+    /// A token allowance, credit-delegation, or governance-power delegation report.
+    /// None moves a balance, so the market's projection deliberately reads none.
     AllowanceReport,
     /// The pool's deficit-coverage report (`DeficitCovered`). The covered
     /// positions' balance reports carry the movement.
@@ -639,6 +638,16 @@ const AAVE_ISOLATION_MODE_TOTAL_DEBT_TOPIC: B256 =
 const AAVE_DEFICIT_COVERED_TOPIC: B256 =
     alloy::primitives::b256!("0x84b203e49f1a4b553088061534231969a68ad1c81be192205e96d23a206cb26a");
 
+/// `keccak256("PositionManagerApproved(address,address)")` — the Pool revision 9
+/// position-manager authorization report.
+const AAVE_POSITION_MANAGER_APPROVED_TOPIC: B256 =
+    alloy::primitives::b256!("0x540e692f36c2fa13e7583c4deeffd91ce6bc04f91e7d84f295d9d858372875fc");
+
+/// `keccak256("PositionManagerRevoked(address,address)")` — the Pool revision 11
+/// position-manager authorization report.
+const AAVE_POSITION_MANAGER_REVOKED_TOPIC: B256 =
+    alloy::primitives::b256!("0x08c92c3870d10c79e9673fecea8f4ff261f8e6b661067d9ca63fd777882bff15");
+
 /// `keccak256("FeesDistributedToTreasury(address,address,uint256)")` — a scaled token's
 /// fee-distribution report.
 const SCALED_TOKEN_FEE_DISTRIBUTION_TOPIC: B256 =
@@ -663,6 +672,66 @@ const SCALED_TOKEN_INITIALIZED_TOPIC: B256 =
 /// debt token's variant of the same initialization report.
 const SCALED_TOKEN_INITIALIZED_DEBT_TOPIC: B256 =
     alloy::primitives::b256!("0x40251fbfb6656cfa65a00d7879029fec1fad21d28fdcff2f4f68f52795b74f2c");
+
+/// `keccak256("VariableDebtTokenSet(address)")` — the GHO aToken's link report.
+const GHO_VARIABLE_DEBT_TOKEN_SET_TOPIC: B256 =
+    alloy::primitives::b256!("0x9a2092516d2c53586ed59ca6d2878442977a16f16e1c85ac0a8a8cd9cb024666");
+
+/// `keccak256("ATokenSet(address)")` — the GHO vToken's reciprocal link report.
+const GHO_ATOKEN_SET_TOPIC: B256 =
+    alloy::primitives::b256!("0x07cba78d3a9bb0cf2cb0e30140558e278b50a2ba6da2e13369a0d9113034548b");
+
+/// `keccak256("GhoTreasuryUpdated(address,address)")` — the GHO aToken's treasury report.
+const GHO_TREASURY_UPDATED_TOPIC: B256 =
+    alloy::primitives::b256!("0x13f4413d8d93a259bd6c10f35095371f30ed50f81a73407e52e9f02000d5d16b");
+
+/// `keccak256("GHODebtTokenChanged(address)")` — the GHO discount token's debt-token report.
+const GHO_DEBT_TOKEN_CHANGED_TOPIC: B256 =
+    alloy::primitives::b256!("0x62bbced765bccc9ed93d0bae1b2a8c86e13b4663f8bf27d5936d9d619194c8a9");
+
+/// `keccak256("AssetIndexUpdated(address,uint256)")` — the GHO discount token's rewards index.
+const GHO_ASSET_INDEX_UPDATED_TOPIC: B256 =
+    alloy::primitives::b256!("0x5777ca300dfe5bead41006fbce4389794dbc0ed8d6cccebfaf94630aa04184bc");
+
+/// `keccak256("UserIndexUpdated(address,address,uint256)")` — per-user rewards accounting.
+const GHO_USER_INDEX_UPDATED_TOPIC: B256 =
+    alloy::primitives::b256!("0xbb123b5c06d5408bbea3c4fef481578175cfb432e3b482c6186f02ed9086585b");
+
+/// `keccak256("DelegatedPowerChanged(address,uint256,uint8)")` — governance-power delegation.
+const GHO_DELEGATED_POWER_CHANGED_TOPIC: B256 =
+    alloy::primitives::b256!("0xa0a19463ee116110c9b282012d9b65cc5522dc38a9520340cbaf3142e550127f");
+
+/// `keccak256("RewardsAccrued(address,uint256)")` — accrued rewards accounting.
+const GHO_REWARDS_ACCRUED_TOPIC: B256 =
+    alloy::primitives::b256!("0x2468f9268c60ad90e2d49edb0032c8a001e733ae888b3ab8e982edf535be1a76");
+
+/// `keccak256("RewardsClaimed(address,address,uint256)")` — direct stkAAVE rewards claims.
+const GHO_REWARDS_CLAIMED_TOPIC: B256 =
+    alloy::primitives::b256!("0x9310ccfcb8de723f578a9e4282ea9f521f05ae40dc08f3068dfad528a65ee3c7");
+
+/// `keccak256("DelegateChanged(address,address,uint8)")` — delegation-target accounting.
+const GHO_DELEGATE_CHANGED_TOPIC: B256 =
+    alloy::primitives::b256!("0xe8d51c8e11bd570db1734c8ec775785330e77007feed45c43b608ef33ff914bd");
+
+/// `keccak256("PendingAdminChanged(address,uint256)")` — pending-admin configuration.
+const GHO_PENDING_ADMIN_CHANGED_TOPIC: B256 =
+    alloy::primitives::b256!("0xc3d1bf52795a20771ee6de3e59948fd83e10db956122d4709a3b86c512963855");
+
+/// `keccak256("RoleClaimed(address,uint256)")` — admin-role claim configuration.
+const GHO_ROLE_CLAIMED_TOPIC: B256 =
+    alloy::primitives::b256!("0x83a9ddad961dcb7c6894c9585a16ff7792c2ec8281256a3cc7303ae830152dcf");
+
+/// `keccak256("Cooldown(address,uint256)")` — staking cooldown accounting.
+const GHO_COOLDOWN_TOPIC: B256 =
+    alloy::primitives::b256!("0x8a05f911d8ab7fc50fec37ef4ba7f9bfcb1a3c191c81dcd824ad0946c4e20d65");
+
+/// `keccak256("AssetConfigUpdated(address,uint256)")` — asset configuration.
+const GHO_ASSET_CONFIG_UPDATED_TOPIC: B256 =
+    alloy::primitives::b256!("0x87fa03892a0556cb6b8f97e6d533a150d4d55fcbf275fff5fa003fa636bcc7fa");
+
+/// `keccak256("MaxSlashablePercentageChanged(uint256)")` — slashing configuration.
+const GHO_MAX_SLASHABLE_PERCENTAGE_CHANGED_TOPIC: B256 =
+    alloy::primitives::b256!("0xb79c2d6c7f5c95eec9dc05affc0ed002620a4ec6d72b7b0744cc8638168c600a");
 
 /// Whether the event is the Pool contract's own report: the operation anchors,
 /// the pool's state and position reports, and its treasury mint.
@@ -707,17 +776,43 @@ fn unmodeled_role_emitted_by(
     if emitter == pool && *topic == AAVE_DEFICIT_COVERED_TOPIC {
         return Some(Slot::Role(NonOperationRole::DeficitCoverageReport));
     }
+    if emitter == pool
+        && (*topic == AAVE_POSITION_MANAGER_APPROVED_TOPIC
+            || *topic == AAVE_POSITION_MANAGER_REVOKED_TOPIC)
+    {
+        return Some(Slot::Role(NonOperationRole::AllowanceReport));
+    }
     if emitter == pool && *topic == AAVE_ISOLATION_MODE_TOTAL_DEBT_TOPIC {
         return Some(Slot::Role(NonOperationRole::IsolationDebtReport));
     }
     if tokens.contains_key(&emitter)
         && (*topic == SCALED_TOKEN_INITIALIZED_TOPIC
-            || *topic == SCALED_TOKEN_INITIALIZED_DEBT_TOPIC)
+            || *topic == SCALED_TOKEN_INITIALIZED_DEBT_TOPIC
+            || *topic == GHO_VARIABLE_DEBT_TOKEN_SET_TOPIC
+            || *topic == GHO_ATOKEN_SET_TOPIC
+            || *topic == GHO_TREASURY_UPDATED_TOPIC
+            || *topic == GHO_DEBT_TOKEN_CHANGED_TOPIC
+            || *topic == GHO_PENDING_ADMIN_CHANGED_TOPIC
+            || *topic == GHO_ROLE_CLAIMED_TOPIC
+            || *topic == GHO_ASSET_CONFIG_UPDATED_TOPIC
+            || *topic == GHO_MAX_SLASHABLE_PERCENTAGE_CHANGED_TOPIC)
     {
         return Some(Slot::Role(NonOperationRole::MarketConfiguration));
     }
     if tokens.contains_key(&emitter)
-        && (*topic == ERC20_APPROVAL_TOPIC || *topic == DEBT_BORROW_ALLOWANCE_TOPIC)
+        && (*topic == GHO_ASSET_INDEX_UPDATED_TOPIC
+            || *topic == GHO_USER_INDEX_UPDATED_TOPIC
+            || *topic == GHO_REWARDS_ACCRUED_TOPIC
+            || *topic == GHO_REWARDS_CLAIMED_TOPIC
+            || *topic == GHO_COOLDOWN_TOPIC)
+    {
+        return Some(Slot::Role(NonOperationRole::RewardsAccounting));
+    }
+    if tokens.contains_key(&emitter)
+        && (*topic == ERC20_APPROVAL_TOPIC
+            || *topic == DEBT_BORROW_ALLOWANCE_TOPIC
+            || *topic == GHO_DELEGATED_POWER_CHANGED_TOPIC
+            || *topic == GHO_DELEGATE_CHANGED_TOPIC)
     {
         return Some(Slot::Role(NonOperationRole::AllowanceReport));
     }
@@ -832,6 +927,599 @@ mod tests {
         assert_eq!(
             ownership.claim(0, 6).unwrap_err(),
             OwnershipRefusal::LogOutsideReceipt { log_index: 6 }
+        );
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines)]
+    fn captured_rev1_gho_token_link_reports_are_market_configuration() {
+        use alloy::primitives::{Bytes, Log as AlloyLog};
+
+        let collateral_token: Address = "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977"
+            .parse()
+            .unwrap();
+        let debt_token: Address = "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B"
+            .parse()
+            .unwrap();
+        let discount_strategy: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
+            .parse()
+            .unwrap();
+        let transaction: B256 =
+            "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b"
+                .parse()
+                .unwrap();
+        let make_log = |emitter: Address, topics: &[B256], index: u64| Log {
+            inner: AlloyLog::new_unchecked(emitter, topics.to_vec(), Bytes::new()),
+            block_hash: Some(
+                "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(17_699_249),
+            block_timestamp: None,
+            transaction_hash: Some(transaction),
+            transaction_index: Some(13),
+            log_index: Some(index),
+            removed: false,
+        };
+        let logs = [
+            make_log(
+                collateral_token,
+                &[
+                    alloy::primitives::b256!(
+                        "0x9a2092516d2c53586ed59ca6d2878442977a16f16e1c85ac0a8a8cd9cb024666"
+                    ),
+                    debt_token.into_word(),
+                ],
+                87,
+            ),
+            make_log(
+                collateral_token,
+                &[
+                    alloy::primitives::b256!(
+                        "0x13f4413d8d93a259bd6c10f35095371f30ed50f81a73407e52e9f02000d5d16b"
+                    ),
+                    B256::ZERO,
+                    alloy::primitives::b256!(
+                        "0x000000000000000000000000464c71f6c2f760dda6093dcb91c24c39e5d6e18c"
+                    ),
+                ],
+                88,
+            ),
+            make_log(
+                debt_token,
+                &[
+                    alloy::primitives::b256!(
+                        "0x07cba78d3a9bb0cf2cb0e30140558e278b50a2ba6da2e13369a0d9113034548b"
+                    ),
+                    collateral_token.into_word(),
+                ],
+                89,
+            ),
+            make_log(
+                discount_strategy,
+                &[
+                    alloy::primitives::b256!(
+                        "0x62bbced765bccc9ed93d0bae1b2a8c86e13b4663f8bf27d5936d9d619194c8a9"
+                    ),
+                    debt_token.into_word(),
+                ],
+                92,
+            ),
+        ];
+        let tokens = BTreeMap::from([
+            (collateral_token, TokenType::Atoken),
+            (debt_token, TokenType::Vtoken),
+            (discount_strategy, TokenType::GhoDiscount),
+        ]);
+        let ownership = ReceiptOwnership::classify(
+            &logs.iter().collect::<Vec<_>>(),
+            &[None, None, None, None],
+            &[],
+            &EventOwnership::default(),
+            &tokens,
+            Address::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ownership.owner(87),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(88),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(89),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(92),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines)]
+    fn captured_rev5_discount_token_index_and_delegation_reports_are_classified() {
+        use alloy::primitives::{Bytes, Log as AlloyLog};
+
+        let discount_token: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
+            .parse()
+            .unwrap();
+        let log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x5777ca300dfe5bead41006fbce4389794dbc0ed8d6cccebfaf94630aa04184bc"
+                    ),
+                    discount_token.into_word(),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "000000000000000000000000000000000000000000000001696a636d44852dcc",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            block_hash: Some(
+                "0x02baf4aeaeba75e020a93706c6c8add928d3040e2bd1685355772d2dc9c6b634"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(17_699_277),
+            block_timestamp: None,
+            transaction_hash: Some(
+                "0x7ef07bae613c423a7c11ab1be6e4899db837312a6fef47522fc0af260f2a6fe3"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(76),
+            log_index: Some(321),
+            removed: false,
+        };
+        let user_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0xbb123b5c06d5408bbea3c4fef481578175cfb432e3b482c6186f02ed9086585b"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77"
+                    ),
+                    discount_token.into_word(),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "000000000000000000000000000000000000000000000001696a636d44852dcc",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            log_index: Some(322),
+            ..log.clone()
+        };
+        let delegation_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0xa0a19463ee116110c9b282012d9b65cc5522dc38a9520340cbaf3142e550127f"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77"
+                    ),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "0000000000000000000000000000000000000000000000056bc75e2d631000000000000000000000000000000000000000000000000000000000000000000000",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            log_index: Some(329),
+            ..log.clone()
+        };
+        let rewards_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![alloy::primitives::b256!(
+                    "0x2468f9268c60ad90e2d49edb0032c8a001e733ae888b3ab8e982edf535be1a76"
+                )],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "0000000000000000000000006b62909ad3f315833a5e5062b670034a3016910b0000000000000000000000000000000000000000000000006bc387c95b2fc39d",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            block_hash: Some(
+                "0xe99f4e137b9dc3caf06ecb2c571ce489130c0799373e73f37a0fffe0ba829ce8"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(17_699_305),
+            transaction_hash: Some(
+                "0x411a900563fd4bf5091a56651b22a0d621f0bd5d0319d05948a1510a6df12b1b"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(127),
+            log_index: Some(325),
+            ..log.clone()
+        };
+        let direct_claim_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x9310ccfcb8de723f578a9e4282ea9f521f05ae40dc08f3068dfad528a65ee3c7"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x0000000000000000000000009f07a0233abc178428aa9a18baef3188f093a7d0"
+                    ),
+                    discount_token.into_word(),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "0000000000000000000000000000000000000000000000004a868b7352b2fa66",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            block_hash: Some(
+                "0x6fa39364eb137b759563c2e2d6430066751f8dabe7a647b23f09ef4d29ad6b0a"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(17_699_689),
+            transaction_hash: Some(
+                "0x50cdffe9a2ae653c46b8e057bd665d26d365c50558c96db401dd21514dc4d598"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(132),
+            log_index: Some(357),
+            ..log.clone()
+        };
+        let delegate_change_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0xe8d51c8e11bd570db1734c8ec775785330e77007feed45c43b608ef33ff914bd"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x000000000000000000000000167c606be99dbf5a8af61e1983e5b309e8fa2ae7"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x0000000000000000000000001ae6dcbc88d6f81a7bcfccc7198397d776f3592e"
+                    ),
+                ],
+                Bytes::from([0_u8; 32].as_slice()),
+            ),
+            block_hash: Some(
+                "0xb1f119ad9186d6b0447132789f283a76ec4be9bc78cd15303d7f5075c292c8e1"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(17_824_467),
+            transaction_hash: Some(
+                "0x92acbe5d2f09da6032f481ac4610825e9af7a423bf26f77988b65f8c83f3b0e3"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(82),
+            log_index: Some(292),
+            ..log.clone()
+        };
+        let pending_admin_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0xc3d1bf52795a20771ee6de3e59948fd83e10db956122d4709a3b86c512963855"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
+                    ),
+                ],
+                Bytes::from([0_u8; 32].as_slice()),
+            ),
+            block_hash: Some(
+                "0x95a70030118aa47f6bbe78300fe5aa2d6a14c03c39e4773cd511b6d36aa5846b"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(18_454_069),
+            transaction_hash: Some(
+                "0x7e7f7adda9ab6af8fc05a248ed2bb0eaf9b53886cfb461d2fb768ce4d0d02a8c"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(15),
+            log_index: Some(118),
+            ..log.clone()
+        };
+        let role_claimed_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x83a9ddad961dcb7c6894c9585a16ff7792c2ec8281256a3cc7303ae830152dcf"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
+                    ),
+                ],
+                Bytes::from([0_u8; 32].as_slice()),
+            ),
+            log_index: Some(124),
+            ..pending_admin_log.clone()
+        };
+        let cooldown_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x8a05f911d8ab7fc50fec37ef4ba7f9bfcb1a3c191c81dcd824ad0946c4e20d65"
+                    ),
+                    alloy::primitives::b256!(
+                        "0x0000000000000000000000001f847fd5e08fb559a69280a14e7e904e6dbff81f"
+                    ),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "000000000000000000000000000000000000000000000000b447a45ad02f832e",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            block_hash: Some(
+                "0x85e1e99c2aa4344f2d8f6b6600fdf64cb1da5f1c039aec1a6726e48eb4e4e6c2"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(18_763_122),
+            transaction_hash: Some(
+                "0x3991c229452ce82fb530fe6200094619b1d53ea6bf1ef4d4b0427363de9d0375"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(255),
+            log_index: Some(422),
+            ..log.clone()
+        };
+        let asset_config_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x87fa03892a0556cb6b8f97e6d533a150d4d55fcbf275fff5fa003fa636bcc7fa"
+                    ),
+                    discount_token.into_word(),
+                ],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "000000000000000000000000000000000000000000000000000cf3ddb8be5d55",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            block_hash: Some(
+                "0x0da0fdd7093f650472f8e1e825ebd652b670a418ea38050081dcf9954985f71d"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(22_638_170),
+            transaction_hash: Some(
+                "0xaa900e1ac9ece8a1a0db38c111ccfe5b5fb735a838278995a7e6534a8fc32a63"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(56),
+            log_index: Some(338),
+            ..log.clone()
+        };
+        let max_slashable_log = Log {
+            inner: AlloyLog::new_unchecked(
+                discount_token,
+                vec![alloy::primitives::b256!(
+                    "0xb79c2d6c7f5c95eec9dc05affc0ed002620a4ec6d72b7b0744cc8638168c600a"
+                )],
+                Bytes::from(
+                    alloy::hex::decode(
+                        "00000000000000000000000000000000000000000000000000000000000007d0",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            log_index: Some(347),
+            ..asset_config_log.clone()
+        };
+        let logs = [
+            rewards_log,
+            log,
+            user_log,
+            delegation_log,
+            direct_claim_log,
+            delegate_change_log,
+            pending_admin_log,
+            role_claimed_log,
+            cooldown_log,
+            asset_config_log,
+            max_slashable_log,
+        ];
+        let tokens = BTreeMap::from([(discount_token, TokenType::GhoDiscount)]);
+        let ownership = ReceiptOwnership::classify(
+            &logs.iter().collect::<Vec<_>>(),
+            &[
+                None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            &[],
+            &EventOwnership::default(),
+            &tokens,
+            Address::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ownership.owner(325),
+            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
+        );
+        assert_eq!(
+            ownership.owner(321),
+            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
+        );
+        assert_eq!(
+            ownership.owner(322),
+            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
+        );
+        assert_eq!(
+            ownership.owner(329),
+            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
+        );
+        assert_eq!(
+            ownership.owner(357),
+            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
+        );
+        assert_eq!(
+            ownership.owner(292),
+            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
+        );
+        assert_eq!(
+            ownership.owner(118),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(124),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(422),
+            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
+        );
+        assert_eq!(
+            ownership.owner(338),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+        assert_eq!(
+            ownership.owner(347),
+            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
+        );
+    }
+
+    #[test]
+    fn captured_rev9_pool_position_manager_approval_is_an_allowance_report() {
+        use alloy::primitives::{Bytes, Log as AlloyLog};
+
+        let pool: Address = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+            .parse()
+            .unwrap();
+        let position_manager: Address = "0xd611d10cf51552227cab601a3788a6be52d53ae0"
+            .parse()
+            .unwrap();
+        let log = Log {
+            inner: AlloyLog::new_unchecked(
+                pool,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x540e692f36c2fa13e7583c4deeffd91ce6bc04f91e7d84f295d9d858372875fc"
+                    ),
+                    position_manager.into_word(),
+                    position_manager.into_word(),
+                ],
+                Bytes::new(),
+            ),
+            block_hash: Some(
+                "0x1c967ead522aac509e69dd23f2c0b0c74b42c43c1340cd8ca0ea81c3a2024401"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(23_105_903),
+            block_timestamp: None,
+            transaction_hash: Some(
+                "0x59cb182caf4d5f99f75050578f93e873ca84674012256cc8ee75cfdd7d4737f8"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(242),
+            log_index: Some(568),
+            removed: false,
+        };
+        let ownership = ReceiptOwnership::classify(
+            &[&log],
+            &[None],
+            &[],
+            &EventOwnership::default(),
+            &BTreeMap::new(),
+            pool,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ownership.owner(568),
+            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
+        );
+    }
+
+    #[test]
+    fn captured_rev11_pool_position_manager_revocation_is_an_allowance_report() {
+        use alloy::primitives::{Bytes, Log as AlloyLog};
+
+        let pool: Address = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+            .parse()
+            .unwrap();
+        let user: Address = "0x2c143f9c8a3da16dbabbb7bf1679cb8e070a3245"
+            .parse()
+            .unwrap();
+        let position_manager: Address = "0x366d12b5c7840d88212e6f78c8cd578275be8f8d"
+            .parse()
+            .unwrap();
+        let log = Log {
+            inner: AlloyLog::new_unchecked(
+                pool,
+                vec![
+                    alloy::primitives::b256!(
+                        "0x08c92c3870d10c79e9673fecea8f4ff261f8e6b661067d9ca63fd777882bff15"
+                    ),
+                    user.into_word(),
+                    position_manager.into_word(),
+                ],
+                Bytes::new(),
+            ),
+            block_hash: Some(
+                "0x81de53198111fc56b7ce96d41bd92ae683be19357b2f8d8a266c3e854a863bf1"
+                    .parse()
+                    .unwrap(),
+            ),
+            block_number: Some(26_036_607),
+            block_timestamp: None,
+            transaction_hash: Some(
+                "0x18a9f88fca2c29fd83d41a3d19cc7e0c84042fae4040cfea3a5a613a9acaedb9"
+                    .parse()
+                    .unwrap(),
+            ),
+            transaction_index: Some(46),
+            log_index: Some(165),
+            removed: false,
+        };
+        let ownership = ReceiptOwnership::classify(
+            &[&log],
+            &[None],
+            &[],
+            &EventOwnership::default(),
+            &BTreeMap::new(),
+            pool,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ownership.owner(165),
+            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
         );
     }
 
