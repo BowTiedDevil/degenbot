@@ -962,6 +962,26 @@ check-evm-captures:
 check-aave-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --features sql-ledger --bin generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
 
+# Record one Aave updater cassette (the full chunk loop) against a reachable
+# archive node. This wrapper is the ONE recording entry point — it supplies
+# `--kind aave-run`, so no hand-typed cargo recording path exists. The market is
+# activated and the warm-boot substrate seeded from facts the node serves at the
+# capture parent (`--from` minus one); `--seed-out` dumps that substrate through
+# degenbot-db's case-preserving replay-seed codec before the recorded update
+# runs. On-demand only: a capture needs the live node, so this lane stays outside
+# `just test`, pre-push, and CI.
+#   just record-aave-cassette --address-provider <addr> --gho <addr> \
+#       --from 17699253 --to 17699253 \
+#       --out tests/fixtures/cassettes/aave_gho_first_mint_17699253.json.zst \
+#       --seed-out tests/fixtures/cassettes/aave_gho_first_mint_17699253.seed.json
+#
+# `--check-seed <seed.json>...` is the seed's offline drift gate: it restores the
+# committed seed into a fresh harness DB and requires the re-export to be
+# byte-identical. The wrapper's `--kind aave-run` is ignored by that arm.
+#   just record-aave-cassette --check-seed tests/fixtures/cassettes/<name>.seed.json
+record-aave-cassette *args:
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-fixture-tools --bin record_updater_cassette -- --kind aave-run {{ args }}
+
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every workspace member that can publish, with the
 # publish-blocked census reconciled FIRST (docs/gates.md section 6). At a

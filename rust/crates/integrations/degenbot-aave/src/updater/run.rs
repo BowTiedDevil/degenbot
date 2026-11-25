@@ -21,8 +21,9 @@ pub mod seed;
 pub mod substrate;
 
 pub use activate::{
-    activate_aave_market, activate_aave_market_on_conn, deactivate_aave_market, ActivatedMarket,
-    ActivationMetadataError, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    activate_aave_market, activate_aave_market_on_conn, deactivate_aave_market,
+    fetch_activation_metadata_at, ActivatedMarket, ActivationMetadata, ActivationMetadataError,
+    ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use apply::{
     apply_aave_chunk_writes_on_conn, apply_canonical_deltas_on_conn, CanonicalDeltaWriteReport,

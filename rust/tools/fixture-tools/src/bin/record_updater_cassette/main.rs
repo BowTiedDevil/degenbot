@@ -50,13 +50,23 @@
 //!
 //! Extended capture modes (the replay-suite chunk):
 //!
-//! - `--kind aave-run` records the full Aave chunk loop: the market is seeded
-//!   via the real `activate_aave_market` plus the loop's warm-boot substrate
-//!   (`POOL/POOL_CONFIGURATOR/PRICE_ORACLE` contract rows + the span's reserve
-//!   assets resolved from chain), then the REAL `run_aave_update` runs over
-//!   the recording transport — every getLogs pass and per-tx config-dispatch
-//!   call the loop issues is recorded (the old `--kind aave` seed captured
-//!   only the Pool-contract pass).
+//! - `--kind aave-run` records the full Aave chunk loop. The market is activated
+//!   from metadata fetched at the CAPTURE PARENT (`from - 1`) through
+//!   `fetch_activation_metadata_at`, then `activate_aave_market_on_conn` seeds it —
+//!   the same substrate fn production `activate_aave_market` calls, reached here
+//!   because the recorder owns the anchor. The loop's warm-boot substrate
+//!   (`POOL/POOL_CONFIGURATOR/PRICE_ORACLE` contract rows, the span's reserve
+//!   assets, and the GHO discount token/rate strategy) is resolved over an
+//!   UNRECORDED side channel, every getter pinned to that same parent block. The
+//!   REAL `run_aave_update` then runs over the recording transport — every
+//!   getLogs pass and per-tx config-dispatch call the loop issues is recorded
+//!   (the old `--kind aave` seed captured only the Pool-contract pass).
+//!
+//! `--seed-out <seed.json>` dumps that seeded substrate through degenbot-db's
+//! case-preserving `degenbot.aave-seed/v1` codec, AFTER the substrate rows are
+//! committed and BEFORE the recorded update writes anything: the dump is a
+//! function of archive state at the capture parent alone, so a replay starts from
+//! exactly the rows the recorded run read (checksummed addresses and all).
 //!
 //! The write-versus-check contract is unchanged. Record mode is the LIVE arm: it flushes
 //! the cassette through the canonical writer and hands `--out` to the cassette module,
@@ -64,6 +74,9 @@
 //! `--check <cassette.json[.zst]>...` is fully OFFLINE and writes nothing: it decodes
 //! each committed artifact, re-serializes it through that same writer, and re-checks
 //! every entry digest, printing one verdict per file and exiting 1 on any drift.
+//! `--check-seed <seed.json>...` is its seed twin, also fully offline: it decodes the
+//! committed seed, restores it into a fresh harness DB through the same codec, and
+//! requires the re-export to be byte-identical.
 
 // Run-once diagnostic tool: stdout/stderr reports ARE its interface, its
 // prose names CLI flags and updaters that pedantry would backtick, and the
@@ -77,20 +90,20 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use degenbot_aave::updater::aave_fetch::fetch_pool_logs;
-use degenbot_aave::updater::{activate_aave_market, run_aave_update, RunSpec, VerifyPolicy};
+use degenbot_aave::updater::{
+    activate_aave_market_on_conn, fetch_activation_metadata_at, run_aave_update,
+    ActivationMetadata, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+};
+use degenbot_core::canonical_head::ChainAnchor;
+use degenbot_db::sql_ledger::{dump_aave_seed_json, restore_aave_seed_json};
 use degenbot_db::DegenbotDb;
 use degenbot_pool_updater::{run_pool_update, NoProgress as PoolNoProgress};
 use degenbot_rpc::cassette::{
     read_artifact, rfc3339_utc, verify_cassette_bytes, write_artifact, CassetteProvenance,
     CassetteSpan, RecordingTransport,
 };
+use degenbot_rpc::chain_evidence::resolve_terminal_anchor;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
-
-/// Seeded aToken/vToken revision for the harness-substrate `aave_v3_assets`
-/// rows. Inert for the pinned span (no `Upgraded` config event dispatches and
-/// no GHO-discount path runs), but the columns are NOT NULL — the value pins
-/// the seed so the recorder and replay-suite DBs stay identical.
-const AAVE_SEED_TOKEN_REVISION: i64 = 1;
 
 /// Raw CLI flags for record mode, validated into a [`RecordSpec`].
 #[derive(Default)]
@@ -103,6 +116,7 @@ struct RecordArgs {
     from_block: Option<u64>,
     to_block: Option<u64>,
     out: Option<PathBuf>,
+    seed_out: Option<PathBuf>,
     node: Option<String>,
 }
 
@@ -111,6 +125,8 @@ struct RecordSpec {
     from_block: u64,
     to_block: u64,
     out: PathBuf,
+    /// Where the `aave-run` replay seed is written.
+    seed_out: Option<PathBuf>,
     node: Option<String>,
 }
 
@@ -141,32 +157,38 @@ fn parse_block(label: &str, raw: &str) -> Result<u64, String> {
 
 fn usage() -> String {
     "usage: record_updater_cassette --check <cassette.json[.zst]>...\n \
+       or:  record_updater_cassette --check-seed <seed.json>...\n \
        or:  record_updater_cassette --kind pool --factory <addr> \
        --from <n> --to <n> --out <path>\n \
        or:  record_updater_cassette --kind aave --pool <addr> \
        --from <n> --to <n> --out <path>\n \
+       or:  record_updater_cassette --help\n \
        or:  record_updater_cassette --kind aave-run --address-provider <addr> \
-       --gho <addr> --from <n> --to <n> --out <path>"
+       --gho <addr> --from <n> --to <n> --out <path> [--seed-out <seed.json>]"
         .to_string()
 }
 
-fn parse_args() -> Result<Either, String> {
+fn parse_args(flags: impl Iterator<Item = String>) -> Result<Either, String> {
     let mut check_files = Vec::new();
+    let mut seed_check_files = Vec::new();
     let mut args = RecordArgs::default();
-    let mut rest = std::env::args().skip(1);
+    let mut rest = flags;
     while let Some(arg) = rest.next() {
         let mut value = |flag: &str| {
             rest.next()
                 .ok_or_else(|| format!("{flag} requires a value"))
         };
         match arg.as_str() {
+            "--help" | "-h" => return Ok(Either::Help),
             "--check" => check_files.push(PathBuf::from(value("--check")?)),
+            "--check-seed" => seed_check_files.push(PathBuf::from(value("--check-seed")?)),
             "--kind" => args.kind_raw = value("--kind")?,
             "--factory" => args.factory_raw = value("--factory")?,
             "--pool" => args.pool_raw = value("--pool")?,
             "--from" => args.from_block = Some(parse_block("--from", &value("--from")?)?),
             "--to" => args.to_block = Some(parse_block("--to", &value("--to")?)?),
             "--out" => args.out = Some(PathBuf::from(value("--out")?)),
+            "--seed-out" => args.seed_out = Some(PathBuf::from(value("--seed-out")?)),
             "--node" => args.node = Some(value("--node")?),
             "--address-provider" => {
                 args.address_provider_raw = value("--address-provider")?;
@@ -185,8 +207,20 @@ fn parse_args() -> Result<Either, String> {
             }
         }
     }
+    if !check_files.is_empty() && !seed_check_files.is_empty() {
+        return Err(format!(
+            "--check names cassettes and --check-seed names seeds; pass one\n{}",
+            usage()
+        ));
+    }
     if !check_files.is_empty() {
         return Ok(Either::Check(check_files));
+    }
+    // The offline seed gate answers before any record flag is validated: the
+    // `just record-aave-cassette` wrapper supplies `--kind aave-run` on every
+    // call, and `--check-seed` must still reach the gate.
+    if !seed_check_files.is_empty() {
+        return Ok(Either::CheckSeed(seed_check_files));
     }
 
     let from_block = args.from_block.ok_or("--from <n> is required")?;
@@ -212,17 +246,26 @@ fn parse_args() -> Result<Either, String> {
             ));
         }
     };
+    // The seed is the `aave-run` substrate dump: the other kinds run no
+    // activation and seed no market, so a `--seed-out` there would name an
+    // artifact nothing writes.
+    if args.seed_out.is_some() && !matches!(&kind, Kind::AaveRun { .. }) {
+        return Err(format!("--seed-out requires --kind aave-run\n{}", usage()));
+    }
     Ok(Either::Record(RecordSpec {
         kind,
         from_block,
         to_block,
         out,
+        seed_out: args.seed_out,
         node: args.node,
     }))
 }
 
 enum Either {
     Check(Vec<PathBuf>),
+    CheckSeed(Vec<PathBuf>),
+    Help,
     Record(RecordSpec),
 }
 
@@ -253,6 +296,45 @@ fn run_check(files: &[PathBuf]) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         println!("{red} cassette(s) RED");
+        ExitCode::from(1)
+    }
+}
+
+/// The seed drift gate's verdict for one committed seed: restore it into a fresh
+/// harness DB through the codec, re-export, and require the bytes to match. Fully
+/// offline — the seed is a dump of archive state, not a recording of it.
+fn check_seed(path: &Path) -> Result<usize, String> {
+    let committed = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
+    let dir = tempfile::TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
+    let (db, _state) = DegenbotDb::open_for_writes(&dir.path().join("seed-check.db"))
+        .map_err(|e| format!("db open: {e}"))?;
+    let conn = db.lock();
+    restore_aave_seed_json(&conn, &committed).map_err(|e| format!("restore: {e}"))?;
+    let reexport = dump_aave_seed_json(&conn).map_err(|e| format!("re-export: {e}"))?;
+    if reexport != committed {
+        return Err("restore -> re-export drifted from the committed bytes".to_string());
+    }
+    Ok(committed.len())
+}
+
+fn run_check_seed(files: &[PathBuf]) -> ExitCode {
+    let mut red = 0;
+    for path in files {
+        match check_seed(path) {
+            Ok(bytes) => println!(
+                "seed gate green {} ({bytes} canonical bytes, byte-identical re-export after restore)",
+                path.display()
+            ),
+            Err(reason) => {
+                println!("SEED GATE RED {}: {reason}", path.display());
+                red += 1;
+            }
+        }
+    }
+    if red == 0 {
+        ExitCode::SUCCESS
+    } else {
+        println!("{red} seed(s) RED");
         ExitCode::from(1)
     }
 }
@@ -329,146 +411,153 @@ fn run_pool_update_off_runtime(
     .map_err(|e| format!("run_pool_update: {e}"))
 }
 
-/// The Aave warm-boot substrate the chunk loop's seeded DB carries: the
-/// contract rows `build_fetch_spec` requires + the span's reserve assets.
+/// The capture parent every seeded substrate read is pinned to: the block
+/// before the recorded span, so the whole seed is a function of ONE archive
+/// state.
+fn seed_block(from_block: u64) -> Result<u64, String> {
+    from_block
+        .checked_sub(1)
+        .ok_or_else(|| "--from must be >= 1: the seed reads at from - 1".to_string())
+}
+
+/// The pinned read view every seeded substrate fact comes from: one block fixed
+/// at construction, one `eth_call` site that always names it. A getter cannot
+/// read at the head because no seed read path exists without this view.
+struct SeedReads<'a> {
+    provider: &'a AlloyProvider,
+    block: u64,
+}
+
+impl<'a> SeedReads<'a> {
+    /// The capture-parent view over `provider` for a span starting at
+    /// `from_block`.
+    fn at(provider: &'a AlloyProvider, from_block: u64) -> Result<Self, String> {
+        Ok(Self {
+            provider,
+            block: seed_block(from_block)?,
+        })
+    }
+
+    async fn call(
+        &self,
+        target: alloy::primitives::Address,
+        signature: &str,
+        argument: Option<alloy::primitives::Address>,
+    ) -> Result<alloy::primitives::Bytes, String> {
+        let selector = &alloy::primitives::keccak256(signature.as_bytes()).0[0..4];
+        let mut calldata = Vec::with_capacity(4 + 32);
+        calldata.extend_from_slice(selector);
+        if let Some(argument) = argument {
+            calldata.extend_from_slice(&[0u8; 12]);
+            calldata.extend_from_slice(argument.as_slice());
+        }
+        self.provider
+            .eth_call(&target, calldata.into(), Some(self.block))
+            .await
+            .map_err(|e| format!("{signature} at block {}: {e}", self.block))
+    }
+
+    /// A no-arg view returning an `address` (the low 20 bytes of word 0).
+    async fn address(
+        &self,
+        target: alloy::primitives::Address,
+        signature: &str,
+    ) -> Result<alloy::primitives::Address, String> {
+        let ret = self.call(target, signature, None).await?;
+        if ret.len() < 32 {
+            return Err(format!("{signature}: short return ({} bytes)", ret.len()));
+        }
+        Ok(alloy::primitives::Address::from_slice(&ret[12..32]))
+    }
+
+    /// A no-arg view returning a uint (word 0), narrowed to the stored column.
+    async fn word(
+        &self,
+        target: alloy::primitives::Address,
+        signature: &str,
+    ) -> Result<i64, String> {
+        let ret = self.call(target, signature, None).await?;
+        if ret.len() < 32 {
+            return Err(format!("{signature}: short return ({} bytes)", ret.len()));
+        }
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&ret[24..32]);
+        let value = u64::from_be_bytes(word);
+        i64::try_from(value)
+            .map_err(|_| format!("{signature}: {value} does not fit a signed 64-bit column"))
+    }
+}
+
+/// The address-provider facts at the capture parent.
+struct SeedContracts {
+    pool: alloy::primitives::Address,
+    configurator: alloy::primitives::Address,
+    price_oracle: alloy::primitives::Address,
+    /// `POOL_REVISION()` — the ops parser reads the POOL contract row's
+    /// revision for the scaled-amount tolerance gate (a NULL revision
+    /// hard-errors the parse).
+    pool_revision: i64,
+    /// `CONFIGURATOR_REVISION()` — seeded for row fidelity with the loop's own
+    /// cold-boot substrate.
+    configurator_revision: i64,
+}
+
+/// One seeded reserve: the underlying asset, its scaled tokens, and the
+/// revisions those tokens answered at the capture parent.
+struct SeededReserve {
+    underlying: alloy::primitives::Address,
+    a_token: alloy::primitives::Address,
+    v_token: alloy::primitives::Address,
+    a_token_revision: i64,
+    v_token_revision: i64,
+}
+
+/// The Aave warm-boot substrate the chunk loop's seeded DB carries: the contract
+/// rows `build_fetch_spec` requires, the span's reserve assets, and the GHO
+/// discount facts a refresh resolves against.
 struct AaveSubstrate {
     pool: alloy::primitives::Address,
     configurator: alloy::primitives::Address,
     price_oracle: alloy::primitives::Address,
-    /// `POOL_REVISION()` - the ops parser reads the POOL contract row's
-    /// revision for the scaled-amount tolerance gate (a NULL revision
-    /// hard-errors the parse).
-    pool_revision: u64,
-    /// `CONFIGURATOR_REVISION()` - seeded for row fidelity with the loop's
-    /// own cold-boot substrate.
-    configurator_revision: u64,
-    /// `(underlying, a_token, v_token)` per reserve the span's Pool logs touch.
-    reserves: Vec<(
-        alloy::primitives::Address,
-        alloy::primitives::Address,
-        alloy::primitives::Address,
-    )>,
+    pool_revision: i64,
+    configurator_revision: i64,
+    discount_token: alloy::primitives::Address,
+    discount_rate_strategy: alloy::primitives::Address,
+    reserves: Vec<SeededReserve>,
 }
 
-/// Resolve the warm-boot substrate over the side-channel provider (NOT the
-/// recording seam - these are harness inputs, not the run's RPC surface):
-/// the Pool/Configurator/PriceOracle addresses from the `PoolAddressProvider`,
-/// then the reserve set from the span's Pool logs (candidate addresses are
-/// the zero-padded topic words; `getReserveData` returns a zeroed struct for
-/// non-reserves, which filters users and unrelated addresses out), each with
-/// its aToken/vToken pair.
-async fn resolve_aave_substrate(
-    side_channel: &AlloyProvider,
+async fn read_seed_contracts(
+    reads: &SeedReads<'_>,
     address_provider: alloy::primitives::Address,
-    from_block: u64,
-    to_block: u64,
-) -> Result<AaveSubstrate, String> {
-    let pool = call_address(side_channel, address_provider, "getPool()").await?;
-    let configurator =
-        call_address(side_channel, address_provider, "getPoolConfigurator()").await?;
-    let price_oracle = call_address(side_channel, address_provider, "getPriceOracle()").await?;
-    let pool_revision = call_revision(side_channel, pool, "POOL_REVISION()").await?;
-    let configurator_revision =
-        call_revision(side_channel, configurator, "CONFIGURATOR_REVISION()").await?;
-
-    let fetcher = LogFetcher::new(Arc::new(side_channel.clone()), 2000);
-    let pool_logs = fetcher
-        .fetch_logs_chunked(
-            from_block,
-            to_block,
-            Some(vec![pool.to_checksum(None)]),
-            None,
-        )
-        .await
-        .map_err(|e| format!("span pool logs: {e}"))?;
-    let mut candidates: Vec<alloy::primitives::Address> = Vec::new();
-    for log in &pool_logs {
-        for topic in log.topics().iter().skip(1) {
-            candidates.push(alloy::primitives::Address::from_word(*topic));
-        }
-    }
-    candidates.sort();
-    candidates.dedup();
-
-    let mut reserves = Vec::new();
-    for candidate in candidates {
-        if let Some((a_token, v_token)) = reserve_tokens(side_channel, pool, candidate).await? {
-            reserves.push((candidate, a_token, v_token));
-        }
-    }
-    if reserves.is_empty() {
-        return Err("no market reserves found in the span's Pool logs".to_string());
-    }
-    Ok(AaveSubstrate {
+) -> Result<SeedContracts, String> {
+    let pool = reads.address(address_provider, "getPool()").await?;
+    let configurator = reads
+        .address(address_provider, "getPoolConfigurator()")
+        .await?;
+    let price_oracle = reads.address(address_provider, "getPriceOracle()").await?;
+    let pool_revision = reads.word(pool, "POOL_REVISION()").await?;
+    let configurator_revision = reads.word(configurator, "CONFIGURATOR_REVISION()").await?;
+    Ok(SeedContracts {
         pool,
         configurator,
         price_oracle,
         pool_revision,
         configurator_revision,
-        reserves,
     })
 }
 
-/// `eth_call` a no-arg view returning an `address` (the low 20 bytes of word
-/// 0). The 4-byte selector is computed from the signature - no hand-pinned
-/// constants.
-async fn call_address(
-    provider: &AlloyProvider,
-    target: alloy::primitives::Address,
-    signature: &str,
-) -> Result<alloy::primitives::Address, String> {
-    let selector = &alloy::primitives::keccak256(signature.as_bytes()).0[0..4];
-    let mut calldata = Vec::with_capacity(4);
-    calldata.extend_from_slice(selector);
-    let ret = provider
-        .eth_call(&target, calldata.into(), None)
-        .await
-        .map_err(|e| format!("{signature}: {e}"))?;
-    if ret.len() < 32 {
-        return Err(format!("{signature}: short return ({} bytes)", ret.len()));
-    }
-    Ok(alloy::primitives::Address::from_slice(&ret[12..32]))
-}
-
-/// `eth_call` a no-arg view returning a uint revision (word 0).
-async fn call_revision(
-    provider: &AlloyProvider,
-    target: alloy::primitives::Address,
-    signature: &str,
-) -> Result<u64, String> {
-    let selector = &alloy::primitives::keccak256(signature.as_bytes()).0[0..4];
-    let mut calldata = Vec::with_capacity(4);
-    calldata.extend_from_slice(selector);
-    let ret = provider
-        .eth_call(&target, calldata.into(), None)
-        .await
-        .map_err(|e| format!("{signature}: {e}"))?;
-    if ret.len() < 32 {
-        return Err(format!("{signature}: short return ({} bytes)", ret.len()));
-    }
-    let mut word = [0u8; 8];
-    word.copy_from_slice(&ret[24..32]);
-    Ok(u64::from_be_bytes(word))
-}
-
-/// `getReserveData(address)` -> the aToken/vToken pair (the address words of
-/// the Aave 3.2+ return shape, verified against the live Pool's symbols), or
-/// `None` when the candidate is not a market reserve (the Pool returns a
-/// zeroed struct for unknown assets).
-async fn reserve_tokens(
-    provider: &AlloyProvider,
+/// `getReserveData(address)` -> the aToken/vToken pair (the address words of the
+/// Aave 3.2+ return shape, verified against the live Pool's symbols), or `None`
+/// when the candidate is not a market reserve (the Pool returns a zeroed struct
+/// for unknown assets).
+async fn read_reserve_tokens(
+    reads: &SeedReads<'_>,
     pool: alloy::primitives::Address,
     candidate: alloy::primitives::Address,
 ) -> Result<Option<(alloy::primitives::Address, alloy::primitives::Address)>, String> {
-    let selector = &alloy::primitives::keccak256("getReserveData(address)".as_bytes()).0[0..4];
-    let mut calldata = Vec::with_capacity(36);
-    calldata.extend_from_slice(selector);
-    calldata.extend_from_slice(&[0u8; 12]);
-    calldata.extend_from_slice(candidate.as_slice());
-    let ret = provider
-        .eth_call(&pool, calldata.into(), None)
-        .await
-        .map_err(|e| format!("getReserveData({candidate}): {e}"))?;
+    let ret = reads
+        .call(pool, "getReserveData(address)", Some(candidate))
+        .await?;
     if ret.len() < 11 * 32 {
         return Err(format!(
             "getReserveData({candidate}): short return ({} bytes)",
@@ -483,13 +572,120 @@ async fn reserve_tokens(
     Ok(Some((a_token, v_token)))
 }
 
+/// The two scaled-token revisions at the capture parent, read per reserve: no
+/// capture inherits a default for a fact the chain states.
+async fn read_reserve_revisions(
+    reads: &SeedReads<'_>,
+    a_token: alloy::primitives::Address,
+    v_token: alloy::primitives::Address,
+) -> Result<(i64, i64), String> {
+    Ok((
+        reads.word(a_token, "ATOKEN_REVISION()").await?,
+        reads.word(v_token, "DEBT_TOKEN_REVISION()").await?,
+    ))
+}
+
+/// The GHO discount facts a refresh resolves against, read on the GHO vToken at
+/// the capture parent.
+async fn read_gho_discount(
+    reads: &SeedReads<'_>,
+    v_gho: alloy::primitives::Address,
+) -> Result<(alloy::primitives::Address, alloy::primitives::Address), String> {
+    Ok((
+        reads.address(v_gho, "getDiscountToken()").await?,
+        reads.address(v_gho, "getDiscountRateStrategy()").await?,
+    ))
+}
+
+/// Resolve the warm-boot substrate on the UNRECORDED side channel — these are
+/// harness inputs, not the run's RPC surface: every getter reads at the capture
+/// parent, the reserve set comes from the span's Pool logs (candidate addresses
+/// are the zero-padded topic words; `getReserveData` returns a zeroed struct for
+/// non-reserves, which filters users and unrelated addresses out), and the GHO
+/// reserve's vToken carries the discount facts.
+async fn resolve_aave_substrate(
+    reads: &SeedReads<'_>,
+    fetcher: &LogFetcher,
+    address_provider: alloy::primitives::Address,
+    gho: alloy::primitives::Address,
+    from_block: u64,
+    to_block: u64,
+) -> Result<AaveSubstrate, String> {
+    let contracts = read_seed_contracts(reads, address_provider).await?;
+
+    let pool_logs = fetcher
+        .fetch_logs_chunked(
+            from_block,
+            to_block,
+            Some(vec![contracts.pool.to_checksum(None)]),
+            None,
+        )
+        .await
+        .map_err(|e| format!("span pool logs: {e}"))?;
+    let mut candidates: Vec<alloy::primitives::Address> = Vec::new();
+    for log in &pool_logs {
+        for topic in log.topics().iter().skip(1) {
+            candidates.push(alloy::primitives::Address::from_word(*topic));
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+
+    let mut reserves = Vec::new();
+    let mut gho_v_token = None;
+    for candidate in candidates {
+        let Some((a_token, v_token)) =
+            read_reserve_tokens(reads, contracts.pool, candidate).await?
+        else {
+            continue;
+        };
+        let (a_token_revision, v_token_revision) =
+            read_reserve_revisions(reads, a_token, v_token).await?;
+        if candidate == gho {
+            gho_v_token = Some(v_token);
+        }
+        reserves.push(SeededReserve {
+            underlying: candidate,
+            a_token,
+            v_token,
+            a_token_revision,
+            v_token_revision,
+        });
+    }
+    if reserves.is_empty() {
+        return Err("no market reserves found in the span's Pool logs".to_string());
+    }
+    let v_gho = match gho_v_token {
+        Some(v_gho) => v_gho,
+        None => {
+            read_reserve_tokens(reads, contracts.pool, gho)
+                .await?
+                .ok_or_else(|| format!("--gho {gho} is not a reserve of pool {}", contracts.pool))?
+                .1
+        }
+    };
+    let (discount_token, discount_rate_strategy) = read_gho_discount(reads, v_gho).await?;
+
+    Ok(AaveSubstrate {
+        pool: contracts.pool,
+        configurator: contracts.configurator,
+        price_oracle: contracts.price_oracle,
+        pool_revision: contracts.pool_revision,
+        configurator_revision: contracts.configurator_revision,
+        discount_token,
+        discount_rate_strategy,
+        reserves,
+    })
+}
+
 /// Seed the chunk loop's warm-boot substrate in ONE writeable handle: the
-/// contract rows (POOL / `POOL_CONFIGURATOR` / `PRICE_ORACLE` - the
-/// `POOL_ADDRESS_PROVIDER` row + the bare GHO substrate `activate_aave_market`
-/// already wrote), the run's span cursor (`from - 1`), and the span's reserve
-/// assets (erc20 rows + `aave_v3_assets` rows via the `ReserveInitialized`
-/// substrate the loop's own dispatch uses). The replay suite seeds the same
-/// rows from the same literals.
+/// contract rows (POOL / `POOL_CONFIGURATOR` / `PRICE_ORACLE` — the
+/// `POOL_ADDRESS_PROVIDER` row + the bare GHO substrate
+/// `activate_aave_market_on_conn` already wrote), the run's span cursor
+/// (`from - 1`), the span's reserve assets (erc20 rows + `aave_v3_assets` rows via
+/// the `ReserveInitialized` substrate the loop's own dispatch uses), and the GHO
+/// discount token / rate strategy the refresh resolves against. The replay suite
+/// seeds the same rows from the committed seed.
 fn seed_aave_substrate(
     database_path: &Path,
     chain_id: i64,
@@ -515,10 +711,7 @@ fn seed_aave_substrate(
             market_id,
             name,
             &address.to_checksum(None),
-            revision
-                .map(i64::try_from)
-                .transpose()
-                .map_err(|e| e.to_string())?,
+            revision,
         )
         .map_err(|e| format!("contract row {name}: {e}"))?;
     }
@@ -528,7 +721,8 @@ fn seed_aave_substrate(
         .ok_or("--from must be >= 1 for the aave-run capture")?;
     DegenbotDb::set_market_last_update_block_on_conn(&conn, market_id, stamp)
         .map_err(|e| format!("market stamp: {e}"))?;
-    for (underlying, a_token, v_token) in &substrate.reserves {
+    for reserve in &substrate.reserves {
+        let underlying = reserve.underlying;
         let underlying_id = DegenbotDb::get_or_create_erc20_token_on_conn(
             &conn,
             chain_id,
@@ -541,22 +735,22 @@ fn seed_aave_substrate(
         let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
             &conn,
             chain_id,
-            &a_token.to_checksum(None),
+            &reserve.a_token.to_checksum(None),
             None,
             None,
             None,
         )
-        .map_err(|e| format!("erc20 row {a_token}: {e}"))?;
+        .map_err(|e| format!("erc20 row {}: {e}", reserve.a_token))?;
         let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
             &conn,
             chain_id,
-            &v_token.to_checksum(None),
+            &reserve.v_token.to_checksum(None),
             None,
             None,
             None,
         )
-        .map_err(|e| format!("erc20 row {v_token}: {e}"))?;
-        let gho_link = if *underlying == gho {
+        .map_err(|e| format!("erc20 row {}: {e}", reserve.v_token))?;
+        let gho_link = if underlying == gho {
             Some(
                 DegenbotDb::get_or_create_gho_token_on_conn(
                     &conn,
@@ -573,24 +767,92 @@ fn seed_aave_substrate(
             market_id,
             underlying_id,
             a_token_id,
-            AAVE_SEED_TOKEN_REVISION,
+            reserve.a_token_revision,
             v_token_id,
-            AAVE_SEED_TOKEN_REVISION,
+            reserve.v_token_revision,
             None,
             gho_link,
         )
         .map_err(|e| format!("asset row {underlying}: {e}"))?;
     }
+    let gho_token_id =
+        DegenbotDb::get_or_create_gho_token_on_conn(&conn, chain_id, &gho.to_checksum(None))
+            .map_err(|e| format!("gho row: {e}"))?;
+    DegenbotDb::apply_gho_discount_rate_strategy_updated_on_conn(
+        &conn,
+        gho_token_id,
+        Some(&substrate.discount_rate_strategy.to_checksum(None)),
+    )
+    .map_err(|e| format!("gho discount rate strategy: {e}"))?;
+    DegenbotDb::apply_gho_discount_token_updated_on_conn(
+        &conn,
+        gho_token_id,
+        Some(&substrate.discount_token.to_checksum(None)),
+    )
+    .map_err(|e| format!("gho discount token: {e}"))?;
     Ok(())
 }
 
-/// The `--kind aave-run` flow: seed the market via the REAL
-/// `activate_aave_market`, resolve + seed the warm-boot substrate over a
-/// side-channel provider, then run the REAL `run_aave_update` over the
-/// recording transport - all on ONE plain OS thread (the run entries block on
-/// the shared runtime and MUST NOT run inside this example's `#[tokio::main]`
-/// context). Returns `(market_id, events applied)`.
+/// Dump the seeded substrate through the case-preserving seed codec: after the
+/// substrate rows are committed and before the recorded update writes anything.
+fn write_aave_seed(database_path: &Path, seed_out: &Path) -> Result<(), String> {
+    let conn =
+        rusqlite::Connection::open(database_path).map_err(|e| format!("seed db open: {e}"))?;
+    let json = dump_aave_seed_json(&conn).map_err(|e| format!("seed dump: {e}"))?;
+    drop(conn);
+    // A bare filename's parent is empty — it names the working directory, which
+    // exists; only a real directory component needs creating.
+    if let Some(parent) = seed_out
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    std::fs::write(seed_out, json).map_err(|e| format!("write {}: {e}", seed_out.display()))?;
+    println!("recorded seed {}", seed_out.display());
+    Ok(())
+}
+
+/// Activate the market from metadata fetched at the capture parent, through the
+/// same substrate fn production `activate_aave_market` calls: ONE transaction,
+/// committed before the seed dump reads the rows back.
+fn activate_market_at_capture_parent(
+    database_path: &Path,
+    chain_id: i64,
+    metadata: &ActivationMetadata,
+    address_provider: alloy::primitives::Address,
+    gho: alloy::primitives::Address,
+) -> Result<i64, String> {
+    let (db, _state) =
+        DegenbotDb::open_for_writes(database_path).map_err(|e| format!("db open: {e}"))?;
+    let mut guard = db.lock();
+    let tx = guard
+        .transaction()
+        .map_err(|e| format!("activation transaction: {e}"))?;
+    let market_id = activate_aave_market_on_conn(
+        &tx,
+        chain_id,
+        &metadata.market_name,
+        &address_provider.to_checksum(None),
+        &gho.to_checksum(None),
+        metadata.gho_name.as_deref(),
+        metadata.gho_symbol.as_deref(),
+        Some(metadata.gho_decimals),
+        ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    )
+    .map_err(|e| format!("activate_aave_market_on_conn: {e}"))?;
+    tx.commit().map_err(|e| format!("activation commit: {e}"))?;
+    Ok(market_id)
+}
+
+/// The `--kind aave-run` flow: activate the market from metadata fetched at the
+/// capture parent, resolve + seed the warm-boot substrate at that same block,
+/// dump the seed, then run the REAL `run_aave_update` over the recording
+/// transport - all on ONE plain OS thread (the run entries block on the shared
+/// runtime and MUST NOT run inside this example's `#[tokio::main]` context).
+/// Returns `(market_id, events applied)`.
 #[expect(clippy::unused_async)] // awaits live inside the worker thread's block_on block
+#[expect(clippy::too_many_arguments)] // the run's pinned inputs, one per fact read
 async fn record_aave_run_chunk(
     chain_id: u64,
     node_uri: &str,
@@ -599,48 +861,68 @@ async fn record_aave_run_chunk(
     gho: alloy::primitives::Address,
     from_block: u64,
     to_block: u64,
+    seed_out: Option<PathBuf>,
 ) -> Result<(i64, usize), String> {
+    let parent_block = seed_block(from_block)?;
     let node_uri = node_uri.to_string();
     let chain_id_i64 = i64::try_from(chain_id).map_err(|e| format!("chain id {chain_id}: {e}"))?;
     let handle = std::thread::spawn(move || -> Result<(i64, usize), String> {
         let dir = tempfile::TempDir::new().map_err(|e| format!("tempdir: {e}"))?;
         let db_path = dir.path().join("aave-run.db");
 
-        // (1) The real one-shot market seed. The shell builds the live
-        //     provider (activate's RPC is a harness input, not part of the
-        //     recorded run surface) on the shared runtime - legal on this
-        //     plain thread - and the core's RPC half blocks on the same
-        //     runtime internally.
-        let activate_provider = degenbot_core::runtime::get_runtime()
-            .block_on(AlloyProvider::new(&node_uri, 5))
-            .map_err(|e| format!("activate provider: {e}"))?;
-        let activated = activate_aave_market(
+        // (1) The activation's identity facts at the CAPTURE PARENT: ONE exact
+        //     anchor at `from - 1` on the unrecorded side channel (a harness
+        //     input, not the run's RPC surface), then the same `_at` fetch
+        //     production activation delegates to. The seed transaction is the
+        //     production substrate fn, so a recording cannot activate a market
+        //     production would not.
+        let side_channel = degenbot_core::runtime::get_runtime()
+            .block_on(AlloyProvider::new(&node_uri, 3))
+            .map_err(|e| format!("side-channel provider: {e}"))?;
+        let anchor: ChainAnchor = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_terminal_anchor(
+                &side_channel,
+                chain_id,
+                Some(parent_block),
+            ))
+            .map_err(|e| format!("capture-parent anchor {parent_block}: {e}"))?;
+        let metadata: ActivationMetadata = degenbot_core::runtime::get_runtime()
+            .block_on(fetch_activation_metadata_at(
+                &side_channel,
+                anchor,
+                &address_provider,
+                &gho,
+            ))
+            .map_err(|e| format!("activation metadata at {parent_block}: {e}"))?;
+        let market_id = activate_market_at_capture_parent(
             &db_path,
             chain_id_i64,
-            &address_provider.to_checksum(None),
-            &gho.to_checksum(None),
-            &activate_provider,
-        )
-        .map_err(|e| format!("activate_aave_market: {e}"))?;
-        let market_id = activated.market_id;
+            &metadata,
+            address_provider,
+            gho,
+        )?;
 
-        // (2) Warm-boot substrate resolution over a side-channel provider
-        //     (unrecorded - harness inputs, not the run's RPC surface), under
-        //     ONE block_on on the shared runtime (this thread carries no
-        //     ambient tokio context, so the block_on is legal).
+        // (2) Warm-boot substrate resolution at the same parent block, under ONE
+        //     block_on on the shared runtime (this thread carries no ambient
+        //     tokio context, so the block_on is legal).
         let substrate = degenbot_core::runtime::get_runtime().block_on(async {
-            let side_channel = AlloyProvider::new(&node_uri, 3)
-                .await
-                .map_err(|e| format!("side-channel provider: {e}"))?;
-            let substrate =
-                resolve_aave_substrate(&side_channel, address_provider, from_block, to_block)
-                    .await?;
-            Ok::<AaveSubstrate, String>(substrate)
+            let reads = SeedReads::at(&side_channel, from_block)?;
+            let fetcher = LogFetcher::new(Arc::new(side_channel.clone()), 2000);
+            resolve_aave_substrate(
+                &reads,
+                &fetcher,
+                address_provider,
+                gho,
+                from_block,
+                to_block,
+            )
+            .await
         })?;
 
         // (3) The substrate rows (the loop's warm boot then finds POOL +
-        //     POOL_CONFIGURATOR + the span's assets, and the cursor pins the
-        //     run's fetch window to the recorded span).
+        //     POOL_CONFIGURATOR + the span's assets, the cursor pins the run's
+        //     fetch window to the recorded span, and the discount facts let a
+        //     refresh resolve), then the seed dump — the rows a replay restores.
         seed_aave_substrate(
             &db_path,
             chain_id_i64,
@@ -649,6 +931,9 @@ async fn record_aave_run_chunk(
             gho,
             from_block,
         )?;
+        if let Some(seed_out) = seed_out.as_deref() {
+            write_aave_seed(&db_path, seed_out)?;
+        }
 
         // (4) The REAL chunk loop over the recording transport.
         let report = run_aave_update(
@@ -757,9 +1042,9 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
             address_provider,
             gho,
         } => {
-            // The full Aave chunk-loop capture: seed the market via the real
-            // `activate_aave_market` + the loop warm-boot substrate, then run
-            // the REAL `run_aave_update` over the recording transport.
+            // The full Aave chunk-loop capture: activate + seed the market from
+            // facts read at the capture parent, dump the seed when asked, then
+            // run the REAL `run_aave_update` over the recording transport.
             // Everything the loop asks - the chunk fetch passes + any per-tx
             // config-dispatch RPC - lands in the recording ledger.
             let (_market_id, events_applied) = record_aave_run_chunk(
@@ -770,6 +1055,7 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
                 *gho,
                 args.from_block,
                 args.to_block,
+                args.seed_out.clone(),
             )
             .await?;
             events_applied
@@ -816,7 +1102,7 @@ async fn record(args: RecordSpec) -> Result<usize, String> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = match parse_args() {
+    let args = match parse_args(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(msg) => {
             eprintln!("error: {msg}");
@@ -824,7 +1110,12 @@ async fn main() -> ExitCode {
         }
     };
     match args {
+        Either::Help => {
+            println!("{}", usage());
+            ExitCode::SUCCESS
+        }
         Either::Check(files) => run_check(&files),
+        Either::CheckSeed(files) => run_check_seed(&files),
         Either::Record(args) => match record(args).await {
             Ok(_) => ExitCode::SUCCESS,
             Err(msg) => {
@@ -832,5 +1123,333 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    use alloy::primitives::{address, keccak256, Address};
+    use degenbot_rpc::offline::OfflineProvider;
+
+    const ADDRESS_PROVIDER: Address = address!("2f39d218133afab8f2b819b1066c7e434ad94e9e");
+    const POOL: Address = address!("87870bca3f3fd6335c3f4ce8392d69350b4fa4e2");
+    const CONFIGURATOR: Address = address!("64b761d848206f447fe2dd461b0c635ec39ebb27");
+    const PRICE_ORACLE: Address = address!("54586b645bb2ef2c5a2e48b3b0a5f1f6ba6e1f3c");
+    const GHO: Address = address!("40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f");
+    const A_TOKEN: Address = address!("b8f0f1b8f0f1b8f0f1b8f0f1b8f0f1b8f0f1b8f0");
+    const V_TOKEN: Address = address!("c1d0e2c1d0e2c1d0e2c1d0e2c1d0e2c1d0e2c1d0");
+    const STK_AAVE: Address = address!("4da27a545c0c5b758a6ba100e3a049001de870f5");
+    const STRATEGY: Address = address!("4c38ec4d1d2068540dfc11dfa4de41f733ddf812");
+
+    const PARENT: u64 = 17_699_252;
+    const FROM: u64 = PARENT + 1;
+
+    fn selector(signature: &str) -> String {
+        let hash = keccak256(signature.as_bytes());
+        format!("0x{}", alloy::hex::encode(&hash.0[..4]))
+    }
+
+    fn address_word(address: Address) -> String {
+        format!(
+            "{}{}",
+            "0".repeat(24),
+            alloy::hex::encode(address.as_slice())
+        )
+    }
+
+    fn uint_word(value: u64) -> String {
+        format!("{value:064x}")
+    }
+
+    /// One recorded `eth_call` key, exactly as the offline provider derives it.
+    fn call_key(target: Address, signature: &str, argument: Option<Address>) -> String {
+        let mut data = selector(signature);
+        if let Some(argument) = argument {
+            data.push_str(&address_word(argument));
+        }
+        format!("0x{}:{data}", alloy::hex::encode(target.as_slice()))
+    }
+
+    /// Every seeded substrate getter's answer, recorded at the capture parent.
+    fn seed_answers() -> Vec<(String, String)> {
+        let mut reserve_data = vec![uint_word(0); 11];
+        reserve_data[8] = address_word(A_TOKEN);
+        reserve_data[10] = address_word(V_TOKEN);
+        vec![
+            (
+                call_key(ADDRESS_PROVIDER, "getPool()", None),
+                address_word(POOL),
+            ),
+            (
+                call_key(ADDRESS_PROVIDER, "getPoolConfigurator()", None),
+                address_word(CONFIGURATOR),
+            ),
+            (
+                call_key(ADDRESS_PROVIDER, "getPriceOracle()", None),
+                address_word(PRICE_ORACLE),
+            ),
+            (call_key(POOL, "POOL_REVISION()", None), uint_word(9)),
+            (
+                call_key(CONFIGURATOR, "CONFIGURATOR_REVISION()", None),
+                uint_word(3),
+            ),
+            (call_key(A_TOKEN, "ATOKEN_REVISION()", None), uint_word(1)),
+            (
+                call_key(V_TOKEN, "DEBT_TOKEN_REVISION()", None),
+                uint_word(1),
+            ),
+            (
+                call_key(V_TOKEN, "getDiscountToken()", None),
+                address_word(STK_AAVE),
+            ),
+            (
+                call_key(V_TOKEN, "getDiscountRateStrategy()", None),
+                address_word(STRATEGY),
+            ),
+            (
+                call_key(POOL, "getReserveData(address)", Some(GHO)),
+                reserve_data.concat(),
+            ),
+        ]
+    }
+
+    /// A chain whose parent block answers every seed getter and whose span block
+    /// answers nothing — so a read that leaves the parent finds no answer, and
+    /// "latest" (the span block) is not a fallback either.
+    fn recorded_seed_corpus() -> String {
+        let calls: serde_json::Map<String, serde_json::Value> = seed_answers()
+            .into_iter()
+            .map(|(key, answer)| (key, serde_json::Value::from(answer)))
+            .collect();
+        serde_json::json!({
+            "chain_id": 1,
+            "blocks": {
+                PARENT.to_string(): { "calls": calls },
+                FROM.to_string(): {},
+            },
+        })
+        .to_string()
+    }
+
+    fn seed_provider() -> AlloyProvider {
+        OfflineProvider::from_json_str(&recorded_seed_corpus())
+            .unwrap()
+            .as_alloy_provider()
+    }
+
+    #[test]
+    fn the_seed_block_is_the_capture_parent() {
+        assert_eq!(seed_block(FROM).unwrap(), PARENT);
+        assert!(
+            seed_block(0).is_err(),
+            "a span starting at genesis has no capture parent"
+        );
+    }
+
+    #[test]
+    fn every_seed_getter_reads_at_the_capture_parent() {
+        let provider = seed_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let reads = SeedReads::at(&provider, FROM).unwrap();
+            assert_eq!(reads.block, PARENT);
+
+            let contracts = read_seed_contracts(&reads, ADDRESS_PROVIDER)
+                .await
+                .expect("the parent answers every contract getter");
+            assert_eq!(contracts.pool, POOL);
+            assert_eq!(contracts.configurator, CONFIGURATOR);
+            assert_eq!(contracts.price_oracle, PRICE_ORACLE);
+            assert_eq!(contracts.pool_revision, 9);
+            assert_eq!(contracts.configurator_revision, 3);
+
+            let (a_token, v_token) = read_reserve_tokens(&reads, POOL, GHO)
+                .await
+                .expect("the parent answers getReserveData")
+                .expect("GHO is a market reserve");
+            assert_eq!((a_token, v_token), (A_TOKEN, V_TOKEN));
+            assert_eq!(
+                read_reserve_revisions(&reads, a_token, v_token)
+                    .await
+                    .expect("the parent answers both revisions"),
+                (1, 1)
+            );
+            assert_eq!(
+                read_gho_discount(&reads, v_token)
+                    .await
+                    .expect("the parent answers both discount getters"),
+                (STK_AAVE, STRATEGY)
+            );
+        });
+    }
+
+    #[test]
+    fn a_seed_read_off_the_capture_parent_finds_nothing() {
+        let provider = seed_provider();
+        degenbot_core::runtime::get_runtime().block_on(async {
+            let late = SeedReads {
+                provider: &provider,
+                block: FROM,
+            };
+            let Err(error) = read_seed_contracts(&late, ADDRESS_PROVIDER).await else {
+                panic!("the span block records no seed getter");
+            };
+            assert!(
+                error.contains("getPool()"),
+                "the refusal names the getter that was not served: {error}"
+            );
+        });
+    }
+
+    fn argv<'a>(items: &'a [&'a str]) -> impl Iterator<Item = String> + 'a {
+        items.iter().map(|item| (*item).to_string())
+    }
+
+    #[test]
+    fn the_recording_lane_takes_a_seed_out_path() {
+        let parsed = parse_args(argv(&[
+            "--kind",
+            "aave-run",
+            "--address-provider",
+            "0x2f39d218133afab8f2b819b1066c7e434ad94e9e",
+            "--gho",
+            "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f",
+            "--from",
+            "17699253",
+            "--to",
+            "17699253",
+            "--out",
+            "cassette.json.zst",
+            "--seed-out",
+            "seed.json",
+        ]))
+        .unwrap();
+        let Either::Record(spec) = parsed else {
+            panic!("record mode expected");
+        };
+        assert_eq!(spec.seed_out.as_deref(), Some(Path::new("seed.json")));
+    }
+
+    #[test]
+    fn the_wrapper_seed_check_reaches_the_offline_gate() {
+        let parsed =
+            parse_args(argv(&["--kind", "aave-run", "--check-seed", "seed.json"])).unwrap();
+        let Either::CheckSeed(files) = parsed else {
+            panic!("seed check mode expected");
+        };
+        assert_eq!(files, vec![PathBuf::from("seed.json")]);
+    }
+
+    /// A harness DB carrying one activated market — the substrate a seed dumps,
+    /// built without any RPC.
+    fn activated_seed_db(path: &Path) {
+        let (db, _state) = DegenbotDb::open_for_writes(path).unwrap();
+        let mut guard = db.lock();
+        let tx = guard.transaction().unwrap();
+        activate_aave_market_on_conn(
+            &tx,
+            1,
+            "Aave Ethereum Market",
+            "0x2f39d218133afab8f2b819b1066c7e434ad94e9e",
+            "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f",
+            Some("Gho Token"),
+            Some("GHO"),
+            Some(18),
+            ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// The offline seed gate end to end, on the PRODUCTION schema: a seed dumped
+    /// from a locally activated market restores byte-identically, and a drifted
+    /// file is refused.
+    #[test]
+    fn the_seed_gate_accepts_a_restored_seed_and_refuses_drift() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("seed-source.db");
+        activated_seed_db(&db_path);
+        let seed_path = dir.path().join("seed.json");
+        write_aave_seed(&db_path, &seed_path).unwrap();
+        let committed = std::fs::read_to_string(&seed_path).unwrap();
+        assert_eq!(
+            check_seed(&seed_path).unwrap(),
+            committed.len(),
+            "a dumped seed restores and re-exports byte-identically"
+        );
+
+        let drift_path = dir.path().join("drift.json");
+        std::fs::write(&drift_path, committed.trim_end()).unwrap();
+        assert!(
+            check_seed(&drift_path).is_err(),
+            "a seed whose bytes drift from its canonical re-export fails the gate"
+        );
+    }
+
+    /// `--seed-out` names the `aave-run` substrate dump, so a kind that seeds
+    /// nothing must refuse it at argument validation instead of ignoring it.
+    #[test]
+    fn a_seed_out_outside_the_aave_run_kind_is_refused() {
+        let parsed = parse_args(argv(&[
+            "--kind",
+            "pool",
+            "--factory",
+            "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+            "--from",
+            "17699253",
+            "--to",
+            "17699253",
+            "--out",
+            "cassette.json.zst",
+            "--seed-out",
+            "seed.json",
+        ]));
+        let Err(error) = parsed else {
+            panic!("--seed-out is the aave-run seed");
+        };
+        assert!(
+            error.contains("--seed-out requires --kind aave-run"),
+            "the refusal names the required kind: {error}"
+        );
+    }
+
+    /// A bare relative `--seed-out` filename names the working directory — which
+    /// exists — so the writer must not try to create an empty parent. The probe
+    /// uses a uniquely named file beside the test process and never moves the
+    /// process-global working directory.
+    #[test]
+    fn a_bare_seed_filename_writes_without_creating_a_parent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("seed-source.db");
+        activated_seed_db(&db_path);
+
+        let bare = PathBuf::from(format!("aave-seed-probe-{}.json", std::process::id()));
+        assert!(
+            bare.parent().is_some_and(Path::is_empty),
+            "a bare relative filename carries an empty parent"
+        );
+        write_aave_seed(&db_path, &bare).unwrap();
+        let written = std::fs::read_to_string(&bare);
+        let _ = std::fs::remove_file(&bare);
+        let written = written.expect("the bare seed path is written beside the process");
+        assert!(
+            written.contains("degenbot.aave-seed/v1"),
+            "a bare filename writes the seed itself"
+        );
+    }
+
+    #[test]
+    fn usage_names_every_recording_lane() {
+        let usage = usage();
+        for flag in [
+            "--kind aave-run",
+            "--seed-out",
+            "--check-seed",
+            "--check <cassette",
+        ] {
+            assert!(usage.contains(flag), "usage must name {flag}");
+        }
     }
 }

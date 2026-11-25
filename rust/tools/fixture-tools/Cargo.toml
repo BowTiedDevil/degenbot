@@ -63,8 +63,9 @@ workspace = true
 # `default-hasher`) is the honest one to name rather than `std`'s.
 [dependencies]
 # The concrete product edges each program's source names — no umbrella facade
-# edge: `degenbot-db` (the harness DBs and the `sql_ledger` module the four
-# ledger binaries replay through), `degenbot-rpc` (the providers, cassettes, and
+# edge: `degenbot-db` (the harness DBs, the `sql_ledger` module the four
+# ledger binaries replay through, and the replay-seed codec the cassette
+# recorder's `--seed-out`/`--check-seed` arms call), `degenbot-rpc` (the providers, cassettes, and
 # replay transports), `degenbot-aave` (the `run_aave_update` chunk loop the
 # recorders drive), `degenbot-pool-updater` (the pool-update recorder and its
 # fetch half), `degenbot-config` (the typed-config node resolution),
@@ -75,7 +76,13 @@ workspace = true
 degenbot-aave.workspace = true
 degenbot-config.workspace = true
 degenbot-core.workspace = true
-degenbot-db.workspace = true
+# The ledger feature is enabled on the EDGE, not through this package's
+# `sql-ledger` feature: the recorder is a default target and its replay-seed
+# codec (`sql_ledger::dump_aave_seed_json` / `restore_aave_seed_json`) lives
+# behind degenbot-db's `sql-ledger`, so a default build of this package must
+# carry it. Production degenbot-db defaults stay OFF; only this tool package
+# compiles the ledger module unconditionally.
+degenbot-db = { workspace = true, features = ["sql-ledger"] }
 degenbot-pool-updater.workspace = true
 degenbot-simulation.workspace = true
 
@@ -120,11 +127,14 @@ tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 [features]
 default = []
 
-# SQL statement-ledger passthrough (`degenbot-db/sql-ledger`). The programs
-# that replay their goldens through the ledger build only under it, and each of
-# those `[[bin]]` entries carries its own `required-features` so a default check
-# skips it deliberately instead of failing on a cfg'd-out module. This forward
-# exists in no other tool package: the ledger is fixture-tools' lane alone.
+# The `[[bin]]` gate for the four programs that replay their goldens through
+# the ledger: each of those entries carries its own `required-features` so a
+# default check skips it deliberately instead of failing on a cfg'd-out module.
+# This forward exists in no other tool package: the ledger is fixture-tools'
+# lane alone. The ledger MODULE itself is already compiled into every lane — the
+# `degenbot-db` edge enables `degenbot-db/sql-ledger` unconditionally for the
+# recorder's replay-seed codec (see that edge) — so this feature now selects
+# those four targets and nothing else.
 #
 # A forward is not a resolved tree. The package's product edges are
 # default-features edges: no lane of this package carries the vendored JIT
@@ -169,14 +179,17 @@ path = "src/bin/generate_aave_config_windows/main.rs"
 required-features = ["sql-ledger"]
 
 # The live updater cassette recorder, and the exception to the rule above: it
-# replays nothing through the statement ledger (its `--check` arm re-serializes each
+# replays nothing through the STATEMENT LEDGER (its `--check` arm re-serializes each
 # cassette through the recorder's canonical writer and re-checks the entry digests,
 # all offline), so it carries NO `required-features` and no feature lane can hide it.
 # It is a default target: `just check-dev-tools default` builds it precisely because
 # that lane is what proves a default-feature build of this package still works. Its
-# argv surface: `--check <cassette.json>...`, the `pool` / `aave` / `aave-run`
-# kinds, the `--verify` verification-surface arm, `--node` over configured-node
-# resolution, and `--out`.
+# argv surface: `--check <cassette.json>...`, `--check-seed <seed.json>...` (the
+# offline seed drift gate: restore -> re-export must be byte-identical), the
+# `pool` / `aave` / `aave-run` kinds, the `--verify` verification-surface arm,
+# `--seed-out` (the `aave-run` replay seed, dumped through degenbot-db's
+# case-preserving seed codec), `--node` over configured-node resolution, and
+# `--out`.
 [[bin]]
 name = "record_updater_cassette"
 path = "src/bin/record_updater_cassette/main.rs"

@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use alloy::primitives::Address;
+use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_core::runtime::get_runtime;
 use degenbot_db::{DbError, DegenbotDb};
 use degenbot_rpc::chain_evidence::{resolve_terminal_anchor, BlockReads};
@@ -262,8 +263,12 @@ pub fn activate_aave_market(
 
 /// The RPC-fetched metadata one market activation seeds from: the on-chain
 /// market name plus the GHO token's `name()` / `symbol()` / `decimals()`.
+///
+/// Public so a caller that resolves its own anchor (the cassette recorder) can
+/// fetch the same facts at it through [`fetch_activation_metadata_at`] and hand
+/// them to [`activate_aave_market_on_conn`] itself.
 #[derive(Debug, Clone)]
-pub(crate) struct ActivationMetadata {
+pub struct ActivationMetadata {
     /// The on-chain `getMarketId()` return (e.g. `"Aave Ethereum Market"`).
     pub market_name: String,
     /// The GHO token's `name()`. `None` only for an established NONCONFORMING
@@ -340,29 +345,29 @@ pub enum ActivationMetadataError {
     },
 }
 
-/// The RPC half shared by [`activate_aave_market`] and the market-reset
-/// module: resolve ONE exact head anchor, then read the market name
-/// (`getMarketId()` on the address provider, a dynamic `string` return) and the
-/// GHO token's metadata at it.
+/// The activation seam's RPC half at ONE caller-supplied exact anchor: read the
+/// market name (`getMarketId()` on the address provider, a dynamic `string`
+/// return) and the GHO token's metadata at `anchor`.
 ///
-/// Every read names the resolved anchor's block hash with canonical membership
-/// required, so the seed's identity facts belong to one block instead of to
-/// whatever the endpoint happened to serve between two ambient reads.
+/// Every read names the anchor's block hash with canonical membership required,
+/// so the seed's identity facts belong to one block instead of to whatever the
+/// endpoint happened to serve between two ambient reads. A caller that owns the
+/// block — the cassette recorder, whose seed is a function of the capture parent
+/// `from - 1` — hands its own anchor; the head-anchored
+/// [`fetch_activation_metadata`] resolves the terminal one and delegates
+/// here, so the market-id fallback and the GHO conformance rules exist once.
 ///
 /// # Errors
 ///
-/// [`RunError::TerminalAnchor`] when the head resolves to no usable exact anchor
-/// (a missing header, or an endpoint on another chain), [`RunError::ExactRead`]
-/// when a read cannot be served at that anchor, and
+/// [`RunError::ExactRead`] when a read cannot be served at that anchor, and
 /// [`RunError::ActivationMetadata`] when a required identity fact was not
 /// established.
-pub(crate) async fn fetch_activation_metadata(
+pub async fn fetch_activation_metadata_at(
     provider: &AlloyProvider,
-    chain_id: u64,
+    anchor: ChainAnchor,
     ap_address: &Address,
     gho_address: &Address,
 ) -> Result<ActivationMetadata, RunError> {
-    let anchor = resolve_terminal_anchor(provider, chain_id, None).await?;
     let reads = BlockReads::at(provider, anchor);
     let market_name = fetch_market_id(&reads, ap_address).await?;
     let metadata = degenbot_rpc::erc20::read_exact(&reads, *gho_address).await?;
@@ -372,6 +377,26 @@ pub(crate) async fn fetch_activation_metadata(
         gho_symbol: optional_gho_text(metadata.symbol, gho_address, "symbol()")?,
         gho_decimals: required_gho_decimals(metadata.decimals, gho_address)?,
     })
+}
+
+/// The head-anchored activation-metadata fetch shared by
+/// [`activate_aave_market`] and the market-reset module: resolve ONE exact
+/// terminal anchor, then delegate every identity read to
+/// [`fetch_activation_metadata_at`].
+///
+/// # Errors
+///
+/// [`RunError::TerminalAnchor`] when the head resolves to no usable exact anchor
+/// (a missing header, or an endpoint on another chain), plus every error the
+/// anchored read raises.
+pub(crate) async fn fetch_activation_metadata(
+    provider: &AlloyProvider,
+    chain_id: u64,
+    ap_address: &Address,
+    gho_address: &Address,
+) -> Result<ActivationMetadata, RunError> {
+    let anchor = resolve_terminal_anchor(provider, chain_id, None).await?;
+    fetch_activation_metadata_at(provider, anchor, ap_address, gho_address).await
 }
 
 /// A GHO text field: the value, an established nonconforming absence (the
@@ -554,7 +579,9 @@ mod tests {
 
     use alloy::primitives::{keccak256, Bytes};
 
-    use crate::updater::test_chain::{Answer, ScriptedChain, CHAIN_ID, HEAD_HASH};
+    use crate::updater::test_chain::{
+        Answer, ScriptedChain, CHAIN_ID, HEAD_HASH, HEAD_NUMBER, HEAD_PARENT,
+    };
 
     const AP_ADDRESS: &str = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
     const GHO_ADDRESS: &str = "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f";
@@ -656,6 +683,103 @@ mod tests {
                 read.block_id(),
                 Some(&pin),
                 "{} did not name the resolved activation anchor",
+                read.method
+            );
+        }
+    }
+
+    /// The `_at` form reads at the anchor it is handed and resolves nothing: no
+    /// head/header probe, one pin on every read. The recorder calls this at
+    /// `from - 1`, so a capture's identity facts belong to the capture parent.
+    #[test]
+    fn fetch_activation_metadata_at_reads_the_named_anchor_without_resolving_one() {
+        let chain = scripted_activation(ScriptedChain::new());
+        let provider = get_runtime().block_on(chain.provider());
+        let anchor = degenbot_core::canonical_head::ChainAnchor::new(
+            CHAIN_ID,
+            HEAD_NUMBER,
+            HEAD_HASH,
+            HEAD_PARENT,
+        )
+        .expect("the fixture names one exact anchor");
+
+        let metadata = get_runtime()
+            .block_on(fetch_activation_metadata_at(
+                &provider,
+                anchor,
+                &ap(),
+                &gho(),
+            ))
+            .expect("the scripted chain serves every activation read at the anchor");
+
+        assert_eq!(metadata.market_name, "Aave Ethereum Market");
+        assert_eq!(metadata.gho_name.as_deref(), Some("Gho Token"));
+        assert_eq!(metadata.gho_decimals, 18);
+
+        let methods: Vec<String> = chain
+            .issued()
+            .into_iter()
+            .map(|request| request.method)
+            .collect();
+        assert!(
+            methods
+                .iter()
+                .all(|method| method == "eth_call" || method == "eth_getCode"),
+            "the `_at` form resolves no anchor, issued {methods:?}"
+        );
+        let pin = serde_json::json!({
+            "blockHash": format!("{HEAD_HASH}"),
+            "requireCanonical": true,
+        });
+        let reads = chain.reads();
+        assert!(!reads.is_empty(), "the activation read the chain");
+        for read in reads {
+            assert_eq!(
+                read.block_id(),
+                Some(&pin),
+                "{} left the named anchor",
+                read.method
+            );
+        }
+    }
+
+    /// The head-anchored form keeps its production shape: it resolves ONE
+    /// terminal anchor and delegates every identity read to the `_at` form.
+    #[test]
+    fn fetch_activation_metadata_resolves_one_terminal_anchor_and_delegates() {
+        let chain = scripted_activation(ScriptedChain::new());
+        let provider = get_runtime().block_on(chain.provider());
+
+        let metadata = get_runtime()
+            .block_on(fetch_activation_metadata(
+                &provider,
+                CHAIN_ID,
+                &ap(),
+                &gho(),
+            ))
+            .expect("the scripted chain serves every activation read");
+
+        assert_eq!(metadata.market_name, "Aave Ethereum Market");
+        assert_eq!(metadata.gho_symbol.as_deref(), Some("GHO"));
+
+        let headers = chain
+            .issued()
+            .into_iter()
+            .filter(|request| request.method == "eth_getBlockByNumber")
+            .count();
+        assert_eq!(
+            headers, 1,
+            "the head-anchored form resolves exactly one terminal anchor"
+        );
+        let pin = serde_json::json!({
+            "blockHash": format!("{HEAD_HASH}"),
+            "requireCanonical": true,
+        });
+        for read in chain.reads() {
+            assert_eq!(
+                read.block_id(),
+                Some(&pin),
+                "{} did not name the resolved anchor",
                 read.method
             );
         }
