@@ -159,8 +159,7 @@ impl WsIngestor {
     }
 
     /// Fetch a full block through the same provider that owns the live
-    /// subscriptions. The Tauri feed uses this to enrich `newHeads` with the
-    /// transaction count, which is not part of an Ethereum block header.
+    /// subscriptions.
     ///
     /// # Errors
     ///
