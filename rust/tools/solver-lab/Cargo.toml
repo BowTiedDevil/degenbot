@@ -69,7 +69,7 @@ alloy-primitives = { version = "^1.7", default-features = false, features = ["st
 # itself is in every tree that reaches `degenbot-pools`; it is optional here so
 # only the `hotpath` lane *enables* real measurement. It is the pool profiling
 # crate, NOT the bot's Prometheus exporter.
-hotpath = { version = "^0.32.1", default-features = false, optional = true }
+hotpath = { version = "^0.33.0", default-features = false, optional = true }
 
 [features]
 default = []

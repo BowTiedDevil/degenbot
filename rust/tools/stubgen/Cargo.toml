@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 # The typed config projection's declaration tables: `config_schema!` emits
 # SCHEMA (every key with its kind) and SECTION_PATHS from the same arms as the
 # runtime machinery in the binding layer, and the generator splices the typed

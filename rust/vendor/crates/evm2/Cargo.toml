@@ -60,7 +60,7 @@ k256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
 secp256k1 = { version = "0.33.1", default-features = false, features = ["alloc", "recovery", "global-context"], optional = true }
 
 # sha256
-sha2 = { version = "0.11.1", default-features = false }
+sha2 = { version = "0.11.2", default-features = false }
 
 # ripemd160
 ripemd = { version = "0.2.0", default-features = false }
