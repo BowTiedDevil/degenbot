@@ -162,7 +162,7 @@ Compact command-stream executor. All execution decisions are made off-chain and 
 1. **Explicit** — off-chain pre-computes amounts (`V4_TAKE`, `ERC20_TRANSFER`)
 2. **Dynamic** — on-chain reads from PM exttload (`V4_TAKE_DELTA`, `V4_SETTLE_DELTA`, `V4_SETTLE_ALL`)
 
-Full documentation: `docs/executor/README.md`
+Full documentation: `docs/architecture/executor-command-grammar.md`
 
 ### Interface
 
@@ -201,8 +201,7 @@ artifact location. Whole-bytecode hashes are deliberately NOT the release
 identity: Vyper immutables differ per deployment, so artifact integrity stays
 with `rust/crates/foundation/degenbot-executor/releases/v2/artifacts/manifest.json`. A deployment compiled
 before these getters answers nothing, and naming it requires an explicit
-operator legacy mapping — never a guess at the latest release. Details and the
-migration policy: `docs/executor/releases.md`.
+operator legacy mapping — never a guess at the latest release.
 
 The command stream format:
 

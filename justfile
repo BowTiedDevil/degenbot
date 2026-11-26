@@ -1589,8 +1589,7 @@ build-executor-three-hop-encoder:
 # or prints key material, archives every artifact (logs, registrations, reports,
 # metadata) in the output directory, and stops the bot through the launcher's
 # own `stop` on every exit path. Optional: --capital, --fixed-input, --chain-id,
-# --release-id, --ready-timeout. Artifact layout and exit codes live in
-# docs/executor/README.md ("Live bankroll matrix").
+# --release-id, --ready-timeout.
 #
 # Run both bankroll postures against one registration set.
 executor-bankroll-matrix *args:

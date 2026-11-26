@@ -79,7 +79,7 @@ The seam's own history is the other half of the disposition: ADR-093 D3 already 
 
 `EngineDriver::core()` is `self.stages.core()` and nothing more: no state, no lock-site choice, no discipline. Deleting it would take the seam from twenty-one members to twenty, retarget three test call sites (`session_paths.rs:506`, `:508`, `:581` → `stages.core()`), and require:
 
-- a `rust/CHANGELOG.md` `Removed` row (ADR-088's hard-cutover license — the method is `pub` on a type the umbrella re-exports, `facade/degenbot/src/lib.rs:59`);
+- a §6.5 was→is row in ADR-093 for the retired member (ADR-088's hard-cutover license — the method is `pub` on a type the umbrella re-exports, `facade/degenbot/src/lib.rs:59`);
 - an ADR-093 D1 As-shipped note recount (twenty-one → twenty; the five projections become four);
 - a decisions-table row in `docs/adr/README.md` in the same change.
 

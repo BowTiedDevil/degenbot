@@ -85,5 +85,4 @@ implementor · **(v)** console operator (`degenbot`).
   (`solve_door_census.txt`).
 - The dependency charter (ADR-084 D3) is the "must not pull" column turned
   into a gate: `just check-dependency-charter` (ratchet #7).
-- Breaking path cuts ship with a "was → is" migration table — the ADR-084
-  solve-door cut's table is in [rust/CHANGELOG.md](rust/CHANGELOG.md).
+- Breaking path cuts ship with a "was → is" migration table (ADR-084 D7).

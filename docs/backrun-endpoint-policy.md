@@ -1,9 +1,10 @@
 # Backrun endpoint policy (MEVBlocker searcher feed)
 
-> Status: operator-approved extension of the closed relay allowlist from
-> `docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md`, scoped to the
-> same operator (MEVBlocker) documentedunwrap Surfaces used by the backrun
-> pipeline tasks (epic `L5NSHX`). Extend only by operator sign-off.
+> Status: operator-approved extension of the closed relay allowlist pinned as
+> `SETTLEMENT_DEFAULT_ENDPOINTS` in
+> `rust/crates/foundation/degenbot-config/src/readiness.rs`, scoped to the
+> same operator (MEVBlocker) surfaces used by the backrun pipeline tasks
+> (epic `L5NSHX`). Extend only by operator sign-off.
 
 ## Searcher-facing endpoints (closed list)
 

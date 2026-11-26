@@ -96,7 +96,7 @@ shared instruments.
 ## Notes
 
 
-- Import `docs/grafana/degenbot-overview.json` for the companion dashboard;
+- Import `grafana/degenbot-overview.json` for the companion dashboard;
   point it at the Prometheus data source scraping the bot endpoint.
 - Dispatch storage lane (BAL delta opt-in): `degenbot.dispatch.storage`
   (`degenbot_dispatch_storage_total` once Prometheus renders it) carries
@@ -109,8 +109,12 @@ shared instruments.
   legacy share, and the legacy share per cold reason;
   DegenbotDispatchStorageFallback pages on the sustained cold share.
 - Function-level profiler metrics (hotpath) are a separate scrape job + the
-  `docs/grafana/hotpath-profiling.json` dashboard — the enablement and scrape
+  `grafana/hotpath-profiling.json` dashboard — the enablement and scrape
   recipe is [`HOTPATH.md`](HOTPATH.md).
+- Instrument ↔ dashboard ↔ alert **metric-name parity** (unit-aware rendering of
+  every `instruments.rs` declaration against all PromQL targets in
+  `degenbot-overview.json`) is recorded in
+  [`epoch-metrics-parity-result.md`](epoch-metrics-parity-result.md).
 - Traces: Jaeger UI, service `degenbot-bot`. Per-block traces root at
   `degenbot.epoch.run` (attrs `epoch.block` / `epoch.seq` plus the pre-solve gap
   fields); the ADR-041 stage spans (`degenbot.stage.streaming` / `quiesced` /

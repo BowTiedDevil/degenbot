@@ -220,7 +220,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | Env var | TOML key | Type | Default | Owner | Description |
 | --- | --- | --- | --- | --- | --- |
 | `DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE` | `strategy.settlement.active` | `bool` | `false` | `core` | Activate the settled-block settlement arm in this process; inactive leaves the facet dormant. |
-| `DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS` | `strategy.settlement.endpoints` | `Option<string>` | `(unset; required when settlement is active)` | `core` | Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md). |
+| `DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS` | `strategy.settlement.endpoints` | `Option<string>` | `(unset; required when settlement is active)` | `core` | Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (SETTLEMENT_DEFAULT_ENDPOINTS in degenbot-config). |
 ## `strategy.mevblocker_backrun`
 
 | Env var | TOML key | Type | Default | Owner | Description |

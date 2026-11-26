@@ -97,7 +97,7 @@ every family file (the 5×2 two-homes ADR-073 removed).
   module namespacing are in scope; count is not the axis. A future split must
   pass C2–C4 *and* show the seam does not cut an object model (D6).
 - **D6 — Rejected alternatives are recorded with their measurements** (§7).
-- **D7 — A breaking cut ships with a migration note.** CHANGELOG entry + "was →
+- **D7 — A breaking cut ships with a migration note.** A "was →
   is" table for every published path removed: W2's `solve::mixed::*` → the
   `solvers` root door, `profit_envelope` → `solve::gate` (the door *module*; the
   `profit_envelope::gate` submodule's items are **hoisted to the door root**, and
@@ -245,7 +245,7 @@ marked "umbrella" resolve to real aliases; the D7 migration table is linked from
 the getting-started page.
 
 ### W7 — Migration + coordination (0.25 d, lands with W2)
-CHANGELOG entry + "was → is" table for W2/W5 path removals; a note that W2/W3/W5
+"was → is" table for W2/W5 path removals; a note that W2/W3/W5
 touch files another lane currently holds uncommitted (AGENTS.md concurrent-work
 rule), so the work rebases behind that landing.
 

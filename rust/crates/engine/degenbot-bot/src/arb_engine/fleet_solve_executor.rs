@@ -1088,7 +1088,7 @@ mod tests {
             self.gate.counters()
         }
     }
-    /// Escalation (see `docs/reth-parallelism-research.md` §7) is a
+    /// Escalation is a
     /// SELF-CONTAINED I/O lane — a bin escalates its cold-miss work through
     /// its `LaneCtx`
     /// while EVERY solver seat is mid-unit, and the escalations complete on

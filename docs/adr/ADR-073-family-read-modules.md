@@ -239,8 +239,7 @@ Solidly adopts its hop state's existing `Clone`-but-not-`Copy` contract. Accepta
 requires identical resolved payloads, refusal mappings, and state nonces, with no
 solver-math change. Existing family and resolve-row tests keep their current seams
 and assertions; no duplicate field-by-field suites are added. The hard cutover carries
-a `rust/CHANGELOG.md` “Was → Is” entry for every deleted projection type (ADR-084
-D7). The cutover is complete: the four projection types and their field-copy
-routines are deleted with no aliases, `rust/CHANGELOG.md` carries the Was → Is
-migration rows, and the pools root surface pin tracks the four-name shrink with
-the full `just test` ladder green.
+a “Was → Is” migration table for every deleted projection type (ADR-084 D7). The
+cutover is complete: the four projection types and their field-copy routines are
+deleted with no aliases, and the pools root surface pin tracks the four-name
+shrink with the full `just test` ladder green.

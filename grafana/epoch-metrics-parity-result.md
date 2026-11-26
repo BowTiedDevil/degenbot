@@ -5,8 +5,8 @@
   rust/crates/engine/degenbot-bot/src/instruments.rs (counters -> _total,
   histograms -> _seconds/{,_bucket,_sum,_count} by unit; By -> _bytes;
   unit "1" -> _ratio; weiless histograms unsuffixed).
-- Compared against ALL 106 PromQL target exprs in docs/grafana/degenbot-overview.json
-  and docs/grafana/provisioning/alerting/degenbot-grafana-rules.yml
+- Compared against ALL 106 PromQL target exprs in grafana/degenbot-overview.json
+  and grafana/provisioning/alerting/degenbot-grafana-rules.yml
   (62 distinct degenbot_* families referenced).
 - VERDICT: PASS - zero unmatched families.
 - Retired-name mentions confined to prose successor notes (panel/ALERTS

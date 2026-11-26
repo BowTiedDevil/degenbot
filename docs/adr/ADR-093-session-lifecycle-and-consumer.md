@@ -512,7 +512,7 @@ the same names carry over to the pose value's suite.
 One cut, no deprecated forwarders, no compatibility shim, no feature flag
 (AGENTS.md; ADR-084 D7's "hard cutover, not silence"). Every removed member
 fails to compile at its former call site, and the change ships with the §6.5
-was→is table plus a `rust/CHANGELOG.md` entry. The consumers cut in the same
+was→is table. The consumers cut in the same
 change: `PyArbEngine` (`rust/crates/shells/degenbot-python/src/bot/engine/`),
 `examples/settlement_bot`, and the Python cockpit (`src/degenbot/runner/`).
 
@@ -735,7 +735,7 @@ a host-owned `Live` sub-state"), which stays open on the host side.
 ### 6.6 Consumer migration notes
 
 **The public was → is table.** The eight rows a consumer migrates by, with the
-retired name in the "was" column only (the same rows the `CHANGELOG` carries):
+retired name in the "was" column only:
 
 | # | Was | Is |
 |---|---|---|
@@ -866,7 +866,7 @@ it.
    `degenbot-batch-executor`; the example and the cockpit become adapters (D6).
 6. **Certification and the final public cut** — ergo `BGZQFG`. The was→is table
    executes to the letter, stubs regenerate, both first-class consumers are
-   certified, and the `CHANGELOG` carries the breaking change (D8).
+   certified, and the §6.5 table carries the breaking change (D8).
 
 **Considered and rejected: pose-first.** An earlier order ran the slices the
 other way — the private pose first (closing the two ordering holes soonest), then
@@ -890,7 +890,7 @@ the ergo task and the commit that shipped it:
 | §6.7.3 — the `EngineStages` direct cutover | `KKUMXS` | `74a724170` | every engine caller at the seam, the nine-name mirror deleted, ADR-075 superseded in the same change |
 | §6.7.4 — private pose, Session event stream, Consumer claim, connect/run/close | `CGXZYJ` | `b59d46d4a` | the data-carrying pose machine (9 poses × 11 events), `SessionEvent`/`SessionStream`/`ConsumerClaim`/`EventHandoff`/`claim_consumer`, `connect`/`run`/`close`, the shared `TeardownReport`, typed refusals, and the total idempotent close |
 | §6.7.5 — the Session consumer | `ZJZU27` | `80a9e8b45`, `f350c36db` | `degenbot_batch_executor::session` with the shared event-sequence oracle (`tests/standalone_parity/fixtures/session_consumption.json` and its Rust and Python halves); the pure-Rust example and the Python cockpit become adapters |
-| §6.7.6 — certification and the final public cut | `BGZQFG` | this change | this ADR's status and landing record, the `CHANGELOG`'s public was→is rows, both consumers' docs, regenerated stubs, and the full gate battery |
+| §6.7.6 — certification and the final public cut | `BGZQFG` | this change | this ADR's status and landing record, its public was→is rows, both consumers' docs, regenerated stubs, and the full gate battery |
 
 Two details the shipped surface settled differently from the decision sketches;
 both are recorded rather than re-litigated:

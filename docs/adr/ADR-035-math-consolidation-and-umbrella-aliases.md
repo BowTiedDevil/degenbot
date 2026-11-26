@@ -8,7 +8,7 @@
 
 - The workspace had a set of publishable crates; five of them were AMM invariant-math ports: `degenbot-v2-math`, `degenbot-concentrated-liquidity-math`, `degenbot-curve-math`, `degenbot-balancer-math`, `degenbot-solidly-math`.
 - crates.io has **no name reservation** — every published name is a permanent footprint: its own README, keywords, dependents, and version lineage.
-- The research handoff (`docs/handoffs/crates-io-publishing-prep.md`) warns against over-splitting (citing ruff/uv internals as a caution) and its "don't shrink" guidance assumed a *post-publish* world. Pre-first-publish, consolidation is free.
+- The research handoff (`docs/handoffs/crates-io-publishing-prep.md`, removed in `87a9ddc76`) warns against over-splitting (citing ruff/uv internals as a caution) and its "don't shrink" guidance assumed a *post-publish* world. Pre-first-publish, consolidation is free.
 - Crate identity test for publishing: (1) does it have value types / API a consumer uses directly? (2) independent external-reuse demand? (3) version independence? (4) a natural home for docs + keywords?
 
 Facts about the five math crates: all carry the ADR-009 lockstep version (one version literal in the tree — zero independence); the same consumer set (pools, bot, solvers, umbrella; db + rpc for CL); no consumer wants a single family in isolation; no external-reuse demand signal; each is byte-exact ports of canonical Solidity math (canonical sources cited in each module doc).

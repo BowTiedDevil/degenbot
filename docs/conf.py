@@ -82,7 +82,7 @@ suppress_warnings = [
     # generated API pages only: live .py docstrings contain tables/indent
     # shapes that trip rst definition-list rendering in autoapi's output
     "docutils",  # existing files have h2/h3 skips
-    "misc.highlighting_failure",  # pre-tool 'mermaid' fences + pygments lacking a lexer for the 'solidity' snippets in docs/aave
+    "misc.highlighting_failure",  # pre-tool 'mermaid' fences
 ]
 
 # The Rust core is documented on docs.rs, not here (degenbot_rs is
@@ -96,12 +96,6 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "handoffs/*",
-    "tasks/*",
-    "gate-viz/*",
-    "grafana/provisioning/*",
-    # untitled ergo-task artifacts; releases/ carries the site copy
-    "release-notes/*",
 ]
 
 # -- Options for HTML output -------------------------------------------------

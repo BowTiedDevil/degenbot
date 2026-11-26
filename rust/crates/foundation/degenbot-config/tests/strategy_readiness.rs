@@ -153,8 +153,8 @@ fn off_allowlist_settlement_endpoints_refuse() {
         let message = error.to_string();
         assert!(message.contains(url), "names the refused URL: {message}");
         assert!(
-            message.contains("RELAYS_AND_GUARDRAILS"),
-            "names the audit doc: {message}"
+            message.contains("SETTLEMENT_DEFAULT_ENDPOINTS"),
+            "names the pinned allowlist: {message}"
         );
     }
 }

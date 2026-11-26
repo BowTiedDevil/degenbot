@@ -764,7 +764,7 @@ mod tests {
         )
         .expect_err("off-allowlist activation must refuse");
         assert!(
-            error.message().contains("RELAYS_AND_GUARDRAILS"),
+            error.message().contains("SETTLEMENT_DEFAULT_ENDPOINTS"),
             "{}",
             error.message()
         );
@@ -834,7 +834,7 @@ mod tests {
         )
         .expect_err("off-allowlist endpoints must refuse at write time");
         assert!(
-            error.message().contains("RELAYS_AND_GUARDRAILS"),
+            error.message().contains("SETTLEMENT_DEFAULT_ENDPOINTS"),
             "{}",
             error.message()
         );

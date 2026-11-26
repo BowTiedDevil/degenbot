@@ -120,11 +120,6 @@ The 2026-09-10 architecture review that flagged this residue
 (Candidate 3, 'one boot surface'), its adversarial verification, and
 the honest bounding of the live scope (the `FLEET_*_BOOT` OnceLock
 census; `SOLVE_FLEET_HOSTED` already retired; the
-`engine_stages.rs:507` citation exposed as a stale-path phantom) are
-recorded at the repository root:
-[`architecture-review-20260910-095446-adversarial.md`](../architecture-review-20260910-095446-adversarial.md)
-(§'Candidate 3 — one boot surface'; Candidate-3 residual-scope cites
-at its tail). The reviewed report itself:
-[`architecture-review-20260910-095446.html`](../architecture-review-20260910-095446.html).
-Both documents are LINK-ONLY records — edit THIS file's rows, never
-the review artifacts.
+`engine_stages.rs:507` citation exposed as a stale-path phantom) were
+recorded in the `architecture-review-20260910-095446` artifacts, which
+have since been discarded as stale.

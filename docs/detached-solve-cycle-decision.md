@@ -131,8 +131,8 @@ Phase A soaked the flag-ON posture (`solve.admission_shed`, `DEGENBOT_SOLVE_ADMI
 live: 95/95 healthy samples held `in_flight` at 0 with `shed_total` flat; a 7 s
 SIGSTOP stall shed exactly one zero-budget cycle (`in_flight=269 >> target_depth=8`)
 and carried the keys; recovery resumed at ~17 merges/s with no further shed or
-degrade (see [docs/tasks/WFF6MM-cutover.md](tasks/WFF6MM-cutover.md) for the full
-evidence table). Phase B then cut over:
+degrade (the full evidence table is the WFF6MM cutover task record). Phase B
+then cut over:
 
 - deleted the in-cycle dispatch arm and every construct that existed only to
   switch to it — the machine's `Saturated` state, `begin_cycle`'s cap/stance

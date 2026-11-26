@@ -96,6 +96,14 @@ range is deeper or shallower. (This is the smooth-model statement; EVM floor
 rounding perturbs it at wei scale — the same staircase the existing ±2 sweep
 already patches, see §6.)
 
+**Interactive explainers.** [`viz/mobius_v3_solver.html`](../viz/mobius_v3_solver.html)
+runs the structure live in BigInt: the per-range CP staircase, the closed-form
+per-piece argmax, and the monotone active-set walk that replaces enumeration.
+[`viz/tangent_envelope.html`](../viz/tangent_envelope.html) draws the
+concavity lemma those walks rely on — a tangent anchored at any point stays
+on or above the whole curve, so a handful of lines certify the best profit a
+path can reach.
+
 ### 2.3 Chaining hops preserves the structure
 
 Composition of increasing concave functions is concave; V2 hops are smooth
@@ -148,7 +156,9 @@ heuristic anchor.
 
 With §2 in hand the three failure modes of the enumeration collapse into
 one: **it uses brute-force subset enumeration to locate the argmax piece of
-a function whose piece structure is monotone.**
+a function whose piece structure is monotone.** Tangent dominance (drawn in
+[`viz/tangent_envelope.html`](../viz/tangent_envelope.html)) is what makes the
+walk safe: no piece behind the argmax can beat the anchor.
 
 1. **Wasted work, exponentially in hop count.** For a well-behaved pool the
    argmax piece is almost always `(0..2, 0..2, …)` — arbs are small relative

@@ -2,8 +2,8 @@
 
 **Status: accepted (implemented for the hook wiring; the doc table and the
 parity manifest are pending, see Migration).** Elaborates
-[ADR-074](ADR-074-the-push-gate-manifest.md)'s single-manifest principle and
-[ADR-087](ADR-087-deleting-code-is-the-complete-retirement.md)'s retirement
+[ADR-074](ADR-074-push-gate-manifest.md)'s single-manifest principle and
+[ADR-087](ADR-087-deletion-is-the-retirement.md)'s retirement
 hygiene for the gate tier itself.
 
 ## Context

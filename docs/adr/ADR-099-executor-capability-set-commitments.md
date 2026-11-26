@@ -531,6 +531,6 @@ criterion, and each one fails on the defect it describes.
   `cmd_executor.v2.json` added.
 - `degenbot-arbitrage/src/release_binding.rs` — the mismatch variant's
   construction and message.
-- Artifacts and the committed ABI/runtime copies rebaked;
-  `docs/executor/releases.md` and `docs/executor/README.md` updated (getter
-  table, strict-decode table, refusal table, versioning policy, runbook).
+- Artifacts and the committed ABI/runtime copies rebaked; the executor docs
+  (getter table, strict-decode table, refusal table, versioning policy, runbook)
+  updated, and later removed.

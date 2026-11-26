@@ -106,3 +106,9 @@ Golden-oracle parity (mainnet, block 24,407,242 —
    mainnet parity tests; the deployments registry's `0x300Ab` is the Base
    counterpart. No Base-scoped constant is added because no consumer queries
    BalancerQueries on Base.
+3. **Unmodeled families — surveyed, not modeled.** The 173 `unmodeled` corpus
+   rows (62 Element principal-token, 48 lending-adapter linear, 23 boosted
+   constituents, 13 mocks, ~27 bespoke) are identified, probed and costed in
+   [`findings/2026-11-18-balancer-unmodeled-families.md`](../findings/2026-11-18-balancer-unmodeled-families.md),
+   the resumption surface for the modeling epic (`4X7MEH`); the named refusal
+   (`BalancerUnmodeledFamily`) stands until that epic resumes.

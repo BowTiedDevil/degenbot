@@ -4,9 +4,9 @@
 //! An activated facet must carry a non-empty `endpoints` set — anything
 //! less would let signed bytes reach the public mempool by omission (the
 //! reverted-broadcast incident class). The `--endpoints-default` CLI
-//! switch stamps the pinned allowlist into that set at activation time. Explicit settlement endpoints are restricted to the
-//! pinned revert-protecting relay allowlist; the audit trail behind it
-//! lives in `docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md`.
+//! switch stamps the pinned allowlist into that set at activation time.
+//! Explicit settlement endpoints are restricted to the pinned
+//! revert-protecting relay allowlist (`SETTLEMENT_DEFAULT_ENDPOINTS`).
 //!
 //! The two per-ecosystem backrun facets each carry their own endpoint
 //! semantics: `mevblocker_backrun.endpoints` is the `MEVBlocker` searcher
@@ -20,8 +20,8 @@
 use crate::schema::BotConfig;
 
 /// The pinned revert-protecting relay allowlist (the settlement default
-/// endpoint set). CLOSED on purpose: an endpoint joins only through the
-/// audit doc, and the readiness gate rejects everything else.
+/// endpoint set). CLOSED on purpose: an endpoint joins only by operator
+/// sign-off, and the readiness gate rejects everything else.
 pub const SETTLEMENT_DEFAULT_ENDPOINTS: &[&str] = &[
     "https://rpc.flashbots.net?hint=hash",
     "https://rpc.mevblocker.io/noreverts",
@@ -114,7 +114,7 @@ impl std::fmt::Display for StrategyReadinessError {
             Self::EndpointRefused { facet, url, reason } => write!(
                 f,
                 "endpoint {url} for strategy \"{facet}\" refused: {reason}; the closed \
-                 allowlist is pinned in docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md"
+                 allowlist is SETTLEMENT_DEFAULT_ENDPOINTS in degenbot-config"
             ),
             Self::NoActiveFacet => write!(
                 f,

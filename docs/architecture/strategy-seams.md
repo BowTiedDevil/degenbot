@@ -85,7 +85,7 @@ for capability gaps.
 ## The strategy host (Phase C, landed)
 
 The dynamic strategy host landed 2026-09-19
-([ADR-057](adr/ADR-057-strategy-host.md)): `StrategyHost`
+([ADR-057](../adr/ADR-057-strategy-host.md)): `StrategyHost`
 (`degenbot-bot/src/strategy_host.rs`) owns the hub, the boot-snapshot
 `RouteRegistry`, and the `NonceAuthority`
 (`degenbot-bot/src/nonce_authority.rs`), and drivers attach through the bound
@@ -122,7 +122,7 @@ gated serving seam was retired (B4, ADR-056), and the boot-snapshot
 `RouteRegistry` answers pool membership for strategies (B5). A second pending
 transaction strategy now implements `PendingTxReaction` and subscribes; no
 intake wiring. The Phase C runtime host now lands on top of it
-([ADR-057](adr/ADR-057-strategy-host.md)).
+([ADR-057](../adr/ADR-057-strategy-host.md)).
 
 **B3 rewritten (2026-11-20):** the engine→driver channels are no longer
 hub-registered named sources. The hub is typed intake — one
@@ -131,7 +131,7 @@ hub-registered named sources. The hub is typed intake — one
 `subscribe_head`, and no overflow-policy vocabulary — and the session's one
 ordered `SessionEvent` stream is engine-owned, handed out exactly once with its
 `ConsumerClaim`
-([ADR-104](adr/ADR-104-typed-eventhub-intake-and-engine-session-stream.md)).
+([ADR-104](../adr/ADR-104-typed-eventhub-intake-and-engine-session-stream.md)).
 
 ## Where the seams are (exact owners)
 

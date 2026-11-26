@@ -38,7 +38,7 @@ are generated.
   `just` recipe the justfile does not define, a script path that does not exist,
   or gates out of stage order fails with the reason named.
 - **Retire a hook.** Delete the block and run `just gates-regen`; the line and
-  its prose go with it ([ADR-087](adr/ADR-087-deleting-code-is-the-complete-retirement.md)
+  its prose go with it ([ADR-087](adr/ADR-087-deletion-is-the-retirement.md)
   — no waiver, no tombstone).
 - **Never hand-edit a hook line.** `just gates-check` regenerates and diffs, and
   the `gate-registry` pre-commit hook runs it, so a hand-edited line cannot
@@ -103,8 +103,8 @@ is one line, not a table.
 ## 1. Comment hygiene
 
 **Failure class.** Dead work-tracker citations and gate-state narration in code
-comments. The 2026-09-15 tech-debt survey (`docs/findings/2026-09-15-tech-debt-survey.md`)
-found 237 in-code tracker citations, zero resolvable. The rules live in
+comments. The 2026-09-15 tech-debt survey found 237 in-code tracker
+citations, zero resolvable. The rules live in
 [comment hygiene](comments.md) and `AGENTS.md` ("Comment Hygiene").
 
 **Gate body.** `scripts/hooks/comment-hygiene.sh`, three detectors:

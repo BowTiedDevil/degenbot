@@ -19,18 +19,15 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 - {doc}`architecture/block-state-machine` — the pump's block clock as a finite state machine
 - {doc}`architecture/executor-command-grammar` — the execution layer's command language
 - {doc}`architecture/rust-owned-bot` — what moved into the Rust core and why
-- {doc}`executor/user-guide` — the Vyper executor, command streams, and balance semantics
-- {doc}`executor/releases` — the executor's declared release identity, release manifest, and migration policy
-
 …plus 14 more in the sidebar: executor grammar usage, concentrated-liquidity tickmaps, Curve stableswap, inspector-captured sim diagnostics, storage layouts.
 
 **{doc}`adr/README`** — the settled design decisions, grouped by whether they still bind; the "why" behind the code.
 
 **Command line** — the `degenbot` CLI: {doc}`cli/pool` (pool inspection & management), {doc}`cli/database` (schema, migrations, cutover), {doc}`cli/aave` (Aave V3 tooling).
 
-**Operations** — {doc}`logging` (log registry, Python-logging forwarding), {doc}`failure-policy` (reaction taxonomy for runtime failures), {doc}`execution-strategy` (strategy configuration), {doc}`execution-adapters` (plugging in your own execution contract), {doc}`telemetry-latency-playbook` (pump/solve latency from Jaeger & Prometheus), {doc}`releases/runbook` (cutting, resuming, and verifying a release), {doc}`llvm-release-ci` (the LLVM 23 toolchain the shipped extension and the umbrella crate link).
+**Operations** — {doc}`logging` (log registry, Python-logging forwarding), {doc}`failure-policy` (reaction taxonomy for runtime failures), {doc}`execution-strategy` (strategy configuration), {doc}`execution-adapters` (plugging in your own execution contract), {doc}`telemetry-latency-playbook` (pump/solve latency from Jaeger & Prometheus), {doc}`llvm-release-ci` (the LLVM 23 toolchain the shipped extension and the umbrella crate link).
 
-**Aave V3 integration** — {doc}`aave/README` is the overview; {doc}`aave/flows/position_manager` and {doc}`aave/transformations/index` are good first entries into the per-flow behavior notes.
+**Reference** — the catalogs and rules the repo runs on: {doc}`capabilities` (every capability’s Rust home, Python name, door items, and consumer probe), {doc}`rust-config-keys` (the generated operator key table), {doc}`comments` (comment hygiene and the first-home test), {doc}`gates` (the gate registry, section by section), {doc}`rust-cli` (the one `degenbot` console), {doc}`config-migration` (schema cutover history).
 
 **Working notes & benchmarks** — lab reports and perf decisions: {doc}`cache-lab-report`, {doc}`rayon-parallelism-lab`, {doc}`mimalloc-purge-delay-decision`, {doc}`detached-solve-cycle-decision`, {doc}`gas-estimation` (the measured per-op gas decomposition behind the pre-sim admission floor).
 
@@ -70,7 +67,6 @@ cli/aave
 ```{toctree}
 :caption: Operations
 :hidden:
-:glob:
 
 logging
 failure-policy
@@ -78,10 +74,20 @@ execution-strategy
 execution-adapters
 telemetry-latency-playbook
 llvm-release-ci
-grafana/ALERTS
-aave/README
-aave/flows/*
-aave/transformations/*
+backrun-driver-runbook
+backrun-endpoint-policy
+```
+
+```{toctree}
+:caption: Reference
+:hidden:
+
+capabilities
+rust-config-keys
+comments
+gates
+rust-cli
+config-migration
 ```
 
 ```{toctree}
@@ -90,7 +96,6 @@ aave/transformations/*
 
 cache-lab-report
 hotpath-crossing-cache-verification
-testing/parity-suite-retirement-census
 cow-protocol-survey
 updater-rpc-sql-survey
 rayon-parallelism-lab
@@ -98,12 +103,5 @@ mimalloc-purge-delay-decision
 ratr5a-cxrhw3-closure-census
 detached-solve-cycle-decision
 gas-estimation
-```
-
-```{toctree}
-:caption: Releases
-:hidden:
-:glob:
-
-releases/*
+test-global-state-audit
 ```

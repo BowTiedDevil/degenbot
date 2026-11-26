@@ -537,8 +537,8 @@ pub struct V4HookFeeMeasurement {
 /// identical state, so the sign is meaningful and the twin's zero output (a
 /// walk the curve rounds away) has nothing to take a ratio against.
 ///
-/// The derivation is the census's (`docs/findings/2026-11-04-dynamic-fee-census.md`),
-/// where it was validated against static-fee control pools whose fee is
+/// The derivation is the dynamic-fee census's, where it was validated against
+/// static-fee control pools whose fee is
 /// readable off the key: the residual is the walk's curvature (worst 0.55 bps,
 /// 0.5% relative). Because a charge is a pool CONFIGURATION — flat over the
 /// census's hour-long sample, 5/5 series — the reading does not rot.

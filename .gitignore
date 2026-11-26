@@ -249,11 +249,6 @@ hp.json
 # break the rust-fmt pre-commit hook — 2026-09-11)
 autoresearch/
 
-# user-journey exercise sealed material (PRD answer key + observer brief):
-# never committed — git history is a permanent leak channel to the worker
-docs/autonomous-user-journey/SEALED.md
-docs/autonomous-user-journey/OBSERVER_BRIEF.md
-
 # The vendored evm2 family (rust/vendor/, ADR-096) mirrors upstream's layout,
 # which contains a `build/` crate directory (degenbot-evm2-jit-build) rather
 # than build output. Nothing under the tree may be ignored: a silently

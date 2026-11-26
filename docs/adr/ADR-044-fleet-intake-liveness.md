@@ -143,4 +143,4 @@ gauge: a held backlog is visible and must be driven to zero by the backstop.
   feed.
 - `src/degenbot/runner/build_paths.py` — `run_registration` window,
   `_consume` operator path.
-- `docs/spike-intake-terminal-receipts.md` — the terminal-receipt spike.
+- the terminal-receipt spike write-up (since removed).

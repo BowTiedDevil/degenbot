@@ -7,8 +7,8 @@
 //! needs a fee number, so the search tier uses the last measured charge per
 //! (pool, direction) — `1 − out(as traded) / out(same walk, nothing charged)` at
 //! a solve anchor, taken by the black-box twin the finalist re-quote already
-//! runs (the derivation the census validated against static-fee controls;
-//! `docs/findings/2026-11-04-dynamic-fee-census.md`).
+//! runs (the derivation the dynamic-fee census validated against static-fee
+//! controls).
 //!
 //! Three states, and the ABSENT one is load-bearing:
 //!

@@ -47,11 +47,11 @@ Core span names:
 
 Metric families (meter `degenbot-bot`, all prefixed `degenbot.`): latency histograms `epoch.header_to_publish` (the ADR-041 epoch race: header accept → Published dispatch; the drain-era `block.header_to_solved` is RETIRED), `stage.streaming_age`, `solve.duration`, `simulate.duration`, `stage.publish_cycle`, `log.decode`, `state.apply`; gauges `detached.in_flight`, `state.head_lag_blocks`, `pump.seconds_since_header`, `pump.seconds_since_apply`, `engine.registered_paths`, `engine.quarantined_pools`; counters `epoch.stale_drops`, `stage.rewind`(+`_duration`), `logs.received/applied/apply_missed`, `candidates.found`, `solver.clamps`, `submit.outcomes`, `errors`. Scrape `curl http://127.0.0.1:9464/metrics` for the live list — the instruments source is authoritative when this list drifts.
 
-Grafana dashboards + alert rules live in `docs/grafana/` (`degenbot-overview.json`, `degenbot-alerts.yml`, `ALERTS.md`).
+Grafana dashboards + alert rules live in `grafana/` (`degenbot-overview.json`, `degenbot-alerts.yml`, `ALERTS.md`).
 
 Done when you can state, with numbers, which phase owns the time: drain/decode, state apply, solve, simulate, or submit. A histogram p99 plus a ranked trace sample is enough evidence to proceed.
 
-For function-level attribution below the span granularity, use hotpath profiling instead of adding ad-hoc timers. Enable with the `DEGENBOT_HOTPATH=1` runtime gate (dev builds already compile `degenbot-bot/hotpath-prometheus`); besides the end-of-run report and `hotpath console` TUI, the profiler exports Prometheus metrics on `127.0.0.1:6772` — scrape recipe, classic-vs-native query guidance, and the `docs/grafana/hotpath-profiling.json` dashboard live in [`docs/grafana/HOTPATH.md`](../../../docs/grafana/HOTPATH.md).
+For function-level attribution below the span granularity, use hotpath profiling instead of adding ad-hoc timers. Enable with the `DEGENBOT_HOTPATH=1` runtime gate (dev builds already compile `degenbot-bot/hotpath-prometheus`); besides the end-of-run report and `hotpath console` TUI, the profiler exports Prometheus metrics on `127.0.0.1:6772` — scrape recipe, classic-vs-native query guidance, and the `grafana/hotpath-profiling.json` dashboard live in [`grafana/HOTPATH.md`](../../../grafana/HOTPATH.md).
 
 ## Step 3: Drill into the owning phase
 

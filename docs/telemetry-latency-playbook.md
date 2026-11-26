@@ -3,7 +3,7 @@
 Operational reference for the tracing/metrics the bot emits: for each latency
 critical phase — what it measures, what "bad" looks like, the hypotheses ranked
 by prior evidence, and where in the code to look next. Companion to
-[`docs/grafana/ALERTS.md`](grafana/ALERTS.md) (Prometheus rules) — this doc is
+[`grafana/ALERTS.md`](../grafana/ALERTS.md) (Prometheus rules) — this doc is
 the Jaeger-side investigation guide.
 
 Sources of truth:
@@ -287,7 +287,7 @@ one `scripts/soak_percentiles.py` reads), `degenbot_stage_streaming_age_seconds`
 `inline` = the streaming inline-sim arm), `degenbot_prefetch_*` (the
 storage-prefetch lane: batches/derived/learned/requested/seeded, plus
 `degenbot_prefetch_skipped_total{reason}`), `degenbot_submit_latency_seconds`. Alert rules + thresholds:
-[`ALERTS.md`](grafana/ALERTS.md).
+[`ALERTS.md`](../grafana/ALERTS.md).
 
 ## Open follow-ups (priority order)
 

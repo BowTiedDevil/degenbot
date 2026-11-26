@@ -84,8 +84,8 @@ files.
 
 **D6 — Rejected alternatives are recorded with their measurements** (below).
 
-**D7 — A breaking cut ships with a migration note.** CHANGELOG entry + a
-"was → is" table for every published path removed (the W2 solve-tree
+**D7 — A breaking cut ships with a migration note.** A "was → is" table for
+every published path removed (the W2 solve-tree
 renames — `solve::mixed::*` → the `solvers` root door, `profit_envelope` →
 `solve::gate` with the inner gate items hoisted to the door root,
 `affected_keys` → `affected`, `capture_fixture` → `fixtures` — and W5's

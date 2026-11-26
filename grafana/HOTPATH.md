@@ -6,7 +6,7 @@
 the `hotpath-prometheus` build feature, exposes every profiling subsystem as
 Prometheus metrics on a dedicated `GET /metrics` endpoint. The companion
 dashboard is [hotpath-profiling.json](hotpath-profiling.json) — imported into
-Grafana and synced from this directory like every dashboard in `docs/grafana/`
+Grafana and synced from this directory like every dashboard in `grafana/`
 (**edit the JSON file, never the Grafana UI** — the host path unit re-syncs
 within ~15 s).
 

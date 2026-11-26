@@ -123,7 +123,7 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 # hotpath starts the exporter automatically with the guard
 # (start_prometheus_server_once), so this feature adds no call sites — the
 # DEGENBOT_HOTPATH=1 runtime gate keeps default runs export-free. Operator
-# scrape recipe + dashboard live in docs/grafana/ (hotpath profiling notes).
+# scrape recipe + dashboard live in grafana/ (hotpath profiling notes).
 hotpath-prometheus = ["hotpath", "hotpath/hotpath-prometheus"]
 opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]
 prometheus = ["dep:prometheus"]

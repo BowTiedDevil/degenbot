@@ -699,7 +699,7 @@ crate::config_schema! {
             active [bool] = false, env = "DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE", def = "false",
                 doc = "Activate the settled-block settlement arm in this process; inactive leaves the facet dormant.";
             endpoints [opt string] = None, env = "DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS", def = "(unset; required when settlement is active)",
-                doc = "Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md).";
+                doc = "Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (SETTLEMENT_DEFAULT_ENDPOINTS in degenbot-config).";
         }
         mevblocker_backrun StrategyMevblockerBackrunConfig {
             active [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE", def = "false",
