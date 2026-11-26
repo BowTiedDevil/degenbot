@@ -1,0 +1,66 @@
+{
+  "checkpoint": {
+    "contracts": [
+      {
+        "address": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "name": "POOL",
+        "revision": 2
+      },
+      {
+        "address": "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e",
+        "name": "POOL_ADDRESS_PROVIDER",
+        "revision": null
+      },
+      {
+        "address": "0x64b761D848206f447Fe2dd461b0c635Ec39EbB27",
+        "name": "POOL_CONFIGURATOR",
+        "revision": 1
+      },
+      {
+        "address": "0x54586bE62E3c3580375aE3723C145253060Ca0C2",
+        "name": "PRICE_ORACLE",
+        "revision": null
+      }
+    ],
+    "encoding_version": "aave.projection-checkpoint/v4",
+    "generations": [],
+    "gho": {
+      "discount_rate_strategy": "0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812",
+      "discount_token": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+      "gho_id": 1,
+      "gho_token_address": "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f",
+      "token_id": 1,
+      "v_token_address": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+      "v_token_id": 3
+    },
+    "positions": []
+  },
+  "cursor": {
+    "hash": "0x60bef44f1c51b93ed63ccc471a343a54eb731430494eacc6fdd0331282ae35a1",
+    "log_index": 0,
+    "number": 17699252,
+    "parent_hash": "0xded8c7b4978385930623a63055ca97c6ad7409b6017c99b6c09d39fc56433db8",
+    "tx_hash": "0x99fd8e105052f7fed5be04bc72057c97a332fe0bf42e6576449666d3add81e13",
+    "tx_index": 0
+  },
+  "fixture": "aave_gho_first_mint_17699253",
+  "identities": {
+    "positions": [
+      {
+        "asset_id": 1,
+        "id": 1,
+        "table": "debt",
+        "user_id": 1
+      }
+    ],
+    "users": [
+      {
+        "address": "0xB9CDf9c22F204118Af35D3293FE57A356Dd9c8C8",
+        "gho_discount": 0,
+        "id": 1,
+        "stk_aave_balance": null
+      }
+    ]
+  },
+  "provenance": "recorded: the capture's own pre-span header"
+}

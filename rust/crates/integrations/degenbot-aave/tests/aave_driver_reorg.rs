@@ -18,8 +18,9 @@ use std::sync::Arc;
 use degenbot_aave::updater::{run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy};
 use degenbot_core::canonical_head::{ChainAnchor, LogRef, TxRef};
 use degenbot_db::{
-    read_projection_cursor_on_conn, write_projection_unit_on_conn, CursorAnchor, DegenbotDb,
-    DeltaJournalEntry, LogCoordinate, ProjectionCheckpoint, ProjectionUnit,
+    read_latest_checkpoint_on_conn, read_projection_cursor_on_conn, write_projection_unit_on_conn,
+    CursorAnchor, DegenbotDb, DeltaJournalEntry, LogCoordinate, ProjectionCheckpoint,
+    ProjectionUnit,
 };
 use degenbot_rpc::cassette::{
     entry_digest, entry_key, Cassette, CassetteEntry, CassetteProvenance, CassetteResponse,
@@ -380,6 +381,38 @@ fn run(
     .unwrap_or_else(|error| panic!("the run must commit through the recovered cursor: {error}"))
 }
 
+/// The activation position the market's surviving lineage names for the Pool
+/// endpoint. The chunk's reduction journals the rotation's generation at the
+/// block the rotation was emitted in, and the unit's checkpoint states the
+/// lineage the reducing view held — so this reads the generation a RESUME would
+/// continue under, not a row an abandoned branch left behind.
+fn restored_generation_names_the_winning_branch(db: &DegenbotDb) -> String {
+    let conn = db.lock();
+    let checkpoint = read_latest_checkpoint_on_conn(&conn, MARKET_ID)
+        .unwrap()
+        .expect("the committed unit checkpointed its cursor");
+    let entity = degenbot_aave::projection::GenerationEntity::Contract {
+        market_id: MARKET_ID,
+        role: degenbot_aave::projection::ContractRole::Pool,
+    }
+    .encode();
+    let mut activations: Vec<String> = checkpoint
+        .generations
+        .iter()
+        .filter(|generation| generation.entity == entity)
+        .filter_map(|generation| match generation.activation {
+            degenbot_db::GenerationActivation::Event(at) => Some(at.anchor().hash().to_string()),
+            degenbot_db::GenerationActivation::Seed => None,
+        })
+        .collect();
+    assert_eq!(
+        activations.len(),
+        1,
+        "the Pool endpoint's lineage names exactly one event activation: {activations:?}"
+    );
+    activations.remove(0)
+}
+
 fn pool_address(db: &DegenbotDb) -> String {
     db.lock()
         .query_row(
@@ -468,5 +501,46 @@ fn a_startup_reorg_recovers_through_the_driver_and_commits_on_the_new_branch() {
     assert_eq!(
         pool_address(&db),
         degenbot_core::address_utils::address_to_checksum_string(&POOL_NEW.parse().unwrap())
+    );
+
+    // Branch B ACTIVATES the Pool endpoint's generation: the rotation delta
+    // carries the generation its reduction consumed, and the surviving lineage
+    // names branch B's block. Recovery rewound the abandoned checkpoint (which
+    // named branch A's activation) to the shared ancestor before the replay.
+    assert_eq!(
+        restored_generation_names_the_winning_branch(&db),
+        branch_hash(BRANCH_B, FORK_AT),
+        "recovery selected branch B's generation"
+    );
+    assert_ne!(
+        restored_generation_names_the_winning_branch(&db),
+        branch_hash(BRANCH_A, FORK_AT),
+        "the surviving generation must not name the abandoned branch"
+    );
+}
+
+/// The branch-A negative control: the SAME gate, on a market that never reorged,
+/// names branch A's activation. The gate above therefore passes only because
+/// recovery rewound the abandoned generation away — had recovery selected branch
+/// A's generation, that assertion would have failed exactly as this one would.
+#[test]
+fn restored_generation_names_the_winning_branch_is_discriminating() {
+    let db = seeded_db();
+    let first = run(
+        &db,
+        &branch_cassette(BRANCH_A, SEED_BLOCK + 1, RUN1_END, FORK_AT),
+        RUN1_END,
+        10,
+    );
+    assert_eq!(first.chunks_committed, 1);
+    assert_eq!(
+        restored_generation_names_the_winning_branch(&db),
+        branch_hash(BRANCH_A, FORK_AT),
+        "a market on branch A names branch A's activation"
+    );
+    assert_ne!(
+        restored_generation_names_the_winning_branch(&db),
+        branch_hash(BRANCH_B, FORK_AT),
+        "the gate cannot pass by accepting any activation"
     );
 }

@@ -1,0 +1,132 @@
+{
+  "checkpoint": {
+    "contracts": [
+      {
+        "address": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "name": "POOL",
+        "revision": 11
+      },
+      {
+        "address": "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e",
+        "name": "POOL_ADDRESS_PROVIDER",
+        "revision": null
+      },
+      {
+        "address": "0x64b761D848206f447Fe2dd461b0c635Ec39EbB27",
+        "name": "POOL_CONFIGURATOR",
+        "revision": 8
+      },
+      {
+        "address": "0x54586bE62E3c3580375aE3723C145253060Ca0C2",
+        "name": "PRICE_ORACLE",
+        "revision": null
+      }
+    ],
+    "encoding_version": "aave.projection-checkpoint/v4",
+    "generations": [],
+    "gho": {
+      "discount_rate_strategy": null,
+      "discount_token": null,
+      "gho_id": 1,
+      "gho_token_address": "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f",
+      "token_id": 1,
+      "v_token_address": null,
+      "v_token_id": null
+    },
+    "positions": []
+  },
+  "cursor": {
+    "hash": "0x41bc6c3d4c1131671dd5e63c787b3cde85ab6c1e6b79820cea4d6938e7a34f63",
+    "log_index": 0,
+    "number": 26130439,
+    "parent_hash": "0x2ddf1e672e66fc920a8bcd1f2428251bac21a22d5ebb507c9a4794fc997d4eed",
+    "tx_hash": "0x495859e3a84caf38cba38ca814487bb8c0924e1e491135051a53c728a57347b3",
+    "tx_index": 0
+  },
+  "fixture": "aave_update_chunk_26130440-26130445",
+  "identities": {
+    "positions": [
+      {
+        "asset_id": 2,
+        "id": 1,
+        "table": "collateral",
+        "user_id": 1
+      },
+      {
+        "asset_id": 3,
+        "id": 2,
+        "table": "collateral",
+        "user_id": 2
+      },
+      {
+        "asset_id": 2,
+        "id": 3,
+        "table": "collateral",
+        "user_id": 4
+      },
+      {
+        "asset_id": 3,
+        "id": 4,
+        "table": "collateral",
+        "user_id": 6
+      },
+      {
+        "asset_id": 3,
+        "id": 1,
+        "table": "debt",
+        "user_id": 1
+      },
+      {
+        "asset_id": 1,
+        "id": 2,
+        "table": "debt",
+        "user_id": 3
+      },
+      {
+        "asset_id": 3,
+        "id": 3,
+        "table": "debt",
+        "user_id": 5
+      }
+    ],
+    "users": [
+      {
+        "address": "0x5aAE4d2f360e156De3416936049837A7Bb685588",
+        "gho_discount": 0,
+        "id": 1,
+        "stk_aave_balance": null
+      },
+      {
+        "address": "0x4D431856295413906075dD40266d83624E09C672",
+        "gho_discount": 0,
+        "id": 2,
+        "stk_aave_balance": null
+      },
+      {
+        "address": "0x945E4197cD8283AC33394e72793bb23D327Cb61F",
+        "gho_discount": 0,
+        "id": 3,
+        "stk_aave_balance": null
+      },
+      {
+        "address": "0xE8F1f8624f29a14547BD148E496Fcbc1FcDafD31",
+        "gho_discount": 0,
+        "id": 4,
+        "stk_aave_balance": null
+      },
+      {
+        "address": "0x9506F523BDc4e74eEb077C7435c00EAcEF97149e",
+        "gho_discount": 0,
+        "id": 5,
+        "stk_aave_balance": null
+      },
+      {
+        "address": "0xF2F4a00F915fD4A60E50f9E131a6B6dea6B7FB4a",
+        "gho_discount": 0,
+        "id": 6,
+        "stk_aave_balance": null
+      }
+    ]
+  },
+  "provenance": "fixture-synthesized: the capture records no header at this height (the numeric-cursor run never read one)"
+}
