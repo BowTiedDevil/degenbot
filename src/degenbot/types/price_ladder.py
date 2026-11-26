@@ -16,9 +16,9 @@ are stated once, here, and cannot drift between families.
 ``degenbot.types.pool_protocols.PoolPricing`` is the structural declaration of
 the surviving verb set; this class is its implementation.
 
-See: contract_reference/uniswap/V2/UniswapV2Factory.sol,
-contract_reference/uniswap/V3/UniswapV3Factory.sol,
-contract_reference/uniswap/V4/PoolManager.sol
+See: https://github.com/Uniswap/v2-core/blob/v1.0.1/contracts/UniswapV2Pair.sol,
+https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/UniswapV3Pool.sol,
+https://github.com/Uniswap/v4-core/blob/v4.0.0/src/PoolManager.sol
 """
 
 from __future__ import annotations

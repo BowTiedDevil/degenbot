@@ -18,8 +18,8 @@
 //! The two `compute_swap_step_v3` / `compute_swap_step_v4` functions handle
 //! this difference while sharing the same core logic.
 //!
-//! Reference: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`)
-//! Reference: `contract_reference/uniswap/V4/PoolManager.sol` (`SwapMath`)
+//! Reference: <https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/libraries/SwapMath.sol>
+//! Reference: <https://github.com/Uniswap/v4-core/blob/v4.0.0/src/libraries/SwapMath.sol>
 
 use alloy::primitives::{aliases::I256, U256};
 

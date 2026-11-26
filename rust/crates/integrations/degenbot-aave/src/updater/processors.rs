@@ -84,11 +84,12 @@ pub struct RoundingStrategy {
 // scaled amount: `ExplicitRoundingMath` for rev ≥ 4 and `HalfUpRoundingMath`
 // for rev ≤ 3. They are the only rounding source the
 // scaled-token paths consult, and the rev-4 collateral-mint row (FLOOR) is the
-// one that a naive "same rounding for both legs" table gets wrong: the Pool's
-// `AToken` rev 9 uses `getATokenMintScaledAmount = rayDivFloor`
-// (`contract_reference/aave/Pool/rev_9.sol:executeSupply:9312`), so a HALF_UP
-// division there lands +1 wei above chain whenever
-// `(raw_amount * RAY) % index > index // 2`.
+// one that a naive "same rounding for both legs" table gets wrong: for an
+// aToken at rev 9 the Pool's `executeSupply` mint leg is
+// `getATokenMintScaledAmount = rayDivFloor` (Pool implementation
+// `0x97287a4f35e583d924f78ad88db8afce1379189a`, `POOL_REVISION() == 9`, mainnet
+// blocks 23088584–24247926), so a HALF_UP division there lands +1 wei above
+// chain whenever `(raw_amount * RAY) % index > index // 2`.
 
 /// Enricher rounding for a collateral `mint` (= the **supplied** side), by
 /// **`token_revision`** of the aToken.

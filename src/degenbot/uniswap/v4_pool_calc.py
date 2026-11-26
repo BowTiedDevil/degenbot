@@ -6,7 +6,7 @@ on state held by V4PoolState; the price/rate verbs themselves are inherited from
 pool class because they're tightly coupled to V4-specific internals (SwapDelta,
 Hooks, HookedPoolResult).
 
-See: contract_reference/uniswap/V4/PoolManager.sol
+See: https://github.com/Uniswap/v4-core/blob/v4.0.0/src/PoolManager.sol
 (PoolManager swap/modifyLiquidity, Pool, Hooks, SqrtPriceMath, SwapMath)
 """
 

@@ -76,7 +76,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation �
   - [Build Requirements](#build-requirements)
   - [Rust Feature Matrix](#rust-feature-matrix)
 - [Documentation](#documentation)
-  - [Contract Reference](#contract-reference)
+  - [Upstream Sources](#upstream-sources)
 - [Contributing](#contributing)
   - [Development Setup](#development-setup)
 - [License](#license)
@@ -1728,22 +1728,22 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 - **[Investigation harness](docs/architecture/investigation-harness.md)**: the simulation oracle driver, the per-contract scaffolder, and the path-fixture toolkit — for debugging a failing settlement-arbitrage path or building a custom simulation harness
 - **[Architecture Decision Records](docs/adr/)**: the ADR design log for the Python→Rust migration (three-layer architecture, per-chain Bot, schema retention/cutover, registration-verify lifecycle, executor grammar, …)
 - **[Execution Strategy](docs/execution-strategy.md)**: the user-owned `ExecutionStrategy` seam (ADR-025)
-- **[Aave V3](docs/cli/aave.md)**: The Aave market/position command reference; verified Solidity sources live in [`contract_reference/aave/`](contract_reference/aave/)
+- **[Aave V3](docs/cli/aave.md)**: The Aave market/position command reference
 - **[CLI](docs/cli/)**: Detailed CLI command reference (`aave.md`, `database.md`, `pool.md`)
 - **[Logging](docs/logging.md)**: Controlling `RUST_LOG` / `DEGENBOT_DEBUG` tracing, the env-gated hard/loud diagnostics, and debug-named diagnostics
 
-### Contract Reference
+### Upstream Sources
 
-Verified Solidity sources for the Uniswap V2/V3/V4 cores and Aave V3 are in [`contract_reference/`](contract_reference/README.md). Each Uniswap directory holds one concatenated file carrying the whole core:
+The Solidity ground truth for each supported core lives upstream, pinned to the release each port was written against, next to the deployed contract that fixes its on-chain behavior:
 
-| Protocol | Path | Contents |
-|----------|------|----------|
-| Uniswap V2 | `contract_reference/uniswap/V2/UniswapV2Factory.sol` | Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
-| Uniswap V3 | `contract_reference/uniswap/V3/UniswapV3Factory.sol` | Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position |
-| Uniswap V4 | `contract_reference/uniswap/V4/PoolManager.sol` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909 |
-| Aave V3 | `contract_reference/aave/` | One file per revision: Pool (10), AToken (5), GhoVariableDebtToken (6), stkAAVE (6), VariableDebtToken (4), plus GhoDiscountRateStrategy, AaveOracle, RewardsController |
+| Protocol | Source | Deployed |
+|----------|--------|----------|
+| Uniswap V2 | [`Uniswap/v2-core@v1.0.1`](https://github.com/Uniswap/v2-core/tree/v1.0.1) | factory [`0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f`](https://etherscan.io/address/0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f) |
+| Uniswap V3 | [`Uniswap/v3-core@v1.0.0`](https://github.com/Uniswap/v3-core/tree/v1.0.0) | factory [`0x1F98431c8aD98523631AE4a59f267346ea31F984`](https://etherscan.io/address/0x1F98431c8aD98523631AE4a59f267346ea31F984) |
+| Uniswap V4 | [`Uniswap/v4-core@v4.0.0`](https://github.com/Uniswap/v4-core/tree/v4.0.0) | `PoolManager` [`0x000000000004444c5dc75cB358380D2e3dE08A90`](https://etherscan.io/address/0x000000000004444c5dc75cB358380D2e3dE08A90) |
+| Aave V3 | [`bgd-labs/aave-v3-origin`](https://github.com/bgd-labs/aave-v3-origin) | `Pool` [`0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2`](https://etherscan.io/address/0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2) |
 
-Useful when auditing, or when you need to understand the exact on-chain behavior of a supported protocol. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
+Useful when auditing, or when you need to understand the exact on-chain behavior of a supported protocol.
 
 ## Contributing
 

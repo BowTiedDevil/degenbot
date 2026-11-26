@@ -1089,8 +1089,8 @@ pub enum SimulateSwapError {
 /// bitmap has not been fetched — the caller must fetch word `w` via the
 /// registered tick-data fetcher and retry (ADR-005 sparse-map parity).
 ///
-/// See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`,
-/// `TickBitmap`, `TickMath`).
+/// See: <https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/UniswapV3Pool.sol>
+/// (`SwapMath`, `TickBitmap`, `TickMath`).
 // `tick` tracks the contract's post-step tick; kept faithful to the V3
 // `_calculate_swap` loop even though this pure simulator returns only amounts.
 // Faithful port of V3's `_calculate_swap`; splitting would obscure the loop.

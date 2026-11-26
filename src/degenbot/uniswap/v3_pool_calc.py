@@ -9,7 +9,7 @@ calculate_tokens_in_from_tokens_out) delegate to the pool's `swap_quoter`; the
 pricing verbs come from `PriceLadder`, and the one leaf that differs per family
 — how the state encodes the exchange rate — is below.
 
-See: contract_reference/uniswap/V3/UniswapV3Factory.sol
+See: https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/UniswapV3Pool.sol
 (UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
 """
 

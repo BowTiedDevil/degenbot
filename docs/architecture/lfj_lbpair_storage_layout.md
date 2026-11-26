@@ -42,7 +42,7 @@ Verified by searching the working tree at HEAD `2ccb1f8ee`:
 | Loud unsupported marker (D8) | present | `rust/crates/engine/degenbot-bot/src/connector_index.rs` (`unsupported_kind`) |
 | **`LBPair` event ABI / topic constants** | **absent** | no `lfj_*` module in `rust/crates/foundation/degenbot-decoders/src/` |
 | **`LBPair` deployed address** | **absent** | `src/degenbot/registry/deployments.json`, `rust/crates/foundation/degenbot-db/src/species.toml` carry no LFJ/Trader Joe row; the species shape test uses a placeholder factory `0x…dead` |
-| **Verified `LBPair` source** | **absent** | `contract_reference/` holds only `uniswap/{V2,V3,V4}` and `aave/`; no `traderjoe/` |
+| **Verified `LBPair` source** | **absent** | nothing in the tree vendors it; upstream is [`traderjoe-xyz/joe-v2@v2.2.0`](https://github.com/traderjoe-xyz/joe-v2/blob/v2.2.0/src/LBPair.sol) |
 | **Factory / creation-event data** | **absent** | no LFJ factory address, no creation-event topic |
 
 A sweep for `trader`, `lbpair`, and `liquidity book` (case-insensitive, all
@@ -136,8 +136,10 @@ must be resolved from the verified source (e.g. `forge inspect`), exactly as
 ## How to close each question (verification procedure)
 
 Preferred, and the pattern the repo already uses for Uniswap V4 — vendor the
-**verified deployed source** under `contract_reference/traderjoe/` (mirroring
-`contract_reference/uniswap/V4/PoolManager.sol`), then:
+**verified deployed source** for the target `LBPair` revision (as
+[`v4_poolmanager_storage_layout.md`](v4_poolmanager_storage_layout.md) pins its
+source to the deployed `PoolManager` at
+`0x000000000004444c5dc75cB358380D2e3dE08A90`), then:
 
 1. derive slot assignment with `forge inspect` from that source;
 2. capture one real `Swap` / `Mint` / `Burn` log from a supplied `LBPair`
@@ -182,9 +184,9 @@ To lift the block, supply **all** of the following:
 1. **A real deployed `LBPair` address** on the target chain, plus the target
    chain id and an RPC URL for it if not chain 1.
 2. **The LFJ `LBPair` factory address** per target chain.
-3. **The verified `LBPair` source code** (vendored into
-   `contract_reference/traderjoe/`, as with the Uniswap/Aave references) **or**
-   an equivalent verified ABI JSON plus the source revision identifier.
+3. **The verified `LBPair` source code** for the deployed revision, pinned to
+   a tag or commit as the repo pins its other contract references, **or** an
+   equivalent verified ABI JSON plus the source revision identifier.
 4. **Confirmation of the target Liquidity Book version/revision** (A3).
 5. Optionally, one captured `Swap` (and `Mint`/`Burn`) log from (1) to seed
    decoder fixtures.

@@ -8,8 +8,8 @@
 //! the V4 naming is `get_sqrt_price_at_tick` / `get_tick_at_sqrt_price`.
 //! Both names are provided as aliases here.
 //!
-//! See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`TickMath` library)
-//! See: `contract_reference/uniswap/V4/PoolManager.sol` (`TickMath` library)
+//! See: <https://github.com/Uniswap/v3-core/blob/v1.0.0/contracts/libraries/TickMath.sol>
+//! See: <https://github.com/Uniswap/v4-core/blob/v4.0.0/src/libraries/TickMath.sol>
 
 use alloy::primitives::{
     aliases::{I24, I256, U160, U256},

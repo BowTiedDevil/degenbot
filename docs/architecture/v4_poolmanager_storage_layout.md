@@ -1,9 +1,10 @@
 # V4 PoolManager storage layout — on-chain-truth verification slots
 
-> Source of truth: `contract_reference/uniswap/V4/PoolManager.sol` (canonical
-> Uniswap V4-core `PoolManager`, the verified deployed source at
-> `0x000000000004444c5dc75cB358380D2e3dE08A90`). This note records the storage
-> slots the V4 on-chain-truth verifier reads via `PoolManager.extsload`.
+> Source of truth: canonical Uniswap V4-core `PoolManager` at
+> [`Uniswap/v4-core@v4.0.0`](https://github.com/Uniswap/v4-core/blob/v4.0.0/src/PoolManager.sol),
+> the verified deployed source at `0x000000000004444c5dc75cB358380D2e3dE08A90`.
+> This note records the storage slots the V4 on-chain-truth verifier reads via
+> `PoolManager.extsload`.
 
 ## Why V4 differs from V3
 
@@ -111,8 +112,9 @@ packed `(gross, net)` per the layout above, bitmap slots yield the raw
 ## On-chain cross-check status
 
 The deployed `PoolManager` storage layout is exactly what `forge inspect`
-computes from the verified deployed source (the vendored
-`contract_reference/uniswap/V4/PoolManager.sol`). A runtime `extsload`
+computes from the verified deployed source,
+[`Uniswap/v4-core@v4.0.0`](https://github.com/Uniswap/v4-core/blob/v4.0.0/src/PoolManager.sol).
+A runtime `extsload`
 round-trip against a live V4 pool (`RPC_URL` available) is a nice-to-have
 sanity check, not a layout-correctness gate — the layout is canonical by
 construction.

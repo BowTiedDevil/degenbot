@@ -12,7 +12,8 @@ Pools with different calculation paths (e.g., Aerodrome's stable mode,
 Camelot's k invariant) answer through their own quoter instead of using this
 one.
 
-See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint/burn)
+See: https://github.com/Uniswap/v2-core/blob/v1.0.1/contracts/UniswapV2Pair.sol
+(UniswapV2Pair swap/mint/burn)
 """
 
 from __future__ import annotations

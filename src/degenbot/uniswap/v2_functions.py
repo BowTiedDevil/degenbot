@@ -1,6 +1,6 @@
 """Uniswap V2 constant-product swap math.
 
-See: contract_reference/uniswap/V2/UniswapV2Factory.sol
+See: https://github.com/Uniswap/v2-core/blob/v1.0.1/contracts/UniswapV2Pair.sol
 (UniswapV2Pair, UniswapV2Factory, Math, UQ112x112)
 """
 

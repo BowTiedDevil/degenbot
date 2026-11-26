@@ -33,9 +33,7 @@
 #   subprocesses.
 #   Deliberately out of scope here: markdown. It is where tracker
 #   discussion legitimately lives (docs/, this gate's own census/waiver
-#   files); and contract_reference/**, the vendored upstream reference
-#   corpus — its comments belong to the contract authors, not this repo's
-#   code.
+#   files).
 #   Waivers: one repo-relative path per line in
 #   scripts/hooks/comment-hygiene-waivers.txt. A waiver means "this file
 #   still carries pre-rule citations" — it NEVER licenses new ones; remove
@@ -136,9 +134,7 @@ scope_code=()
 if tree_scope; then
     # An empty list means rg defaults to the working tree, which keeps the
     # fixture seam's reported paths identical to a historical run.
-    # contract_reference/**: vendored upstream reference corpus — its
-    # comments belong to the contract authors, not this repo's code.
-    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**' -g '!contract_reference/**')
+    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**')
     scope_cite_glob=("${scope_glob[@]}" -g '!scripts/hooks/comment-hygiene*')
     scope_code=(src tests rust/crates run_bot.sh scripts examples justfile prek.toml rust/Cargo.toml .github tier3-oracle)
 else
@@ -146,14 +142,12 @@ else
     # searched whatever the glob list says.
     mapfile -d '' -t scope_all < <(git ls-files -z --cached -- \
         '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
-        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
-        ':(exclude)contract_reference/**')
+        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**')
     # Detector 3 exempts its own hook and censuses: the docstring above lists the
     # shapes it bans, so the file that spells them is not evidence against itself.
     mapfile -d '' -t scope_cite < <(git ls-files -z --cached -- \
         '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
         ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
-        ':(exclude)contract_reference/**' \
         ':(exclude)scripts/hooks/comment-hygiene*')
     # The bare-token ratchet covers the whole tree — crate tests/benches/
     # examples and inline src/**/tests modules included — so the index listing

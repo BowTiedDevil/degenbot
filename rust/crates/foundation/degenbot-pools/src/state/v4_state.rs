@@ -940,7 +940,8 @@ pub fn v4_simulate_swap(
         // The earlier code had both the flag polarity inverted (is_positive vs
         // V4's is_negative) AND the quantities swapped between remaining/
         // calculated — they partially cancelled, producing a ~1-wei over-count
-        // instead of total breakage. See `contract_reference/uniswap/V4/PoolManager.sol`.
+        // instead of total breakage. See
+        // https://github.com/Uniswap/v4-core/blob/v4.0.0/src/libraries/Pool.sol.
         if exact_in {
             let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount))
                 .map_err(|_| SimulateSwapError::NotComputable)?;
