@@ -1678,8 +1678,9 @@ mod tests {
         activated_seed_db(&db_path);
 
         let bare = PathBuf::from(format!("aave-seed-probe-{}.json", std::process::id()));
-        assert!(
-            bare.parent().is_some_and(Path::is_empty),
+        assert_eq!(
+            bare.parent(),
+            Some(Path::new("")),
             "a bare relative filename carries an empty parent"
         );
         write_aave_seed(&db_path, &bare).unwrap();

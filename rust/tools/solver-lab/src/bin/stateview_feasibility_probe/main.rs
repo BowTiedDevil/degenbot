@@ -219,7 +219,6 @@ fn main() {
         "V2 restore_before_block (pop full 32-block window): p50={:>7.1}ns p90={:>7.1}ns p99={:>7.1}ns",
         p50(reps.clone()), p90(reps.clone()), p99(reps)
     );
-    #[expect(dead_code)]
     #[derive(Clone, Copy)]
     struct V2Snap {
         r0: U112,
@@ -233,6 +232,10 @@ fn main() {
             block: 25_900_000,
         })
         .collect();
+    assert_eq!(
+        v2s.last().map(|snap| (snap.block, snap.r0, snap.r1)),
+        Some((25_900_000, U112::from(99_999u64), U112::from(100_000u64)))
+    );
     let mut reps = Vec::with_capacity(1001);
     for _ in 0..1001 {
         let t0 = Instant::now();
