@@ -188,11 +188,29 @@ pub(crate) struct PumpCounters {
 
 /// How a session ended: the host stopped it, the server closed it, or the
 /// watchdog reaped a frame-silent socket.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SessionEnd {
     Stopped,
     Closed,
     Stall,
+    /// The peer closed the socket and supplied its own close evidence, if
+    /// any was present on the frame.
+    PeerClose {
+        code: Option<u16>,
+        reason: Option<String>,
+    },
+}
+
+impl SessionEnd {
+    /// The disconnect event's classification plus whatever close evidence the
+    /// peer supplied; the ends that carry no peer evidence report none.
+    fn disconnect_evidence(&self) -> (&'static str, Option<u16>, Option<&str>) {
+        match self {
+            Self::Stall => ("stall", None, None),
+            Self::PeerClose { code, reason } => ("peer close", *code, reason.as_deref()),
+            Self::Stopped | Self::Closed => ("closed", None, None),
+        }
+    }
 }
 
 /// What a wire handler wants after one frame: keep reading, or close the
@@ -303,17 +321,20 @@ pub(crate) async fn run_loop<S: FeedSession>(
                 op_info!(domain = rpc, url = %cfg.url, "{}: stopped", S::LABEL);
                 return;
             }
-            end @ (SessionEnd::Closed | SessionEnd::Stall) => {
+            end @ (SessionEnd::Closed | SessionEnd::Stall | SessionEnd::PeerClose { .. }) => {
                 let session_accepted = shared.accepted.load(Ordering::Relaxed) - accepted_before;
                 if session_accepted > 0 {
                     reconnect.reset();
                 }
                 shared.connected.store(false, Ordering::Relaxed);
                 shared.count(Count::Reconnects);
+                let (reason, close_code, close_reason) = end.disconnect_evidence();
                 op_info!(
                     domain = rpc,
                     url = %cfg.url,
-                    reason = if end == SessionEnd::Stall { "stall" } else { "closed" },
+                    reason,
+                    close_code = ?close_code,
+                    close_reason = ?close_reason,
                     session_accepted,
                     reconnects = shared.reconnects.load(Ordering::Relaxed),
                     "{}: disconnected", S::LABEL
@@ -390,7 +411,16 @@ async fn run_session<S: FeedSession>(
             Message::Ping(p) => {
                 let _ = ws.send(Message::Pong(p)).await;
             }
-            Message::Close(_) => return SessionEnd::Closed,
+            Message::Close(frame) => {
+                return SessionEnd::PeerClose {
+                    code: frame.as_ref().map(|f| u16::from(f.code)),
+                    reason: frame
+                        .as_ref()
+                        .map(|f| f.reason.as_str())
+                        .filter(|r| !r.is_empty())
+                        .map(str::to_owned),
+                };
+            }
             Message::Binary(_) => shared.count(Count::RejectedParse),
             // ExpectedAbsent: raw frames never surface on read; pong answers
             // our keepalive ping.

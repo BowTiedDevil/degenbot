@@ -19,7 +19,9 @@ use degenbot_rpc::backrun_feed::{BackrunFeedConfig, EagerBackrunFeed};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 use tokio_tungstenite::{accept_async, WebSocketStream};
 
 const SUB_METHOD: &str = "mevblocker_partialPendingTransactions";
@@ -31,6 +33,8 @@ enum Step {
     Ack,
     Push(serde_json::Value),
     Close,
+    /// Send a close frame carrying the peer's own code and reason.
+    CloseWith(CloseFrame),
     /// Park reading until the peer disconnects.
     Hold,
 }
@@ -122,6 +126,10 @@ async fn serve_conn<S>(
             Step::Push(v) => ws.send(Message::Text(v.to_string().into())).await.unwrap(),
             Step::Close => {
                 let _ = ws.send(Message::Close(None)).await;
+                return;
+            }
+            Step::CloseWith(frame) => {
+                let _ = ws.send(Message::Close(Some(frame))).await;
                 return;
             }
             Step::Hold => {
@@ -422,7 +430,8 @@ async fn t07_drain_returns_unbatched_frames_oldest_first() {
 // see them).
 
 /// Install (once) the capturing subscriber and return the shared collector.
-/// Lines are `"{level}|{message}"`.
+/// Lines are `"{level}|{message}"`, with any captured `close_code` /
+/// `close_reason` evidence appended as `key=value` text.
 fn feed_log_capture() -> Arc<StdMutex<Vec<String>>> {
     static INSTALL: Once = Once::new();
     static COLLECTOR: OnceLock<Arc<StdMutex<Vec<String>>>> = OnceLock::new();
@@ -431,24 +440,43 @@ fn feed_log_capture() -> Arc<StdMutex<Vec<String>>> {
         use tracing_subscriber::layer::{Context, Layer};
         use tracing_subscriber::registry::LookupSpan;
 
-        struct MessageCollector(String);
+        #[derive(Default)]
+        struct MessageCollector {
+            message: String,
+            evidence: Vec<String>,
+        }
+
+        impl MessageCollector {
+            fn rendered(&self) -> String {
+                if self.evidence.is_empty() {
+                    return self.message.clone();
+                }
+                format!("{} {}", self.message, self.evidence.join(" "))
+            }
+        }
+
         impl tracing::field::Visit for MessageCollector {
             fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
-                if f.name() == "message" {
-                    let s = format!("{v:?}");
-                    let unquoted = s
-                        .strip_prefix('"')
-                        .and_then(|s| s.strip_suffix('"'))
-                        .unwrap_or(&s);
-                    self.0.clear();
-                    self.0.push_str(unquoted);
+                let rendered = format!("{v:?}");
+                match f.name() {
+                    "message" => {
+                        rendered
+                            .strip_prefix('"')
+                            .and_then(|s| s.strip_suffix('"'))
+                            .unwrap_or(&rendered)
+                            .clone_into(&mut self.message);
+                    }
+                    name @ ("close_code" | "close_reason") => {
+                        self.evidence.push(format!("{name}={rendered}"));
+                    }
+                    _ => {}
                 }
             }
 
             fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
                 if f.name() == "message" {
-                    self.0.clear();
-                    self.0.push_str(v);
+                    self.message.clear();
+                    self.message.push_str(v);
                 }
             }
         }
@@ -462,12 +490,12 @@ fn feed_log_capture() -> Arc<StdMutex<Vec<String>>> {
                 if event.metadata().target() != "degenbot::rpc" {
                     return;
                 }
-                let mut collector = MessageCollector(String::new());
+                let mut collector = MessageCollector::default();
                 event.record(&mut collector);
                 self.0.lock().unwrap().push(format!(
                     "{}|{}",
                     event.metadata().level(),
-                    collector.0
+                    collector.rendered()
                 ));
             }
         }
@@ -547,6 +575,69 @@ async fn t08_info_logs_cover_connect_subscribed_payload_disconnect() {
                 "{needle} must log at INFO, got: {hit}"
             );
         }
+    }
+    feed.stop();
+}
+
+/// The peer-close arm: a close frame carrying a policy code and a quoted
+/// reason must reach the disconnect log as structured evidence, while the
+/// session reconnects and resubscribes exactly like a bare close. The
+/// accepted frame before the close is what makes that a delivering session,
+/// the reset-on-delivery path the redial runs through.
+#[tokio::test]
+async fn t09_peer_close_code_and_reason_reach_the_disconnect_log() {
+    const REASON: &str = "policy violation: \"searcher\" not allowlisted";
+    let capture = feed_log_capture();
+    let h2 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let server = start_server(vec![
+        vec![
+            Step::ExpectSubscribe,
+            Step::Ack,
+            Step::Push(sample_event("0x1")),
+            Step::CloseWith(CloseFrame {
+                code: CloseCode::Policy,
+                reason: Utf8Bytes::from_static(REASON),
+            }),
+        ],
+        vec![
+            Step::ExpectSubscribe,
+            Step::Ack,
+            Step::Push(sample_tx("0x1", 1, h2)),
+            Step::Hold,
+        ],
+    ])
+    .await;
+    let feed = spawn_feed(cfg_with(server.addr.port(), Duration::from_secs(30), 64));
+    let evs = drain_until(&feed, 2, Duration::from_secs(10)).await;
+    assert_eq!(evs.len(), 2, "delivery spans the peer close");
+    assert_eq!(
+        evs[0].hash.to_string(),
+        "0x5f08dd372fce1a44dda27bed60ca036acb4979fad6ca37b9c388e351a870fe4c",
+        "the pre-close frame drains first"
+    );
+    assert_eq!(
+        evs[1].hash.to_string(),
+        h2,
+        "the reconnected session delivers"
+    );
+    assert_eq!(feed.status().reconnects, 1, "one peer close, one reconnect");
+    assert_eq!(seen(&server).len(), 2, "the peer close resubscribes");
+
+    wait_for_line(&capture, "close_code=Some(1008)", 10).await;
+    {
+        let lines = capture.lock().unwrap();
+        let line = lines
+            .iter()
+            .find(|l| l.contains("close_code=Some(1008)"))
+            .expect("the peer-close evidence line was captured");
+        assert!(
+            line.contains("backrun feed: disconnected"),
+            "peer close evidence must ride the disconnect event: {line}"
+        );
+        assert!(
+            line.contains(r#"close_reason=Some("policy violation: \"searcher\" not allowlisted")"#),
+            "peer close reason is not Debug-escaped: {line}"
+        );
     }
     feed.stop();
 }
