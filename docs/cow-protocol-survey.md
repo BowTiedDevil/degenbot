@@ -1,5 +1,7 @@
 # CoW Protocol Rust Survey — Auction Mechanics, Solvers, and Chain Interaction
 
+> **Historical survey.** This page studies upstream CoW Protocol sources at the revision it names. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+>
 > Study of how [cowprotocol](https://github.com/cowprotocol) builds its off-chain solver stack,
 > as design input for degenbot's backrun resolver, submission pipeline, and any future
 > auction participation. Investigated against `cowprotocol/services` at commit

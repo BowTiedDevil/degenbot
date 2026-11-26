@@ -1,5 +1,7 @@
 # The asynchronous canonical-head lifecycle for BAL delta snapshots
 
+> **Historical capture.** This page records the seam and its measurements at capture time. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 A head's block access list is fetched and fully decoded as its own **prepare**
 phase, off the caller's critical path, and applied to the snapshot when — and only
 when — it names the exact head the driver currently holds. This document records

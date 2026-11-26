@@ -1,5 +1,7 @@
 # Test-touched process-global state — audit
 
+> **Historical audit.** The audit drove its fixes and closed with the epic that filed it. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 Epic `64ZQLA` (host-shape independence) task `I4EJ4N`. Systematic pass over
 every piece of process-global state that the Rust test suites touch, after two
 2026-09 failures that only fired on a raw 24-core host while staying green in

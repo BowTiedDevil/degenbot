@@ -1,5 +1,7 @@
 # Concentrated-liquidity cache-lab sweep & rebuild matrix (S0-S7)
 
+> **Historical lab report.** The sweep matrix below is the campaign that produced it. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 Task: Z5NOPD (epic KIMRKS) — 369-line corpus sweep of the instrumented concentrated-liquidity-table
 cache strategies, every solve byte-compared against the full-rebuild reference.
 

@@ -100,7 +100,6 @@ cow-protocol-survey
 updater-rpc-sql-survey
 rayon-parallelism-lab
 mimalloc-purge-delay-decision
-ratr5a-cxrhw3-closure-census
 detached-solve-cycle-decision
 gas-estimation
 test-global-state-audit

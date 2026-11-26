@@ -1,5 +1,7 @@
 # BAL carry-forward dispatch evaluation
 
+> **Historical evaluation.** This is the closing evaluation of a landed epic. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 Closing evaluation for the parent-linked block-access-list (BAL) carry-forward
 dispatch epic: what the committed implementation does, what the evidence proves,
 what it does not, and the operator recommendation.

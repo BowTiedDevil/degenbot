@@ -1,5 +1,7 @@
 # detached solve cycle decision (epic SRQEK5, tasks WV62TX + 4QKZE3 + SF3QLP)
 
+> **Historical record.** The decision still binds; the evidence that settled it does not move with the tree. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 ## Context
 
 Epic BXZBWY shipped streamed solve orchestration (dedicated tokio solve runtime +

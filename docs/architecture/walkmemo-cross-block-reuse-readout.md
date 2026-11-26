@@ -1,5 +1,7 @@
 # WalkMemo cross-block reuse readout: the honest A/B and the gated follow-ups
 
+> **Historical readout.** The readout landed with its epic and the follow-ups it names were re-filed. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 **Status: static readout landed (ergo N754F3); the live multi-block capture
 landed (ergo 3S7HGF) and resolves two of the three follow-ups below — (a) with
 data, (b) by bounds. (c) stays closed as a doc note. The synthetic-caveat

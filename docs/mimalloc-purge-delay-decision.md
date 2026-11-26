@@ -1,5 +1,7 @@
 # mimalloc purge-delay decision (epic AZZDBI, tasks XXJR3A + T3/T4)
 
+> **Historical record.** The decision still binds; the evidence that settled it does not move with the tree. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 ## Context
 
 mimalloc's default purge delay (~10ms) discards freed pages between blocks,

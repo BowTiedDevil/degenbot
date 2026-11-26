@@ -1,5 +1,7 @@
 # Updater RPC/SQL survey — golden captures, measurement, and the perf program
 
+> **Historical survey.** The updater has since moved to its foundation home. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+
 Survey of the pool updater (`rust/crates/foundation/degenbot-pool-updater`; surveyed at its former integrations home) and the
 Aave updater (`rust/crates/integrations/degenbot-aave/src/updater`) for RPC- and
 SQL-level inefficiencies and the testability gap around their coherence mechanism.

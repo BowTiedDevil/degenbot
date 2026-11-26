@@ -1,5 +1,7 @@
 # Evaluation: combinatorial ending-range enumeration in the Möbius V3/concentrated-liquidity solver
 
+> **Historical evaluation.** This records the state of the solver when the evaluation was written. The paths and line numbers below were taken when this page was written and have since drifted; read them as the record, not as a map of today's tree.
+>
 > Ergo task `TT4VOX`. Triggered by the V2-V3-V3 solver divergence fixture
 > (`logs/fixtures/v2_v3_v3_solver_divergence_25641093.md`, a gitignored logs/
 > artifact since removed): a tick_spacing=1
