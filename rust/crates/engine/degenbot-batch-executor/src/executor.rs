@@ -67,7 +67,9 @@ pub struct ExecutorConfig {
     /// The submission policy: whether the submit arm may lease a nonce, sign,
     /// and broadcast. Converted ONCE from the driver's run-mode stance
     /// ([`SubmissionPolicy::from_dry_run`]) — the submit leaf's dry-run flag and
-    /// the probe entry's refusal both read this value, never a second stance.
+    /// the probe entry's refusal both read this value, never a second stance,
+    /// and construction reads the SAME value to decide whether it validates a
+    /// signing authority.
     pub(crate) submission: SubmissionPolicy,
     /// The submit-side `inject_code` guard (the injected contract doesn't
     /// exist on-chain — live submission is unsafe). The SAME declared inject
@@ -103,15 +105,20 @@ impl ExecutorConfig {
     ///
     /// [`degenbot_arbitrage::DeploymentRegistryError`] when the composed
     /// registry is empty or holds two deployments with one identity
-    /// ([`DeploymentRegistry::new`]), or when a deployment's owner is not the
-    /// account the configured signer holds
+    /// ([`DeploymentRegistry::new`]), or when a SUBMITTING executor's
+    /// deployment names an owner the configured signer does not hold
     /// ([`DeploymentRegistry::validate_signing_authority`]). Each is a
     /// composition error: an empty registry has no target to encode against, a
     /// duplicate identity makes every post-target row ambiguous, and an owner
     /// the signer does not hold would be simulated from — and submitted as — an
-    /// account the session cannot sign for. The caller that assembled the
-    /// configuration names it to its own consumer (the `PyO3` boundary raises
-    /// `ValueError`).
+    /// account the session cannot sign for.
+    ///
+    /// A NON-SUBMITTING executor ([`SubmissionPolicy::NonSubmitting`], the
+    /// dry-run stance) validates no signing authority at all: it never leases a
+    /// nonce, signs, or broadcasts, so it may simulate a deployment owner it does
+    /// not hold, and that owner stays the transaction's simulated `from`. The
+    /// caller that assembled the configuration names a refusal to its own
+    /// consumer (the `PyO3` boundary raises `ValueError`).
     ///
     /// # Panics
     ///
@@ -153,9 +160,14 @@ impl ExecutorConfig {
             extra_broadcast,
             target,
         } = runtime;
-        // The signer's account is the one authority every deployment must name
-        // as its owner; read before the signer handle moves into the config.
-        let authority = signer.address();
+        // The run-mode stance decides submission exactly ONCE, here: the value
+        // the submit leaf later reads is the same one that decides whether this
+        // executor has a signing authority to offer. A non-submitting executor
+        // never leases a nonce, signs, or broadcasts, so it validates none and
+        // may simulate an owner it does not hold. The signer's address is read
+        // before the handle moves into the config.
+        let submission = SubmissionPolicy::from_dry_run(dry_run);
+        let authority = submission.permits_submission().then_some(signer.address());
         let sim = SimStage::build(
             &policy,
             crate::stage::SimRuntime {
@@ -184,7 +196,7 @@ impl ExecutorConfig {
             signer,
             probe,
             nonce_lane,
-            submission: SubmissionPolicy::from_dry_run(dry_run),
+            submission,
             inject_code_guard: policy.inject_code_guard,
             extra_broadcast,
             target,

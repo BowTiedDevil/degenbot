@@ -158,8 +158,10 @@ pub struct ExecutorRuntime {
     /// path is then bound to all of them (explicit all-target fan-out).
     ///
     /// The composition boundary validates the whole registry: identities must
-    /// be distinct (never the built-in id) and every owner must be the account
-    /// the configured signer holds, or construction panics.
+    /// be distinct (never the built-in id) and — when the executor submits —
+    /// every owner must be the account the configured signer holds. A
+    /// non-submitting (dry-run) executor validates no signing authority, so it
+    /// may simulate an owner it does not hold.
     pub additional_deployments: Vec<Arc<degenbot_arbitrage::SimulationDeployment>>,
     /// How a solved path chooses among those deployments
     /// ([`degenbot_arbitrage::TargetSelection`]).
@@ -541,6 +543,82 @@ mod tests {
             error,
             degenbot_arbitrage::DeploymentRegistryError::OwnerNotSigner {
                 deployment_id: degenbot_execution::DeploymentId::new(2),
+                owner: stranger,
+                authority,
+            }
+        );
+    }
+
+    /// A NON-SUBMITTING (dry-run) executor simulates an owner it does not hold.
+    ///
+    /// A session holds only the throwaway dry-run key, while the deployed
+    /// artifact bakes the real owner as the transaction's `from`. Nothing is
+    /// leased, signed, or broadcast on this lane, so there is no signing
+    /// authority to validate — and the simulated `from` stays the real
+    /// deployment owner rather than the throwaway signer.
+    #[tokio::test]
+    async fn a_non_submitting_executor_simulates_a_foreign_owner() {
+        let stranger = alloy::primitives::Address::repeat_byte(0x11);
+        let mut runtime = runtime(Vec::new()).await;
+        let signer = runtime.signer.address();
+        assert_ne!(
+            stranger, signer,
+            "the fixture owner is foreign to the signer"
+        );
+        runtime.dry_run = true;
+        runtime.binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            stranger,
+            BUILTIN_EXECUTOR,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let config = crate::executor::ExecutorConfig::from_verdict(
+            &degenbot_config::BotConfig::default(),
+            runtime,
+        )
+        .expect("a non-submitting executor has no signing authority to validate");
+        assert_eq!(config.submission, SubmissionPolicy::NonSubmitting);
+        let deployment = config
+            .sim
+            .deployments
+            .get(crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID)
+            .expect("the built-in deployment is the registry's first entry");
+        let overrides = deployment
+            .override_params(&[])
+            .expect("an empty path set composes the posture's no-write plan");
+        assert_eq!(
+            overrides.owner, stranger,
+            "the simulated `from` is the deployed owner, never the throwaway signer"
+        );
+    }
+
+    /// The SAME mismatch on a SUBMITTING executor is still refused: this lane
+    /// signs with the session key and sends from the deployment's owner, so the
+    /// two must be one account.
+    #[tokio::test]
+    async fn a_submitting_executor_refuses_a_foreign_owner() {
+        let stranger = alloy::primitives::Address::repeat_byte(0x11);
+        let mut runtime = runtime(Vec::new()).await;
+        let authority = runtime.signer.address();
+        runtime.dry_run = false;
+        runtime.binding = degenbot_arbitrage::CmdExecutorBinding::new(
+            stranger,
+            BUILTIN_EXECUTOR,
+            alloy::primitives::Address::ZERO,
+            alloy::primitives::Address::ZERO,
+            degenbot_executor::composers::EncodeOptions::default(),
+        );
+        let error = crate::executor::ExecutorConfig::from_verdict(
+            &degenbot_config::BotConfig::default(),
+            runtime,
+        )
+        .err()
+        .expect("a submitting executor cannot sign for an account it does not hold");
+        assert_eq!(
+            error,
+            degenbot_arbitrage::DeploymentRegistryError::OwnerNotSigner {
+                deployment_id: crate::executor::ExecutorConfig::BUILTIN_DEPLOYMENT_ID,
                 owner: stranger,
                 authority,
             }

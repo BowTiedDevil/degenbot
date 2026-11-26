@@ -874,9 +874,13 @@ class SimulationDeployment:
                 contract's transaction and declares its probe reads and minimum
                 net profit.
             `owner`: the account whose key sends the opportunity's transaction
-                (the `from` of the simulated and submitted transaction). It must
-                be the session signer's account; a foreign owner is refused at
-                executor construction.
+                (the `from` of the simulated transaction, and of the submitted
+                one when the executor submits). A SUBMITTING executor requires it
+                to be the session signer's account and refuses a foreign owner at
+                construction; a NON-SUBMITTING (dry-run) executor never signs or
+                broadcasts, so it simulates that owner without holding its key —
+                a dry run can therefore mirror the deployed artifact's baked owner
+                while the session holds only a throwaway key.
             `target`: the deployment's EXECUTION TARGET — the `to` of the
                 transaction its adapter encodes. The submit join stamps this
                 address, so a heterogeneous session routes each candidate to its
@@ -1036,7 +1040,9 @@ def build_batch_executor_py(
             lane's first stamp never re-issues a consumed nonce; the hosted
             per-head reconcile maintains it afterwards).
         `dry_run`: skip live submission (the driver's run-mode stance — a CLI
-            fact, not a declared key).
+            fact, not a declared key). It also decides whether construction
+            validates a signing authority: a non-submitting executor has none to
+            offer, so a foreign deployment owner is simulable.
         `broadcast_providers`: the relay fan-out (the `RelayPosture` value's
             endpoints); `None`/empty = the public mempool (read provider
             only).
@@ -1069,9 +1075,12 @@ def build_batch_executor_py(
     reusing an
     existing identity (including the built-in
     [`crate::simulation::deployment::builtin_deployment_id`]) makes every
-    post-target row ambiguous, and a deployment whose owner is not the session
-    signer's account could not be signed for. Both are the core
-    [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
+    post-target row ambiguous, and — when `dry_run` is false — a deployment whose
+    owner is not the session signer's account could not be signed for. Both are
+    the core [`degenbot_arbitrage::DeploymentRegistry`]'s refusals, mapped here.
+    A `dry_run=True` construction validates no signing authority: it may
+    simulate a foreign owner, and that owner stays the transaction's simulated
+    `from`.
 
     `RuntimeError` when `simulation.delta_dispatch` is ON and the startup BAL
     capability probe refuses — the session never gets an executor, an armed

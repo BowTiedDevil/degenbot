@@ -38,7 +38,7 @@ ExecutorConfig {
 }
 
 DeploymentRegistry::new(vec![deployment_1, deployment_2, ...])
-    .validate_signing_authority(signer.address())
+    .validate_signing_authority(signer.address())   // the submitting construction
 ```
 
 Composition refuses three things LOUDLY, at construction rather than per block:
@@ -46,13 +46,21 @@ Composition refuses three things LOUDLY, at construction rather than per block:
 - an **empty** registry (no target to encode against, no join to stamp);
 - **duplicate** `DeploymentId`s (a post-target row keys on
   `(path, deployment)`, so two entries with one identity cannot be told apart);
-- a deployment **owner** that is not the account the configured signer holds —
-  the transaction's `from` is the deployment's owner and its bytes are signed
-  with the session key, so simulating a target the session cannot sign for would
-  plan a transaction that can never land.
+- a deployment **owner** that is not the account the configured signer holds,
+  when the executor SUBMITS — the transaction's `from` is the deployment's owner
+  and its bytes are signed with the session key, so simulating a target the
+  session cannot sign for would plan a transaction that can never land.
 
-Same-author heterogeneous deployments are the supported multi-target case: every
-registered deployment's owner is the one operator account.
+The owner rule is CONDITIONAL on the submission stance: a **non-submitting**
+executor (a dry run) never leases a nonce, signs, or broadcasts, so it has no
+signing authority to validate and may simulate an owner it does not hold. That
+owner stays the transaction's simulated `from`, which is how a dry run mirrors a
+deployed artifact's baked owner while the session holds only a throwaway key. A
+probe construction is the strict case: it always validates its binding's owner.
+
+Same-author heterogeneous deployments are the supported multi-target case: when
+a session submits, every registered deployment's owner is the one operator
+account.
 
 The target is a DEPLOYMENT fact, not a session-global stamp: the post-target
 join reads `SimulationDeployment::target()`, so a foreign contract's `to` is
@@ -409,8 +417,9 @@ onto `degenbot_arbitrage::SimulationDeployment`, and `build_batch_executor_py`'s
 for the explicit fan-out) names the policy — an unknown spelling is a
 `ValueError`, never a silent default. The registry, the selection walk, the
 fan-out, the `CandidateId` keying, and the per-target join all stay core-side;
-Python adds no fan-out, join, assessment, or target-selection algorithm. The core registry's composition refusals (a duplicate identity,
-an owner the signer does not hold) are mapped to `ValueError` at that boundary
+Python adds no fan-out, join, assessment, or target-selection algorithm. The
+core registry's composition refusals (a duplicate identity, an owner the signer
+does not hold when the lane submits) are mapped to `ValueError` at that boundary
 rather than surfacing `ExecutorConfig::from_verdict`'s error as a panic across
 the FFI.
 

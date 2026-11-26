@@ -1295,8 +1295,10 @@ _Avoid_: using an implementation release ID or contract address alone as the can
 The session's ordered set of one or more execution deployments, each carrying its own
 adapter, owner, execution target, code stance, and gas/fee policy. The order is the
 fan-out order and therefore the merge order of every post-target record set. It is never
-empty and never holds two entries with one identity, and every owner must be the account
-the session signer holds.
+empty and never holds two entries with one identity. A **submitting** executor also
+requires every owner to be the account its signer holds; a **non-submitting** (dry-run)
+executor leases no nonce, signs nothing, and broadcasts nothing, so it simulates any
+deployment owner — that owner is the transaction's simulated `from`.
 
 _Avoid_: treating the built-in settlement deployment as the session's only target, or a
 session-global executor address as the transaction target.

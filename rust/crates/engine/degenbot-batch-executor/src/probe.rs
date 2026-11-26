@@ -111,7 +111,9 @@ impl ProbeConfig {
     /// ([`degenbot_arbitrage::CmdExecutorBinding::owner`]) — the account the
     /// simulated transaction is sent from, which is the same account a session
     /// signer holds when a session has one. A deployment naming any other owner
-    /// would be simulated from an account this construction cannot vouch for.
+    /// would be simulated from an account this construction cannot vouch for, so
+    /// this check is UNCONDITIONAL here: a probe always names the owner it
+    /// simulates from, unlike a non-submitting executor, which offers none.
     ///
     /// # Panics
     ///
@@ -123,7 +125,7 @@ impl ProbeConfig {
         runtime: SimRuntime,
     ) -> Result<Self, DeploymentRegistryError> {
         let policy = ExecutorPolicy::from(verdict);
-        let authority = runtime.binding.owner();
+        let authority = Some(runtime.binding.owner());
         Ok(Self {
             stage: SimStage::build(&policy, runtime, authority)?,
         })

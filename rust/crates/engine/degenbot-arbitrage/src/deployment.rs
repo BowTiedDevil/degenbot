@@ -478,9 +478,14 @@ pub struct SimulateContext<'a> {
 ///   which deployment produced it.
 ///
 /// The signer/owner check ([`Self::validate_signing_authority`]) is the third
-/// composition error: a deployment whose owner is not the account the session's
-/// signer holds would be simulated from — and submitted as — an address the
-/// session cannot sign for.
+/// composition error, and it is CONDITIONAL on the session's submission stance:
+/// a deployment whose owner is not the account a SUBMITTING session's signer
+/// holds would be simulated from — and submitted as — an address the session
+/// cannot sign for, so construction refuses it. A NON-SUBMITTING executor (a
+/// dry run) never leases a nonce, signs, or broadcasts, so it validates no
+/// signing authority and may simulate a deployment owner it does not hold; that
+/// owner stays the transaction's simulated `from`. A probe construction
+/// validates its own binding's owner unconditionally.
 #[derive(Debug)]
 pub struct DeploymentRegistry {
     entries: Vec<Arc<SimulationDeployment>>,
@@ -497,7 +502,8 @@ pub enum DeploymentRegistryError {
         /// The identity that appears twice.
         deployment_id: DeploymentId,
     },
-    /// A deployment's owner is not the session signer's account.
+    /// A SUBMITTING session's deployment declares an owner its signer does not
+    /// hold.
     OwnerNotSigner {
         /// The deployment whose owner disagrees with the signer.
         deployment_id: DeploymentId,
@@ -592,11 +598,18 @@ impl DeploymentRegistry {
     /// sign for.
     ///
     /// The transaction's `from` is the deployment's owner and the bytes are
-    /// signed with the session signer's key, so the two must be the same
-    /// account. A heterogeneous session where two deployments share the
-    /// operator account satisfies this; one that names a foreign account does
-    /// not, and is refused at composition instead of simulated and submitted
-    /// incorrectly.
+    /// signed with the session signer's key, so on a lane that submits the two
+    /// must be the same account. A heterogeneous session where two deployments
+    /// share the operator account satisfies this; one that names a foreign
+    /// account does not, and is refused at composition instead of simulated and
+    /// submitted incorrectly.
+    ///
+    /// The check belongs to the constructions that may SIGN: a non-submitting
+    /// executor never leases a nonce, signs, or broadcasts, so it offers no
+    /// authority and does not call this — a dry run therefore simulates the
+    /// deployed artifact's owner while holding only a throwaway key, and that
+    /// owner stays the simulated `from`. A probe construction always calls it
+    /// with its binding's owner.
     ///
     /// # Errors
     ///

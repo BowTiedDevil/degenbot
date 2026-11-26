@@ -34,7 +34,7 @@ use degenbot_batch_executor::{
     derive_path_pools, AssemblyVerdict, BatchWork, ExecutorConfig, PathResolver, ProbeCapital,
     ProbeConfig, ProbeExecutor, RawResult, SimRuntime, SimulateVerdict,
 };
-use degenbot_execution::{CandidateId, HopInfo, PathInfo, V2HopInfo};
+use degenbot_execution::{CandidateId, DeploymentId, HopInfo, PathInfo, V2HopInfo};
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
@@ -147,19 +147,9 @@ async fn probe_executor_with(capital: ProbeCapital) -> ProbeExecutor {
     probe_executor_over(capital, HashMap::from([(PATH_ID, v2_path())])).await
 }
 
-/// The same probe executor over an explicit resolver projection: a probe whose
-/// rows this engine cannot resolve is a shape the capital pre-flight must SKIP,
-/// so the fixture needs a resolver that knows fewer paths than the work names.
-async fn probe_executor_over(
-    capital: ProbeCapital,
-    paths: HashMap<u64, PathInfo>,
-) -> ProbeExecutor {
-    let mut verdict = degenbot_config::BotConfig::default();
-    // The built-in target runs a DECLARED build in this fixture: its `execute`
-    // stub returns a receipt, so the probe's outcome is the real sim's own
-    // assessment rather than an absent-receipt refusal.
-    verdict.simulation.inject_executor_code = true;
-    let runtime = SimRuntime {
+/// The probe's sim-side runtime over the fixture's declared build.
+fn sim_runtime(capital: ProbeCapital, paths: HashMap<u64, PathInfo>) -> SimRuntime {
+    SimRuntime {
         max_candidates: 50,
         use_v4_batch: false,
         probe_capital: capital,
@@ -181,13 +171,65 @@ async fn probe_executor_over(
         runtime_bytecode: receipt_stub(BUILTIN_GROSS),
         bot_state: Some(Arc::new(StateLock::new(BotState::new()))),
         warm_cache: Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
-    };
+    }
+}
+
+/// The declared-build verdict every probe fixture converts.
+fn declared_build_verdict() -> degenbot_config::BotConfig {
+    let mut verdict = degenbot_config::BotConfig::default();
+    // The built-in target runs a DECLARED build in this fixture: its `execute`
+    // stub returns a receipt, so the probe's outcome is the real sim's own
+    // assessment rather than an absent-receipt refusal.
+    verdict.simulation.inject_executor_code = true;
+    verdict
+}
+
+/// The same probe executor over an explicit resolver projection: a probe whose
+/// rows this engine cannot resolve is a shape the capital pre-flight must SKIP,
+/// so the fixture needs a resolver that knows fewer paths than the work names.
+async fn probe_executor_over(
+    capital: ProbeCapital,
+    paths: HashMap<u64, PathInfo>,
+) -> ProbeExecutor {
+    let verdict = declared_build_verdict();
+    let runtime = sim_runtime(capital, paths);
     ProbeExecutor::new(
         ProbeConfig::from_verdict(&verdict, runtime)
             .expect("the fixture's one deployment composes a valid registry"),
     )
     .await
     .expect("this fixture's cache carries no BAL opt-in, so no capability probe can refuse")
+}
+
+/// A probe ALWAYS names the owner it simulates from, so a deployment owned by
+/// any other account is refused at construction: the probe's half of the
+/// authority rule stays strict while a non-submitting executor is exempt.
+#[test]
+fn a_probe_refuses_a_deployment_owned_by_another_account() {
+    let stranger = Address::repeat_byte(0x11);
+    let verdict = declared_build_verdict();
+    let mut runtime = sim_runtime(ProbeCapital::Production, HashMap::new());
+    runtime.additional_deployments = vec![Arc::new(
+        CmdExecutorBinding::new(
+            stranger,
+            EXECUTOR,
+            WETH,
+            POOL_MANAGER,
+            EncodeOptions::default(),
+        )
+        .deployment(DeploymentId::new(2)),
+    )];
+    let error = ProbeConfig::from_verdict(&verdict, runtime)
+        .err()
+        .expect("a foreign deployment owner is not the account this probe simulates from");
+    assert_eq!(
+        error,
+        degenbot_arbitrage::DeploymentRegistryError::OwnerNotSigner {
+            deployment_id: DeploymentId::new(2),
+            owner: stranger,
+            authority: ANVIL_ADDRESS,
+        }
+    );
 }
 
 /// The ordinary stages answer a probe with the fixture's PROFITABLE receipt, and

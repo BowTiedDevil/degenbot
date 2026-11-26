@@ -372,7 +372,13 @@ class TestSingleEntryParity:
 
 
 class TestCompositionRefusals:
-    """The core's registry rules surface as ordinary Python exceptions."""
+    """The core's registry rules surface as ordinary Python exceptions.
+
+    The owner rule is conditional on the submission stance: a SUBMITTING
+    construction refuses an owner the session signer does not hold, while a
+    non-submitting (dry-run) one simulates that owner's address without ever
+    signing or broadcasting from it.
+    """
 
     def test_a_duplicate_identity_is_a_value_error(
         self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
@@ -397,7 +403,7 @@ class TestCompositionRefusals:
                 ],
             )
 
-    def test_an_owner_the_signer_does_not_hold_is_a_value_error(
+    def test_a_submitting_construction_refuses_an_owner_the_signer_does_not_hold(
         self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
     ) -> None:
         engine, _path_id = nxm2bf_v2_engine_and_path
@@ -406,7 +412,19 @@ class TestCompositionRefusals:
             _executor(
                 engine,
                 deployments=[_deployment(2, target=TARGET_A, owner=stranger)],
+                dry_run=False,
             )
+
+    def test_a_dry_run_construction_simulates_an_owner_the_signer_does_not_hold(
+        self, nxm2bf_v2_engine_and_path: tuple[ArbitrageEngine, int]
+    ) -> None:
+        engine, _path_id = nxm2bf_v2_engine_and_path
+        stranger = "0x" + "22" * 20
+        executor = _executor(
+            engine,
+            deployments=[_deployment(2, target=TARGET_A, owner=stranger)],
+        )
+        assert isinstance(executor, BatchExecutor)
 
 
 class TestCapitalPostureRefusal:

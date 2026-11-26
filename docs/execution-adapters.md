@@ -550,9 +550,16 @@ Two identities matter, and they are different facts:
   two addresses can never collide. Its `Display` is `path@deployment`.
 
 Registration refuses three things loudly, at construction rather than per block:
-an empty registry; two entries claiming one `DeploymentId`; and a deployment
-whose owner is not the account the session signer holds (it could be simulated
-but never signed). Simulate a target you can sign for.
+an empty registry; two entries claiming one `DeploymentId`; and — when the
+executor SUBMITS — a deployment whose owner is not the account the session
+signer holds (it could be simulated but never signed).
+
+That last rule is conditional on submission: a non-submitting executor
+(`dry_run`) leases no nonce, signs nothing, and broadcasts nothing, so it has no
+signing authority to validate and may simulate a deployment owner it does not
+hold. The owner stays the transaction's `from`, which is what lets a dry run
+mirror a deployed artifact's baked owner from a throwaway key. A probe
+construction is strict: it always validates its binding's owner.
 
 `target` must also be the address your adapter actually encodes, because
 `SimulationDeployment::target()` is what the submit join stamps. An adapter that
@@ -640,9 +647,10 @@ constructor only when you want to declare that warmup; trading through WETH9 or
 `PoolManager` itself needs no Rust. Fee sizing stays adapter-owned, so your
 adapter's `ExecutionResult` — priority fee, net, threshold, verdict — reaches the
 caller unchanged. Registration refusals arrive as ordinary `ValueError`s (a
-duplicate identity, an owner the signer does not hold, a zero gas limit), never a
-panic. A driver that owns its own pipeline factory names the same list on
-`ExecutorInputs.deployments` and `ExecutorInputs.target_selection`.
+duplicate identity, an owner a submitting executor's signer does not hold, a
+zero gas limit), never a panic. A driver that owns its own pipeline factory
+names the same list on `ExecutorInputs.deployments` and
+`ExecutorInputs.target_selection`.
 
 ## Target selection
 

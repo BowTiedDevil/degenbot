@@ -461,7 +461,7 @@ The six declared facts are the whole Python surface:
 | --- | --- |
 | `deployment_id` | the operator-assigned identity; the deployment half of every `CandidateId` it executes. It must be distinct from every other deployment — including `builtin_deployment_id()` |
 | `adapter` | the existing `PayloadAdapter` (Encode + declared Probe + assessed minimum net profit). Not a second adapter framework |
-| owner | the transaction's `from`; must be the account the session signer holds |
+| owner | the transaction's `from`. A submitting executor requires the session signer's account; a `dry_run=True` executor never signs or broadcasts, so it simulates any owner it is given |
 | target | the `to` of the transaction the adapter encodes — the address the submit join stamps |
 | `gas_limit` | the top-level gas limit the transaction may burn |
 | `code` | an optional declared runtime installed at `target` in the simulated block (explicit development data for an undeployed build); omitted means "simulate the deployed contract" |
@@ -478,8 +478,9 @@ exceptions — never a `PanicException`, never a Rust abort:
 
 - a **duplicate identity** (`ValueError`: "deployment … is registered twice"),
   including a deployment reusing `builtin_deployment_id()`;
-- an **owner the session signer does not hold** (`ValueError`: "… cannot sign
-  for …");
+- an **owner a submitting executor's signer does not hold** (`ValueError`:
+  "… cannot sign for …") — a `dry_run=True` construction instead accepts any
+  owner and simulates it;
 - a malformed declaration (`ValueError` for an unparseable address, an empty
   declared runtime, or a zero gas limit; `TypeError` for a non-adapter).
 

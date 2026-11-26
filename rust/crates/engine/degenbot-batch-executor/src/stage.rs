@@ -151,16 +151,23 @@ impl SimStage {
     /// composed, so the production executor and a probe executor run the same
     /// stages over the same answers.
     ///
-    /// `authority` is the account every deployment must name as its owner. The
-    /// production conversion hands the session signer's address; a probe hands
-    /// the account it SIMULATES from (its binding's owner), because a probe
-    /// holds no key at all.
+    /// `authority` is the account every deployment must name as its owner, for
+    /// the constructions that may sign: the production conversion hands the
+    /// session signer's address when the executor SUBMITS, and a probe hands the
+    /// account it SIMULATES from (its binding's owner), because a probe holds no
+    /// key at all.
+    ///
+    /// `None` states that the caller has no signing authority to offer: a
+    /// non-submitting executor never leases a nonce, signs, or broadcasts, so a
+    /// deployment may name an owner it does not hold — that owner is the
+    /// transaction's simulated `from`, and it stays the deployment's own. The
+    /// owner check therefore runs only for `Some`.
     ///
     /// # Errors
     ///
     /// [`degenbot_arbitrage::DeploymentRegistryError`] when the composed
-    /// registry is empty or holds two deployments with one identity, or when a
-    /// deployment's owner is not `authority`.
+    /// registry is empty or holds two deployments with one identity, or — for a
+    /// `Some` authority — when a deployment's owner is not that account.
     ///
     /// # Panics
     ///
@@ -170,7 +177,7 @@ impl SimStage {
     pub(crate) fn build(
         policy: &ExecutorPolicy,
         runtime: SimRuntime,
-        authority: alloy::primitives::Address,
+        authority: Option<alloy::primitives::Address>,
     ) -> Result<Self, degenbot_arbitrage::DeploymentRegistryError> {
         let SimRuntime {
             max_candidates,
@@ -228,7 +235,9 @@ impl SimStage {
         entries.push(Arc::new(builtin));
         entries.extend(additional_deployments);
         let registry = DeploymentRegistry::new(entries)?;
-        registry.validate_signing_authority(authority)?;
+        if let Some(authority) = authority {
+            registry.validate_signing_authority(authority)?;
+        }
         Ok(Self {
             max_candidates,
             min_profit_margin_bps: policy.min_profit_margin_bps,

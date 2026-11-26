@@ -28,8 +28,8 @@
 //! # Composition invariants are the core's
 //!
 //! The registry rules that decide whether a session may run — a non-empty
-//! registry, distinct deployment identities, and every deployment's owner
-//! signed by the session's one signer — are
+//! registry, distinct deployment identities, and (when the executor submits)
+//! every deployment's owner signed by the session's one signer — are
 //! [`degenbot_arbitrage::DeploymentRegistry`]'s, evaluated once at
 //! [`crate::simulation::batch::build_batch_executor_py`] with the
 //! [`degenbot_batch_executor::ExecutorConfig`] composition boundary. This seam
@@ -106,9 +106,13 @@ impl PySimulationDeployment {
     ///         contract's transaction and declares its probe reads and minimum
     ///         net profit.
     ///     `owner`: the account whose key sends the opportunity's transaction
-    ///         (the `from` of the simulated and submitted transaction). It must
-    ///         be the session signer's account; a foreign owner is refused at
-    ///         executor construction.
+    ///         (the `from` of the simulated transaction, and of the submitted
+    ///         one when the executor submits). A SUBMITTING executor requires it
+    ///         to be the session signer's account and refuses a foreign owner at
+    ///         construction; a NON-SUBMITTING (dry-run) executor never signs or
+    ///         broadcasts, so it simulates that owner without holding its key —
+    ///         a dry run can therefore mirror the deployed artifact's baked owner
+    ///         while the session holds only a throwaway key.
     ///     `target`: the deployment's EXECUTION TARGET — the `to` of the
     ///         transaction its adapter encodes. The submit join stamps this
     ///         address, so a heterogeneous session routes each candidate to its

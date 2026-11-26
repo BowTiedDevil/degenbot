@@ -481,9 +481,16 @@ must refuse every row on capital policy (`--expect insolvent`).
 
 `--runtime` must be the release's deployed runtime (the immutable tail already baked
 in), and `--release-id` must name a release whose tail layout the runner knows
-(`cmd_executor/2` today). The tracked artifact bakes the production release owner, so a
-session signing with another key is refused at composition (`OwnerNotSigner`) — bake the
-probe runtime for the signer instead:
+(`cmd_executor/2` today). The tracked artifact bakes the production release owner, and
+this matrix session is a DRY/INJECTION session: it turns declared-code injection on and
+never passes `--live`, so its executor never leases a nonce, signs, or broadcasts. A
+non-submitting executor has no signing authority to validate, so it simulates the
+artifact's baked owner — the `--owner` the runner already requires to match the tail's
+`OWNER_ADDR` — while the session holds only a throwaway dry-run key.
+
+Only a construction that can SIGN refuses a foreign owner (`OwnerNotSigner`): a real
+submitting session, or a probe-runtime rebind whose artifact bakes another account. In
+those cases bake the probe runtime for the account that will sign:
 
 ```bash
 uv run python contracts/recompile.py \
