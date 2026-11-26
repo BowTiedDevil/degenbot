@@ -848,16 +848,10 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
     }
 }
 
-/// The synthetic two-refresh fixture's canonical delta stream, pinned
-/// byte-for-byte, and the ordering the stream must keep: the journal stays
-/// chronological across the two refresh transactions, and each refresh signal is
-/// followed by its own observation then its recomputed discount — the sequencing
-/// the consolidation work must not disturb. No debt row is seeded: the run
-/// creates the position, so the refresh reads the pre-block balance it just
-/// observed.
-#[test]
-#[expect(clippy::too_many_lines)]
-fn synthetic_two_refresh_pins_the_committed_delta_stream_at_its_source_positions() {
+/// The synthetic two-refresh fixture's run: ONE chunk over two GHO vToken
+/// mints, each in its own transaction, whose refresh reads the committed
+/// stkAAVE balance at the second transaction's parent.
+fn synthetic_two_refresh_stream() -> Vec<CanonicalDelta> {
     let early_block = 17_699_253;
     let late_block = 17_701_049;
     let db = warm_boot_db(Some(T0));
@@ -893,8 +887,85 @@ fn synthetic_two_refresh_pins_the_committed_delta_stream_at_its_source_positions
         collector.clone(),
     );
     assert_eq!(report.chunks_committed, 1);
+    let deltas = collector.0.lock().unwrap().clone();
+    deltas
+}
 
-    let deltas = collector.0.lock().unwrap();
+/// The two triggering transactions' EXACT ordered effect sequences inside one
+/// interleaved chunk: each transaction's movement, its journaled refresh signal,
+/// and the follow-ups that signal raised, ending before the next transaction's
+/// first delta. Chronology alone would not catch a follow-up that crossed the
+/// boundary.
+#[test]
+fn interleaved_refreshes_preserve_their_transaction_effect_sequences() {
+    let deltas = synthetic_two_refresh_stream();
+    let effects_of = |tx: &str| -> Vec<String> {
+        let hash: alloy::primitives::B256 = tx.parse().unwrap();
+        deltas
+            .iter()
+            .filter(|delta| *delta.source().tx().hash() == hash)
+            .map(|delta| {
+                let encoded = delta.encode();
+                encoded
+                    .split_once(" effect=")
+                    .map_or_else(|| encoded.clone(), |(_, effect)| effect.to_string())
+            })
+            .collect()
+    };
+    let early = effects_of(REFRESH_EARLY_TX);
+    assert_eq!(
+        early,
+        vec![
+            "scaled-balance{aave_v3_debt_positions:1+0,1000000000}".to_string(),
+            "gho-refresh-discount{1}".to_string(),
+            "stk-aave-balance-observed{user=1,balance=0}".to_string(),
+            "gho-discount-refreshed{user=1,discount=0}".to_string(),
+        ],
+        "the early transaction emits its movement, its signal, then the observation its NULL pre-state required and the discount recomputed from it"
+    );
+    let late = effects_of(REFRESH_LATE_TX);
+    assert_eq!(
+        late,
+        vec![
+            "scaled-balance{aave_v3_debt_positions:1+0,1000000000}".to_string(),
+            "gho-refresh-discount{1}".to_string(),
+            "gho-discount-refreshed{user=1,discount=0}".to_string(),
+        ],
+        "the late transaction reads the balance the early refresh resolved, so its sequence carries no second observation"
+    );
+    let encoded: Vec<String> = deltas.iter().map(CanonicalDelta::encode).collect();
+    assert_eq!(
+        encoded.len(),
+        early.len() + late.len(),
+        "the chunk's stream is exactly the two transactions' sequences: {encoded:?}"
+    );
+    let early_hash =
+        alloy::hex::encode(REFRESH_EARLY_TX.parse::<alloy::primitives::B256>().unwrap());
+    let late_hash = alloy::hex::encode(REFRESH_LATE_TX.parse::<alloy::primitives::B256>().unwrap());
+    assert!(
+        encoded[..early.len()]
+            .iter()
+            .all(|line| line.contains(&early_hash)),
+        "the early transaction's sequence occupies the chunk's first positions: {encoded:?}"
+    );
+    assert!(
+        encoded[early.len()..]
+            .iter()
+            .all(|line| line.contains(&late_hash)),
+        "the late transaction's sequence follows it, with no follow-up crossing the boundary: {encoded:?}"
+    );
+}
+
+/// The synthetic two-refresh fixture's canonical delta stream, pinned
+/// byte-for-byte, and the ordering the stream must keep: the journal stays
+/// chronological across the two refresh transactions, and each refresh signal is
+/// followed by its own observation then its recomputed discount — the sequencing
+/// the consolidation work must not disturb. No debt row is seeded: the run
+/// creates the position, so the refresh reads the pre-block balance it just
+/// observed.
+#[test]
+fn synthetic_two_refresh_pins_the_committed_delta_stream_at_its_source_positions() {
+    let deltas = synthetic_two_refresh_stream();
     let positions: Vec<(u64, String)> = deltas
         .iter()
         .map(|delta| {

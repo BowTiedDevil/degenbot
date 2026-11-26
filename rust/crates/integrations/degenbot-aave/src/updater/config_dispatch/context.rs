@@ -10,17 +10,18 @@
 //! construction, not by convention — and every dispatch arm takes the single
 //! context instead of the exploded id + substrate list.
 //!
-//! [`ChunkContext::dispatch_transaction`] is the chunk overlay's ONE
-//! apply→bump→dispatch seam, in the fixed order the read-your-own-writes
-//! contract requires: re-read the overlay's GHO vToken revision (a prior
-//! log-transaction's `Upgraded` projection bumped the cached row), build the
-//! discount snapshot off it, then dispatch the configuration events, each
-//! reduced into a positioned delta and projected onto the substrate overlay
-//! (the chunk's one write transaction persists them).
+//! [`ChunkContext::begin_dispatch`] is the transaction-start half of the
+//! chunk overlay's ONE apply→bump→dispatch seam, in the fixed order the
+//! read-your-own-writes contract requires: re-read the overlay's GHO vToken
+//! revision (a prior log-transaction's `Upgraded` projection bumped the cached
+//! row), then build the discount snapshot off it. The transaction sequencer
+//! resolves each configuration event, projects it onto the substrate overlay,
+//! and reduces its positioned delta; [`ChunkContext::resolve_operation_identity`]
+//! then reads the overlay those projections left behind.
 //!
 //! Surface table: `tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)
 //! row 3 (the memo key MUST include the block lane), row 7 (stage 1 of
-//! `dispatch_transaction` re-resolves the GHO vToken revision per
+//! `begin_dispatch` re-resolves the GHO vToken revision per
 //! transaction — a chunk-start snapshot is the mutated-replay shape),
 //! and row 11 (one memo instance per phase; the cold-boot bootstrap pass in
 //! `run::fetch` builds its own [`RevisionMemo`] and calls
@@ -29,8 +30,10 @@
 use std::collections::HashMap;
 
 #[cfg(test)]
+use crate::projection::CanonicalDelta;
+use crate::projection::ConfigurationEffect;
+#[cfg(test)]
 use crate::projection::DeltaEffect;
-use crate::projection::{CanonicalDelta, ConfigurationEffect, ProjectionView};
 #[cfg(test)]
 use crate::run::CanonicalDeltaWriteReport;
 use crate::updater::run::substrate::{ChunkSubstrate, ASSET_KIND_V_TOKEN};
@@ -44,7 +47,6 @@ use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
 use super::build_discount_snapshot;
-use super::dispatch_config_events;
 use super::revision::{match_proxy_id, ProxyCreationResolution};
 use super::revision_selector;
 use super::{
@@ -535,12 +537,13 @@ impl<'span> ChunkContext<'span> {
     /// Repoint the in-chunk POOL endpoint after an `AddressSet` rotation: the
     /// dispatch's own `getConfiguration` and the ops parser scope RPCs at the
     /// POOL proxy through this field, and the durable row moves in the chunk's
-    /// write transaction.
+    /// write transaction. The transaction sequencer's configuration stage is
+    /// the one caller, at the event that states the rotation.
     ///
     /// # Errors
     ///
     /// [`DbError::Decode`] when the rotation target is not an address.
-    pub(super) fn repoint_pool(&mut self, effect: &ConfigurationEffect) -> Result<(), DbError> {
+    pub(crate) fn repoint_pool(&mut self, effect: &ConfigurationEffect) -> Result<(), DbError> {
         if let ConfigurationEffect::ContractAddressChanged {
             name, new_address, ..
         } = effect
@@ -626,10 +629,9 @@ impl<'span> ChunkContext<'span> {
         self.memo.read(&reads, target, sig).await
     }
 
-    /// Run one log-transaction's overlay-mediated read + dispatch stages in
-    /// the ONE order the read-your-own-writes contract requires.
-    ///
-    /// The sequence is fixed here and nowhere else:
+    /// The transaction's reading stages before its configuration events are
+    /// resolved and applied, in the ONE order the read-your-own-writes contract
+    /// requires:
     ///
     /// 1. **re-read the overlay's GHO vToken revision** — a prior log-
     ///    transaction's `Upgraded` apply bumped the cached row, and this read
@@ -637,28 +639,20 @@ impl<'span> ChunkContext<'span> {
     /// 2. **build the discount snapshot** — the GHO-discount pre-pass, gated
     ///    on the revision just read, against the TRANSACTION-START GHO row
     ///    (a same-tx link is invisible to it by design).
-    /// 3. **dispatch the configuration events** — each is reduced into a
-    ///    positioned, generation-qualified delta and projected onto the
-    ///    substrate overlay, so a later event in the same transaction sees an
-    ///    earlier event's effect. The projection view advances separately, in
-    ///    canonical event order with the transaction's operations, and the
-    ///    chunk's one write transaction persists the deltas.
-    /// 4. **re-resolve the GHO row for the operation parser** — the tx-start
-    ///    read predates a same-tx `ReserveInitialized` linking the GHO
-    ///    vToken; the parser's Mint/Burn classification must see the link
-    ///    (the later operation executed on initialized chain state).
     ///
-    /// Returning the resolved GHO addresses lets the caller parse the
-    /// transaction's operations against the same overlay state.
+    /// The transaction sequencer then resolves, projects and reduces the
+    /// configuration events at their own positions (ADR-105 D4), so each event
+    /// sees the previous one's overlay, and `resolve_operation_identity` reads
+    /// the overlay the last of them left behind.
     ///
     /// # Errors
     ///
-    /// Propagates a substrate lookup failure or the dispatch's own error.
-    pub(crate) async fn dispatch_transaction(
+    /// Propagates a substrate lookup failure or the discount pre-pass's own
+    /// error.
+    pub(crate) async fn begin_dispatch(
         &mut self,
-        view: &mut ProjectionView,
         tx_logs: &[&alloy::rpc::types::Log],
-    ) -> Result<TransactionDispatch, ConfigDispatchError> {
+    ) -> Result<TransactionPrelude, ConfigDispatchError> {
         // (0) The GHO row as THIS transaction sees it — the overlay carries
         //     every prior transaction's projection. This is the
         //     TRANSACTION-START snapshot: the discount pre-pass below runs
@@ -694,35 +688,30 @@ impl<'span> ChunkContext<'span> {
         )
         .await?;
 
-        // (3) The config-event dispatch (RPC + substrate lookups). The
-        //     revision reads ride the per-chunk memo; the same-block
-        //     independent `eth_call`s ride the multicall batch.
-        let deltas = dispatch_config_events(self, view, tx_logs).await?;
+        Ok(TransactionPrelude { discounts })
+    }
 
-        // (4) Post-config GHO re-resolve for the operation parser: a same-tx
-        //     `ReserveInitialized` linking the GHO vToken marked the row
-        //     dirty, so this read sees the link and the tx's Mint/Burn logs
-        //     classify as GHO — the initialized state the later operation
-        //     executed on. The discount pre-pass above deliberately keeps
-        //     its transaction-start snapshot; only the addresses the
-        //     POST-apply consumers ride are fresh: the operation-parsing
-        //     addresses, and the discount token the post-apply refresh
-        //     reads — a same-tx `DiscountTokenUpdated` rotation must refresh
-        //     against the NEW contract's ledger, never the tx-start one.
-        let gho_asset_post = self.gho_asset();
-        let underlying = gho_asset_post
-            .as_ref()
-            .and_then(|g| g.gho_token_address.parse().ok());
-        let gho_vtoken_post = gho_asset_post
-            .as_ref()
-            .and_then(|g| g.v_token_address.as_deref())
-            .and_then(|s| s.parse().ok());
-        Ok(TransactionDispatch {
-            discounts,
-            deltas,
-            gho_underlying_address: underlying,
-            gho_vtoken_address: gho_vtoken_post,
-        })
+    /// The GHO addresses the operation parser and the discount refresh read,
+    /// resolved AFTER the transaction sequencer applied every configuration
+    /// event to the substrate overlay: a same-tx `ReserveInitialized` linking
+    /// the GHO vToken marked the row dirty, so this read sees the link and the
+    /// transaction's Mint/Burn logs classify as GHO — the initialized state the
+    /// later operation executed on. The discount pre-pass deliberately keeps its
+    /// transaction-start snapshot; only the addresses the POST-apply consumers
+    /// ride are fresh: the operation-parsing addresses, and the discount token
+    /// the follow-up refresh reads — a same-tx `DiscountTokenUpdated` rotation
+    /// must refresh against the NEW contract's ledger, never the tx-start one.
+    pub(crate) fn resolve_operation_identity(&mut self) -> TransactionIdentity {
+        let gho_asset = self.gho_asset();
+        TransactionIdentity {
+            gho_underlying_address: gho_asset
+                .as_ref()
+                .and_then(|g| g.gho_token_address.parse().ok()),
+            gho_vtoken_address: gho_asset
+                .as_ref()
+                .and_then(|g| g.v_token_address.as_deref())
+                .and_then(|s| s.parse().ok()),
+        }
     }
 
     /// The `ProxyCreated` resolution through this chunk's memo + provider —
@@ -751,22 +740,21 @@ impl<'span> ChunkContext<'span> {
     }
 }
 
-/// The products of one log-transaction's dispatch stages — the GHO-discount
-/// snapshot, the emitted config events, and the overlay-resolved GHO addresses
-/// the caller's operation parser consumes.
+/// The transaction's transaction-start reading products: the per-user GHO
+/// discount snapshot the operation reduction resolves its effective discounts
+/// against.
 #[derive(Debug)]
-pub(crate) struct TransactionDispatch {
-    /// The per-user GHO discount snapshot for this transaction.
+pub(crate) struct TransactionPrelude {
     pub(crate) discounts: HashMap<Address, U256>,
-    /// The configuration deltas this transaction reduced: the caller advances
-    /// the projection view in canonical event order and the chunk's one write
-    /// transaction persists them.
-    pub(crate) deltas: Vec<CanonicalDelta>,
-    /// The GHO underlying (`GHO`) address, resolved POST-config (a same-tx
-    /// `ReserveInitialized` link is visible).
+}
+
+/// The GHO addresses the operation parser and the discount refresh read, after
+/// every configuration event of the transaction was applied.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TransactionIdentity {
+    /// The GHO underlying (`GHO`) address.
     pub(crate) gho_underlying_address: Option<Address>,
-    /// The GHO vToken (`v_token`) address, resolved POST-config (a same-tx
-    /// `ReserveInitialized` link is visible).
+    /// The GHO vToken (`v_token`) address.
     pub(crate) gho_vtoken_address: Option<Address>,
 }
 

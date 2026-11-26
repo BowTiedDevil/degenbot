@@ -981,6 +981,14 @@ no new constant and a threshold move is one edit.
 _Avoid_: a revision literal per consumer; a closed upper bound a later compatible
 revision would falsify.
 
+**Transaction resolution** (`TransactionResolution`):
+The transaction-scoped sequencer for one log-transaction's resolution: it opens the transaction's exact read position, emits the exact-block observations configuration resolution made, projects each configuration effect onto the chunk substrate and repoints the POOL at a rotation, reduces the configuration and operation families against the advancing `ProjectionView` in canonical event order, seals the generations a replacement displaced, resolves the follow-up requests the transaction's journaled signals raised, and emits one ordered delta stream. Its scope is one transaction, so no chunk-wide phase exists to reorder work across a transaction boundary, and the configuration stage applies each event before the next one resolves so the overlay keeps its read-your-own-writes order.
+_Avoid_: chunk-wide refresh or prefetch phases; resolution work in the projection, the reducer, or persistence; a second per-transaction sequencer beside it.
+
+**Resolution request** (`ResolutionRequest`):
+The typed follow-up a journaled signal obliges, stated with the inputs composition must not re-derive. `RefreshGhoDiscount` carries the triggering movement's own `U256` index and the signal's exact source, so a refresh never reaches composition as an optional index or a zero default.
+_Avoid_: an optional trigger index; re-deriving a trigger's index from the view's settled end-of-transaction state; an effect-shaped special case in the chunk resolver.
+
 **Market reset**:
 Purging one market's rows and re-initializing through the activate seam under a single
 transaction, leaving the market observationally identical to a fresh cold boot.

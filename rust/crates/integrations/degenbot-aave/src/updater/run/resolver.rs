@@ -11,26 +11,26 @@
 //! (shared with the reserve-identity acquisition that ran before the seed) and
 //! the ParentAnchors map the pre-block discount observation reads through — so
 //! one chunk issues one read per distinct (implementation, selector, anchor) and
-//! per distinct parent position.
+//! per distinct parent position. Each candidate transaction's own sequence
+//! belongs to one transaction-scoped `TransactionResolution` (ADR-105 D4).
 
 #![expect(clippy::doc_markdown)]
 
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use alloy::primitives::Address;
 use degenbot_core::canonical_head::TxRef;
 use degenbot_db::ScaledTokenPosition;
-use degenbot_rpc::chain_evidence::BlockReads;
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::evidence::CandidateTransaction;
+use super::resolution::TransactionResolution;
 use super::seed::ChunkSeed;
 use super::substrate::ChunkSubstrate;
-use super::{ConfigDispatchError, RunError};
+use super::RunError;
 use crate::config_dispatch::{ChunkContext, ChunkSpan, ParentAnchors, RevisionMemo};
 use crate::projection::{CanonicalDelta, DeltaEffect, PositionSubject, ProjectionView};
-use crate::transaction_processor::{MarketIdentity, OperationReducer, ProcessTxError};
 
 /// The per-chunk resolution owner: the read memos the chunk's exact reads
 /// share, plus the two stages that run before and around the seed.
@@ -60,7 +60,7 @@ impl ChunkResolver {
     /// A dispatch/parse refusal, or an IncompleteChunkSeed when resolution names
     /// a fact the seed does not hold. A successful resolution leaves the chunk's
     /// deltas as the only product that crosses into persistence.
-    #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn resolve(
         &mut self,
         provider: &AlloyProvider,
@@ -93,8 +93,7 @@ impl ChunkResolver {
         for candidate in candidates {
             let group = &candidate.group;
             let block_number = group.block_number;
-            let tx_logs: Vec<&alloy::rpc::types::Log> = group.logs.clone();
-            ctx.begin_transaction(*candidate.evidence.tx());
+            let tx = *candidate.evidence.tx();
             for log in &group.logs {
                 let topics = log.topics();
                 if let Some(t1) = topics.get(1) {
@@ -104,64 +103,14 @@ impl ChunkResolver {
                     touched_user_addresses.insert(Address::from_slice(&t2.as_slice()[12..]));
                 }
             }
-            let compute_span = tracing::info_span!(
-                "degenbot.updater.aave.compute",
-                tx.block = block_number,
-                rpc.round_trips = tracing::field::Empty,
-            );
-            let compute_rt_start = degenbot_rpc::provider::rpc_round_trips();
-            let compute_guard = compute_span.enter();
-            let compute_started = Instant::now();
-            let dispatch = ctx
-                .dispatch_transaction(&mut view, &tx_logs)
-                .await
-                .map_err(map_dispatch_error)?;
-            let discounts = dispatch.discounts;
-            let config_deltas = dispatch.deltas;
-            chunk_deltas.extend(config_deltas.iter().cloned());
-            let identity = MarketIdentity {
-                market_id,
-                chain_id,
-                pool_address: ctx.pool_address(),
-                gho_token_address: dispatch.gho_underlying_address,
-                gho_vtoken_address: dispatch.gho_vtoken_address,
-            };
-            let deltas = OperationReducer::new(
-                identity,
-                *candidate.evidence.tx(),
-                &discounts,
-                ctx.substrate_mut(),
-                &mut view,
+            let resolved = TransactionResolution::for_transaction(
+                &mut ctx, &mut view, market_id, chain_id, tx,
             )
-            .reduce_transaction(&candidate.evidence, &config_deltas)
-            .map_err(|error| {
-                report_parse_failure(*candidate.evidence.tx(), &error);
-                map_process_error(error)
-            })?;
-            decode_compute_time += compute_started.elapsed();
-            emit_transaction_trace(&view, &deltas, block_number, *candidate.evidence.tx());
-            drop(compute_guard);
-            compute_span.record(
-                "rpc.round_trips",
-                degenbot_rpc::provider::rpc_round_trips().saturating_sub(compute_rt_start),
-            );
-            chunk_deltas.extend(deltas.iter().cloned());
-            for delta in &deltas {
-                if let DeltaEffect::GhoRefreshDiscount { position_id } = delta.effect() {
-                    let signal = delta.clone();
-                    let anchor = *signal.source().tx().anchor();
-                    let parent = self.parent_anchors.of(provider, anchor).await?;
-                    resolve_discount_refresh(
-                        &BlockReads::at(provider, parent),
-                        &signal,
-                        *position_id,
-                        &view,
-                        ctx.substrate_mut(),
-                        &mut chunk_deltas,
-                    )
-                    .await?;
-                }
-            }
+            .resolve(provider, &mut self.parent_anchors, candidate)
+            .await?;
+            decode_compute_time += resolved.decode_compute_time;
+            emit_transaction_trace(&view, &resolved.deltas, block_number, tx);
+            chunk_deltas.extend(resolved.deltas);
         }
         self.memo = ctx.take_memo();
         self.parent_anchors = ctx.take_parent_anchors();
@@ -265,135 +214,12 @@ fn emit_transaction_trace(
     }
 }
 
-/// Report a reduction refusal as one bounded `AAVE-PARSE-FAIL` event carrying the
-/// exact block and transaction coordinates of the refused transaction: the
-/// differential-narrowing consumer needs the position even when the error text
-/// states only the operation's own refusal.
-fn report_parse_failure(tx: TxRef, error: &ProcessTxError) {
-    let anchor = tx.anchor();
-    degenbot_core::op_error!(
-        domain = aave,
-        block = anchor.number(),
-        block_hash = %alloy::hex::encode(anchor.hash()),
-        tx = %alloy::hex::encode(tx.hash()),
-        tx_index = tx.index(),
-        err = %error,
-        "AAVE-PARSE-FAIL"
-    );
-}
-
-/// Recompute the users' GHO discounts the transaction's debt movements require
-/// (the (C) refresh): the debt state is the view's post-transaction state and
-/// the stkAAVE balance is the projection's. The settled values travel as their
-/// own deltas, so persistence writes them without recomputing.
-async fn resolve_discount_refresh(
-    reads: &BlockReads<'_>,
-    signal: &CanonicalDelta,
-    position_id: i64,
-    view: &ProjectionView,
-    substrate: &mut ChunkSubstrate,
-    chunk_deltas: &mut Vec<CanonicalDelta>,
-) -> Result<(), RunError> {
-    let discount_token = substrate
-        .gho_asset()
-        .and_then(|gho| gho.v_gho_discount_token)
-        .and_then(|address| address.parse::<Address>().ok());
-    let Some(discount_token) = discount_token else {
-        return Ok(());
-    };
-    let user_id = substrate.position_user(degenbot_db::ScaledTokenPosition::Debt, position_id)?;
-    let user_address = substrate.user_address(user_id)?;
-    let (scaled_balance, last_index) = view
-        .require_position_state(PositionSubject {
-            position: degenbot_db::ScaledTokenPosition::Debt,
-            position_id,
-        })
-        .map_err(|error| RunError::ProcessTx(ProcessTxError::Projection(error)))?;
-    let projected = substrate.user_stk_aave_balance(&user_address)?;
-    let stk_aave_balance = if let Some(Some(balance)) = projected {
-        balance
-    } else {
-        let address: Address = user_address.parse().map_err(|_| {
-            RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
-                "bad user_address in refresh: {user_address}"
-            )))
-        })?;
-        let ret = reads
-            .call(
-                discount_token,
-                crate::config_dispatch::encode_single_address_call("balanceOf(address)", &address),
-            )
-            .await
-            .map_err(|error| RunError::ConfigDispatch(ConfigDispatchError::from(error)))?;
-        let balance =
-            crate::config_dispatch::require_word0_u256(&ret, "balanceOf(address)", &discount_token)
-                .map_err(|error| {
-                    RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
-                        "balanceOf for user {user_address}: {error}"
-                    )))
-                })?;
-        substrate.record_user_stk_aave_balance_by_id(user_id, Some(balance));
-        chunk_deltas.push(CanonicalDelta::new(
-            signal.source(),
-            None,
-            DeltaEffect::StkAaveBalanceObserved { user_id, balance },
-        ));
-        balance
-    };
-    let debt_balance = crate::ray_mul(scaled_balance, last_index.unwrap_or_default(), None)
-        .map_err(|error| {
-            RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
-                "ray_mul overflow in refresh: {error}"
-            )))
-        })?;
-    let rate = crate::gho_processor::calculate_gho_discount_rate(debt_balance, stk_aave_balance)
-        .map_err(|error| {
-            RunError::ConfigDispatch(ConfigDispatchError::DecodeShape(format!(
-                "calculate_gho_discount_rate: {error}"
-            )))
-        })?;
-    let gho_discount = crate::config_dispatch::discount_to_i64(rate);
-    substrate.record_user_gho_discount_by_id(user_id, gho_discount);
-    chunk_deltas.push(CanonicalDelta::new(
-        signal.source(),
-        None,
-        DeltaEffect::GhoDiscountRefreshed {
-            user_id,
-            gho_discount,
-        },
-    ));
-    Ok(())
-}
-
-/// Map a configuration-dispatch refusal onto the run's error.
-fn map_dispatch_error(error: ConfigDispatchError) -> RunError {
-    match error {
-        ConfigDispatchError::IncompleteSeed(seed) => RunError::IncompleteChunkSeed(Box::new(seed)),
-        ConfigDispatchError::Projection(error) => match error {
-            crate::projection::ProjectionError::IncompleteSeed(seed) => {
-                RunError::IncompleteChunkSeed(Box::new(seed))
-            }
-            other => RunError::ConfigDispatch(ConfigDispatchError::Projection(other)),
-        },
-        other => RunError::ConfigDispatch(other),
-    }
-}
-
-/// Map a parse refusal onto the run's error.
-fn map_process_error(error: ProcessTxError) -> RunError {
-    match error {
-        ProcessTxError::IncompleteSeed(seed) => RunError::IncompleteChunkSeed(Box::new(seed)),
-        ProcessTxError::Projection(crate::projection::ProjectionError::IncompleteSeed(seed)) => {
-            RunError::IncompleteChunkSeed(Box::new(seed))
-        }
-        other => RunError::ProcessTx(other),
-    }
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::transaction_processor::ProcessTxError;
+    use crate::updater::run::resolution::report_parse_failure;
     use alloy::primitives::{I256, U256};
     use degenbot_core::canonical_head::LogRef;
     use degenbot_db::sql_ledger::LedgerDb;

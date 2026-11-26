@@ -8,7 +8,7 @@
 //! path) with the NULL-balance backfill, + the post-apply discount refresh.
 //!
 //! The pre-pass consumes the vToken revision its caller re-resolved per
-//! transaction (stage 1 of `ChunkContext::dispatch_transaction`) — with the
+//! transaction (stage 1 of `ChunkContext::begin_dispatch`) — with the
 //! deprecation applied, the snapshot must serve the applied revision + the
 //! recorded corpus must carry ZERO `getDiscountPercent` entries (a
 //! chunk-start revision snapshot produces exactly the mutated replay's RPC

@@ -9,19 +9,23 @@
 //! name) + emit [`ConfigurationEffect`] variants — the tx's first dispatch
 //! phase. Each effect is reduced into a [`CanonicalDelta`] at its exact log
 //! position, carrying the generation the event activated (ADR-105 D6, D7), and
-//! the chunk's one writer persists it at the write stage.
+//! the chunk's one writer persists it at the write stage. The reduction and the
+//! emission belong to the transaction sequencer
+//! (`run::resolution::TransactionResolution`), which owns one transaction's
+//! canonical event order.
 //!
 //! # Scope (this module)
 //!
 //! The dispatch loop + the shared decode/RPC helpers every resolver rides
 //! (the checksum/calldata encoders, the batch-or-direct multicall seam, the
-//! word/string decoders). `dispatch_config_events` routes each decoded event to
-//! its resolver, projects the effect onto the chunk substrate's read position
-//! and emits the positioned delta (logIndex order), so a later event's
-//! resolution sees an earlier event's effect — surface-table row 6
+//! word/string decoders). `resolve_config_log` routes one decoded event to its
+//! resolver and hands the resolution to the transaction sequencer, whose
+//! configuration stage projects the effect onto the chunk substrate's read
+//! position in logIndex order, so a later event's resolution sees an earlier
+//! event's effect — surface-table row 6
 //! (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(A)). The dispatch takes no
 //! `Connection`: the chunk's one writer persists the delta stream at the write
-//! stage, and the VIEW advance is the caller's — configuration and operation
+//! stage, and the VIEW advance is the sequencer's — configuration and operation
 //! deltas advance the projection in canonical event order
 //! (`OperationReducer::reduce_transaction`).
 //!
@@ -58,7 +62,8 @@
 //! every id it names is the seed's (interned before resolution opened) and an
 //! unseeded fact is an `IncompleteChunkSeed` refusal, never a lazy query. The
 //! chunk-atomicity invariant (ONE `Transaction` per chunk) is unaffected: the
-//! dispatch emits [`CanonicalDelta`]s, and the chunk's one writer persists them
+//! dispatch resolves [`ConfigurationEffect`]s, and the chunk's one writer persists
+//! their deltas
 //! inside that transaction. No `Transaction` lifecycle here — this file owns
 //! neither `commit` nor `drop`.
 
@@ -67,11 +72,9 @@ mod context;
 mod discount;
 mod revision;
 
-use crate::projection::{
-    reduce_configuration, CanonicalDelta, ConfigurationEffect, DeltaEffect, ProjectionError,
-    ProjectionView,
-};
+use crate::projection::{ConfigurationEffect, GenerationRef, ProjectionError};
 use alloy::primitives::{keccak256, Address, Bytes, U256};
+use degenbot_core::canonical_head::LogRef;
 use degenbot_db::DbError;
 use degenbot_decoders::aave_event_decoder::{decode_aave_log, DecodedAaveEvent};
 use degenbot_rpc::chain_evidence::BlockReads;
@@ -175,9 +178,27 @@ fn fixture_tx(block_number: u64) -> degenbot_core::canonical_head::TxRef {
 
 // ── the dispatch loop ──────────────────────────────────────────────────────
 
-/// The per-tx config-event dispatch loop: loop over `tx_logs`, decode each via
-/// [`decode_aave_log`], + for the 10 enum-covered config event types,
-/// resolve ids + emit [`ConfigurationEffect`] variants. Non-config events
+/// One configuration event's resolution: the effect it states, the exact
+/// position it was resolved at, the generation it names, the generation it
+/// supersedes, and the exact-block observations its resolution resolved first.
+///
+/// Resolution stops at the facts. The transaction sequencer's configuration
+/// stage records the observations into the chunk substrate, projects the effect
+/// onto it, seals the superseded generation, repoints the POOL, and reduces the
+/// positioned delta — in canonical log order, so a later event's dispatch reads
+/// an earlier event's overlay (ADR-105 D4).
+#[derive(Debug)]
+pub(crate) struct ConfigEventResolution {
+    pub(crate) source: LogRef,
+    pub(crate) effect: ConfigurationEffect,
+    pub(crate) generation: Option<GenerationRef>,
+    pub(crate) superseded: Option<GenerationRef>,
+    pub(crate) observations: Vec<(i64, alloy::primitives::U256)>,
+}
+
+/// Resolve ONE transaction log's configuration event: decode it via
+/// [`decode_aave_log`] and, for the 10 enum-covered config event types,
+/// resolve its ids into a [`ConfigurationEffect`]. Non-config events
 /// (Supply/Borrow/Mint/Burn/Transfer — the Operation events
 /// `OperationReducer::reduce_transaction` handles) are skipped. The six upgrade-transition
 /// events (`Upgraded`/`PoolUpdated`/`PoolConfiguratorUpdated`/
@@ -187,51 +208,27 @@ fn fixture_tx(block_number: u64) -> degenbot_core::canonical_head::TxRef {
 /// are pure decode, and `ProxyCreated` resolves the filtered proxy.
 /// `AddressSet` covers BOTH shapes — a registration (an insert) and an
 /// address rotation (an in-place replace through [`ChunkContext`]).
-pub(crate) async fn dispatch_config_events(
+pub(crate) async fn resolve_config_log(
     ctx: &mut ChunkContext<'_>,
-    view: &mut ProjectionView,
-    tx_logs: &[&alloy::rpc::types::Log],
-) -> Result<Vec<CanonicalDelta>, ConfigDispatchError> {
-    let mut deltas = Vec::new();
-    for log in tx_logs {
-        let Some(decoded) = decode_aave_log(log) else {
-            continue; // not an Aave event (may be an unrelated ERC20/etc.).
-        };
-        let source = ctx.log_ref(log)?;
-        if let Some(effect) = dispatch_single_config_event(&decoded, ctx).await? {
-            let generation = effect.generation(ctx.chain_id(), source)?;
-            // Project the effect onto the resolution read position (ADR-105
-            // D4): the SQL write is deferred to the chunk's one transaction,
-            // so every fact a later event's resolution reads is mutated in the
-            // chunk substrate here — `CollateralConfigurationChanged` sees the
-            // asset `ReserveInitialized` created. The VIEW advance is the
-            // caller's, in canonical event order with the operations.
-            let sealed = ctx.superseded_generation(&effect);
-            for (user_id, balance) in ctx.take_observations() {
-                ctx.substrate_mut()
-                    .record_user_stk_aave_balance_by_id(user_id, Some(balance));
-                deltas.push(CanonicalDelta::new(
-                    source,
-                    None,
-                    DeltaEffect::StkAaveBalanceObserved { user_id, balance },
-                ));
-            }
-            effect.project(ctx.substrate_mut())?;
-            if let Some(sealed) = sealed {
-                view.seal_generation(sealed);
-            }
-            ctx.repoint_pool(&effect)?;
-            let delta = reduce_configuration(view, effect, source, generation)
-                .map_err(config_projection_error)?;
-            deltas.push(delta);
-        }
-    }
-    Ok(deltas)
-}
-
-/// A projection refusal during configuration resolution.
-fn config_projection_error(error: ProjectionError) -> ConfigDispatchError {
-    ConfigDispatchError::Projection(error)
+    log: &alloy::rpc::types::Log,
+) -> Result<Option<ConfigEventResolution>, ConfigDispatchError> {
+    let Some(decoded) = decode_aave_log(log) else {
+        return Ok(None); // not an Aave event (may be an unrelated ERC20/etc.).
+    };
+    let source = ctx.log_ref(log)?;
+    let Some(effect) = dispatch_single_config_event(&decoded, ctx).await? else {
+        return Ok(None);
+    };
+    let generation = effect.generation(ctx.chain_id(), source)?;
+    let superseded = ctx.superseded_generation(&effect);
+    let observations = ctx.take_observations();
+    Ok(Some(ConfigEventResolution {
+        source,
+        effect,
+        generation,
+        superseded,
+        observations,
+    }))
 }
 
 /// Resolve the `PRICE_ORACLE` contract address for `ReserveInitialized`
@@ -892,6 +889,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn captured_rev1_stk_aave_burn_applies_its_parent_balance_observation_first() {
         let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
         let discount_token: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
@@ -966,13 +964,22 @@ mod tests {
             log_index: Some(328),
             removed: false,
         };
-        let deltas = degenbot_core::runtime::get_runtime()
-            .block_on(dispatch_config_events(
-                &mut ctx,
-                &mut ProjectionView::new(),
-                &[&log],
-            ))
+        let _prelude = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.begin_dispatch(&[&log]))
             .unwrap();
+        let mut view = crate::projection::ProjectionView::new();
+        let mut resolution =
+            crate::updater::run::resolution::TransactionResolution::for_transaction(
+                &mut ctx,
+                &mut view,
+                1,
+                1,
+                fixture_tx(17_699_305),
+            );
+        let deltas = degenbot_core::runtime::get_runtime()
+            .block_on(resolution.apply_configuration(&[&log]))
+            .unwrap();
+        drop(resolution);
 
         assert_eq!(deltas.len(), 2);
         assert!(matches!(
@@ -2864,21 +2871,35 @@ mod tests {
         let ri_log = reserve_initialized_log(85);
         let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&ri_log, &mint_log];
-        let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
+        let prelude = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.begin_dispatch(&logs))
             .unwrap();
+        let mut view = crate::projection::ProjectionView::new();
+        let mut resolution =
+            crate::updater::run::resolution::TransactionResolution::for_transaction(
+                &mut ctx,
+                &mut view,
+                1,
+                1,
+                fixture_tx(100),
+            );
+        degenbot_core::runtime::get_runtime()
+            .block_on(resolution.apply_configuration(&logs))
+            .unwrap();
+        drop(resolution);
+        let identity = ctx.resolve_operation_identity();
         assert_eq!(
-            dispatch.gho_vtoken_address,
+            identity.gho_vtoken_address,
             Some(t[2].0),
             "the operation parser's vToken address resolves POST-config (the link is visible)"
         );
         assert_eq!(
-            dispatch.gho_underlying_address,
+            identity.gho_underlying_address,
             Some(t[0].0),
             "the operation parser's underlying address resolves POST-config"
         );
         assert!(
-            dispatch.discounts.is_empty(),
+            prelude.discounts.is_empty(),
             "the discount pre-pass kept its transaction-start snapshot (no vToken yet)"
         );
 
@@ -2886,8 +2907,8 @@ mod tests {
             1,
             1,
             Address::repeat_byte(0x88),
-            dispatch.gho_underlying_address,
-            dispatch.gho_vtoken_address,
+            identity.gho_underlying_address,
+            identity.gho_vtoken_address,
             ctx.substrate_mut(),
         )
         .unwrap();
@@ -2960,21 +2981,39 @@ mod tests {
         ctx.begin_transaction_at(100);
         let mint_log = gho_vtoken_mint_log(5, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&mint_log];
-        let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
+        let prelude = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.begin_dispatch(&logs))
             .unwrap();
+        let mut view = crate::projection::ProjectionView::new();
+        let mut resolution =
+            crate::updater::run::resolution::TransactionResolution::for_transaction(
+                &mut ctx,
+                &mut view,
+                1,
+                1,
+                fixture_tx(100),
+            );
+        let deltas = degenbot_core::runtime::get_runtime()
+            .block_on(resolution.apply_configuration(&logs))
+            .unwrap();
+        drop(resolution);
+        assert!(
+            deltas.is_empty(),
+            "the mint is an operation event: the configuration stage resolves nothing"
+        );
+        let identity = ctx.resolve_operation_identity();
         assert_eq!(
-            dispatch.gho_vtoken_address,
+            identity.gho_vtoken_address,
             Some(t[2].0),
             "no link event → the tx-start address stands"
         );
         assert_eq!(
-            dispatch.gho_underlying_address,
+            identity.gho_underlying_address,
             Some(t[0].0),
             "no link event → the tx-start underlying stands"
         );
         assert_eq!(
-            dispatch.discounts.get(&Address::repeat_byte(0x42)),
+            prelude.discounts.get(&Address::repeat_byte(0x42)),
             Some(&U256::ZERO),
             "the linked-vToken mint takes the deprecation snapshot path"
         );
@@ -3007,18 +3046,117 @@ mod tests {
         let ri_log = reserve_initialized_log(85);
         let mint_log = gho_vtoken_mint_log(91, t[2].0, Address::repeat_byte(0x42));
         let logs = vec![&ri_log, &mint_log];
-        let dispatch = degenbot_core::runtime::get_runtime()
-            .block_on(ctx.dispatch_transaction(&mut ProjectionView::new(), &logs))
+        let prelude = degenbot_core::runtime::get_runtime()
+            .block_on(ctx.begin_dispatch(&logs))
             .unwrap();
         assert!(
-            dispatch.discounts.is_empty(),
+            prelude.discounts.is_empty(),
             "the pre-pass saw no vToken at tx start — the same-tx link is invisible to it"
         );
+        let mut view = crate::projection::ProjectionView::new();
+        let mut resolution =
+            crate::updater::run::resolution::TransactionResolution::for_transaction(
+                &mut ctx,
+                &mut view,
+                1,
+                1,
+                fixture_tx(100),
+            );
+        degenbot_core::runtime::get_runtime()
+            .block_on(resolution.apply_configuration(&logs))
+            .unwrap();
+        drop(resolution);
         assert_eq!(
-            dispatch.gho_vtoken_address,
+            ctx.resolve_operation_identity().gho_vtoken_address,
             Some(t[2].0),
-            "the operation parser still resolves POST-config in the same dispatch"
+            "the operation parser still resolves POST-config after the sequencer's configuration stage"
         );
+    }
+
+    /// The transaction sequencer's configuration stage — not the resolution
+    /// loop — projects each effect onto the chunk substrate and repoints the
+    /// POOL: resolving a rotation alone leaves both at their pre-event state,
+    /// and the stage applies both before the rotation's delta is reduced.
+    #[test]
+    fn the_sequencer_configuration_stage_projects_and_repoints() {
+        let (db, _) = db_seeded();
+        let conn = db.lock();
+        let old_addr = Address::repeat_byte(0x51);
+        let new_addr = Address::repeat_byte(0x52);
+        conn.execute(
+            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+             VALUES (1, 'POOL', ?1, 7)",
+            params![checksum(&old_addr)],
+        )
+        .unwrap();
+        let mut substrate = seed(&conn, &[]);
+        let mut ctx = ctx_for(&mut substrate);
+        ctx.begin_transaction_at(100);
+        let rotation = Log {
+            inner: AlloyLog::new_unchecked(
+                Address::repeat_byte(0x77),
+                vec![
+                    degenbot_decoders::aave_event_decoder::AAVE_ADDRESS_SET_TOPIC,
+                    ascii_id("POOL"),
+                    old_addr.into_word(),
+                    new_addr.into_word(),
+                ],
+                Bytes::new(),
+            ),
+            block_hash: None,
+            block_number: Some(100),
+            block_timestamp: None,
+            transaction_hash: Some(B256::from([0xaa; 32])),
+            transaction_index: None,
+            log_index: Some(3),
+            removed: false,
+        };
+        let resolved = degenbot_core::runtime::get_runtime()
+            .block_on(resolve_config_log(&mut ctx, &rotation))
+            .unwrap()
+            .expect("a rotation resolves a configuration event");
+        assert!(
+            matches!(
+                &resolved.effect,
+                ConfigurationEffect::ContractAddressChanged { .. }
+            ),
+            "the fixture is the POOL rotation"
+        );
+        assert_eq!(
+            ctx.pool_address(),
+            Address::ZERO,
+            "resolution alone does not repoint the POOL endpoint: the context still reads its construction address"
+        );
+        assert_eq!(
+            ctx.substrate_mut().contract_address("POOL").unwrap(),
+            Some(checksum(&old_addr)),
+            "resolution alone does not project the rotation onto the substrate"
+        );
+
+        let mut view = crate::projection::ProjectionView::new();
+        let mut resolution =
+            crate::updater::run::resolution::TransactionResolution::for_transaction(
+                &mut ctx,
+                &mut view,
+                1,
+                1,
+                fixture_tx(100),
+            );
+        let deltas = degenbot_core::runtime::get_runtime()
+            .block_on(resolution.apply_configuration(&[&rotation]))
+            .unwrap();
+        drop(resolution);
+        assert_eq!(
+            ctx.pool_address(),
+            new_addr,
+            "the configuration stage repoints the POOL at the event that rotates it"
+        );
+        assert_eq!(
+            ctx.substrate_mut().contract_address("POOL").unwrap(),
+            Some(checksum(&new_addr)),
+            "the configuration stage projects the rotation onto the substrate"
+        );
+        assert_eq!(deltas.len(), 1, "one rotation, one configuration delta");
     }
 
     /// A same-entity multi-upgrade seals EVERY revision it replaces, in order:

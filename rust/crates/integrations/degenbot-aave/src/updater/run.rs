@@ -16,6 +16,7 @@ mod fetch;
 mod process;
 mod recovery;
 mod reset;
+pub(crate) mod resolution;
 mod resolver;
 pub mod seed;
 pub mod substrate;
@@ -491,7 +492,7 @@ pub struct RunSpec {
 /// # Parity-gate notes (flagged)
 ///
 /// - **`vtoken_revision`**: re-resolved per transaction — stage 1 of
-///   `ChunkContext::dispatch_transaction` — so a transaction after an in-chunk
+///   `ChunkContext::begin_dispatch` — so a transaction after an in-chunk
 ///   `Upgraded` apply reads the bumped revision; a chunk-start snapshot would
 ///   not (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(C)).
 #[expect(clippy::missing_errors_doc)]

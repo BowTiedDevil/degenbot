@@ -78,6 +78,7 @@ use super::projection::{
     CanonicalDelta, DeltaEffect, GenerationEntity, GenerationRef, PositionState, PositionSubject,
     ProjectionError, ProjectionView,
 };
+use super::run::resolution::{ResolutionRequest, TransactionReduction};
 use super::run::substrate::ChunkSubstrate;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -152,6 +153,7 @@ pub(crate) struct DeltaSink<'a> {
     tx: TxRef,
     view: &'a mut ProjectionView,
     deltas: Vec<CanonicalDelta>,
+    requests: Vec<ResolutionRequest>,
 }
 
 impl<'a> DeltaSink<'a> {
@@ -160,6 +162,7 @@ impl<'a> DeltaSink<'a> {
             tx,
             view,
             deltas: Vec::new(),
+            requests: Vec::new(),
         }
     }
 
@@ -262,6 +265,27 @@ impl<'a> DeltaSink<'a> {
         self.deltas.push(delta);
         Ok(())
     }
+
+    /// Emit one GHO refresh trigger: the journaled `GhoRefreshDiscount` signal
+    /// at its exact position, then the follow-up resolution the signal obliges.
+    /// The request carries the triggering effect's index, so the sequencer never
+    /// re-derives it from the settled end-of-transaction state.
+    fn emit_refresh(
+        &mut self,
+        substrate: &mut ChunkSubstrate,
+        trigger: RefreshTrigger,
+    ) -> Result<(), ProcessTxError> {
+        self.emit(substrate, trigger.signal)?;
+        self.requests.push(trigger.request);
+        Ok(())
+    }
+}
+
+/// One GHO refresh trigger: the journaled signal the movement raised and the
+/// follow-up resolution it requires.
+struct RefreshTrigger {
+    signal: ResolvedDelta,
+    request: ResolutionRequest,
 }
 
 /// Extract the first data word (32 bytes) from a Pool event's `data` field.
@@ -479,7 +503,7 @@ impl<'a> OperationReducer<'a> {
         &mut self,
         evidence: &TransactionEvidence,
         configuration_deltas: &[CanonicalDelta],
-    ) -> Result<Vec<CanonicalDelta>, ProcessTxError> {
+    ) -> Result<TransactionReduction, ProcessTxError> {
         let mut parser = TransactionOperationsParser::new(
             self.market.market_id,
             self.market.chain_id,
@@ -525,7 +549,7 @@ impl<'a> OperationReducer<'a> {
         for delta in &configuration_deltas[next_configuration..] {
             self.advance_view(delta)?;
         }
-        Ok(self.take_deltas())
+        Ok(self.take_reduction())
     }
 
     /// Open the operation reduction unit anchored at `position`, the position the
@@ -557,8 +581,17 @@ impl<'a> OperationReducer<'a> {
         self.sink.emit(self.substrate, resolved)
     }
 
-    fn take_deltas(&mut self) -> Vec<CanonicalDelta> {
-        std::mem::take(&mut self.sink.deltas)
+    /// Emit one GHO refresh trigger: the journaled signal at its exact position
+    /// and the follow-up resolution that carries the triggering effect's index.
+    fn emit_refresh(&mut self, trigger: RefreshTrigger) -> Result<(), ProcessTxError> {
+        self.sink.emit_refresh(self.substrate, trigger)
+    }
+
+    fn take_reduction(&mut self) -> TransactionReduction {
+        TransactionReduction {
+            deltas: std::mem::take(&mut self.sink.deltas),
+            requests: std::mem::take(&mut self.sink.requests),
+        }
     }
 
     #[cfg(test)]
@@ -1143,7 +1176,7 @@ impl OperationReducer<'_> {
                     self.build_gho_chunk_event(ev, op, op.pool_event, Some(U256::ZERO), gho_ctx)?;
                 self.emit(resolved)?;
                 if let Some(refresh) = refresh {
-                    self.emit(refresh)?;
+                    self.emit_refresh(refresh)?;
                 }
                 continue;
             }
@@ -1417,7 +1450,7 @@ impl OperationReducer<'_> {
                 self.build_gho_chunk_event(ev, op, pool_event, None, gho_ctx)?;
             self.emit(resolved)?;
             if let Some(refresh) = refresh {
-                self.emit(refresh)?;
+                self.emit_refresh(refresh)?;
             }
         }
         Ok(())
@@ -1502,7 +1535,7 @@ impl OperationReducer<'_> {
                     self.build_gho_chunk_event(ev, op, Some(pool_event), None, gho_ctx)?;
                 self.emit(resolved)?;
                 if let Some(refresh) = refresh {
-                    self.emit(refresh)?;
+                    self.emit_refresh(refresh)?;
                 }
             } else {
                 // Non-GHO event within a GHO liquidation: either the aToken
@@ -1573,7 +1606,7 @@ impl OperationReducer<'_> {
         pool_event: Option<&Log>,
         scaled_amount_override: Option<U256>,
         gho_ctx: &GhoDiscountContext<'_>,
-    ) -> Result<(ResolvedDelta, Option<ResolvedDelta>), ProcessTxError> {
+    ) -> Result<(ResolvedDelta, Option<RefreshTrigger>), ProcessTxError> {
         let asset = self.lookup_gho_debt_asset(ev)?;
         let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
         let balance_increase = ev.balance_increase.unwrap_or_default();
@@ -1667,10 +1700,17 @@ impl OperationReducer<'_> {
         };
         let effective_discount =
             gho_ctx.effective_discount(ev.user_address, ev.log_index, asset.v_token_revision);
-        let refresh = |position_id| ResolvedDelta {
-            effect: DeltaEffect::GhoRefreshDiscount { position_id },
-            generation,
-            log_index: ev.log_index,
+        let refresh = |position_id, index| RefreshTrigger {
+            signal: ResolvedDelta {
+                effect: DeltaEffect::GhoRefreshDiscount { position_id },
+                generation,
+                log_index: ev.log_index,
+            },
+            request: ResolutionRequest::RefreshGhoDiscount {
+                source: LogRef::new(self.sink.tx, ev.log_index),
+                position_id,
+                index,
+            },
         };
 
         let (resolved, refresh) = match ev.event_type {
@@ -1682,7 +1722,9 @@ impl OperationReducer<'_> {
                     effective_discount,
                     actual_repay_amount,
                 )?;
-                let refresh = result.should_refresh_discount.then(|| refresh(position_id));
+                let refresh = result
+                    .should_refresh_discount
+                    .then(|| refresh(position_id, result.new_index));
                 let resolved = ResolvedDelta {
                     effect: DeltaEffect::ScaledBalance {
                         subject,
@@ -1701,7 +1743,9 @@ impl OperationReducer<'_> {
                     prev_index,
                     effective_discount,
                 )?;
-                let refresh = result.should_refresh_discount.then(|| refresh(position_id));
+                let refresh = result
+                    .should_refresh_discount
+                    .then(|| refresh(position_id, result.new_index));
                 let resolved = ResolvedDelta {
                     effect: DeltaEffect::ScaledBalance {
                         subject,
@@ -4563,6 +4607,7 @@ mod tests {
         .reduce_transaction(&evidence, &configuration)
         .expect("the supply reduces against the configuration the view already read");
 
+        let deltas = deltas.deltas;
         assert_eq!(deltas.len(), 1, "one operation, one delta: {deltas:?}");
         assert_eq!(
             deltas[0].source().index(),
@@ -4619,6 +4664,7 @@ mod tests {
         .reduce_transaction(&evidence, &configuration)
         .expect("the operation reduces before the configuration that follows it");
 
+        let deltas = deltas.deltas;
         assert_eq!(deltas.len(), 1, "one operation, one delta: {deltas:?}");
         assert_eq!(
             deltas[0].source().index(),
@@ -4956,6 +5002,7 @@ mod tests {
         .reduce_transaction(&liquidation_evidence, &[])
         .expect("the bad-debt liquidation reduces");
 
+        let liquidation_deltas = liquidation_deltas.deltas;
         let debt = PositionSubject {
             position: ScaledTokenPosition::Debt,
             position_id: 1,
@@ -4992,6 +5039,7 @@ mod tests {
         .reduce_transaction(&borrow_evidence, &[])
         .expect("the GHO borrow reduces against the advanced view");
 
+        let borrow_deltas = borrow_deltas.deltas;
         let balance_delta = borrow_deltas
             .iter()
             .find_map(|delta| match delta.effect() {
@@ -5015,6 +5063,139 @@ mod tests {
                 Some(later_index)
             )),
             "the view holds the zero-based borrow state"
+        );
+    }
+
+    /// The GHO refresh request the reduction raises carries the TRIGGERING
+    /// effect's index: the movement's own `U256`, never an optional value
+    /// defaulted to zero when it reaches composition.
+    #[test]
+    fn refresh_request_carries_the_triggering_effects_index() {
+        use degenbot_decoders::aave_event_decoder::{AAVE_BORROW_TOPIC, AAVE_MINT_TOPIC};
+        use degenbot_rpc::tx_evidence::ReceiptTransaction;
+
+        let fixture = ReduceTxFixture::new_with_gho_debt();
+        let gho_underlying = fixture.gho_underlying.unwrap();
+        let gho_vtoken = fixture.gho_vtoken.unwrap();
+        let ray = fixture_index();
+        let trigger_index = U256::from(2u8) * ray;
+        let borrow_amount = U256::from(1_000u64) * U256::from(10u8).pow(U256::from(18u8));
+        let borrow_tx = fixture_tx();
+        let logs = vec![
+            ReduceTxFixture::log(
+                borrow_tx,
+                4,
+                gho_vtoken,
+                vec![
+                    degenbot_decoders::aave_event_decoder::ERC20_TRANSFER_TOPIC,
+                    B256::ZERO,
+                    topic_of(fixture.user),
+                ],
+                &[borrow_amount],
+            ),
+            ReduceTxFixture::log(
+                borrow_tx,
+                5,
+                gho_vtoken,
+                vec![
+                    AAVE_MINT_TOPIC,
+                    topic_of(fixture.user),
+                    topic_of(fixture.user),
+                ],
+                &[borrow_amount, U256::ZERO, trigger_index],
+            ),
+            ReduceTxFixture::log(
+                borrow_tx,
+                6,
+                fixture.pool,
+                vec![
+                    AAVE_BORROW_TOPIC,
+                    topic_of(gho_underlying),
+                    topic_of(fixture.user),
+                    B256::ZERO,
+                ],
+                &[
+                    U256::from_be_slice(fixture.user.as_slice()),
+                    borrow_amount,
+                    U256::from(2u8),
+                    U256::ZERO,
+                ],
+            ),
+        ];
+        let receipt =
+            ReceiptTransaction::new(borrow_tx, logs).expect("the logs are one complete receipt");
+        let owned: Vec<Log> = receipt.logs().to_vec();
+        let filtered: Vec<&Log> = owned.iter().collect();
+        let evidence =
+            crate::updater::evidence::bind_transaction_evidence(&filtered, receipt, None)
+                .expect("a receipt-only transaction binds");
+        let conn = fixture.db.lock();
+        let mut substrate =
+            crate::updater::run::seed::ChunkSeed::for_tests_users(&conn, 1, 1, &[fixture.user])
+                .into_substrate();
+        let mut view = fixture_view(&substrate);
+        let discounts = HashMap::new();
+
+        let reduction = OperationReducer::new(
+            fixture.identity(),
+            borrow_tx,
+            &discounts,
+            &mut substrate,
+            &mut view,
+        )
+        .reduce_transaction(&evidence, &[])
+        .expect("the GHO borrow reduces");
+
+        assert!(
+            !reduction.requests.is_empty(),
+            "the discount-supported mint raises the refresh request"
+        );
+        let mut saw_trigger_index = false;
+        for request in &reduction.requests {
+            let ResolutionRequest::RefreshGhoDiscount {
+                source,
+                position_id,
+                index,
+            } = request;
+            assert_eq!(
+                *position_id, 1,
+                "the request names the debt position the movement settled"
+            );
+            assert_ne!(
+                *index,
+                U256::ZERO,
+                "the request carries the triggering effect's index, never a zero default"
+            );
+            assert_ne!(
+                *index, ray,
+                "the request carries the movement's index, not the position's pre-transaction index"
+            );
+            assert!(
+                reduction
+                    .deltas
+                    .iter()
+                    .any(|delta| delta.source() == *source
+                        && matches!(delta.effect(), DeltaEffect::GhoRefreshDiscount { .. })),
+                "the journaled signal travels at the same position"
+            );
+            let trigger = reduction
+                .deltas
+                .iter()
+                .filter(|delta| delta.source() == *source)
+                .find_map(|delta| match delta.effect() {
+                    DeltaEffect::ScaledBalance { index, .. } => Some(*index),
+                    _ => None,
+                })
+                .expect("the triggering movement sits at the signal's own position");
+            assert_eq!(
+                *index, trigger,
+                "the request states the triggering effect's own index"
+            );
+            saw_trigger_index |= trigger == trigger_index;
+        }
+        assert!(
+            saw_trigger_index,
+            "the mint's index reached the request unchanged"
         );
     }
 
