@@ -2263,7 +2263,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "degenbot"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2307,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-aave"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-config",
@@ -2326,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-abi"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2338,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-arbitrage"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "alloy-eip7928",
@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-batch-executor"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-arbitrage",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-bot"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-cli"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "clap",
  "degenbot-bot",
@@ -2453,7 +2453,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-cli-core"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-aave",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-config"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "toml",
  "toml_edit",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-core"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-config",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-db"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "criterion",
@@ -2520,14 +2520,14 @@ dependencies = [
 
 [[package]]
 name = "degenbot-decoders"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
 ]
 
 [[package]]
 name = "degenbot-engine-lab"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-arbitrage",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-eventhub"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "degenbot-evm2",
  "degenbot-evm2-jit-backend",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-backend"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "eyre",
  "ruint",
@@ -2627,11 +2627,11 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-build"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 
 [[package]]
 name = "degenbot-evm2-jit-builtins"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "degenbot-evm2",
@@ -2643,7 +2643,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-codegen"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "bitflags",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-context"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "degenbot-evm2",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-llvm"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "cc",
@@ -2686,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-jit-runtime"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "crossbeam-channel",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-evm2-macros"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-execution"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "alloy-json-abi",
@@ -2730,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-execution-sample"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-execution",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-executor"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -2755,7 +2755,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-executor-fixture-tools"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-execution",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-fixture-tools"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-aave",
@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-fork"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-ingestion"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2810,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-math"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "criterion",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-order-index"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy-primitives",
  "proptest",
@@ -2831,14 +2831,14 @@ dependencies = [
 
 [[package]]
 name = "degenbot-pathfinding"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "degenbot-pool-updater"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-pools"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "criterion",
@@ -2883,7 +2883,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-price"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -2898,14 +2898,14 @@ dependencies = [
 
 [[package]]
 name = "degenbot-primitives"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "hashbrown 0.17.1",
 ]
 
 [[package]]
 name = "degenbot-rpc"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "dashmap",
@@ -2934,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-runs"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "degenbot-config",
  "tracing-subscriber",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-settlement-bot-example"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-simulation"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "alloy-eip7928",
@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-solver-lab"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "alloy-primitives",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-strategy"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "async-trait",
@@ -3041,7 +3041,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-stubgen"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "anyhow",
  "degenbot-config",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-submission"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-bot",
@@ -3078,7 +3078,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-substrate"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "async-trait",
@@ -3110,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-uniswap"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -3122,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-workers"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "degenbot-config",
  "degenbot-core",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot_rs"
-version = "0.6.0-alpha.20"
+version = "0.6.0-alpha.21"
 dependencies = [
  "alloy",
  "crossbeam-queue",
