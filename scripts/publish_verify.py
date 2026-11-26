@@ -1160,7 +1160,7 @@ class LoopbackRegistry:
                     # it, and `dl` is the `.crate` tree cargo downloads from.
                     # http.server sets `server_port` on the bound server outside
                     # any type stub, so the attribute read needs the suppression.
-                    origin = f"http://127.0.0.1:{self.server.server_port}"  # ty: ignore[unresolved-attribute]
+                    origin = f"http://127.0.0.1:{self.server.server_port}"  # ty: ignore[missing-attribute]
                     self._send_json(200, {"dl": f"{origin}/dl", "api": origin})
                     return
                 if path.startswith("index/"):
@@ -1187,7 +1187,7 @@ class LoopbackRegistry:
                     _store_upload(
                         overlay,
                         body,
-                        self.server.server_port,  # ty: ignore[unresolved-attribute]
+                        self.server.server_port,  # ty: ignore[missing-attribute]
                         self.headers.get("Authorization") or "",
                     )
                 except Exception as exc:  # ruff: ignore[blind-except] -- the client must see the failure

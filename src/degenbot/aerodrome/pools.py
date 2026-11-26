@@ -218,4 +218,4 @@ class AerodromeV3Pool(UniswapV3Pool):
     # The runtime alias override is the intended specialization of
     # ``UniswapV3Pool.PoolState``; ty cannot prove assignability across two
     # ``TypeAliasType`` values.
-    type PoolState = AerodromeV3PoolState  # ty: ignore[invalid-attribute-override]
+    type PoolState = AerodromeV3PoolState  # ty: ignore[incompatible-attribute-override]

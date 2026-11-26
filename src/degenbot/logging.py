@@ -101,7 +101,7 @@ class _LiveStdoutStreamHandler(logging.StreamHandler[TextIO]):
     # mirrors stdlib ``logging._StderrHandler``, which overrides the same
     # attribute with a property — ty cannot model the stdlib's own shape.
     @property
-    def stream(self) -> TextIO:  # ty: ignore[invalid-property-type-override]
+    def stream(self) -> TextIO:  # ty: ignore[incompatible-property-override]
         current = sys.stdout
         if current is not None and not current.closed:
             return cast("TextIO", current)
