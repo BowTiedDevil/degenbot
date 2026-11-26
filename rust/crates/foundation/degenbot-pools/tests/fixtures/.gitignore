@@ -1,5 +1,7 @@
-# Large capture fixtures ship ONLY as .jsonl.zst (see src/capture_fixture.rs);
-# plain .jsonl here is untracked regenerable capture output.
+# Large capture fixtures ship ONLY as .jsonl.zst (see src/solve/fixtures.rs).
+# Plain .jsonl here is untracked regenerable capture output. write_fixture
+# removes only a byte-identical plain shadow before packed replacement and
+# refuses divergent shadows without changing either file.
 heavy_concentrated_liquidity_solve_captures.jsonl
 heavy_mixed_solve_captures.jsonl
 live_capture_loop13.jsonl

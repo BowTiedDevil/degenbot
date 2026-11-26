@@ -23,6 +23,10 @@ pub const REPO_ROOT_MARKERS: [&str; 2] = ["justfile", "rust/Cargo.toml"];
 /// The pools crate's committed fixture corpus, repository-relative.
 pub const POOLS_FIXTURES_HOME: &str = "rust/crates/foundation/degenbot-pools/tests/fixtures";
 
+/// The reviewed concentrated-liquidity walk-count budget artifact.
+pub const WALK_BUDGET_PATH: &str =
+    "rust/tools/solver-lab/budgets/concentrated_liquidity_walk_counts.json";
+
 /// Walk `start` and its ancestors, returning the nearest directory that carries every
 /// [`REPO_ROOT_MARKERS`] entry.
 ///
@@ -68,4 +72,37 @@ pub fn repo_root() -> Result<PathBuf, String> {
 /// Propagates [`repo_root`]'s error.
 pub fn pools_fixtures_dir() -> Result<PathBuf, String> {
     Ok(repo_root()?.join(POOLS_FIXTURES_HOME))
+}
+
+/// Resolve the walk-count budget from an arbitrary checkout-relative directory.
+///
+/// # Errors
+///
+/// Propagates [`repo_root_from`]'s missing-marker error.
+pub fn walk_budget_path_from(start: &Path) -> Result<PathBuf, String> {
+    Ok(repo_root_from(start)?.join(WALK_BUDGET_PATH))
+}
+
+/// Resolve the committed walk-count budget independently of the process cwd.
+///
+/// # Errors
+///
+/// Propagates [`repo_root`]'s missing-marker error.
+pub fn walk_budget_path() -> Result<PathBuf, String> {
+    Ok(repo_root()?.join(WALK_BUDGET_PATH))
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walk_budget_resolution_is_independent_of_root_or_rust_cwd() {
+        let root = repo_root().unwrap();
+        let expected = root.join(WALK_BUDGET_PATH);
+        assert_eq!(walk_budget_path_from(&root).unwrap(), expected);
+        assert_eq!(walk_budget_path_from(&root.join("rust")).unwrap(), expected);
+        assert_eq!(walk_budget_path().unwrap(), expected);
+    }
 }

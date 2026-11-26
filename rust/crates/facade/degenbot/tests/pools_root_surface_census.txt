@@ -156,6 +156,21 @@
 # family module's existing hop state, so the four projection names leave the
 # root surface; the four capability-module rows stay unchanged.
 #
+# The 1102 -> 1110 review is the doc-hidden capture/regeneration lab
+# surface: `solve::capture` (module + `CaptureError` + `parse_capture_hops` +
+# `parse_capture_range`) and `solve::fixtures` (`FixtureWriteError` +
+# `FixtureWriteOutcome` + `write_plain_atomic` + `write_fixture`). These are
+# not curated solve-door items: integration replay and solver-lab need the
+# shared parser and failure-atomic writer in every feature shape, while zstd
+# I/O remains feature-gated. Count them once each, matching the gate's per-name
+# rule; no new pool-family capability or production solve entry is exported.
+#
+# The 1110 -> 1111 review adds `write_plain_atomic_checked`, the M6 budget
+# writer's pre-rename validation seam beside M7's plain atomic primitive. It
+# remains doc-hidden capture-fixture lab support; solver-lab uses it to parse
+# the temporary budget JSON before rename, with validation failure preserving
+# the previous artifact. No capture-fixture shadow rule or solve API changes.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

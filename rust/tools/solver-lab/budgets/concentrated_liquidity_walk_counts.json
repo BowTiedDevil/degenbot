@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "workflow": "derivation-inclusive-prepared-entry",
+  "entries": [
+    {
+      "corpus": "concentrated_liquidity_capture_offline.jsonl",
+      "path_id": 4,
+      "variant": "uncut",
+      "range_fingerprint": [
+        872,
+        38
+      ],
+      "required_nonzero": [
+        "stats.pieces",
+        "stats.sims",
+        "stats.refine_sims",
+        "ns.refine_sims",
+        "ns.dir_sims"
+      ],
+      "counts": {
+        "ns.dir_sims": 455,
+        "ns.refine_sims": 402,
+        "stats.anchor_sims": 180,
+        "stats.grid_sims": 66,
+        "stats.pieces": 38,
+        "stats.refine_sims": 366,
+        "stats.sims": 1188,
+        "stats.ternary_sims": 300
+      }
+    },
+    {
+      "corpus": "concentrated_liquidity_capture_offline.jsonl",
+      "path_id": 105,
+      "variant": "uncut",
+      "range_fingerprint": [
+        191,
+        344
+      ],
+      "required_nonzero": [
+        "stats.pieces",
+        "stats.sims",
+        "stats.refine_sims",
+        "ns.refine_sims",
+        "ns.dir_sims"
+      ],
+      "counts": {
+        "ns.dir_sims": 1379,
+        "ns.refine_sims": 123,
+        "stats.anchor_sims": 955,
+        "stats.grid_sims": 33,
+        "stats.pieces": 191,
+        "stats.refine_sims": 123,
+        "stats.sims": 3430,
+        "stats.ternary_sims": 90
+      }
+    }
+  ]
+}

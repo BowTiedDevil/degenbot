@@ -232,16 +232,24 @@ test-rust-ci:
 # determinism across repetitions, and null-golden reconciliation — through the
 # canonical nextest lane (the selector fails closed on zero matches). The
 # solver-lab replay follows as the non-gating measurement/readout pass over
-# the same corpora; its stale-golden regeneration (`DR_REPLAY_REGEN`,
-# over-shoot-only) stays a manual write mode. Blocks merge in CI; named here
-# so the pre-push gate runs it too. The tests read the corpora from the pools
-# crate's fixture home behind the package's `capture-fixtures` feature, which
-# the nextest lane enables; the lab binary reads the same home through the
-# tool package's `capture-fixtures` forward.
+# the same corpora; its stale-golden regeneration (`--regen-golden`,
+# over-shoot-only) stays a manual write mode. The deterministic walk-budget
+# check is a separate blocking gate. Golden replay and budgets block in CI;
+# the pre-push stage runs `just test-rust-affected`, not this recipe. The tests
+# read the corpora from the pools crate's fixture home behind the package's
+# `capture-fixtures` feature, which the nextest lane enables; the lab binary
+# reads the same home through the tool package's `capture-fixtures` forward.
+generate-walk-budgets:
+    cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures,telemetry --bin concentrated_liquidity_solve_replay -- --generate-budgets crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
+
+check-walk-budgets:
+    cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures,telemetry --bin concentrated_liquidity_solve_replay -- --check-budgets crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
+
 test-golden-replay:
     just test-rust-nextest -p degenbot-pools -E 'binary(concentrated_liquidity_golden_replay)'
     cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
     cd rust && cargo run --locked -q -p degenbot-solver-lab --features capture-fixtures --bin concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
+    just check-walk-budgets
 
 
 # Run the cargo workspace suite under cargo-nextest: per-process test

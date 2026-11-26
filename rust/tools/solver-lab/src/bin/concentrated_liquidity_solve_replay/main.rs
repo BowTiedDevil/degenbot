@@ -6,8 +6,14 @@
 //!
 //! Usage:
 //!   cargo run -p degenbot-solver-lab --features capture-fixtures
-//!     --bin `concentrated_liquidity_solve_replay` [-- <capture.jsonl>]
+//!     --bin `concentrated_liquidity_solve_replay`
+//!     -- [--regen-golden] [--regen-json] [<capture.jsonl>]
 //!   `DR_REPLAY_ITERS=25` ...   // more reps for tighter p95 (default 9)
+//!   `--regen-golden` refreshes over-shoot-only goldens atomically;
+//!   `--regen-json` emits the old/new refresh report as JSON.
+//!   `--generate-budgets` / `--check-budgets` manage the exact path 4/105
+//!   count artifact under `capture-fixtures,telemetry`; `--budgets <path>`
+//!   overrides its repository-marker-resolved default.
 //!
 //! Re-reads a capture JSONL produced by the live hook
 //! (`arb_engine::solver_capture` `DEGENBOT_SOLVER_CAPTURE=1`) or by the live
@@ -34,17 +40,81 @@ use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::WalkEventCensus;
 use degenbot_pools::solve::gate::{path_profit_bound, GateDeps, HopMath};
 use degenbot_pools::solve::golden_gate::{
-    classify, parse_golden, replay_profitable, results_consistent, GateVerdict, ReplaySolution,
+    classify, parse_golden, replay_profitable, results_consistent, GateVerdict,
     OVER_SHOOT_TOLERANCE_WEI, PROFIT_EPS,
 };
 use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
-use degenbot_solver_lab::capture_rows::capture_arg;
+use degenbot_solver_lab::budgets::{
+    compare_budgets, load_budget, measure_repetitions, write_budget, BudgetArtifact, BudgetEntry,
+};
 use degenbot_solver_lab::concentrated_liquidity_rows::parse_concentrated_liquidity_hops;
+use degenbot_solver_lab::golden_regen::{apply_golden_refreshes, GoldenRefresh};
 use serde_json::Value;
+
+#[derive(Default)]
+struct ReplayOptions {
+    capture: Option<String>,
+    regen_golden: bool,
+    regen_json: bool,
+    generate_budgets: bool,
+    check_budgets: bool,
+    budgets: Option<std::path::PathBuf>,
+}
+
+fn replay_options(args: &[String]) -> Result<ReplayOptions, String> {
+    let mut options = ReplayOptions::default();
+    let mut index = 1;
+    while let Some(arg) = args.get(index) {
+        match arg.as_str() {
+            "--regen-golden" => options.regen_golden = true,
+            "--regen-json" => options.regen_json = true,
+            "--generate-budgets" => options.generate_budgets = true,
+            "--check-budgets" => options.check_budgets = true,
+            "--budgets" => {
+                index += 1;
+                let path = args
+                    .get(index)
+                    .ok_or_else(|| "--budgets requires a path".to_string())?;
+                options.budgets = Some(std::path::PathBuf::from(path));
+            }
+            flag if flag.starts_with("--") => {
+                return Err(format!("unknown option {flag}"));
+            }
+            _ if options.capture.is_some() => {
+                return Err("only one capture path may be supplied".to_string());
+            }
+            _ => options.capture = Some(arg.clone()),
+        }
+        index += 1;
+    }
+    if options.regen_json && !options.regen_golden {
+        return Err("--regen-json requires --regen-golden".to_string());
+    }
+    if options.generate_budgets && options.check_budgets {
+        return Err("--generate-budgets and --check-budgets are mutually exclusive".to_string());
+    }
+    if options.budgets.is_some() && !(options.generate_budgets || options.check_budgets) {
+        return Err("--budgets requires --generate-budgets or --check-budgets".to_string());
+    }
+    if options.regen_golden && (options.generate_budgets || options.check_budgets) {
+        return Err("golden regeneration cannot be combined with budget modes".to_string());
+    }
+    Ok(options)
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = capture_arg(&args, "heavy_concentrated_liquidity_solve_captures.jsonl");
+    let options = replay_options(&args).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
+    let path = options.capture.clone().unwrap_or_else(|| {
+        degenbot_pools::solve::fixtures::fixture_path(
+            "heavy_concentrated_liquidity_solve_captures.jsonl",
+        )
+        .to_string_lossy()
+        .into_owned()
+    });
     let iters: usize = std::env::var("DR_REPLAY_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -52,12 +122,13 @@ fn main() {
         .max(1);
     let content = degenbot_pools::solve::fixtures::read_fixture(&path);
     let mut n_paths = 0u64;
-    // Loop-18 T4: DR_REPLAY_REGEN=1 refreshes goldens that the solver now
-    // EXCEEDS (over-shoot only; under-shoot stays a hard fail) — the loud,
-    // deliberate stale-golden regeneration path.
-    let regen_golden = std::env::var("DR_REPLAY_REGEN").is_ok();
-    let mut regen_queue: Vec<(usize, Value)> = Vec::new();
-    let mut regen_count = 0u64;
+    let regen_golden = options.regen_golden;
+    let regen_json = options.regen_json;
+    let mut regen_queue: Vec<GoldenRefresh> = Vec::new();
+    let mut budget_actuals: Vec<BudgetEntry> = Vec::new();
+    let corpus = std::path::Path::new(&path)
+        .file_name()
+        .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned());
     // Gate A/B rows : (path_id, golden JSON, derived bound).
     let mut gate_rows: Vec<(u64, Value, Option<U256>)> = Vec::new();
     let mut n_golden_ok = 0u64;
@@ -135,32 +206,15 @@ fn main() {
         // solve_concentrated_liquidity_piecewise is pure math, so all runs must agree; per-run
         // nondeterminism (e.g. HashMap-iteration order in the active-set walk)
         // is flagged and counted separately.
-        let mut times: Vec<u128> = Vec::with_capacity(iters);
-        let mut runs: Vec<Option<ReplaySolution>> = Vec::with_capacity(iters);
-        let mut last_stats: Option<degenbot_pools::solve::concentrated_liquidity::WalkStats> = None;
-        let mut path_pieces: Vec<(Vec<usize>, U256)> = Vec::new();
-        for _ in 0..iters {
-            let t0 = std::time::Instant::now();
-            let out = degenbot_pools::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
-                refs.as_slice(),
-                &degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
-            );
-            times.push(t0.elapsed().as_micros());
-            last_stats = Some(out.stats);
-            path_pieces = out.census_pieces;
-            runs.push(out.result.map(|solution| ReplaySolution {
-                optimal_input: solution.optimal_input,
-                hop_outputs: solution.hop_outputs,
-            }));
-        }
-        // Census + per-piece log ride the last rep's WalkOutcome (T2: out
-        // the return path; no frozen-thread-local takes).
-        let wsteps = last_stats.as_ref().map_or(0, |s| s.word_steps);
-        let refine = last_stats.as_ref().map_or(0, |s| s.refine_sims);
-        let last_census = last_stats
-            .as_ref()
-            .map_or(WalkEventCensus::default(), |s| s.census);
-        census_total.accumulate_event_census(last_census);
+        let repetitions = measure_repetitions(refs.as_slice(), iters);
+        let mut times = repetitions.times;
+        let runs = repetitions.runs;
+        let last_stats = repetitions.last_stats;
+        let last_ns = repetitions.last_ns;
+        let path_pieces = repetitions.census_pieces;
+        let wsteps = last_stats.word_steps;
+        let refine = last_stats.refine_sims;
+        census_total.accumulate_event_census(last_stats.census);
         if let Some(prev) = last_pieces_by_pid.get(&pid) {
             cross_block_pids += 1;
             let prev_map: std::collections::HashMap<&Vec<usize>, &U256> =
@@ -186,14 +240,25 @@ fn main() {
             }
         }
         last_pieces_by_pid.insert(pid, path_pieces);
-        let ws_last = last_stats;
-        let pieces = ws_last.as_ref().map_or(0, |s| s.pieces);
-        let sims = ws_last.as_ref().map_or(0, |s| s.sims);
-        let ls = ws_last.as_ref().map_or(0, |s| s.left_edge_sims);
-        let rs = ws_last.as_ref().map_or(0, |s| s.right_edge_sims);
-        let ans = ws_last.as_ref().map_or(0, |s| s.anchor_sims);
-        let esok = ws_last.as_ref().map_or(0, |s| s.event_solver_ok);
-        let esfb = ws_last.as_ref().map_or(0, |s| s.event_solver_fallbacks);
+        let pieces = last_stats.pieces;
+        let sims = last_stats.sims;
+        let ls = last_stats.left_edge_sims;
+        let rs = last_stats.right_edge_sims;
+        let ans = last_stats.anchor_sims;
+        let esok = last_stats.event_solver_ok;
+        let esfb = last_stats.event_solver_fallbacks;
+        if corpus == "concentrated_liquidity_capture_offline.jsonl"
+            && matches!(pid, 4 | 105)
+            && doc.get("golden").is_some_and(|golden| !golden.is_null())
+        {
+            budget_actuals.push(BudgetEntry::from_measurements(
+                &corpus,
+                pid,
+                seqs.iter().map(|seq| seq.ranges.len()).collect(),
+                &last_stats,
+                &last_ns,
+            ));
+        }
         let consistent = results_consistent(&runs);
         if consistent {
             n_consistent += 1;
@@ -271,23 +336,17 @@ fn main() {
                     // so the over-shoot-only lines get their goldens
                     // refreshed in place, loudly; under-shoot never reaches
                     // this arm.
-                    if let Some(r) = first {
-                        regen_queue.push((
-                            line_index,
-                            serde_json::json!({
-                                "optimal_input": r.optimal_input.to_string(),
-                                "profit": r.profit().to_string(),
-                                "hop_outputs": r
-                                    .hop_outputs
-                                    .iter()
-                                    .map(std::string::ToString::to_string)
-                                    .collect::<Vec<_>>(),
-                            }),
-                        ));
-                        eprintln!(
-                            "path {pid}: DR_REPLAY_REGEN queued golden refresh (+{over} wei, over-shoot-only)"
-                        );
-                        regen_count += 1;
+                    match GoldenRefresh::try_new(line_index, &doc, first) {
+                        Ok(refresh) => {
+                            regen_queue.push(refresh);
+                            eprintln!(
+                                "path {pid}: --regen-golden queued golden refresh (+{over} wei, over-shoot-only)"
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("path {pid}: golden regeneration refused: {error}");
+                            ok = false;
+                        }
                     }
                 } else {
                     ok = false;
@@ -385,44 +444,74 @@ fn main() {
         );
     }
     let exact_goldens = n_paths - n_gate_skipped;
-    // Loop-18 T4: apply queued golden refreshes (over-shoot-only) in place.
-    if regen_count > 0 {
-        let mut rewritten: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        let raw_lines: Vec<&str> = content.lines().collect();
-        for (idx, refreshed) in &regen_queue {
-            if let Some(raw) = raw_lines.get(*idx) {
-                let mut row: Value = serde_json::from_str(raw).unwrap_or_default();
-                row["golden"] = refreshed.clone();
-                rewritten.insert(*idx, serde_json::to_string(&row).unwrap_or_default());
+    if !regen_queue.is_empty() {
+        let regen_count = regen_queue.len();
+        match apply_golden_refreshes(std::path::Path::new(&path), &content, regen_queue) {
+            Ok(report) => {
+                if regen_json {
+                    println!("{}", report.to_json());
+                } else {
+                    print!("{}", report.human());
+                }
+                println!(
+                    "regen: {regen_count} golden(s) refreshed in {path} (over-shoot-only; rerun the replay to confirm)"
+                );
+            }
+            Err(error) => eprintln!("golden regen failed: {error}"),
+        }
+    }
+    if options.generate_budgets || options.check_budgets {
+        let budget_path = match &options.budgets {
+            Some(path) => Ok(path.clone()),
+            None => degenbot_solver_lab::paths::walk_budget_path(),
+        }
+        .unwrap_or_else(|error| {
+            eprintln!("DRIFT: {error}");
+            std::process::exit(1);
+        });
+        if options.generate_budgets {
+            let generated = BudgetArtifact::from_actuals(&budget_actuals).and_then(|artifact| {
+                write_budget(&budget_path, &artifact)?;
+                println!(
+                    "BUDGET: generated {} row(s) in {}",
+                    artifact.entries.len(),
+                    budget_path.display()
+                );
+                Ok(artifact)
+            });
+            if let Err(error) = generated {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        } else {
+            let report =
+                load_budget(&budget_path).map(|budget| compare_budgets(&budget_actuals, &budget));
+            match report {
+                Ok(report) => {
+                    println!("{}", report.summary());
+                    for issue in &report.issues {
+                        eprintln!("{issue}");
+                    }
+                    if !report.ok() {
+                        std::process::exit(1);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("DRIFT: {error}");
+                    std::process::exit(1);
+                }
             }
         }
-        let final_text: String = raw_lines
-            .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                rewritten
-                    .get(&i)
-                    .cloned()
-                    .unwrap_or_else(|| (*l).to_string())
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&path, final_text + "\n").unwrap_or_else(|e| {
-            eprintln!("golden regen write failed: {e}");
-        });
-        println!(
-            "regen: {regen_count} golden(s) refreshed in {path} (over-shoot-only; rerun the replay to confirm)"
-        );
     }
     println!(
-        "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{exact_goldens} exact match | gate-skipped {n_gate_skipped} | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest median: path {} = {}us | file={path}",
+        "----\nreplayed {n_paths} path(s) | golden {n_golden_ok}/{exact_goldens} exact match | gate-skipped {n_gate_skipped} | deterministic {n_consistent}/{n_paths} | iters={iters} | heaviest derivation-inclusive prepared-entry median: path {} = {}us | file={path}",
         heaviest.1, heaviest.0
     );
     // The durable two-sided golden gate lives in the owning `degenbot-pools`
     // integration tests (run by `just test-golden-replay` through the
-    // canonical nextest lane); this program is the measurement/readout pass,
-    // so a mismatch is reported loudly here but is not an exit code.
+    // canonical nextest lane); this program's ordinary measurement/readout
+    // does not exit on a mismatch. Explicit budget-check mode above is a
+    // separate deterministic gate and exits nonzero on drift or unmeasured rows.
     // Null-golden gate-skipped captures are reconciled out (counted
     // separately) and deterministic coverage is computed over the whole
     // population.
@@ -430,5 +519,37 @@ fn main() {
         eprintln!(
             "GOLDEN MISMATCHES PRESENT: golden {n_golden_ok}/{n_paths} match, deterministic {n_consistent}/{n_paths} (the owning degenbot-pools tests gate this contract)"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replay_options;
+
+    #[test]
+    fn budget_override_does_not_become_the_capture_path() {
+        let args = [
+            "replay",
+            "--check-budgets",
+            "--budgets",
+            "/tmp/budget.json",
+            "capture.jsonl",
+        ]
+        .map(str::to_string);
+        let options = replay_options(&args).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(options.capture.as_deref(), Some("capture.jsonl"));
+        assert_eq!(
+            options.budgets.as_deref(),
+            Some(std::path::Path::new("/tmp/budget.json"))
+        );
+        assert!(options.check_budgets);
+    }
+
+    #[test]
+    fn budget_override_requires_a_value_and_mode() {
+        let missing = ["replay", "--budgets"].map(str::to_string);
+        assert!(replay_options(&missing).is_err());
+        let no_mode = ["replay", "--budgets", "/tmp/budget.json"].map(str::to_string);
+        assert!(replay_options(&no_mode).is_err());
     }
 }

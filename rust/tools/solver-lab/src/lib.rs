@@ -36,6 +36,10 @@
 //!   the replay and readout instruments share, behind `capture-fixtures`
 //!   because they reach the feature's fixture reader for the default capture
 //!   path.
+//! - `golden_regen` — over-shoot-only refresh planning, atomic fixture writes,
+//!   and old/new human and JSON reports for the replay instrument.
+//! - `budgets` — exact path 4/105 walk-count artifacts, fail-closed drift
+//!   comparison, checked generation, and derivation-inclusive repetitions.
 //!
 //! Lane features: `capture-fixtures`, `cache-lab`, `telemetry` (the cache lab's
 //! second build shape, never a bot-exporter lane), `hotpath`, `envelope`.
@@ -43,7 +47,13 @@
 pub mod paths;
 
 #[cfg(feature = "capture-fixtures")]
+pub mod budgets;
+
+#[cfg(feature = "capture-fixtures")]
 pub mod capture_rows;
 
 #[cfg(feature = "capture-fixtures")]
 pub mod concentrated_liquidity_rows;
+
+#[cfg(feature = "capture-fixtures")]
+pub mod golden_regen;

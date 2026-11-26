@@ -35,6 +35,7 @@ degenbot-math = { workspace = true }
 # and the generator emits them, so both edges are plain ones on the same rule as
 # `degenbot-pools` above.
 alloy = { version = "^2.6" }
+serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 
 # The scale probe's fan-out: it builds its own `rayon::ThreadPoolBuilder` pools
@@ -105,6 +106,10 @@ hotpath = ["degenbot-pools/hotpath", "hotpath/hotpath", "hotpath/threads"]
 # `U256` its hard-coded point generator is typed in. Both edges are optional and
 # `dep:`-named, so this lane is the only thing that adds either to a build.
 envelope = ["degenbot-order-index/envelope", "dep:alloy-primitives"]
+
+[dev-dependencies]
+tempfile = "3"
+zstd = { workspace = true }
 
 # The programs this package carries so far, split by which lane each one needs.
 #

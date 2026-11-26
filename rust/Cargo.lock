@@ -2999,8 +2999,11 @@ dependencies = [
  "degenbot-pools",
  "hotpath",
  "rayon",
+ "serde",
  "serde_json",
+ "tempfile",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
