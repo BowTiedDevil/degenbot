@@ -44,7 +44,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Native token identity & chain facts** | `degenbot_core::chain_facts` + `degenbot_substrate::session_registry` | `degenbot._ffi.NativeToken` (`degenbot.NativeToken`) | `NativeTokenFacts`, `native_facts`, `UnknownChainFacts`, `TokenIdentity` | (i) a pure-Rust consumer names the native asset without a protocol address; session identity treats it as one chain-scoped token | no operator config and no species manifest (ADR-065/ADR-097 D2); no sentinel address in any generic input; no pyo3 in the cores |
 | **Persistence** | `degenbot_db` | `degenbot._ffi.db` | crate root | production: updaters; Aave update in pure Rust | no pyo3 |
 | **Run artifacts** | `degenbot_runs` | Rust-only | crate root | production: session logging | std-only |
-| **Aave updater** | `degenbot_aave` | `degenbot.aave` | `run_aave_update` | (i) `cargo add degenbot` consumer runs `run_aave_update` with no Python | no pyo3 |
+| **Aave updater** | `degenbot_aave` | `degenbot.aave` | `AaveMarketWriter::update` | (i) a `cargo add degenbot` consumer acquires the market's `AaveMarketWriter` and updates with no Python | no pyo3 |
 | **Standalone pool updater** | `degenbot_pool_updater` | Rust-only | crate root | production: Aave-shaped update in pure Rust | foundation-resident (W4) |
 | **Fork management** | `degenbot_fork` | `degenbot._ffi.fork` | crate root | production: fork lanes | no pyo3 |
 | **External command executor** | `degenbot_executor` | `degenbot._ffi.executor` | crate root | production: strategy `CmdExecutorAdapter` | no pyo3 |

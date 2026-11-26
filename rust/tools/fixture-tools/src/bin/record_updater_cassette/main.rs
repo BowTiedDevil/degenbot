@@ -58,7 +58,8 @@
 //!   (`POOL/POOL_CONFIGURATOR/PRICE_ORACLE` contract rows, the span's reserve
 //!   assets, and the GHO discount token/rate strategy) is resolved over an
 //!   UNRECORDED side channel, every getter pinned to that same parent block. The
-//!   REAL `run_aave_update` then runs over the recording transport — every
+//!   REAL market update (`AaveMarketWriter::update`) then runs over the
+//!   recording transport — every
 //!   getLogs pass and per-tx config-dispatch call the loop issues is recorded
 //!   (the old `--kind aave` seed captured only the Pool-contract pass).
 //!
@@ -98,10 +99,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use degenbot_aave::updater::aave_fetch::fetch_pool_logs;
 use degenbot_aave::updater::{
-    activate_aave_market_on_conn, fetch_activation_metadata_at, run_aave_update, AaveChunkProgress,
+    activate_aave_market_on_conn, fetch_activation_metadata_at, AaveChunkProgress,
     ActivationMetadata, CanonicalDelta, ProgressSink, RunSpec, VerifyPolicy,
     ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
+use degenbot_aave::AaveMarketWriter;
 use degenbot_core::canonical_head::ChainAnchor;
 use degenbot_db::sql_ledger::{dump_aave_seed_json, restore_aave_seed_json};
 use degenbot_db::DegenbotDb;
@@ -440,21 +442,19 @@ fn check_seed_replay(path: &Path, replay: &SeedReplay) -> Result<String, String>
     let sink = Arc::new(DeltaSink::default());
     let collector = Arc::clone(&sink);
     std::thread::spawn(move || {
-        run_aave_update(
-            &db_path,
-            RunSpec {
-                chain_id,
-                market_id,
-                to_block: Some(span.to_block),
-                chunk_size: span.to_block - span.from_block + 1,
-                max_block_range: 10_000,
-                provider: transport.as_alloy_provider(),
-                cancel: Arc::new(AtomicBool::new(false)),
-                progress: collector,
-                verify: VerifyPolicy::default(),
-                max_chunks: None,
-            },
-        )
+        let writer = AaveMarketWriter::acquire(&db_path, market_id)?;
+        writer.update(RunSpec {
+            chain_id,
+            market_id,
+            to_block: Some(span.to_block),
+            chunk_size: span.to_block - span.from_block + 1,
+            max_block_range: 10_000,
+            provider: transport.as_alloy_provider(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: collector,
+            verify: VerifyPolicy::default(),
+            max_chunks: None,
+        })
     })
     .join()
     .map_err(|_| "replay worker thread panicked".to_string())?
@@ -1109,9 +1109,9 @@ async fn record_aave_run_chunk(
         }
 
         // (4) The REAL chunk loop over the recording transport.
-        let report = run_aave_update(
-            &db_path,
-            RunSpec {
+        let report = AaveMarketWriter::acquire(&db_path, market_id)
+            .map_err(|e| format!("market writer: {e}"))?
+            .update(RunSpec {
                 chain_id: chain_id_i64,
                 market_id,
                 to_block: Some(to_block),
@@ -1122,9 +1122,8 @@ async fn record_aave_run_chunk(
                 progress: Arc::new(degenbot_aave::updater::NoProgress),
                 verify: VerifyPolicy::default(),
                 max_chunks: None,
-            },
-        )
-        .map_err(|e| format!("run_aave_update: {e}"))?;
+            })
+            .map_err(|e| format!("run_aave_update: {e}"))?;
         Ok((market_id, report.total_events_applied))
     });
     handle

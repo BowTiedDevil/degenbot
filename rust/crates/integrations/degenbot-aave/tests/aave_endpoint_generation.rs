@@ -12,7 +12,8 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::updater::{NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{
     entry_digest, entry_key, Cassette, CassetteEntry, CassetteProvenance, CassetteResponse,
@@ -21,6 +22,9 @@ use degenbot_rpc::cassette::{
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 
 mod common;
+#[path = "common/fixture_db.rs"]
+mod fixture_db;
+use fixture_db::FixtureDb;
 
 /// The chain the fixture runs on.
 const CHAIN_ID: i64 = 1;
@@ -92,8 +96,8 @@ const ADDRESS_SET_TOPIC: &str =
 /// A warm-boot substrate: the market cursor at 99 plus the three endpoint
 /// rows (no `PRICE_ORACLE` — the oracle pass stays in chain-wide discovery,
 /// which a rotation does not repoint).
-fn warm_boot_db() -> DegenbotDb {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+fn warm_boot_db() -> FixtureDb {
+    let db = FixtureDb::create("endpoint-generation.db");
     {
         let conn = db.lock();
         conn.execute(
@@ -375,21 +379,23 @@ fn address_set_pool_rotation_fetches_new_pool_logs_next_chunk() {
     let db = warm_boot_db();
     let transport = two_chunk_rotation_cassette();
     let provider = transport.as_alloy_provider();
-    let result = run_aave_update_on_db(
-        &db,
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: 1,
-            to_block: Some(CHUNK_END),
-            chunk_size: 10,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    );
+    let result = AaveMarketWriter::acquire(db.path(), 1)
+        .unwrap()
+        .update_through(
+            &db,
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: 1,
+                to_block: Some(CHUNK_END),
+                chunk_size: 10,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        );
     let report = result.unwrap_or_else(|e| {
         panic!(
             "the two-chunk run must commit: {e} — a stale-generation chunk 2 would have \

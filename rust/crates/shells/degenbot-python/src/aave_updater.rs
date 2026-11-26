@@ -1,8 +1,9 @@
 //! `PyO3` seam for the `degenbot-aave` chunk loop.
 //!
-//! Thin `#[pyfunction]` wrapper over
-//! [`degenbot_aave::run::run_aave_update`]. Arg
-//! extraction → GIL release (`py.detach`) → core call → result wrap. No
+//! Thin `#[pyfunction]` wrapper over the market's writer +
+//! [`degenbot_aave::AaveMarketWriter::update`]: acquire the market's ONE writer
+//! lock, then run the chunk loop. Arg
+//! extraction → GIL release (`py.detach`) → writer + core call → result wrap. No
 //! business logic (three-layer architecture, ADR-005). The "Rust is the
 //! engine; Python is the cockpit" framing: Python threads the args + a
 //! cancel handle; Rust owns the loop, the RPC fetches, the decode, the DB
@@ -11,7 +12,7 @@
 //!
 //! # GIL discipline
 //!
-//! `py.detach(|| core::run_aave_update(...))` releases the GIL across the
+//! `py.detach(|| writer.update(...))` releases the GIL across the
 //! WHOLE run (long RPC polls hold NO GIL); the core
 //! never re-acquires it. A Python-side `KeyboardInterrupt` won't
 //! pre-empt mid-chunk (the GIL is released); the CLI signal handler calls
@@ -20,11 +21,11 @@
 //!
 //! # Owned-runtime constraint
 //!
-//! [`degenbot_aave::run::run_aave_update`] owns its
-//! `tokio::runtime::Runtime`. Calling it from within an existing tokio
-//! runtime panics ("Cannot start a runtime from within a runtime"). The CLI
-//! driver runs `run_aave_update` from a worker thread with NO ambient tokio
-//! runtime. See [`crate::pool`] for the same constraint.
+//! [`degenbot_aave::AaveMarketWriter::update`] runs the chunk loop on the
+//! process-wide shared runtime (`get_runtime().block_on`). Calling it from
+//! within an existing tokio runtime panics ("Cannot start a runtime from within
+//! a runtime"). The CLI driver runs the update from a worker thread with NO
+//! ambient tokio runtime. See [`crate::pool`] for the same constraint.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,13 +35,13 @@ use pyo3::types::PyDict;
 
 use degenbot_aave::{
     activate_aave_market as core_activate_aave_market,
-    deactivate_aave_market as core_deactivate_aave_market, run_aave_update as core_run_aave_update,
+    deactivate_aave_market as core_deactivate_aave_market,
     verify::{
         acquire_position_truth_at, acquire_verification_truth_at,
         cleanup_zero_balance_positions_on_conn, compare_position_truth, compare_verification_truth,
         load_verification_positions, load_verification_truth_rows,
     },
-    AaveUpdateReport, NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
+    AaveMarketWriter, AaveUpdateReport, NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
 };
 
 use crate::cancel::CancelHandle;
@@ -68,7 +69,7 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
 /// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
 /// `to_block is None`). See
-/// [`degenbot_aave::run::run_aave_update`] for the chunk-atomicity
+/// [`degenbot_aave::AaveMarketWriter::update`] for the chunk-atomicity
 /// invariant (`docs/architecture/chunk-atomicity.md`; one `Transaction` per
 /// chunk; failure mid-chunk → rollback →
 /// `last_update_block` unchanged → restart re-processes clean).
@@ -115,7 +116,10 @@ fn aave_report_to_dict(py: Python<'_>, r: &AaveUpdateReport) -> PyResult<Py<PyDi
 /// # Raises
 ///
 /// `ValueError` on a DB / RPC / config-dispatch / parse failure (the in-flight
-/// chunk is rolled back before returning; committed chunks stay durable).
+/// chunk is rolled back before returning; committed chunks stay durable), and on
+/// a market another writer holds — the CLI, another Python writer, or a Rust
+/// consumer mid-run on the same (database, market). The refusal names the lock
+/// file and lands before the transport is built.
 /// `RuntimeError` if cancelled.
 /// `AssertionError` if `verify_chunk=True` and pre-commit verification found
 /// divergences (the in-flight chunk is rolled back — the chunk's data is NOT
@@ -169,6 +173,11 @@ fn run_aave_update(
     // injects the built provider, and the seam never re-enters Python.
     let report = py
         .detach(move || {
+            // The market's ONE writer, taken BEFORE the live transport is
+            // built: a market the CLI (or another Python writer) is mid-update
+            // on is refused without costing an RPC connection, and the run this
+            // seam starts can never interleave with that writer's chunks.
+            let writer = AaveMarketWriter::acquire(&path, market_id)?;
             // The thin live-provider wrapper (ADR-068 D5): the shell builds
             // the live transport from `rpc_url` and the core only injects it.
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
@@ -176,25 +185,22 @@ fn run_aave_update(
                 crate::provider_seam::UPDATER_MAX_RETRIES,
             ))
             .map_err(RunError::from)?;
-            core_run_aave_update(
-                &path,
-                RunSpec {
-                    chain_id,
-                    market_id,
-                    to_block,
-                    chunk_size,
-                    max_block_range,
-                    provider,
-                    cancel,
-                    progress,
-                    verify: VerifyPolicy {
-                        verify_chunk,
-                        verify_all_interval,
-                        verify_all_at_completion,
-                    },
-                    max_chunks,
+            writer.update(RunSpec {
+                chain_id,
+                market_id,
+                to_block,
+                chunk_size,
+                max_block_range,
+                provider,
+                cancel,
+                progress,
+                verify: VerifyPolicy {
+                    verify_chunk,
+                    verify_all_interval,
+                    verify_all_at_completion,
                 },
-            )
+                max_chunks,
+            })
         })
         .map_err(run_err_to_py)?;
 

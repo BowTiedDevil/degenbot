@@ -4,7 +4,8 @@
 //! These spans pin the six formerly-fenced config-dispatch events
 //! (`ProxyCreated`, `AddressSet`, `PoolUpdated`, `PoolConfiguratorUpdated`,
 //! `PoolDataProviderUpdated`) with golden coverage. Each window drives the
-//! REAL `run_aave_update` multi-chunk loop over the recording transport
+//! REAL multi-chunk market update (`AaveMarketWriter::update`) over the
+//! recording transport
 //! (`degenbot_rpc::cassette::RecordingTransport`), so the cassette carries
 //! exactly the RPC surface an offline replay re-issues. The warm-boot
 //! substrate comes from the chain's current reserve set
@@ -27,7 +28,8 @@
 //! This program lives in `degenbot-fixture-tools` (`src/bin/<name>/main.rs`), not in the
 //! facade's `examples/`: it is fixture tooling, not a consumer starting point (the epic's
 //! taxonomy). Nothing about the recording is changed by that move — the windows (including
-//! each window's independent substrate-resolution block), the real `run_aave_update` loops,
+//! each window's independent substrate-resolution block), the real market update
+//! loops (`AaveMarketWriter::update`),
 //! the recorder writer, the statement-ledger replay, the two-pass determinism gate, the
 //! chain id / block pins / addresses / provenance string, and the argv surface all travel
 //! with the source. What changed is the invocation and the *path anchor*: the old source
@@ -65,9 +67,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_aave::updater::aave_fetch::resolve_aave_substrate;
-use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
-};
+use degenbot_aave::updater::{NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::sql_ledger::LedgerDb;
 use degenbot_db::DegenbotDb;
 use degenbot_fixture_tools::{ledger, paths};
@@ -333,9 +334,9 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
         .expect("recording transport");
     let dir = TempDir::new().expect("temp dir");
     let (db_path, market_id) = seed_db(dir.path(), "record.db", &substrate, window.cursor);
-    let report = run_aave_update(
-        &db_path,
-        RunSpec {
+    let report = AaveMarketWriter::acquire(&db_path, market_id)
+        .expect("recording market writer")
+        .update(RunSpec {
             chain_id: CHAIN_ID,
             market_id,
             to_block: Some(window.to_block),
@@ -346,9 +347,8 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{}: recording run must commit cleanly: {e}", window.name));
+        })
+        .unwrap_or_else(|e| panic!("{}: recording run must commit cleanly: {e}", window.name));
     println!(
         "  {}: {} events, {} chunks",
         window.name, report.total_events_applied, report.chunks_committed
@@ -372,22 +372,24 @@ fn record_window(node_uri: &str, window: &Window) -> WindowArtifacts {
     let dir2 = TempDir::new().expect("golden temp dir");
     let (db2, market_id2) = seed_db(dir2.path(), "golden.db", &substrate, window.cursor);
     let (ledger, _state) = LedgerDb::open_for_writes(&db2).expect("ledger opens");
-    run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: market_id2,
-            to_block: Some(window.to_block),
-            chunk_size: window.chunk_size,
-            max_block_range: 10_000,
-            provider: replay,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{}: golden replay must commit cleanly: {e}", window.name));
+    AaveMarketWriter::acquire(&db2, market_id2)
+        .expect("golden market writer")
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: market_id2,
+                to_block: Some(window.to_block),
+                chunk_size: window.chunk_size,
+                max_block_range: 10_000,
+                provider: replay,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{}: golden replay must commit cleanly: {e}", window.name));
     let (ledger_json, dump_json) = ledger::goldens(&ledger, DUMP_TABLES).expect("goldens");
 
     WindowArtifacts {

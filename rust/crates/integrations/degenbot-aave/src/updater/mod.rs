@@ -56,11 +56,10 @@ pub use protocol_events::{
 pub use revision::{gho_discount_retired, scaled_amount_flooring, RevisionChange, RevisionRange};
 pub use run::{
     activate_aave_market, activate_aave_market_on_conn, apply_aave_chunk_writes_on_conn,
-    deactivate_aave_market, fetch_activation_metadata_at, reset_market_to_cold_boot,
-    run_aave_update, run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, ActivatedMarket,
-    ActivationMetadata, ActivationMetadataError, CanonicalDeltaWriteReport, ChunkWriteReport,
-    EvidenceAcquisitionError, MarketResetFacts, NoProgress, ProgressSink, RunError, RunSpec,
-    VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
+    deactivate_aave_market, fetch_activation_metadata_at, AaveChunkProgress, AaveUpdateReport,
+    ActivatedMarket, ActivationMetadata, ActivationMetadataError, CanonicalDeltaWriteReport,
+    ChunkWriteReport, EvidenceAcquisitionError, MarketResetFacts, NoProgress, ProgressSink,
+    RunError, RunSpec, VerifyPolicy, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK,
 };
 pub use transaction_processor::ProcessTxError;
 pub use verify::VerificationEvidenceError;

@@ -219,6 +219,35 @@ impl DegenbotDb {
         self.conn.lock()
     }
 
+    /// The database file this handle actually has open as its `main` schema, or
+    /// `None` for an in-memory handle.
+    ///
+    /// Asked of SQLite's own connection (`sqlite3_db_filename`), not of the path
+    /// a caller remembers, so it states the file a write through this handle
+    /// would reach. It costs no statement, which is what lets a caller verify a
+    /// handle's identity without disturbing a traced connection's statement
+    /// ledger.
+    #[must_use]
+    pub fn main_database_file(&self) -> Option<std::path::PathBuf> {
+        let conn = self.conn.lock();
+        // SAFETY: the guard owns `conn`'s sqlite3 handle for this whole call,
+        // and `sqlite3_db_filename` only reads the connection's registered
+        // schema name.
+        let name = unsafe { rusqlite::ffi::sqlite3_db_filename(conn.handle(), c"main".as_ptr()) };
+        if name.is_null() {
+            return None;
+        }
+        // SAFETY: a non-null return is a NUL-terminated string owned by SQLite
+        // and valid while the connection lives (the guard above).
+        let file = unsafe { std::ffi::CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
+        if file.is_empty() {
+            return None;
+        }
+        Some(std::path::PathBuf::from(file))
+    }
+
     /// The handle's guard when no one holds it.
     ///
     /// The non-blocking sibling of [`Self::lock`]: a caller that must prove it
@@ -234,6 +263,25 @@ impl DegenbotDb {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_database_file_states_the_open_file_or_none_in_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity.db");
+        let (file_db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
+        assert_eq!(
+            file_db.main_database_file(),
+            Some(path.canonicalize().unwrap()),
+            "the handle names the file it opened"
+        );
+
+        let (memory_db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert_eq!(
+            memory_db.main_database_file(),
+            None,
+            "an in-memory database has no file identity"
+        );
+    }
 
     /// Flip a Rust-owned DB to the legacy `alembic_version`-marked shape.
     fn mark_legacy(path: &Path) {

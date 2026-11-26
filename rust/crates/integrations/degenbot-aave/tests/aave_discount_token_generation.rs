@@ -24,9 +24,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use degenbot_aave::updater::{
-    run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, CanonicalDelta, NoProgress,
-    ProgressSink, RunSpec, VerifyPolicy,
+    AaveChunkProgress, AaveUpdateReport, CanonicalDelta, NoProgress, ProgressSink, RunSpec,
+    VerifyPolicy,
 };
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{
     entry_digest, entry_key, Cassette, CassetteEntry, CassetteProvenance, CassetteResponse,
@@ -35,6 +36,9 @@ use degenbot_rpc::cassette::{
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 
 mod common;
+#[path = "common/fixture_db.rs"]
+mod fixture_db;
+use fixture_db::FixtureDb;
 use serde_json::{json, Value};
 
 /// The chain the fixtures run on.
@@ -141,8 +145,8 @@ fn data_word(n: u64) -> String {
 /// and the chain's GHO row linked to its vToken with `v_gho_discount_token`
 /// set to `discount_token` (`None` = the cold-boot pre-initialization
 /// state).
-fn warm_boot_db(discount_token: Option<&str>) -> DegenbotDb {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+fn warm_boot_db(discount_token: Option<&str>) -> FixtureDb {
+    let db = FixtureDb::create("warm-boot.db");
     {
         let conn = db.lock();
         conn.execute(
@@ -525,12 +529,12 @@ impl Ledger {
     }
 }
 
-fn run_update(db: &DegenbotDb, transport: &CassetteReplayTransport) -> AaveUpdateReport {
+fn run_update(db: &FixtureDb, transport: &CassetteReplayTransport) -> AaveUpdateReport {
     run_update_to(db, transport, CHUNK_END, 10)
 }
 
 fn run_update_to(
-    db: &DegenbotDb,
+    db: &FixtureDb,
     transport: &CassetteReplayTransport,
     to_block: u64,
     chunk_size: u64,
@@ -539,28 +543,30 @@ fn run_update_to(
 }
 
 fn run_update_with_progress(
-    db: &DegenbotDb,
+    db: &FixtureDb,
     transport: &CassetteReplayTransport,
     to_block: u64,
     chunk_size: u64,
     progress: Arc<dyn ProgressSink>,
 ) -> AaveUpdateReport {
-    run_aave_update_on_db(
-        db,
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: 1,
-            to_block: Some(to_block),
-            chunk_size,
-            max_block_range: 10_000,
-            provider: transport.as_alloy_provider(),
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress,
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("the run must commit: {e}"))
+    AaveMarketWriter::acquire(db.path(), 1)
+        .unwrap()
+        .update_through(
+            db,
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: 1,
+                to_block: Some(to_block),
+                chunk_size,
+                max_block_range: 10_000,
+                provider: transport.as_alloy_provider(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress,
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .unwrap_or_else(|e| panic!("the run must commit: {e}"))
 }
 
 fn committed_discount_token(db: &DegenbotDb) -> Option<String> {

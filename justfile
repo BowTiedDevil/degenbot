@@ -548,6 +548,37 @@ test-fork: dev
     fi
     echo "✓ fork lane complete."
 
+# Aave V3 deployment-to-head soak — ON DEMAND only, never in `test`,
+# pre-push, or CI (it writes an operator database and reads an archive node for
+# minutes).
+#
+#   Short cassette smoke (offline, seconds — the committed capture replays):
+#       just test-rust-nextest -p degenbot-aave -E 'test(aave_cassette_replay)'
+#
+#   Full live soak:
+#       just aave-soak                                  # resume to the head
+#       just aave-soak -- --reset                       # purge, then sync
+#       just aave-soak -- --to-block 20000000 --stop-after-one-chunk
+#       just aave-soak -- --help                        # the tool's own surface
+#
+# The tool is `scripts/aave_reset_sync.sh`: a `latest` target (the default)
+# is resolved to its concrete block FIRST (`cast block-number` through `--node`
+# or the CLI's resolved `nodes.http[<chain-id>]`), then it captures the target
+# head BEFORE syncing, pins the run to that exact block, and asserts the
+# market's cursor reached it, then reports the cursor, the applied event count,
+# and the wall time. Resume is the default — only an explicit `--reset` purges. Every write
+# goes through `uv run --no-sync degenbot` (the console-script shim over
+# `degenbot-cli-core`), which the `dev` prerequisite builds, so the soak never
+# runs a stale extension. Each CLI command the soak runs (`aave reset`,
+# `aave update`) takes that market's one writer lock for its own duration, so a
+# concurrent writer of the same market (the PyO3 seam, a Rust consumer, another
+# soak command) is refused instead of interleaved. The script adds no lock of
+# its own and holds none across its commands: its plan reads are dry-runs, and a
+# multi-command soak is several separately locked invocations, not one atomic
+# operation.
+aave-soak *args: dev
+    bash scripts/aave_reset_sync.sh "$@"
+
 # The ADR-089 phase-6 offline engine benchmark: one executor
 # corpus (real cmd_executor bytecode + V2 stub pairs), four engine modes
 # (interp / jit-block / jit-pool / aot), first-run + steady-state latency and

@@ -41,10 +41,11 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::{keccak256, I256};
 use degenbot_aave::projection::JournaledDelta;
 use degenbot_aave::updater::{
-    apply_aave_chunk_writes_on_conn, journal_entries, run_aave_update_on_db, AaveChunkProgress,
-    AaveUpdateReport, CanonicalDelta, DeltaEffect, ProgressSink, RunError, RunSpec, VerifyPolicy,
+    apply_aave_chunk_writes_on_conn, journal_entries, AaveChunkProgress, AaveUpdateReport,
+    CanonicalDelta, DeltaEffect, ProgressSink, RunError, RunSpec, VerifyPolicy,
     CHECKPOINT_ENCODING_VERSION, DELTA_ENCODING_VERSION,
 };
+use degenbot_aave::AaveMarketWriter;
 use degenbot_core::canonical_head::{ChainAnchor, LogRef, TxRef};
 use degenbot_db::sql_ledger::{dump_tables_golden_json, restore_aave_seed_json};
 use degenbot_db::{
@@ -135,14 +136,15 @@ impl Fixture {
 
     /// The fixture's substrate, seeded exactly as the capture's recorder built
     /// it. Each path gets its own file: the paths must not share a market.
-    fn prepare(self, dir: &Path, name: &str) -> DegenbotDb {
+    fn prepare(self, dir: &Path, name: &str) -> (DegenbotDb, PathBuf) {
         let path = dir.join(format!("{name}.db"));
-        match self {
+        let db = match self {
             Self::Update => seed_real_market(&path, self.span().0, UPDATE_RESERVES),
             Self::Config => seed_real_market(&path, self.span().0, CONFIG_RESERVES),
             Self::FirstMint => seed_first_mint(&path),
             Self::Synthetic => seed_synthetic(&path),
-        }
+        };
+        (db, path)
     }
 
     /// The fixture's replay ledger.
@@ -1307,6 +1309,7 @@ impl Collector {
 
 fn run_span(
     db: &DegenbotDb,
+    db_path: &Path,
     cassette: &Cassette,
     fixture: Fixture,
     verify: VerifyPolicy,
@@ -1318,21 +1321,23 @@ fn run_span(
     let transport = CassetteReplayTransport::new(cassette.clone());
     let sink = Arc::new(Collector::default());
     let (from, to) = fixture.span();
-    let result = run_aave_update_on_db(
-        db,
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: MARKET_ID,
-            to_block: Some(to),
-            chunk_size: to - from + 1,
-            max_block_range: 10_000,
-            provider: transport.as_alloy_provider(),
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: sink.clone(),
-            verify,
-            max_chunks: None,
-        },
-    );
+    let result = AaveMarketWriter::acquire(db_path, MARKET_ID)
+        .unwrap()
+        .update_through(
+            db,
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: MARKET_ID,
+                to_block: Some(to),
+                chunk_size: to - from + 1,
+                max_block_range: 10_000,
+                provider: transport.as_alloy_provider(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: sink.clone(),
+                verify,
+                max_chunks: None,
+            },
+        );
     let chunks = sink.take();
     (result, chunks, transport)
 }
@@ -1636,10 +1641,11 @@ fn assert_three_paths_agree(fixture: Fixture) {
     // resolution settles OUTSIDE the chunk transaction: the pre-commit
     // verification reads a balance the offline corpora never recorded, so the
     // chunk's transaction never opens and nothing but the identities exists.
-    let substrate = fixture.prepare(dir.path(), "substrate");
-    let identities = fixture.prepare(dir.path(), "identities");
+    let (substrate, _) = fixture.prepare(dir.path(), "substrate");
+    let (identities, identities_path) = fixture.prepare(dir.path(), "identities");
     let (refused, refused_chunks, _) = run_span(
         &identities,
+        &identities_path,
         &cassette,
         fixture,
         VerifyPolicy {
@@ -1676,9 +1682,10 @@ fn assert_three_paths_agree(fixture: Fixture) {
     );
 
     // (A) incremental: the fixture's numeric cursor.
-    let incremental_market = fixture.prepare(dir.path(), "incremental");
+    let (incremental_market, incremental_path) = fixture.prepare(dir.path(), "incremental");
     let (result, chunks, transport) = run_span(
         &incremental_market,
+        &incremental_path,
         &cassette,
         fixture,
         VerifyPolicy::default(),
@@ -1693,12 +1700,13 @@ fn assert_three_paths_agree(fixture: Fixture) {
     let incremental_headers = header_reads(&transport);
 
     // (B) seed-restore: the fixture's exact ProjectionCursor + checkpoint.
-    let restore_market = fixture.prepare(dir.path(), "restore");
+    let (restore_market, restore_path) = fixture.prepare(dir.path(), "restore");
     write_restored_market(&restore_market, &resume);
     assert_restored_market_states_the_fixture(&restore_market, &resume);
     let restore_cassette = cassette_with_pre_span_header(fixture, &cassette, &resume);
     let (result, chunks, transport) = run_span(
         &restore_market,
+        &restore_path,
         &restore_cassette,
         fixture,
         VerifyPolicy::default(),
@@ -1714,7 +1722,7 @@ fn assert_three_paths_agree(fixture: Fixture) {
     );
 
     // (C) journal replay: the post-run journal rows, decoded and written.
-    let replay_market = fixture.prepare(dir.path(), "replay");
+    let (replay_market, _) = fixture.prepare(dir.path(), "replay");
     write_restored_market(&replay_market, &resume);
     materialize_identities(&replay_market, &resume);
     let journal = post_run_journal(&incremental_market, &journal_entries(&incremental.deltas));
@@ -1937,8 +1945,14 @@ fn a_committed_resume_artifact_round_trips_through_the_canonical_serializer() {
 fn a_one_delta_mutation_fails_with_its_exact_source_position() {
     let dir = TempDir::new().unwrap();
     let fixture = Fixture::Update;
-    let db = fixture.prepare(dir.path(), "mutation");
-    let (result, chunks, _) = run_span(&db, &fixture.cassette(), fixture, VerifyPolicy::default());
+    let (db, db_path) = fixture.prepare(dir.path(), "mutation");
+    let (result, chunks, _) = run_span(
+        &db,
+        &db_path,
+        &fixture.cassette(),
+        fixture,
+        VerifyPolicy::default(),
+    );
     result.expect("the incremental run commits");
     let deltas: Vec<CanonicalDelta> = chunks
         .iter()

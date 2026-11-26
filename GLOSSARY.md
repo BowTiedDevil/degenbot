@@ -989,9 +989,21 @@ _Avoid_: chunk-wide refresh or prefetch phases; resolution work in the projectio
 The typed follow-up a journaled signal obliges, stated with the inputs composition must not re-derive. `RefreshGhoDiscount` carries the triggering movement's own `U256` index and the signal's exact source, so a refresh never reaches composition as an optional index or a zero default.
 _Avoid_: an optional trigger index; re-deriving a trigger's index from the view's settled end-of-transaction state; an effect-shaped special case in the chunk resolver; a refresh read consumed against another transaction's event boundary.
 
+**Market writer** (`AaveMarketWriter`):
+The one exclusion over a (canonical database path, market id) pair, held for the whole
+of a market's reset or update run. It is an advisory flock on a database-sibling lock
+file that is created if absent and never unlinked, so a crashed holder cannot wedge the
+next writer and an unlink cannot split the lock across two inodes. Acquisition refuses
+when another writer holds the market; it never waits. The CLI, the PyO3 seam, and
+standalone Rust consumers all acquire it, so no caller is a path around it.
+_Avoid_: a second lock — per-process, per-command, or shell-script — over the same
+market; unlinking a held lock file; a runner that opens the database for writes without
+the writer.
+
 **Market reset**:
 Purging one market's rows and re-initializing through the activate seam under a single
-transaction, leaving the market observationally identical to a fresh cold boot.
+transaction, leaving the market observationally identical to a fresh cold boot. It runs
+under the market writer, so no chunk of a concurrent run can land inside it.
 _Avoid_: shell-assembled purge-then-re-init across separate transactions.
 
 **Completed-market manifest**:

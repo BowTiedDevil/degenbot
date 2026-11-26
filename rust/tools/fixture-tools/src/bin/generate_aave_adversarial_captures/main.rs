@@ -7,7 +7,8 @@
 //! ([`ScratchDriver`](degenbot_simulation::capture::ScratchDriver)) with the
 //! scripted actor contracts (`degenbot_simulation::capture::actor` — the aave
 //! sibling of the wave-2 `V3CaptureHarness` precedent). Each drives the REAL
-//! `run_aave_update` chunk loop over a recording transport — the flushed
+//! market update (`AaveMarketWriter::update`) over a recording transport — the
+//! flushed
 //! cassette is the recorder's canonical writer's bytes, exactly what a live
 //! recording produces — then replays the committed cassette bytes through the
 //! statement-ledger wrapper for the SQL goldens (the same writers
@@ -100,10 +101,8 @@ use std::sync::Arc;
 
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::transports::Transport as _;
-use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RevisionChange, RunSpec,
-    VerifyPolicy,
-};
+use degenbot_aave::updater::{AaveUpdateReport, NoProgress, RevisionChange, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::sql_ledger::LedgerDb;
 use degenbot_db::DegenbotDb;
 use degenbot_fixture_tools::{ledger, paths};
@@ -631,9 +630,9 @@ fn run_recorded_chunk(
     market_id: i64,
     provider: degenbot_rpc::provider::AlloyProvider,
 ) -> AaveUpdateReport {
-    run_aave_update(
-        db_path,
-        RunSpec {
+    AaveMarketWriter::acquire(db_path, market_id)
+        .expect("recording market writer")
+        .update(RunSpec {
             chain_id: 1,
             market_id,
             to_block: Some(SPAN_TO),
@@ -644,9 +643,8 @@ fn run_recorded_chunk(
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the recording run of the scenario chunk must commit cleanly")
+        })
+        .expect("the recording run of the scenario chunk must commit cleanly")
 }
 
 /// The SQL golden pass: replay the committed cassette BYTES through the
@@ -660,22 +658,24 @@ fn golden_pass(
     let dir = TempDir::new().expect("golden temp dir");
     let (db2, market_id) = seed(dir.path(), "golden.db");
     let (ledger, _state) = LedgerDb::open_for_writes(&db2).expect("ledger opens");
-    run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id: 1,
-            market_id,
-            to_block: Some(SPAN_TO),
-            chunk_size: SPAN_TO - DEPLOY_BLOCK + 1,
-            max_block_range: 10_000,
-            provider: replay_provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .expect("the golden replay of the scenario chunk must commit cleanly");
+    AaveMarketWriter::acquire(&db2, market_id)
+        .expect("golden market writer")
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id: 1,
+                market_id,
+                to_block: Some(SPAN_TO),
+                chunk_size: SPAN_TO - DEPLOY_BLOCK + 1,
+                max_block_range: 10_000,
+                provider: replay_provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .expect("the golden replay of the scenario chunk must commit cleanly");
     // The two goldens come from the shared ledger pattern
     // (`degenbot_fixture_tools::ledger::goldens`), so the wave-3 and wave-2 generators
     // (and every later one) dump the same shape from the same armed session.

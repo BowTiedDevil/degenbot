@@ -15,7 +15,8 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::updater::{NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_core::canonical_head::{ChainAnchor, LogRef, TxRef};
 use degenbot_db::{
     read_latest_checkpoint_on_conn, read_projection_cursor_on_conn, write_projection_unit_on_conn,
@@ -29,6 +30,9 @@ use degenbot_rpc::cassette::{
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 
 mod common;
+#[path = "common/fixture_db.rs"]
+mod fixture_db;
+use fixture_db::FixtureDb;
 
 const CHAIN_ID: i64 = 1;
 const MARKET_ID: i64 = 1;
@@ -270,8 +274,8 @@ fn contract_rows() -> [(&'static str, &'static str); 3] {
 /// A warm-boot substrate with one committed projection unit at the shared
 /// block: the market's cursor, journal, and checkpoint all sit where both
 /// branches agree, so a reorg to the fork height has a retained ancestor.
-fn seeded_db() -> DegenbotDb {
-    let (db, _) = DegenbotDb::open_in_memory_for_writes().unwrap();
+fn seeded_db() -> FixtureDb {
+    let db = FixtureDb::create("reorg.db");
     {
         let conn = db.lock();
         conn.execute(
@@ -358,27 +362,29 @@ fn seeded_db() -> DegenbotDb {
 }
 
 fn run(
-    db: &DegenbotDb,
+    db: &FixtureDb,
     transport: &CassetteReplayTransport,
     to_block: u64,
     chunk_size: u64,
 ) -> degenbot_aave::updater::AaveUpdateReport {
-    run_aave_update_on_db(
-        db,
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: MARKET_ID,
-            to_block: Some(to_block),
-            chunk_size,
-            max_block_range: 10_000,
-            provider: transport.as_alloy_provider(),
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|error| panic!("the run must commit through the recovered cursor: {error}"))
+    AaveMarketWriter::acquire(db.path(), MARKET_ID)
+        .unwrap()
+        .update_through(
+            db,
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: MARKET_ID,
+                to_block: Some(to_block),
+                chunk_size,
+                max_block_range: 10_000,
+                provider: transport.as_alloy_provider(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .unwrap_or_else(|error| panic!("the run must commit through the recovered cursor: {error}"))
 }
 
 /// The activation position the market's surviving lineage names for the Pool

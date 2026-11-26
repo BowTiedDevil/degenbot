@@ -15,6 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 use alloy::primitives::Address;
+use degenbot_aave::AaveMarketWriter;
 use degenbot_cli_core::{
     resolve_aave_deployment, run, AaveCommand, AaveReport, AaveUpdateOutcome, CliContext, CliError,
     Command, DeactivateOutcome, ExitCode, PromptPlan, Prompter,
@@ -592,6 +593,60 @@ fn update_skips_a_market_needing_bootstrap() {
 }
 
 const UNKNOWN_MARKET: &str = "No Such Aave Market";
+
+/// A market another writer holds refuses BOTH arms before either costs a
+/// transport build: the CLI is one of the writers the market's lock excludes,
+/// never a path around it.
+#[test]
+fn the_cli_refuses_a_market_another_writer_holds() {
+    let dir = TempDir::new().unwrap();
+    let db = write_db(dir.path());
+    seed_market(&db, 1, "Aave Ethereum Market", true, Some(26_130_445));
+    seed_user(&db, 1, 1);
+    let holder = AaveMarketWriter::acquire(&db, 1).unwrap();
+    let e = MapEnv::new(BTreeMap::new());
+
+    let reset = run_aave(
+        AaveCommand::Reset {
+            chain_id: 1,
+            market_name: None,
+            dry_run: false,
+        },
+        &db,
+        &e,
+    );
+    assert_eq!(reset.exit_code, ExitCode::Failure);
+    assert!(
+        matches!(
+            reset.error(),
+            Some(CliError::AaveMarketMidUpdate { market_id: 1, .. })
+        ),
+        "got {:?}",
+        reset.error()
+    );
+
+    // The update arm resolves the chain's endpoint before it reaches the market
+    // loop; the writer refusal still lands before the transport is built (the
+    // endpoint here answers nothing).
+    let update = run_aave(update_command("latest", false), &db, &env_with_rpc());
+    assert_eq!(update.exit_code, ExitCode::Failure);
+    assert!(
+        matches!(
+            update.error(),
+            Some(CliError::AaveMarketMidUpdate { market_id: 1, .. })
+        ),
+        "got {:?}",
+        update.error()
+    );
+
+    // The refusal wrote nothing: the warm market's user row is still there.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let users: i64 = conn
+        .query_row("SELECT COUNT(*) FROM aave_v3_users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 1, "a refused writer never touched the market");
+    drop(holder);
+}
 
 #[test]
 fn reset_refuses_an_unknown_market_without_touching_data() {

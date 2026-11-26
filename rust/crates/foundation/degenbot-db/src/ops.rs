@@ -215,27 +215,44 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
 /// lives (ADR-070 D8's serialization idiom).
 ///
 /// Callers are the file-level admin operations that must not interleave on one
-/// DB (heal's build-and-swap, the backup's publish). The lock file is created
-/// if absent and never unlinked: unlinking a held `flock` reopens the classic
-/// race where a waiter blocked on the unlinked inode and a newcomer
-/// re-creating the path hold locks on two different inodes. The kernel releases
-/// the lock with the holding process, so a crashed holder cannot wedge the next
-/// one.
-pub(crate) struct AdvisoryLock {
+/// DB (heal's build-and-swap, the backup's publish) and the per-market writer
+/// that serializes a durable update (`degenbot_aave::AaveMarketWriter`). The
+/// lock file is created if absent and never unlinked: unlinking a held `flock`
+/// reopens the classic race where a waiter blocked on the unlinked inode and a
+/// newcomer re-creating the path hold locks on two different inodes. The kernel
+/// releases the lock with the holding process, so a crashed holder cannot wedge
+/// the next one.
+pub struct AdvisoryLock {
     /// Holding the descriptor is what holds the lock; the lifetime IS the lock.
     _file: std::fs::File,
 }
 
-impl AdvisoryLock {
-    pub(crate) fn acquire(path: &Path) -> Result<Self, DbError> {
-        use std::io::Write as _;
+/// Open-or-create the lock file. Never `create_new`: a file surviving its
+/// holder is the expected crash case, and the flock — not the file's existence
+/// — is the exclusion.
+fn open_lock_file(path: &Path) -> Result<std::fs::File, DbError> {
+    Ok(std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?)
+}
 
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)?;
+/// Record the holder's pid in the freshly-locked file and wrap the descriptor.
+fn held(file: std::fs::File) -> AdvisoryLock {
+    use std::io::Write as _;
+
+    let mut file = file;
+    let _ = file.set_len(0);
+    let _ = writeln!(file, "{}", std::process::id());
+    AdvisoryLock { _file: file }
+}
+
+impl AdvisoryLock {
+    /// Take `path`'s lock, waiting for a current holder to release it.
+    pub(crate) fn acquire(path: &Path) -> Result<Self, DbError> {
+        let file = open_lock_file(path)?;
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
@@ -244,9 +261,23 @@ impl AdvisoryLock {
             }
             Err(std::fs::TryLockError::Error(error)) => return Err(DbError::Io(error)),
         }
-        let _ = file.set_len(0);
-        let _ = writeln!(file, "{}", std::process::id());
-        Ok(Self { _file: file })
+        Ok(held(file))
+    }
+
+    /// Take `path`'s lock, or report `None` when another holder has it — the
+    /// fail-closed form a second writer of the same resource is refused with.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Io`] when the lock file cannot be opened or the kernel
+    /// refuses the lock for a reason other than a competing holder.
+    pub fn try_acquire(path: &Path) -> Result<Option<Self>, DbError> {
+        let file = open_lock_file(path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(held(file))),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(DbError::Io(error)),
+        }
     }
 }
 
@@ -341,6 +372,23 @@ mod tests {
         drop(held);
         waiter.join().unwrap();
         assert!(released.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn try_acquire_reports_the_held_lock_instead_of_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.lock");
+        let held = AdvisoryLock::try_acquire(&path).unwrap();
+        assert!(held.is_some(), "an unheld path yields the lock");
+        assert!(
+            AdvisoryLock::try_acquire(&path).unwrap().is_none(),
+            "a held lock is reported, never waited on"
+        );
+        drop(held);
+        assert!(
+            AdvisoryLock::try_acquire(&path).unwrap().is_some(),
+            "the released lock is acquirable again, from the file the holder left behind"
+        );
     }
 
     #[test]

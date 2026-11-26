@@ -57,7 +57,7 @@
 //! identity rows resolution needs are interned synchronously by the chunk seed
 //! on the caller's connection before that transaction opens, so a rolled-back
 //! chunk leaves only inert rows behind (ADR-105 D4). This crate owns nothing
-//! about the connection lifecycle — the caller (`run_aave_update`
+//! about the connection lifecycle — the caller (`AaveMarketWriter::update`
 //! orchestrator) opens ONE `DegenbotDb`, loads the seed, begins ONE
 //! `Transaction`, calls [`apply_aave_chunk_writes_on_conn`], and commits.
 //!
@@ -66,7 +66,7 @@
 //! - **Transactional apply core** ([`updater::apply_aave_chunk_writes_on_conn`]):
 //!   the pure apply loop, callable on any `&Connection`, fixture-tested with
 //!   atomicity round-trip tests.
-//! - **`run_aave_update` orchestrator** ([`updater::run_aave_update`]): RPC
+//! - **`AaveMarketWriter::update` orchestrator** ([`crate::AaveMarketWriter::update`]): RPC
 //!   fetch + decode into canonical deltas (configuration and operation effects
 //!   alike) + the outer chunk-advance loop over
 //!   the `aave_v3_markets.last_update_block` cursor.
@@ -75,6 +75,13 @@
 //! in `degenbot-python`.
 
 pub mod analysis;
+#[cfg(test)]
+#[expect(clippy::expect_used, clippy::panic)]
+// reason: a fixture reader refuses by panicking — a missing, malformed, or
+// unknown-schema capture is a harness defect that must stop the test, never
+// shrink its coverage.
+pub(crate) mod fixtures;
+pub mod market_writer;
 pub mod percentage_math;
 pub mod positions;
 pub mod updater;
@@ -95,7 +102,8 @@ pub use wad_ray_math::{
 };
 
 // Re-export the updater surface at the crate root so the PyO3 seam +
-// standalone consumers resolve `degenbot_aave::run_aave_update` etc. without
+// standalone consumers resolve `degenbot_aave::AaveMarketWriter::update` etc. without
 // the `updater::` prefix. The analysis surface is likewise re-exported.
+pub use market_writer::{market_lock_path, AaveMarketWriter, MarketReset};
 pub use positions::AavePositionObserver;
 pub use updater::*;

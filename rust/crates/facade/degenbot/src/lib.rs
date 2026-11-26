@@ -175,7 +175,8 @@ pub use degenbot_uniswap::{dex_identity, v2_encoding};
 /// ABI encode/decode (`decoder`, `encoder`).
 pub use degenbot_abi as abi;
 
-/// `cargo add degenbot` consumer runs `run_aave_update` with no Python.
+/// `cargo add degenbot` consumer acquires the market's `AaveMarketWriter` and
+/// updates with no Python.
 pub use degenbot_aave as aave;
 
 /// Anvil fork lifecycle and development RPC support (isolated `anvil` binary

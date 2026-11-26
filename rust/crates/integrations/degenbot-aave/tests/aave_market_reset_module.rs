@@ -12,15 +12,21 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use degenbot_aave::updater::{reset_market_to_cold_boot, RunError};
-use degenbot_aave::ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK;
+use degenbot_aave::updater::{MarketResetFacts, RunError};
+use degenbot_aave::{AaveMarketWriter, ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{
     entry_digest, entry_key, Cassette, CassetteEntry, CassetteProvenance, CassetteResponse,
     CassetteSpan,
 };
 use degenbot_rpc::cassette_replay::CassetteReplayTransport;
+use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::params;
+use tempfile::TempDir;
+
+#[path = "common/fixture_db.rs"]
+mod fixture_db;
+use fixture_db::FixtureDb;
 
 const CHAIN_ID: i64 = 1;
 const MARKET_NAME: &str = "Aave Ethereum Market";
@@ -63,8 +69,8 @@ fn market_row(db: &DegenbotDb, market_id: i64) -> (String, bool, Option<i64>) {
 /// A market with the substrate `aave activate` seeds plus everything an update
 /// run populated: extra contract rows, a reserve, a user, both position kinds,
 /// and a warm cursor. Mirrors `aave_market_reset.rs`'s `populated` fixture.
-fn populated() -> (DegenbotDb, i64) {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+fn populated() -> (FixtureDb, i64) {
+    let db = FixtureDb::create("populated.db");
     let market_id = {
         let conn = db.lock();
         conn.execute(
@@ -161,6 +167,16 @@ fn populated() -> (DegenbotDb, i64) {
         market_id
     };
     (db, market_id)
+}
+
+/// Run the market's reset through its ONE writer and report the facts the
+/// transaction read back.
+fn reset(db: &FixtureDb, market_id: i64, provider: &AlloyProvider) -> MarketResetFacts {
+    AaveMarketWriter::acquire(db.path(), market_id)
+        .unwrap()
+        .reset_to_cold_boot(POOL_ADDRESS_PROVIDER, GHO, provider)
+        .unwrap()
+        .facts
 }
 
 /// ABI-encode a dynamic `string` return: the 0x20 offset word, the byte-length
@@ -285,15 +301,7 @@ fn reset_reports_read_back_facts_and_seeds_the_cold_boot_substrate() {
     let transport = activation_cassette(MARKET_NAME);
     let provider = transport.as_alloy_provider();
 
-    let facts = {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        let facts =
-            reset_market_to_cold_boot(&tx, market_id, POOL_ADDRESS_PROVIDER, GHO, &provider)
-                .unwrap();
-        tx.commit().unwrap();
-        facts
-    };
+    let facts = reset(&db, market_id, &provider);
 
     let bootstrap = u64::try_from(ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK).unwrap();
     assert!(facts.market_activated);
@@ -346,7 +354,9 @@ fn reset_completes_a_bare_inactive_market_and_reports_it() {
     // A pre-registered market is an INACTIVE, BARE row; the reset completes it
     // (the row flips active and gains the substrate), and the facts read that
     // completion back.
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("bare-market.db");
+    let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
     let market_id = db.register_aave_market(CHAIN_ID, MARKET_NAME).unwrap().0;
     {
         let conn = db.lock();
@@ -363,15 +373,11 @@ fn reset_completes_a_bare_inactive_market_and_reports_it() {
     let transport = activation_cassette(MARKET_NAME);
     let provider = transport.as_alloy_provider();
 
-    let facts = {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        let facts =
-            reset_market_to_cold_boot(&tx, market_id, POOL_ADDRESS_PROVIDER, GHO, &provider)
-                .unwrap();
-        tx.commit().unwrap();
-        facts
-    };
+    let facts = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .reset_to_cold_boot(POOL_ADDRESS_PROVIDER, GHO, &provider)
+        .unwrap()
+        .facts;
 
     assert!(facts.market_activated);
     assert!(facts.contract_row_present);
@@ -387,12 +393,11 @@ fn reset_refuses_and_rolls_back_when_the_onchain_name_names_another_row() {
     let transport = activation_cassette("Some Other Market");
     let provider = transport.as_alloy_provider();
 
-    let result = {
-        let mut guard = db.lock();
-        let tx = guard.transaction().unwrap();
-        // Drop the transaction without committing: the rollback under test.
-        reset_market_to_cold_boot(&tx, market_id, POOL_ADDRESS_PROVIDER, GHO, &provider)
-    };
+    // The writer's transaction is the one that must roll back: the refusal
+    // happens before its commit, so the database keeps the warm market.
+    let result = AaveMarketWriter::acquire(db.path(), market_id)
+        .unwrap()
+        .reset_to_cold_boot(POOL_ADDRESS_PROVIDER, GHO, &provider);
 
     assert!(matches!(result, Err(RunError::Db(_))), "got {result:?}");
 
@@ -426,13 +431,11 @@ fn reset_of_an_unknown_market_is_a_typed_failure_before_any_rpc() {
     let transport = activation_cassette(MARKET_NAME);
     let provider = transport.as_alloy_provider();
 
-    let mut guard = db.lock();
-    let tx = guard.transaction().unwrap();
-    let err =
-        reset_market_to_cold_boot(&tx, 999, POOL_ADDRESS_PROVIDER, GHO, &provider).unwrap_err();
+    let err = AaveMarketWriter::acquire(db.path(), 999)
+        .unwrap()
+        .reset_to_cold_boot(POOL_ADDRESS_PROVIDER, GHO, &provider)
+        .unwrap_err();
     assert!(matches!(err, RunError::MarketNotFound(999)), "got {err:?}");
-    drop(tx);
-    drop(guard);
 
     assert_eq!(
         transport.served_snapshot().served,

@@ -40,9 +40,10 @@ use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{keccak256, B256};
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveChunkProgress, AaveUpdateReport, CanonicalDelta,
-    NoProgress, ProgressSink, RunError, RunSpec, VerifyPolicy,
+    AaveChunkProgress, AaveUpdateReport, CanonicalDelta, NoProgress, ProgressSink, RunError,
+    RunSpec, VerifyPolicy,
 };
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::sql_ledger::{
     dump_tables_golden_json, ledger_golden_json, restore_aave_seed_json, LedgerDb,
 };
@@ -401,9 +402,9 @@ fn aave_chunk_delta_stream_matches_the_committed_golden() {
     let dir = TempDir::new().unwrap();
     let (path, market_id) = seeded_db(dir.path(), "delta-stream.db");
     let sink = Arc::new(ProgressCollector::default());
-    run_aave_update(
-        &path,
-        RunSpec {
+    AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -414,9 +415,8 @@ fn aave_chunk_delta_stream_matches_the_committed_golden() {
             progress: sink.clone(),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the replayed run must commit cleanly");
+        })
+        .expect("the replayed run must commit cleanly");
 
     let chunks = sink.chunks.lock().unwrap().clone();
     let mut encoded: Vec<String> = Vec::new();
@@ -558,22 +558,24 @@ fn first_mint_delta_stream_matches_the_committed_golden() {
     let _ledger_session = ledger_session();
     let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
     let sink = Arc::new(ProgressCollector::default());
-    let report = run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id,
-            market_id,
-            to_block: Some(FIRST_MINT_BLOCK),
-            chunk_size: FIRST_MINT_BLOCK - FIRST_MINT_PARENT,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: sink.clone(),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .expect("the replayed first mint must commit cleanly");
+    let report = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id,
+                market_id,
+                to_block: Some(FIRST_MINT_BLOCK),
+                chunk_size: FIRST_MINT_BLOCK - FIRST_MINT_PARENT,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: sink.clone(),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .expect("the replayed first mint must commit cleanly");
     assert_eq!(report.chunks_committed, 1);
     assert_eq!(report.total_events_applied, events);
 
@@ -913,9 +915,9 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
 
     // One chunk covering the whole recorded span (chunk_size > span width).
     let sink = Arc::new(ProgressCollector::default());
-    let report = run_aave_update(
-        &path,
-        RunSpec {
+    let report = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -926,9 +928,8 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
             progress: sink.clone(),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the replayed run must commit cleanly");
+        })
+        .expect("the replayed run must commit cleanly");
 
     assert_eq!(report.chain_id, chain_id);
     assert_eq!(report.market_id, market_id);
@@ -1011,9 +1012,9 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
 
     // Restart no-op: the committed stamp roots the second run's cursor past
     // the pin, so it commits nothing and advances nothing.
-    let restart = run_aave_update(
-        &path,
-        RunSpec {
+    let restart = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -1024,9 +1025,8 @@ fn aave_chunk_replay_commits_the_recorded_span_offline_and_restarts_clean() {
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the restarted run must be a clean no-op");
+        })
+        .expect("the restarted run must be a clean no-op");
     assert_eq!(restart.chunks_committed, 0, "nothing left to commit");
     assert_eq!(restart.total_events_applied, 0);
     assert_eq!(
@@ -1065,9 +1065,9 @@ fn the_replayed_chunk_checkpoints_the_cursor_it_commits() {
 
     let dir = TempDir::new().unwrap();
     let (path, market_id) = seeded_db(dir.path(), "checkpoint.db");
-    run_aave_update(
-        &path,
-        RunSpec {
+    AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -1078,9 +1078,8 @@ fn the_replayed_chunk_checkpoints_the_cursor_it_commits() {
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the replayed run must commit cleanly");
+        })
+        .expect("the replayed run must commit cleanly");
 
     let (db, _state) = DegenbotDb::open_for_writes(&path).unwrap();
     let conn = db.lock();
@@ -1189,22 +1188,24 @@ fn aave_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     // connection the chunk loop actually uses (ADR-068 D3).
     let _ledger_session = ledger_session();
     let (ledger, _state) = LedgerDb::open_for_writes(&path).unwrap();
-    let report = run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id,
-            market_id,
-            to_block: Some(SPAN_TO),
-            chunk_size: SPAN_TO - SPAN_FROM + 1,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .expect("the replayed run must commit cleanly");
+    let report = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id,
+                market_id,
+                to_block: Some(SPAN_TO),
+                chunk_size: SPAN_TO - SPAN_FROM + 1,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .expect("the replayed run must commit cleanly");
     assert_eq!(report.chunks_committed, 1);
     assert_eq!(report.total_events_applied, events);
 
@@ -1310,9 +1311,9 @@ fn run_recorded_state(cassette: &Cassette, to_block: Option<u64>) -> ReplayedChu
     let chain_id = i64::try_from(cassette.chain_id).unwrap();
     let dir = TempDir::new().unwrap();
     let (path, market_id) = seeded_db(dir.path(), "terminal.db");
-    let result = run_aave_update(
-        &path,
-        RunSpec {
+    let result = AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block,
@@ -1323,8 +1324,7 @@ fn run_recorded_state(cassette: &Cassette, to_block: Option<u64>) -> ReplayedChu
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    );
+        });
     ReplayedChunk {
         result,
         served: transport.served_snapshot(),
@@ -1720,9 +1720,9 @@ fn aave_update_chunk_holds_no_rpc_round_trip_inside_the_write_lock() {
     let dir = TempDir::new().unwrap();
     let (path, market_id) = seeded_db(dir.path(), "no-rpc-in-lock.db");
     let sink = Arc::new(ProgressCollector::default());
-    run_aave_update(
-        &path,
-        RunSpec {
+    AaveMarketWriter::acquire(&path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -1733,9 +1733,8 @@ fn aave_update_chunk_holds_no_rpc_round_trip_inside_the_write_lock() {
             progress: sink.clone(),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .expect("the replayed run must commit cleanly");
+        })
+        .expect("the replayed run must commit cleanly");
 
     let chunks = sink.chunks.lock().unwrap().clone();
     assert!(!chunks.is_empty(), "the run reports its chunks");
@@ -1857,9 +1856,9 @@ fn run_span(
 ) -> (Result<AaveUpdateReport, RunError>, Vec<AaveChunkProgress>) {
     let provider = CassetteReplayTransport::new(committed_cassette()).as_alloy_provider();
     let sink = Arc::new(ProgressCollector::default());
-    let outcome = run_aave_update(
-        path,
-        RunSpec {
+    let outcome = AaveMarketWriter::acquire(path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id,
             market_id,
             to_block: Some(SPAN_TO),
@@ -1870,8 +1869,7 @@ fn run_span(
             progress: sink.clone(),
             verify,
             max_chunks: None,
-        },
-    );
+        });
     let chunks = sink.chunks.lock().unwrap().clone();
     (outcome, chunks)
 }

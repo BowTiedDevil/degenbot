@@ -1,11 +1,11 @@
 //! The Aave V3 updater driver: the shared-runtime sync entry
-//! ([`run_aave_update`]) plus the ONE async driver future orchestrating the
+//! (`AaveMarketWriter::update`) plus the ONE async driver future orchestrating the
 //! chunk loop over its stage modules (`fetch`, `seed`, `resolver`,
 //! `process`, `apply`).
 //!
 //! The runtime-facing invariants — the shared-runtime `block_on` constraint,
 //! the single-thread-poll soundness argument, and the atomicity-ownership
-//! duties of the loop — are documented on `run_aave_update` /
+//! duties of the loop — are documented on `AaveMarketWriter::update` /
 //! `run_aave_update_driver`. The chunk-atomicity contract itself is owned by
 //! the `apply` stage.
 
@@ -34,7 +34,8 @@ pub use evidence::EvidenceAcquisitionError;
 use evidence::{bind_chunk_evidence, trace_backed_count};
 use fetch::{bootstrap_pool_contracts, build_fetch_spec, refresh_chunk_fetch_spec};
 use process::{group_logs_by_tx, guard_terminal_transaction_identity};
-pub use reset::{reset_market_to_cold_boot, MarketResetFacts};
+pub(crate) use reset::reset_market_to_cold_boot;
+pub use reset::MarketResetFacts;
 use resolver::ChunkResolver;
 use seed::{acquire_reserve_facts, collect_reserve_initializations, ChunkSeed};
 pub use seed::{IncompleteChunkSeed, SeedEntity};
@@ -42,7 +43,6 @@ pub use seed::{IncompleteChunkSeed, SeedEntity};
 // ── the outer chunk loop (RPC-bound; the chunk-atomicity owner) ──
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -232,7 +232,7 @@ fn progress_percent(from_block: u64, chunk_end: u64, last_block: u64) -> u64 {
     processed.saturating_mul(100) / total
 }
 
-/// The final report from a [`run_aave_update`] run. Mirrors
+/// The final report from a `AaveMarketWriter::update` run. Mirrors
 /// `degenbot-pool-updater::UpdateReport`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AaveUpdateReport {
@@ -253,7 +253,7 @@ pub struct AaveUpdateReport {
     pub total_events_applied: usize,
 }
 
-/// An error from [`run_aave_update`]. Mirrors `degenbot-pool-updater::RunError`
+/// An error from `AaveMarketWriter::update`. Mirrors `degenbot-pool-updater::RunError`
 /// + adds the Aave dispatch/parse errors.
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -358,6 +358,34 @@ pub enum RunError {
     /// rolls back and no cursor moves.
     #[error("verification evidence: {0}")]
     VerificationEvidence(Box<crate::verify::VerificationEvidenceError>),
+    /// Another writer holds this market: a process (or another handle in this
+    /// process) is mid-update or mid-reset on the same (database, market) pair.
+    /// Raised by [`crate::AaveMarketWriter::acquire`] before any handle opens,
+    /// so nothing is read or written.
+    #[error("market {market_id} is held by another Aave writer (lock {lock_path})")]
+    MarketHeld { market_id: i64, lock_path: String },
+    /// A run spec names a market the writer does not guard: the lock would
+    /// serialize writes on a market the run never touches.
+    #[error(
+        "the writer guards market {writer_market_id}, but the run spec names market {spec_market_id}"
+    )]
+    MarketWriterMismatch {
+        writer_market_id: i64,
+        spec_market_id: i64,
+    },
+    /// The handle handed to a writer is not that writer's database: a writer for
+    /// one file received an already-open handle onto another, so its lock would
+    /// guard a database the run never touches. Raised before the run starts (and
+    /// before any provider work), so nothing is written outside the lock.
+    #[error(
+        "the writer guards {writer_database}, but the supplied handle has {handle_database} open"
+    )]
+    MarketWriterHandleMismatch {
+        /// The canonical database this writer holds.
+        writer_database: String,
+        /// The database the supplied handle actually has open.
+        handle_database: String,
+    },
 }
 
 /// The boxed activation refusal keeps `RunError` pointer-sized for the `Err` half
@@ -406,7 +434,7 @@ pub struct VerifyPolicy {
 /// [`Self::to_block`]), its chunking ([`Self::chunk_size`],
 /// [`Self::max_chunks`]), its [`VerifyPolicy`], the cooperative cancel flag,
 /// the per-chunk progress sink and the injected provider travel as one
-/// `RunSpec` through [`run_aave_update`], [`run_aave_update_on_db`] and the
+/// `RunSpec` through `AaveMarketWriter::update`, [`run_aave_update_on_db`] and the
 /// driver. The named fields are the single source of truth for the run's
 /// interface: a caller that owned a mirrored argument list builds a `RunSpec`
 /// instead.
@@ -441,10 +469,16 @@ pub struct RunSpec {
     pub provider: AlloyProvider,
 }
 
-/// Run the Aave V3 chunk-update loop for `market_id`, advancing
-/// `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
-/// `to_block` is `None`). The chunk-atomicity owner. The run's knobs
-/// travel as one [`RunSpec`].
+/// Run the Aave V3 chunk-update loop for `spec.market_id` on an already-open
+/// handle, advancing `aave_v3_markets.last_update_block` to `to_block` (or the
+/// chain tip if `to_block` is `None`). The chunk-atomicity owner. The run's
+/// knobs travel as one [`RunSpec`].
+///
+/// The chunk loop is reachable ONLY under a market's writer lock: the public
+/// entry is [`crate::AaveMarketWriter::update`] (which opens its own handle) or
+/// [`crate::AaveMarketWriter::update_through`] (this handle, for the
+/// statement-ledger golden machinery, whose run must write through ITS traced
+/// connection — ADR-068 D3). No unguarded path-level run remains.
 ///
 /// Per market per chunk:
 /// 1. Resolve the range's terminal `ChainAnchor` and acquire the chunk's
@@ -495,32 +529,13 @@ pub struct RunSpec {
 ///   `ChunkContext::begin_dispatch` — so a transaction after an in-chunk
 ///   `Upgraded` apply reads the bumped revision; a chunk-start snapshot would
 ///   not (`tests/fixtures/cassettes/wave4/UPGRADE-MAP.md` §(C)).
-#[expect(clippy::missing_errors_doc)]
-pub fn run_aave_update(database_path: &Path, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
-    if spec.chunk_size == 0 || spec.max_block_range == 0 {
-        return Err(RunError::Provider(ProviderError::InvalidBlockRange {
-            from: 1,
-            to: 0,
-        }));
-    }
-
-    // Open ONE writeable handle for the whole run, then delegate to the
-    // pre-opened-handle variant (same shape as the pool updater's seam).
-    let (db, _schema_state) = DegenbotDb::open_for_writes(database_path)?;
-    run_aave_update_on_db(&db, spec)
-}
-
-/// Pre-opened-handle variant of [`run_aave_update`] — behaviorally identical.
-/// The statement-ledger golden machinery (`degenbot_db::sql_ledger::LedgerDb`,
-/// ADR-068 D3) needs to hand the run ITS traced connection, so the chunk loop
-/// must accept a handle it did not open (the Aave golden captures are wired to
-/// this seam; `tests/aave_cassette_replay.rs` replays the committed
-/// statement-ledger + DB-dump goldens through it).
-///
 /// # Errors
 ///
-/// Same conditions as [`run_aave_update`].
-pub fn run_aave_update_on_db(db: &DegenbotDb, spec: RunSpec) -> Result<AaveUpdateReport, RunError> {
+/// Same conditions as [`crate::AaveMarketWriter::update`].
+pub(crate) fn run_aave_update_on_db(
+    db: &DegenbotDb,
+    spec: RunSpec,
+) -> Result<AaveUpdateReport, RunError> {
     if spec.chunk_size == 0 || spec.max_block_range == 0 {
         return Err(RunError::Provider(ProviderError::InvalidBlockRange {
             from: 1,
@@ -689,7 +704,7 @@ impl Drop for ChunkTx<'_> {
     }
 }
 
-/// The async driver body of [`run_aave_update`] — the ONE future under
+/// The async driver body of `AaveMarketWriter::update` — the ONE future under
 /// `get_runtime().block_on`. Every RPC fetch/verify is an `.await`
 /// inside this future; the doc contract (the chunk-atomicity contract,
 /// shared-runtime nesting constraint, the parity-gate notes) lives on the
@@ -706,7 +721,7 @@ impl Drop for ChunkTx<'_> {
 ///
 /// # Errors
 ///
-/// See [`run_aave_update`].
+/// See `AaveMarketWriter::update`.
 #[expect(clippy::too_many_lines)]
 async fn run_aave_update_driver(
     db: &DegenbotDb,
@@ -1394,7 +1409,7 @@ fn a_stalled_provider_does_not_block_an_unrelated_database_operation() {
     use std::future::Future;
     use std::task::{Context, Poll, Waker};
 
-    let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+    let (db, _state) = DegenbotDb::open_for_writes(std::path::Path::new(":memory:")).unwrap();
     {
         let conn = db.lock();
         conn.execute(
@@ -1533,7 +1548,7 @@ mod tests {
     fn refresh_chunk_fetch_spec_rereads_rotated_endpoint_rows() {
         use crate::aave_fetch::AaveFetchSpec;
 
-        let (db, _state) = DegenbotDb::open_for_writes(Path::new(":memory:")).unwrap();
+        let (db, _state) = DegenbotDb::open_for_writes(std::path::Path::new(":memory:")).unwrap();
         let old_pool = Address::repeat_byte(0x11);
         let new_pool = Address::repeat_byte(0x22);
         let checksummed = |a: Address| degenbot_core::address_utils::address_to_checksum_string(&a);

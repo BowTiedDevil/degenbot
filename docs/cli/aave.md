@@ -190,8 +190,12 @@ database unchanged, and no kill can land between the two halves. The re-seed
 reads the on-chain market name and the GHO metadata through the configured RPC,
 so a reset needs a working endpoint. `--dry-run` prints the per-table row counts
 the purge would remove and writes nothing. An unknown market name is refused
-rather than registered. Two resets of the same database cannot interleave — the
-second is refused with the lock path the first holds.
+rather than registered. Every durable write of one market takes that market's
+writer lock — one advisory flock per (canonical database path, market id) — so two
+resets of the same market, a reset racing an update, or a CLI run racing the PyO3
+seam cannot interleave: the second writer is refused and told the lock path the
+first holds. Another market of the same database proceeds independently, and the
+lock file is never unlinked, so a crashed holder cannot wedge the next writer.
 
 ```bash
 # Preview the blast radius

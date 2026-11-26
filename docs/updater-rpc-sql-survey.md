@@ -282,7 +282,7 @@ edited; restore it and both pass with the observed counters equal to it again.
 The replay bench's first baseline, recorded — where a chunk spends its time
 and what one chunk costs in round trips and statements. The workload is the
 replay bench (GLOSSARY “replay bench”): the REAL chunk loops
-(`run_pool_update_on_db` / `run_aave_update_on_db`) over the committed seed
+(`run_pool_update_on_db` / `AaveMarketWriter::update_through`) over the committed seed
 cassettes through the cassette replay transport (ADR-068 D5 injection, zero
 network), each run writing a fresh temp SQLite DB wrapped in the statement
 ledger.

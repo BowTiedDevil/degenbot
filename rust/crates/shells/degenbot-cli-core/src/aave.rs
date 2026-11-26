@@ -21,8 +21,8 @@ use std::sync::Arc;
 use alloy::primitives::{address, Address};
 use degenbot_aave::updater::verify::cleanup_zero_balance_positions_on_conn;
 use degenbot_aave::{
-    activate_aave_market, deactivate_aave_market, reset_market_to_cold_boot, run_aave_update,
-    NoProgress, RunError, RunSpec, VerifyPolicy,
+    activate_aave_market, deactivate_aave_market, AaveMarketWriter, MarketReset, NoProgress,
+    RunError, RunSpec, VerifyPolicy,
 };
 use degenbot_db::{
     aave_market_digest_for, ops, parse_completed_market_manifest, CompletedMarketDrive,
@@ -423,6 +423,10 @@ fn update(
                 });
                 continue;
             }
+            // The market's ONE writer, taken before the transport is built: a
+            // market another writer holds is refused without costing an RPC
+            // connection.
+            let writer = acquire_market_writer(&database_path, market.id)?;
             // The thin live-provider wrapper (ADR-068 D5): one build per
             // market run on the shared runtime, and the core only injects
             // it. A build failure surfaces as the same
@@ -430,21 +434,18 @@ fn update(
             let run = match crate::pool::shared_runtime_block_on(async {
                 AlloyProvider::new(&rpc_url, RPC_MAX_RETRIES).await
             }) {
-                Ok(Ok(provider)) => run_aave_update(
-                    &database_path,
-                    RunSpec {
-                        chain_id: chain,
-                        market_id: market.id,
-                        to_block: resolved,
-                        chunk_size: args.chunk_size,
-                        max_block_range: args.max_block_range,
-                        provider,
-                        cancel: cancel.flag(),
-                        progress: Arc::new(NoProgress),
-                        verify: VerifyPolicy::from(args),
-                        max_chunks,
-                    },
-                ),
+                Ok(Ok(provider)) => writer.update(RunSpec {
+                    chain_id: chain,
+                    market_id: market.id,
+                    to_block: resolved,
+                    chunk_size: args.chunk_size,
+                    max_block_range: args.max_block_range,
+                    provider,
+                    cancel: cancel.flag(),
+                    progress: Arc::new(NoProgress),
+                    verify: VerifyPolicy::from(args),
+                    max_chunks,
+                }),
                 Ok(Err(err)) => Err(RunError::from(err)),
                 Err(cli_err) => return Err(cli_err),
             };
@@ -488,80 +489,15 @@ fn update(
     Ok(AaveReport::Updated { entries })
 }
 
-/// An exclusive, reset-scoped advisory lock over one database path.
-///
-/// The exclusion is an advisory `flock` (via [`std::fs::File::try_lock`]) on a
-/// file beside the database, which also carries the holder's pid for
-/// diagnostics. The kernel releases the lock when the holding process dies, so
-/// a killed or crashed reset cannot wedge every later reset the way the
-/// previous create-new pid file did: the surviving file carries no lock, and
-/// the next reset takes it over. A live holder still blocks, and the refusal
-/// still reports the path. It guards reset-against-reset on a shared database,
-/// rather than racing a purge against an in-flight re-init. The updater arms
-/// do not take this lock, so it does not by itself exclude a concurrent
-/// `aave update`; the purge's own transaction is what keeps a racing writer
-/// from observing a partially-purged market.
-struct ResetLock {
-    path: std::path::PathBuf,
-    /// Holding the descriptor is what holds the `flock`: dropping it (after
-    /// [`Drop for ResetLock`] unlinks the name) releases the lock. Never read;
-    /// the lifetime IS the lock.
-    _file: std::fs::File,
-}
-
-impl ResetLock {
-    /// Take the lock, or report the holder's file path.
-    fn acquire(database_path: &std::path::Path, market_id: i64) -> Result<Self, CliError> {
-        use std::io::Write as _;
-
-        let mut path = database_path.to_path_buf();
-        let stem = database_path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        path.set_file_name(format!("{stem}.aave-reset.lock"));
-        // Open-or-create, never `create_new`: a file surviving its holder is
-        // the expected crash case, and the flock — not the file's existence —
-        // is the exclusion.
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(CliError::Io)?;
-        file.try_lock().map_err(|err| match err {
-            std::fs::TryLockError::WouldBlock => CliError::AaveMarketMidUpdate {
-                market_id,
-                lock_path: path.display().to_string(),
-            },
-            std::fs::TryLockError::Error(err) => CliError::Io(err),
-        })?;
-        let mut file = file;
-        file.set_len(0).map_err(CliError::Io)?;
-        writeln!(file, "{}", std::process::id()).map_err(CliError::Io)?;
-        Ok(Self { path, _file: file })
-    }
-}
-
-impl Drop for ResetLock {
-    fn drop(&mut self) {
-        // Unlink while the flock is still held (the descriptor drops after
-        // this body), so a waiter that opens the path cannot inherit a lock
-        // on a file whose name is already gone.
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// `aave reset`.
 ///
 /// Resolves the market by name, defaulting to the shipped deployment's market
 /// when none is given; reads and prints the purge's per-relation counts as the
-/// plan, then — under the reset lock — purges the
-/// market and re-seeds its cold-boot substrate in ONE transaction through
-/// [`reset_market_to_cold_boot`]: the purge and the activate seam's completion
-/// commit together, so nothing can land between them. The report renders the
-/// facts that module read back from that transaction. No update run here: the
+/// plan, then — under the market's writer lock — purges the market and
+/// re-seeds its cold-boot substrate in ONE transaction
+/// ([`AaveMarketWriter::reset_to_cold_boot`]): the purge and the activate
+/// seam's completion commit together, so nothing can land between them. The
+/// report renders the facts that transaction read back. No update run here: the
 /// command returns in seconds, and the next `aave update` takes the cold-boot
 /// path from the stamped cursor.
 fn reset(
@@ -621,9 +557,10 @@ fn reset(
         });
     }
 
-    // Taken BEFORE the module's transaction and held through it, so two
-    // resets of this database cannot interleave a purge with a re-seed.
-    let _lock = ResetLock::acquire(&database_path, market.id)?;
+    // The market's ONE writer: held from here through the reset transaction, so
+    // no reset or update of this market anywhere (this CLI, the PyO3 seam, a
+    // Rust consumer) can interleave a purge with a re-seed or a chunk with it.
+    let writer = acquire_market_writer(&database_path, market.id)?;
 
     // The module's activation RPC needs a live transport; the shipped
     // deployment constants supply the two addresses it reads (the on-chain
@@ -638,7 +575,7 @@ fn reset(
         Err(cli_err) => return Err(cli_err),
     };
 
-    // ONE open + ONE transaction: the module purges the market and re-seeds
+    // ONE open + ONE transaction: the writer purges the market and re-seeds
     // its cold-boot substrate on this same transaction — the rewind block is
     // the shipped deployment's bootstrap block, where `aave activate` stamps a
     // fresh market — and returns the facts it read back from it. A single
@@ -646,22 +583,13 @@ fn reset(
     // failure drops the transaction and the database stays byte-identical. The
     // counts are read on this transaction ahead of the write, so they are the
     // rows the purge removes.
-    let (removed, facts) = {
-        let (db, _state) = DegenbotDb::open_for_writes(&database_path)?;
-        let mut guard = db.lock();
-        let tx = guard.transaction().map_err(DbError::from)?;
-        let removed = DegenbotDb::count_aave_market_rows_on_conn(&tx, market.id)?;
-        let facts = reset_market_to_cold_boot(
-            &tx,
-            market.id,
+    let MarketReset { removed, facts } = writer
+        .reset_to_cold_boot(
             &deployment.pool_address_provider.to_checksum(None),
             &deployment.gho_token_address.to_checksum(None),
             &provider,
         )
-        .map_err(CliError::AaveUpdate)?;
-        tx.commit().map_err(DbError::from)?;
-        (removed, facts)
-    };
+        .map_err(map_run_error)?;
     tracing::info!(
         chain_id,
         market_id = market.id,
@@ -682,6 +610,33 @@ fn reset(
                 .map(|block| i64::try_from(block).unwrap_or(i64::MAX)),
         }),
     })
+}
+
+/// Take `market_id`'s writer for `database_path`.
+///
+/// The arms hold it across their run, so this CLI is one of the writers the
+/// market's lock excludes — never a path around it.
+fn acquire_market_writer(
+    database_path: &std::path::Path,
+    market_id: i64,
+) -> Result<AaveMarketWriter, CliError> {
+    AaveMarketWriter::acquire(database_path, market_id).map_err(map_run_error)
+}
+
+/// The core run error's CLI face: a market another writer holds is the
+/// operator-facing mid-update refusal (the writer's lock path included),
+/// everything else stays the wrapped core failure.
+fn map_run_error(err: RunError) -> CliError {
+    match err {
+        RunError::MarketHeld {
+            market_id,
+            lock_path,
+        } => CliError::AaveMarketMidUpdate {
+            market_id,
+            lock_path,
+        },
+        other => CliError::AaveUpdate(other),
+    }
 }
 
 /// Delete the market's zero-balance collateral + debt rows under one transaction.
@@ -763,108 +718,4 @@ fn position_show(
         collateral,
         debt,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    #![expect(clippy::unwrap_used)]
-
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{Duration, Instant};
-
-    use super::ResetLock;
-    use crate::error::CliError;
-
-    /// Spawn the `#[ignore]` child test as a fake holder and wait until it
-    /// reports the lock armed.
-    fn spawn_holder(db: &PathBuf, dir: &std::path::Path) -> std::process::Child {
-        let ready = dir.join("holder-ready");
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "aave::tests::reset_lock_holder_child",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("RESET_LOCK_TEST_DB", db)
-            .env("RESET_LOCK_TEST_READY", &ready)
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !ready.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "holder child never armed the reset lock"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        child
-    }
-
-    #[test]
-    fn stale_lock_file_does_not_block_a_reset() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("degenbot.db");
-        let lock_path = dir.path().join("degenbot.db.aave-reset.lock");
-        // A lock file outliving its holder: dead-or-garbage pid, no flock.
-        fs::write(&lock_path, "999999999 dead holder\n").unwrap();
-        let lock = ResetLock::acquire(&db, 7).unwrap();
-        // The takeover rewrites the pid file with the new holder's pid.
-        assert_eq!(
-            fs::read_to_string(&lock_path).unwrap().trim(),
-            std::process::id().to_string()
-        );
-        drop(lock);
-        assert!(!lock_path.exists());
-    }
-
-    #[test]
-    fn a_live_holder_blocks_until_it_releases() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("degenbot.db");
-        let holder = ResetLock::acquire(&db, 7).unwrap();
-        // A second open file description conflicts with the held flock even
-        // inside one process — the same refusal a concurrent reset sees.
-        assert!(matches!(
-            ResetLock::acquire(&db, 7),
-            Err(CliError::AaveMarketMidUpdate { .. })
-        ));
-        drop(holder);
-        ResetLock::acquire(&db, 7).unwrap();
-    }
-
-    #[test]
-    fn a_killed_holder_releases_the_reset_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("degenbot.db");
-        let mut child = spawn_holder(&db, dir.path());
-        // The live fake holder blocks.
-        assert!(matches!(
-            ResetLock::acquire(&db, 7),
-            Err(CliError::AaveMarketMidUpdate { .. })
-        ));
-        // SIGKILL: the kernel drops the flock with the process, the pid file
-        // survives, and the next reset proceeds.
-        child.kill().unwrap();
-        child.wait().unwrap();
-        ResetLock::acquire(&db, 7).unwrap();
-    }
-
-    /// The fake holder: spawned as a child test process by
-    /// `a_killed_holder_releases_the_reset_lock`, killed mid-hold.
-    #[test]
-    #[ignore = "spawned as the fake holder by a_killed_holder_releases_the_reset_lock"]
-    fn reset_lock_holder_child() {
-        let db = PathBuf::from(std::env::var("RESET_LOCK_TEST_DB").unwrap());
-        let ready = PathBuf::from(std::env::var("RESET_LOCK_TEST_READY").unwrap());
-        let _lock = ResetLock::acquire(&db, 7).unwrap();
-        fs::write(&ready, b"armed").unwrap();
-        // Hold until the parent kills us; the deadline only bounds a leak if
-        // the parent dies before it can.
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
 }

@@ -100,7 +100,7 @@ def run_aave_update(
     Drive the Rust-owned Aave V3 updater chunk loop for `market_id`, advancing
     `aave_v3_markets.last_update_block` to `to_block` (or the chain tip if
     `to_block is None`). See
-    [`degenbot_aave::run::run_aave_update`] for the chunk-atomicity
+    [`degenbot_aave::AaveMarketWriter::update`] for the chunk-atomicity
     invariant (`docs/architecture/chunk-atomicity.md`; one `Transaction` per
     chunk; failure mid-chunk → rollback →
     `last_update_block` unchanged → restart re-processes clean).
@@ -147,7 +147,10 @@ def run_aave_update(
     # Raises
 
     `ValueError` on a DB / RPC / config-dispatch / parse failure (the in-flight
-    chunk is rolled back before returning; committed chunks stay durable).
+    chunk is rolled back before returning; committed chunks stay durable), and on
+    a market another writer holds — the CLI, another Python writer, or a Rust
+    consumer mid-run on the same (database, market). The refusal names the lock
+    file and lands before the transport is built.
     `RuntimeError` if cancelled.
     `AssertionError` if `verify_chunk=True` and pre-commit verification found
     divergences (the in-flight chunk is rolled back — the chunk's data is NOT

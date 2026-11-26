@@ -1,5 +1,5 @@
 //! The config-event direct-decode dispatch for the Rust-owned Aave V3 chunk
-//! loop (`run_aave_update`).
+//! loop (`AaveMarketWriter::update`).
 //!
 //! This module owns the orchestrator's per-transaction configuration
 //! handling: loop over a tx's logs, decode each via

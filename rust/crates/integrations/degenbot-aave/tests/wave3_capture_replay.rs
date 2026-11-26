@@ -49,9 +49,8 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, NoProgress, RevisionChange, RunSpec, VerifyPolicy,
-};
+use degenbot_aave::updater::{NoProgress, RevisionChange, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, CassetteResponse};
@@ -374,22 +373,24 @@ fn replay_and_gate(name: &str, seed: &ScenarioSeed) -> ReplayRun {
         SEED_TOKEN_REVISION,
     );
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
-    let report = run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id: 1,
-            market_id,
-            to_block: Some(SPAN_TO),
-            chunk_size: SPAN_TO - SPAN_FROM + 1,
-            max_block_range: 10_000,
-            provider: provider.clone(),
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{name}: the replayed chunk must commit cleanly: {e}"));
+    let report = AaveMarketWriter::acquire(&db_path, market_id)
+        .unwrap()
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id: 1,
+                market_id,
+                to_block: Some(SPAN_TO),
+                chunk_size: SPAN_TO - SPAN_FROM + 1,
+                max_block_range: 10_000,
+                provider: provider.clone(),
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{name}: the replayed chunk must commit cleanly: {e}"));
     assert_eq!(
         report.chunks_committed, 1,
         "{name}: the whole recorded span is one chunk"
@@ -458,9 +459,9 @@ fn replay_probe(
         )
         .unwrap();
     }
-    run_aave_update(
-        &db_path,
-        RunSpec {
+    AaveMarketWriter::acquire(&db_path, market_id)
+        .unwrap()
+        .update(RunSpec {
             chain_id: 1,
             market_id,
             to_block: Some(SPAN_TO),
@@ -471,9 +472,8 @@ fn replay_probe(
             progress: Arc::new(NoProgress),
             verify: VerifyPolicy::default(),
             max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{name}: the probe replay must commit cleanly: {e}"));
+        })
+        .unwrap_or_else(|e| panic!("{name}: the probe replay must commit cleanly: {e}"));
     let db_path = dir.keep().join("probe.db");
     ReplayRun {
         served: transport.served_snapshot(),

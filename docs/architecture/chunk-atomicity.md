@@ -35,8 +35,9 @@ invariant, and the whole reorg/restart story depends on it:
   `run::run_pool_update` owns the transaction; the write half is
   `apply_chunk_writes_on_conn` — pure-sync, borrowed `&Connection`, so every
   write of the chunk rides the caller's transaction.
-- **Aave V3 updater** (`degenbot-aave`): the outer chunk loop in
-  `run::run_aave_update` opens one `DegenbotDb`, begins one `Transaction`, and
+- **Aave V3 updater** (`degenbot-aave`): the outer chunk loop behind
+  `AaveMarketWriter::update` (the market's one writer lock; the loop itself is
+  `run::run_aave_update_on_db`) opens one `DegenbotDb`, begins one `Transaction`, and
   the apply stage commits through `apply_aave_chunk_writes_on_conn` on that one
   borrowed connection. Any `?` early-return (a `UNIQUE` violation, a decode
   failure) leaves the transaction uncommitted, so it drops and the whole chunk

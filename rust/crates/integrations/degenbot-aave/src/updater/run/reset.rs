@@ -44,6 +44,10 @@ pub struct MarketResetFacts {
 /// caller-supplied transaction, returning the facts read back from that same
 /// transaction.
 ///
+/// The caller is [`crate::AaveMarketWriter::reset_to_cold_boot`], which owns the
+/// market's writer lock and the transaction this rides; no unguarded reset entry
+/// remains.
+///
 /// The market row must exist; its `chain_id` is read from that row, so the
 /// re-seed completes the SAME market the purge cleared (never a sibling row).
 /// `provider` supplies the activation RPC — the on-chain market name plus the
@@ -70,7 +74,7 @@ pub struct MarketResetFacts {
 /// - [`RunError::Db`] on a query failure, or when the on-chain market name
 ///   resolves to a row other than `market_id` (the re-seed would otherwise
 ///   strand the purged market, leaving it inactive with a rewound cursor).
-pub fn reset_market_to_cold_boot(
+pub(crate) fn reset_market_to_cold_boot(
     conn: &Connection,
     market_id: i64,
     pool_address_provider: &str,

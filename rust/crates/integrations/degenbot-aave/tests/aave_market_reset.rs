@@ -13,9 +13,9 @@
 use std::sync::Arc;
 
 use degenbot_aave::updater::{
-    activate_aave_market_on_conn, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunError,
-    RunSpec, VerifyPolicy,
+    activate_aave_market_on_conn, AaveUpdateReport, NoProgress, RunError, RunSpec, VerifyPolicy,
 };
+use degenbot_aave::AaveMarketWriter;
 use degenbot_aave::ETHEREUM_AAVE_V3_BOOTSTRAP_BLOCK;
 use degenbot_db::sql_ledger::dump_tables_golden_json;
 use degenbot_db::{DbError, DegenbotDb};
@@ -27,6 +27,9 @@ use degenbot_rpc::cassette_replay::CassetteReplayTransport;
 use rusqlite::params;
 
 mod common;
+#[path = "common/fixture_db.rs"]
+mod fixture_db;
+use fixture_db::FixtureDb;
 use std::sync::atomic::AtomicBool;
 
 const CHAIN_ID: i64 = 1;
@@ -62,8 +65,8 @@ const MARKET_TABLES: &[&str] = &[
 /// row, the `POOL_ADDRESS_PROVIDER` contract row, the GHO `erc20_tokens` row
 /// with its metadata, and the bare `aave_gho_tokens` row. Mirrors
 /// `activate_aave_market_on_conn`'s fresh-insert branch (crate-private).
-fn fresh_activated() -> (DegenbotDb, i64) {
-    let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+fn fresh_activated() -> (FixtureDb, i64) {
+    let db = FixtureDb::create("fresh-activated.db");
     let market_id = {
         let conn = db.lock();
         conn.execute(
@@ -99,7 +102,7 @@ fn fresh_activated() -> (DegenbotDb, i64) {
 /// The post-sync shape: the activation seed plus everything an update run
 /// populates (the remaining contract rows, a reserve, a user, both position
 /// kinds, an e-mode category, and the GHO discount columns).
-fn populated() -> (DegenbotDb, i64) {
+fn populated() -> (FixtureDb, i64) {
     let (db, market_id) = fresh_activated();
     {
         let conn = db.lock();
@@ -706,26 +709,28 @@ fn bootstrap_only_cassette(terminal: u64) -> CassetteReplayTransport {
 }
 
 fn run_once(
-    db: &DegenbotDb,
+    db: &FixtureDb,
     transport: &CassetteReplayTransport,
     to_block: u64,
 ) -> (Result<AaveUpdateReport, RunError>, u64, u64) {
     let provider = transport.as_alloy_provider();
-    let result = run_aave_update_on_db(
-        db,
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id: 1,
-            to_block: Some(to_block),
-            chunk_size: BOOTSTRAP_WINDOW + 1,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: Some(1),
-        },
-    );
+    let result = AaveMarketWriter::acquire(db.path(), 1)
+        .unwrap()
+        .update_through(
+            db,
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id: 1,
+                to_block: Some(to_block),
+                chunk_size: BOOTSTRAP_WINDOW + 1,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: Some(1),
+            },
+        );
     let snapshot = transport.served_snapshot();
     (result, snapshot.requests, snapshot.served)
 }

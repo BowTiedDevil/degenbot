@@ -57,7 +57,8 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use degenbot_aave::updater::{run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::updater::{NoProgress, RunSpec, VerifyPolicy};
+use degenbot_aave::AaveMarketWriter;
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
 use degenbot_rpc::cassette::{entry_digest, verify_cassette_bytes, Cassette, CassetteResponse};
@@ -406,22 +407,24 @@ fn replay_and_gate(name: &str, expect: &WindowExpectations) -> ReplayRun {
     let dir = TempDir::new().unwrap();
     let (db_path, market_id) = seeded_db(dir.path(), "golden.db", &seed);
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
-    let report = run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id,
-            to_block: Some(seed.to_block),
-            chunk_size: seed.chunk_size,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    )
-    .unwrap_or_else(|e| panic!("{name}: the replayed span must commit cleanly: {e}"));
+    let report = AaveMarketWriter::acquire(&db_path, market_id)
+        .unwrap()
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id,
+                to_block: Some(seed.to_block),
+                chunk_size: seed.chunk_size,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{name}: the replayed span must commit cleanly: {e}"));
     assert_eq!(
         report.chunks_committed, expect.chunks,
         "{name}: the recorded span commits the pinned chunk count"
@@ -465,21 +468,23 @@ fn replay_probe_capture(
     let dir = TempDir::new().unwrap();
     let (db_path, market_id) = seeded_db(dir.path(), "probe.db", seed);
     let (ledger, _state) = LedgerDb::open_for_writes(&db_path).unwrap();
-    let run = run_aave_update_on_db(
-        ledger.db(),
-        RunSpec {
-            chain_id: CHAIN_ID,
-            market_id,
-            to_block: Some(seed.to_block),
-            chunk_size: seed.chunk_size,
-            max_block_range: 10_000,
-            provider,
-            cancel: Arc::new(AtomicBool::new(false)),
-            progress: Arc::new(NoProgress),
-            verify: VerifyPolicy::default(),
-            max_chunks: None,
-        },
-    );
+    let run = AaveMarketWriter::acquire(&db_path, market_id)
+        .unwrap()
+        .update_through(
+            ledger.db(),
+            RunSpec {
+                chain_id: CHAIN_ID,
+                market_id,
+                to_block: Some(seed.to_block),
+                chunk_size: seed.chunk_size,
+                max_block_range: 10_000,
+                provider,
+                cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(NoProgress),
+                verify: VerifyPolicy::default(),
+                max_chunks: None,
+            },
+        );
     match run {
         Ok(_) => {
             let records = ledger.records().expect("the capture session is armed");
