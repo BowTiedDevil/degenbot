@@ -9,6 +9,8 @@
 
 #![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
+mod support;
+
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
@@ -201,11 +203,11 @@ fn txpool_pump(cfg: TxpoolFeedConfig) -> (PendingTxPump, PendingTxStream) {
 }
 
 async fn drain_until(feed: &PendingTxStream, want: usize, timeout: Duration) -> Vec<Json> {
-    let mut acc: Vec<Json> = Vec::new();
-    let deadline = Instant::now() + timeout;
-    loop {
-        for ev in feed.drain() {
-            acc.push(json!({
+    support::drain_frames(|| feed.drain(), want, timeout)
+        .await
+        .into_iter()
+        .map(|ev| {
+            json!({
                 "hash": ev.hash.to_string(),
                 "from": ev.from.to_string(),
                 "to": ev.to.map(|a| a.to_string()),
@@ -218,18 +220,9 @@ async fn drain_until(feed: &PendingTxStream, want: usize, timeout: Duration) -> 
                 "chainId": ev.chain_id,
                 "tx_type": ev.tx_type,
                 "raw": ev.raw_signed_tx.map(|b| format!("0x{}", alloy::hex::encode(&b))),
-            }));
-        }
-        if acc.len() >= want {
-            return acc;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {want} events (got {})",
-            acc.len()
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+            })
+        })
+        .collect()
 }
 
 /// Wait until the pump's own status counters satisfy `ready`, then return them

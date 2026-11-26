@@ -25,40 +25,38 @@
 //! so it fills BOTH caps (the frame's EIP-1559 fee fields become the
 //! effective ceiling).
 //!
-//! Robustness mirrors `backrun_feed`'s watchdog: a frame-silent socket is torn
-//! down and reconnected; any server close reconnects with capped exponential
-//! backoff that resets once a session proves it can deliver events. Non-1
-//! chain ids and malformed payloads are counted, never fatal.
+//! Robustness is the shared feed pump's (`crate::feed_pump`): a frame-silent
+//! socket is torn down and reconnected, any server close reconnects with the
+//! capped backoff curve that resets once a session proves it can deliver
+//! events. Non-1 chain ids and malformed payloads are counted, never fatal.
+//! This module owns only the txpool wire — the subscribe method, the hash
+//! notice and its by-hash fetch, and the typed frame.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use alloy::primitives::{Address, Bytes, B256, U256};
-use futures_util::{SinkExt, StreamExt};
+use alloy::primitives::{Address, Bytes, B256};
+use futures_util::SinkExt;
 use serde_json::Value as Json;
-use tokio::net::TcpStream;
-use tokio::sync::watch;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use degenbot_core::{op_info, op_warn};
-use degenbot_eventhub::PendingTxPublisher;
+use degenbot_eventhub::{PendingTx, PendingTxPublisher};
 
+use crate::feed_pump::{
+    hex_u128, hex_u256, hex_u64, now_unix_ms, run_loop, str_field, Count, FeedSession,
+    FrameVerdict, PumpConfig, PumpCounters, PumpShared, WsStream,
+};
 use crate::feed_shell::{spawn_feed_loop, DeferredFeedShell};
 
 /// The txpool feed's production ring capacity: 4096 frames.
 pub const DEFAULT_RING_CAPACITY: NonZeroUsize = NonZeroUsize::new(4096).expect("4096 is non-zero");
 
-const SUBSCRIBE_ID: u64 = 1;
 const SUBSCRIBE_METHOD: &str = "newPendingTransactions";
 /// First auto id for a hash fetch (the subscribe ack owns `SUBSCRIBE_ID`).
 const FETCH_ID_BASE: u64 = 2;
-
-type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Debug, Clone)]
 pub struct TxpoolFeedConfig {
@@ -106,7 +104,7 @@ pub struct TxpoolFeed {
     /// launch dispatch); declared first so its `Drop` — the stop send — runs
     /// before the pump's other fields tear down.
     shell: DeferredFeedShell,
-    shared: Arc<Shared>,
+    shared: Arc<PumpShared>,
     /// The provisioning config [`Self::start`] consumes to spawn the loop.
     /// Held (not consumed at build) so provisioning stays dial-free.
     cfg: TxpoolFeedConfig,
@@ -125,50 +123,19 @@ pub struct TxpoolFeedStatus {
     pub last_event_unix_ms: u64,
 }
 
-struct Shared {
-    cfg_backoff: (Duration, Duration),
-    source: PendingTxPublisher,
-    connected: AtomicBool,
-    accepted: AtomicU64,
-    rejected_chain_id: AtomicU64,
-    rejected_parse: AtomicU64,
-    mine_misses: AtomicU64,
-    reconnects: AtomicU64,
-    last_event_unix_ms: AtomicU64,
-}
-
-impl Shared {
-    fn push(&self, ev: degenbot_eventhub::PendingTx) {
-        self.accepted.fetch_add(1, Ordering::Relaxed);
-        self.last_event_unix_ms
-            .store(now_unix_ms(), Ordering::Relaxed);
-        self.source.push(ev);
+impl From<PumpCounters> for TxpoolFeedStatus {
+    fn from(c: PumpCounters) -> Self {
+        Self {
+            connected: c.connected,
+            accepted: c.accepted,
+            dropped_ring: c.dropped_ring,
+            rejected_chain_id: c.rejected_chain_id,
+            rejected_parse: c.rejected_parse,
+            mine_misses: c.mine_misses,
+            reconnects: c.reconnects,
+            last_event_unix_ms: c.last_event_unix_ms,
+        }
     }
-
-    fn count(&self, which: Count) {
-        let c = match which {
-            Count::RejectedChainId => &self.rejected_chain_id,
-            Count::RejectedParse => &self.rejected_parse,
-            Count::MineMisses => &self.mine_misses,
-            Count::Reconnects => &self.reconnects,
-        };
-        c.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Count {
-    RejectedChainId,
-    RejectedParse,
-    MineMisses,
-    Reconnects,
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or_default()
 }
 
 impl TxpoolFeed {
@@ -180,20 +147,9 @@ impl TxpoolFeed {
     /// txpool arm's only production drain). The feed owns only the publisher.
     /// [`Self::start`] launches the reconnect loop later.
     pub(crate) fn build(cfg: TxpoolFeedConfig, source: PendingTxPublisher) -> Self {
-        let shared = Arc::new(Shared {
-            cfg_backoff: (cfg.reconnect_backoff, cfg.max_backoff),
-            source,
-            connected: AtomicBool::new(false),
-            accepted: AtomicU64::new(0),
-            rejected_chain_id: AtomicU64::new(0),
-            rejected_parse: AtomicU64::new(0),
-            mine_misses: AtomicU64::new(0),
-            reconnects: AtomicU64::new(0),
-            last_event_unix_ms: AtomicU64::new(0),
-        });
         Self {
             shell: DeferredFeedShell::new(),
-            shared,
+            shared: Arc::new(PumpShared::new(source)),
             cfg,
         }
     }
@@ -204,26 +160,22 @@ impl TxpoolFeed {
     /// current tokio runtime when one is entered, else the crate-global
     /// runtime.
     pub(crate) fn start(&self) {
-        let cfg = self.cfg.clone();
-        let sh = Arc::clone(&self.shared);
+        let pump = PumpConfig::new(
+            self.cfg.ws_url.clone(),
+            self.cfg.watchdog,
+            self.cfg.reconnect_backoff,
+            self.cfg.max_backoff,
+        );
+        let shared = Arc::clone(&self.shared);
+        let wire = TxpoolWire::new(self.cfg.expected_chain_id);
         self.shell.start_once(move |stop_rx| {
-            spawn_feed_loop(async move { run_loop(cfg, sh, stop_rx).await });
+            spawn_feed_loop(async move { run_loop(pump, shared, wire, stop_rx).await });
         });
     }
 
     #[must_use]
     pub fn status(&self) -> TxpoolFeedStatus {
-        let s = &self.shared;
-        TxpoolFeedStatus {
-            connected: s.connected.load(Ordering::Relaxed),
-            accepted: s.accepted.load(Ordering::Relaxed),
-            dropped_ring: s.source.dropped(),
-            rejected_chain_id: s.rejected_chain_id.load(Ordering::Relaxed),
-            rejected_parse: s.rejected_parse.load(Ordering::Relaxed),
-            mine_misses: s.mine_misses.load(Ordering::Relaxed),
-            reconnects: s.reconnects.load(Ordering::Relaxed),
-            last_event_unix_ms: s.last_event_unix_ms.load(Ordering::Relaxed),
-        }
+        self.shared.counters().into()
     }
 
     /// Politely stop the pump (idempotent).
@@ -232,144 +184,51 @@ impl TxpoolFeed {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum SessionEnd {
-    Stopped,
-    Closed,
-    Stall,
+/// The chain-node txpool wire: a hash notice resolved by an on-socket
+/// `eth_getTransactionByHash` fetch (a full-tx notice needs no fetch).
+struct TxpoolWire {
+    expected_chain_id: u64,
+    /// In-flight hash fetches: request id -> tx hash.
+    fetches: HashMap<u64, B256>,
+    next_fetch_id: u64,
 }
 
-async fn run_loop(cfg: TxpoolFeedConfig, s: Arc<Shared>, mut stop_rx: watch::Receiver<bool>) {
-    let (init_backoff, max_backoff) = s.cfg_backoff;
-    let mut backoff = init_backoff;
-    loop {
-        if *stop_rx.borrow() {
-            return;
-        }
-        s.connected.store(false, Ordering::Relaxed);
-        let request = match cfg.ws_url.as_str().into_client_request() {
-            Ok(r) => r,
-            Err(e) => {
-                op_warn!(domain = rpc, url = %cfg.ws_url, e = %e, "txpool feed: invalid url");
-                return;
-            }
-        };
-        let socket = match tokio::time::timeout(cfg.watchdog, connect_async(request)).await {
-            Ok(Ok((ws, _resp))) => {
-                op_info!(domain = rpc, url = %cfg.ws_url, "txpool feed: connected");
-                ws
-            }
-            Ok(Err(e)) => {
-                s.count(Count::Reconnects);
-                op_warn!(domain = rpc, %e, "txpool feed: connect failed");
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff.saturating_mul(2), max_backoff);
-                continue;
-            }
-            Err(_) => {
-                s.count(Count::Reconnects);
-                op_warn!(domain = rpc, "txpool feed: connect timeout");
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff.saturating_mul(2), max_backoff);
-                continue;
-            }
-        };
-        let accepted_before = s.accepted.load(Ordering::Relaxed);
-        match session(socket, &cfg, &s, &mut stop_rx).await {
-            SessionEnd::Stopped => {
-                op_info!(domain = rpc, url = %cfg.ws_url, "txpool feed: stopped");
-                return;
-            }
-            end @ (SessionEnd::Closed | SessionEnd::Stall) => {
-                let session_accepted = s.accepted.load(Ordering::Relaxed) - accepted_before;
-                if session_accepted > 0 {
-                    backoff = init_backoff;
-                }
-                s.connected.store(false, Ordering::Relaxed);
-                s.count(Count::Reconnects);
-                op_info!(
-                    domain = rpc,
-                    url = %cfg.ws_url,
-                    reason = if end == SessionEnd::Stall { "stall" } else { "closed" },
-                    session_accepted,
-                    reconnects = s.reconnects.load(Ordering::Relaxed),
-                    "txpool feed: disconnected"
-                );
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff.saturating_mul(2), max_backoff);
-            }
+impl TxpoolWire {
+    fn new(expected_chain_id: u64) -> Self {
+        Self {
+            expected_chain_id,
+            fetches: HashMap::new(),
+            next_fetch_id: FETCH_ID_BASE,
         }
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "the ws session reads top-to-bottom")]
-async fn session(
-    mut ws: WsStream,
-    cfg: &TxpoolFeedConfig,
-    s: &Shared,
-    stop_rx: &mut watch::Receiver<bool>,
-) -> SessionEnd {
-    let sub_req = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": SUBSCRIBE_ID,
-        "method": "eth_subscribe",
-        "params": [SUBSCRIBE_METHOD]
-    });
-    if let Err(e) = ws.send(Message::Text(sub_req.to_string().into())).await {
-        op_warn!(domain = rpc, %e, "txpool feed: subscribe send failed");
-        return SessionEnd::Closed;
-    }
-    let mut sub_id: Option<String> = None;
-    // in-flight hash fetches: request id -> tx hash.
-    let mut fetches: HashMap<u64, B256> = HashMap::new();
-    let mut next_fetch_id = FETCH_ID_BASE;
-    s.connected.store(true, Ordering::Relaxed);
-    loop {
-        let frame = tokio::select! {
-            () = tokio::time::sleep(cfg.watchdog) => return SessionEnd::Stall,
-            // Wildcard `_` is deliberate: `changed()` also yields `Err` on a dropped stop sender, and this arm must fire then too so a closed watch ends the session promptly instead of waiting out the watchdog.
-            _ = stop_rx.changed() => {
-                let _ = ws.send(Message::Close(None)).await;
-                return SessionEnd::Stopped;
-            }
-            f = ws.next() => match f {
-                None => return SessionEnd::Closed,
-                Some(Err(e)) => {
-                    op_warn!(domain = rpc, %e, "txpool feed: stream error");
-                    return SessionEnd::Closed;
-                }
-                Some(Ok(m)) => m,
-            },
-        };
-        let Message::Text(t) = frame else {
-            continue;
-        };
-        let Ok(v): Result<Json, _> = serde_json::from_str(t.as_str()) else {
-            s.count(Count::RejectedParse);
-            continue;
-        };
-        // Subscribe ack: mirror id, string result, no `method` field.
-        if v.get("method").is_none() && v.get("id").and_then(Json::as_u64) == Some(SUBSCRIBE_ID) {
-            if let Some(id) = v.get("result").and_then(Json::as_str) {
-                sub_id = Some(id.to_string());
-                op_info!(domain = rpc, subscription = %id, "txpool feed: subscribed");
-            }
-            continue;
-        }
+impl FeedSession for TxpoolWire {
+    const LABEL: &'static str = "txpool feed";
+    const SUBSCRIBE_METHOD: &'static str = SUBSCRIBE_METHOD;
+
+    async fn handle_frame(
+        &mut self,
+        ws: &mut WsStream,
+        shared: &PumpShared,
+        sub_id: Option<&str>,
+        v: Json,
+    ) -> FrameVerdict {
         // By-hash fetch response: the tx object (or null = mined first).
         if v.get("method").is_none() {
             let resolved = v
                 .get("id")
                 .and_then(Json::as_u64)
-                .and_then(|id| fetches.remove(&id).map(|hash| (id, hash)));
-            if let Some((req_id, hash)) = resolved {
-                let _ = req_id;
+                .and_then(|id| self.fetches.remove(&id).map(|hash| (id, hash)));
+            if let Some((_, hash)) = resolved {
                 match v.get("result") {
                     Some(Json::Null) | None => {
-                        s.count(Count::MineMisses);
+                        shared.count(Count::MineMisses);
                     }
                     Some(result) => {
-                        if let Some(ev) = parse_full_tx(result, hash, cfg.expected_chain_id, s) {
+                        if let Some(ev) =
+                            parse_full_tx(result, hash, self.expected_chain_id, shared)
+                        {
                             op_info!(
                                 domain = rpc,
                                 hash = %ev.hash,
@@ -378,31 +237,30 @@ async fn session(
                                 chain_id = ev.chain_id,
                                 gas = ev.gas,
                                 nonce = ev.nonce,
-                                "txpool feed: pending tx"
+                                "{}: pending tx", Self::LABEL
                             );
-                            s.push(ev);
+                            shared.push(ev);
                         }
                     }
                 }
-                continue;
+                return FrameVerdict::Continue;
             }
-            s.count(Count::RejectedParse);
-            continue;
+            shared.count(Count::RejectedParse);
+            return FrameVerdict::Continue;
         }
-        // Subscription notice: the hash (or, on nodes that send full bodies,
-        // the tx object itself).)
+        // Subscription notice: the hash (or, on nodes that send full
+        // bodies, the tx object itself).
         let is_sub_notif = v.get("method").and_then(Json::as_str) == Some("eth_subscription");
         let sub_matches = sub_id
-            .as_deref()
             .zip(v.pointer("/params/subscription").and_then(Json::as_str))
             .is_some_and(|(a, b)| a == b);
         if !(is_sub_notif && sub_matches) {
-            s.count(Count::RejectedParse);
-            continue;
+            shared.count(Count::RejectedParse);
+            return FrameVerdict::Continue;
         }
         let Some(result) = v.pointer("/params/result") else {
-            s.count(Count::RejectedParse);
-            continue;
+            shared.count(Count::RejectedParse);
+            return FrameVerdict::Continue;
         };
         match result {
             Json::String(hash_str) => {
@@ -411,12 +269,12 @@ async fn session(
                     .unwrap_or(hash_str)
                     .parse::<B256>()
                 else {
-                    s.count(Count::RejectedParse);
-                    continue;
+                    shared.count(Count::RejectedParse);
+                    return FrameVerdict::Continue;
                 };
-                let id = next_fetch_id;
-                next_fetch_id = next_fetch_id.wrapping_add(1).max(FETCH_ID_BASE);
-                fetches.insert(id, hash);
+                let id = self.next_fetch_id;
+                self.next_fetch_id = self.next_fetch_id.wrapping_add(1).max(FETCH_ID_BASE);
+                self.fetches.insert(id, hash);
                 let fetch_req = serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -424,8 +282,8 @@ async fn session(
                     "params": [hash]
                 });
                 if let Err(e) = ws.send(Message::Text(fetch_req.to_string().into())).await {
-                    op_warn!(domain = rpc, %e, "txpool feed: fetch send failed");
-                    return SessionEnd::Closed;
+                    op_warn!(domain = rpc, %e, "{}: fetch send failed", Self::LABEL);
+                    return FrameVerdict::Closed;
                 }
             }
             // A node delivering full bodies straight on the sub: parse it.
@@ -434,15 +292,16 @@ async fn session(
                     h.as_str()
                         .and_then(|s| s.strip_prefix("0x").unwrap_or(s).parse::<B256>().ok())
                 }) else {
-                    s.count(Count::RejectedParse);
-                    continue;
+                    shared.count(Count::RejectedParse);
+                    return FrameVerdict::Continue;
                 };
-                if let Some(ev) = parse_full_tx(result, hash, cfg.expected_chain_id, s) {
-                    s.push(ev);
+                if let Some(ev) = parse_full_tx(result, hash, self.expected_chain_id, shared) {
+                    shared.push(ev);
                 }
             }
-            _ => s.count(Count::RejectedParse),
+            _ => shared.count(Count::RejectedParse),
         }
+        FrameVerdict::Continue
     }
 }
 
@@ -450,15 +309,15 @@ fn parse_full_tx(
     v: &Json,
     hash: B256,
     expected_chain_id: u64,
-    s: &Shared,
-) -> Option<degenbot_eventhub::PendingTx> {
+    shared: &PumpShared,
+) -> Option<PendingTx> {
     let Some(from) = str_field(v, "from").and_then(|x| x.parse::<Address>().ok()) else {
-        s.count(Count::RejectedParse);
+        shared.count(Count::RejectedParse);
         return None;
     };
     let chain_id = hex_u64(v.get("chainId")).unwrap_or_default();
     if chain_id != expected_chain_id {
-        s.count(Count::RejectedChainId);
+        shared.count(Count::RejectedChainId);
         return None;
     }
     let data = v
@@ -482,12 +341,12 @@ fn parse_full_tx(
         (f, p)
     } else {
         let Some(price) = hex_u128(v.get("gasPrice")) else {
-            s.count(Count::RejectedParse);
+            shared.count(Count::RejectedParse);
             return None;
         };
         (price, price)
     };
-    Some(degenbot_eventhub::PendingTx {
+    Some(PendingTx {
         chain_id,
         from,
         to: str_field(v, "to").and_then(|x| x.parse::<Address>().ok()),
@@ -510,97 +369,4 @@ fn parse_full_tx(
         received_unix_ms: now_unix_ms(),
         raw_signed_tx: raw,
     })
-}
-
-fn str_field<'a>(v: &'a Json, key: &str) -> Option<&'a str> {
-    v.get(key).and_then(Json::as_str)
-}
-
-fn hex_u64(v: Option<&Json>) -> Option<u64> {
-    let s = v?.as_str()?;
-    u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
-}
-
-fn hex_u128(v: Option<&Json>) -> Option<u128> {
-    let s = v?.as_str()?;
-    u128::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
-}
-
-fn hex_u256(s: &str) -> Option<U256> {
-    U256::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use tokio_tungstenite::accept_async;
-
-    /// A `Shared` over a throwaway detached ring, mirroring `TxpoolFeed::build`
-    /// (the session never touches the ring on the stop path).
-    fn test_shared() -> Arc<Shared> {
-        let (source, _ring) = degenbot_eventhub::detached_pending_ring(DEFAULT_RING_CAPACITY);
-        Arc::new(Shared {
-            cfg_backoff: (Duration::from_millis(20), Duration::from_millis(50)),
-            source,
-            connected: AtomicBool::new(false),
-            accepted: AtomicU64::new(0),
-            rejected_chain_id: AtomicU64::new(0),
-            rejected_parse: AtomicU64::new(0),
-            mine_misses: AtomicU64::new(0),
-            reconnects: AtomicU64::new(0),
-            last_event_unix_ms: AtomicU64::new(0),
-        })
-    }
-
-    /// Acceptance pin for the stop arm of `session`'s frame `select!` (the
-    /// `_ = stop_rx.changed()` arm just above). `watch::Receiver::changed()`
-    /// resolves to `Err` when the stop sender is dropped WITHOUT a send; the
-    /// wildcard binding makes the arm fire on that `Err` too, so a closed stop
-    /// watch ends the session promptly as `SessionEnd::Stopped`. An
-    /// `Ok(()) = stop_rx.changed()` binding leaves the arm disabled in that
-    /// case and the session waits out `cfg.watchdog` (returning `Stall` here).
-    ///
-    /// Shape: this drives the real `session` directly against a silent mock WS,
-    /// because the public `TxpoolFeed` API cannot drop the sender without a
-    /// send — both `stop()` and `Drop` call `stop_tx.send(true)`, an `Ok`
-    /// change, never the sender-drop this arm exists to catch. `backrun_feed`'s
-    /// `session` carries the identical arm.
-    #[tokio::test]
-    async fn dropped_stop_sender_ends_the_session_as_stopped() {
-        // Mock server: accept one connection and hold it open, relaying
-        // nothing — so the ws.next() arm stays pending.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            if let Ok((stream, _)) = listener.accept().await {
-                if let Ok(mut ws) = accept_async(stream).await {
-                    while let Some(Ok(_)) = ws.next().await {}
-                }
-            }
-        });
-        let ws_url = format!("ws://127.0.0.1:{}", addr.port());
-        let request = ws_url.as_str().into_client_request().unwrap();
-        let (ws, _resp) = connect_async(request).await.unwrap();
-
-        let cfg = TxpoolFeedConfig {
-            ws_url,
-            // Small so that if the stop arm does NOT fire on the dropped
-            // sender, this test fails fast with `Stall` instead of hanging.
-            watchdog: Duration::from_secs(2),
-            ..TxpoolFeedConfig::defaults()
-        };
-        let shared = test_shared();
-        let (stop_tx, mut stop_rx) = watch::channel(false);
-        // Sender dropped with no send: the receiver can only observe the
-        // closed channel, so `changed()` resolves to `Err`.
-        drop(stop_tx);
-
-        let end = session(ws, &cfg, &shared, &mut stop_rx).await;
-        assert_eq!(
-            end,
-            SessionEnd::Stopped,
-            "a dropped stop sender must end the session as Stopped, not wait out the watchdog"
-        );
-    }
 }

@@ -141,18 +141,7 @@ impl PendingTxPump {
     pub fn status(&self) -> BackrunFeedStatus {
         match &self.inner {
             PumpInner::Mevblocker(feed) => feed.status(),
-            PumpInner::Txpool(feed) => {
-                let st = feed.status();
-                BackrunFeedStatus {
-                    connected: st.connected,
-                    accepted: st.accepted,
-                    dropped_ring: st.dropped_ring,
-                    rejected_chain_id: st.rejected_chain_id,
-                    rejected_parse: st.rejected_parse,
-                    reconnects: st.reconnects,
-                    last_event_unix_ms: st.last_event_unix_ms,
-                }
-            }
+            PumpInner::Txpool(feed) => feed.status().into(),
         }
     }
 

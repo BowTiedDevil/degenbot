@@ -37,6 +37,7 @@ pub mod chain_evidence;
 pub mod contract;
 pub mod erc20;
 mod error_class;
+mod feed_pump;
 mod feed_shell;
 pub mod fees;
 pub mod head_watch;

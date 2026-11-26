@@ -8,6 +8,8 @@
 
 #![expect(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
+mod support;
+
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex as StdMutex, Once, OnceLock};
@@ -183,20 +185,7 @@ async fn drain_until(
     want: usize,
     timeout: Duration,
 ) -> Vec<degenbot_eventhub::PendingTx> {
-    let mut acc: Vec<_> = Vec::new();
-    let deadline = Instant::now() + timeout;
-    loop {
-        acc.extend(feed.drain());
-        if acc.len() >= want {
-            return acc;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {want} events (got {})",
-            acc.len()
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    support::drain_frames(|| feed.drain(), want, timeout).await
 }
 
 #[tokio::test]
