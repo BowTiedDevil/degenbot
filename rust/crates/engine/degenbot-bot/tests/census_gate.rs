@@ -67,3 +67,37 @@ fn pipeline_accessor_is_census_module_private() {
         "pipeline() must not be named outside the census module — report the \n  happening through `instruments::record(CensusEvent::…)` instead; offenders: {offenders:?}"
     );
 }
+
+/// The application crate's own emit sites never reach the substrate port's
+/// `pipeline()` accessor: a bot-side substrate hook is a second bypass that
+/// skips the census door (the feed sampler's own `None` guard was exactly
+/// that). The strategy-side substrate caller is legitimate and outside this
+/// bot-only rule. The census module installs the bundle, so only the
+/// `register` seam may name the port here.
+#[test]
+fn bot_sources_reach_the_census_door_not_the_substrate_port() {
+    let bot_sources = crates_root()
+        .join("engine")
+        .join("degenbot-bot")
+        .join("src");
+    let mut files = Vec::new();
+    collect_rs(&bot_sources, &mut files);
+    assert!(
+        !files.is_empty(),
+        "the sweep found no bot sources under {}",
+        bot_sources.display()
+    );
+    let mut offenders = Vec::new();
+    for file in files {
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        if source.contains("telemetry_port::pipeline()") {
+            offenders.push(file.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "degenbot-bot must report through `instruments::record(CensusEvent::…)`,\n  not the substrate telemetry port; offenders: {offenders:?}"
+    );
+}

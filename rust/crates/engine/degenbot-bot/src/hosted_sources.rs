@@ -1462,13 +1462,13 @@ fn publish_observed(
     }
 }
 
-/// Spawn the one feed-telemetry sampler: scrape every hosted pump's status
-/// into the engine instruments on a `<=2s` tick, pushing counters as deltas.
+/// Spawn the one feed-telemetry sampler: sample every hosted pump's status
+/// into the census on a `<=2s` tick, one sample per pump.
 fn spawn_feed_sampler(
     pumps: Arc<parking_lot::Mutex<Vec<PendingTxPump>>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let mut last: Vec<BackrunFeedStatus> = pumps.lock().iter().map(PendingTxPump::status).collect();
+    let mut last = feed_snapshot(&pumps);
     degenbot_core::runtime::get_runtime().spawn(async move {
         loop {
             // A stop signal ends the sampler promptly; otherwise it ticks.
@@ -1477,107 +1477,64 @@ fn spawn_feed_sampler(
                 _ = shutdown.changed() => break,
                 () = tokio::time::sleep(FEED_SAMPLE_TICK) => {}
             }
-            let Some(pipeline) = degenbot_substrate::telemetry_port::pipeline() else {
-                continue;
-            };
-            let guard = pumps.lock();
-            if guard.is_empty() {
-                continue;
-            }
-            let current: Vec<BackrunFeedStatus> = guard.iter().map(PendingTxPump::status).collect();
-            drop(guard);
-            let pairs: Vec<(BackrunFeedStatus, BackrunFeedStatus)> = current
-                .iter()
-                .zip(
-                    last.iter()
-                        .chain(std::iter::repeat(&BackrunFeedStatus {
-                            connected: false,
-                            accepted: 0,
-                            dropped_ring: 0,
-                            rejected_chain_id: 0,
-                            rejected_parse: 0,
-                            reconnects: 0,
-                            last_event_unix_ms: 0,
-                        }))
-                        .take(current.len()),
-                )
-                .map(|(cur, prev)| (*cur, *prev))
-                .collect();
-            if let Some((
-                connected,
-                seconds_since_event,
-                frames,
-                dropped,
-                parse,
-                chain_id,
-                reconnects,
-            )) = aggregate_feed_sample(&pairs)
-            {
-                pipeline.record_backrun_feed(
-                    connected,
-                    seconds_since_event,
-                    frames,
-                    dropped,
-                    parse,
-                    chain_id,
-                    reconnects,
-                );
-            }
-            last = current;
+            publish_feed_samples(&mut last, feed_snapshot(&pumps), now_unix_ms());
         }
     });
 }
 
-/// One sampler record: `(connected, seconds_since_event, frames, dropped,
-/// parse, chain-id rejects, reconnects)` — the positional shape the engine
-/// instruments' `record_backrun_feed` consumes.
-type FeedSample = (bool, Option<f64>, u64, u64, u64, u64, u64);
+/// One hosted pump's sampler pair: its own source and the status snapshot this
+/// ticker last read for it. Keyed by source, so each feed keeps its own
+/// previous counters and its own event age.
+type FeedSnapshot = Vec<(PendingTxSource, BackrunFeedStatus)>;
 
-/// One sampler record from every pump's (current, previous) status pair:
-/// `connected` is ANY arm live, `seconds_since_event` the most recent event
-/// across arms, and the counters the summed per-arm deltas. A single arm
-/// records exactly what the per-driver scrape it replaced recorded.
-fn aggregate_feed_sample(samples: &[(BackrunFeedStatus, BackrunFeedStatus)]) -> Option<FeedSample> {
-    if samples.is_empty() {
+/// Every hosted pump's current status, keyed by the pump's own source kind.
+fn feed_snapshot(pumps: &Arc<parking_lot::Mutex<Vec<PendingTxPump>>>) -> FeedSnapshot {
+    pumps
+        .lock()
+        .iter()
+        .map(|pump| (pump.source(), pump.status()))
+        .collect()
+}
+
+/// One tick's fold and emit, one sample per pump through the census door: each
+/// pump reports its OWN sample, so two feeds never sum into one series. A
+/// feed's counters are cumulative from its own start, so its first observation
+/// folds against the all-zero status and reports its totals as the delta; its
+/// event age stays `None` until it accepts a first event, independently of
+/// every other source.
+fn publish_feed_samples(previous: &mut FeedSnapshot, current: FeedSnapshot, now_ms: u64) {
+    for (source, status) in &current {
+        let prior = previous
+            .iter()
+            .find(|(seen, _)| seen == source)
+            .map_or_else(BackrunFeedStatus::default, |(_, prior)| *prior);
+        crate::instruments::record(crate::instruments::CensusEvent::BackrunFeedSample {
+            source: source.as_str(),
+            connected: status.connected,
+            seconds_since_event: event_age_secs(status, now_ms),
+            frames: status.accepted.saturating_sub(prior.accepted),
+            dropped_ring: status.dropped_ring.saturating_sub(prior.dropped_ring),
+            rejected_parse: status.rejected_parse.saturating_sub(prior.rejected_parse),
+            rejected_chain_id: status
+                .rejected_chain_id
+                .saturating_sub(prior.rejected_chain_id),
+            reconnects: status.reconnects.saturating_sub(prior.reconnects),
+        });
+    }
+    *previous = current;
+}
+
+/// Age of this source's newest accepted event; `None` until its first one.
+fn event_age_secs(status: &BackrunFeedStatus, now_ms: u64) -> Option<f64> {
+    if status.last_event_unix_ms == 0 {
         return None;
     }
-    let now_ms = now_unix_ms();
-    let mut connected = false;
-    let mut seconds_since_event: Option<f64> = None;
-    let mut frames = 0;
-    let mut dropped = 0;
-    let mut parse = 0;
-    let mut chain_id = 0;
-    let mut reconnects = 0;
-    #[expect(clippy::cast_precision_loss)]
-    for (current, previous) in samples {
-        connected |= current.connected;
-        if current.last_event_unix_ms != 0 {
-            let secs = (now_ms.saturating_sub(current.last_event_unix_ms)) as f64 / 1_000.0;
-            seconds_since_event = Some(match seconds_since_event {
-                Some(shortest) if shortest < secs => shortest,
-                _ => secs,
-            });
-        }
-        frames += current.accepted.saturating_sub(previous.accepted);
-        dropped += current.dropped_ring.saturating_sub(previous.dropped_ring);
-        parse += current
-            .rejected_parse
-            .saturating_sub(previous.rejected_parse);
-        chain_id += current
-            .rejected_chain_id
-            .saturating_sub(previous.rejected_chain_id);
-        reconnects += current.reconnects.saturating_sub(previous.reconnects);
-    }
-    Some((
-        connected,
-        seconds_since_event,
-        frames,
-        dropped,
-        parse,
-        chain_id,
-        reconnects,
-    ))
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a feed age in seconds; the dashboard charts magnitudes"
+    )]
+    let age_secs = now_ms.saturating_sub(status.last_event_unix_ms) as f64 / 1_000.0;
+    Some(age_secs)
 }
 
 fn now_unix_ms() -> u64 {
@@ -1816,10 +1773,11 @@ mod tests {
     }
 
     /// The sampler record: one arm aggregates to exactly what the per-driver
-    /// scrape recorded; two arms sum their deltas and keep the freshest
-    /// event age.
+    /// The sampler's per-tick fold, driven inline on the test thread: two
+    /// pumps' deltas stay separate, each source keeps its own event age, and
+    /// the census door observes one sample per source.
     #[test]
-    fn the_sampler_aggregates_arms() {
+    fn the_sampler_records_one_sample_per_source() {
         let status = |connected, accepted, last_ms| BackrunFeedStatus {
             connected,
             accepted,
@@ -1829,28 +1787,52 @@ mod tests {
             reconnects: 0,
             last_event_unix_ms: last_ms,
         };
-        let prev = status(false, 10, 0);
-        let one = status(true, 15, 1_000);
-        let (connected, secs, frames, dropped, parse, chain, reconnects) =
-            aggregate_feed_sample(&[(one, prev)]).expect("one arm");
-        assert!(connected);
-        assert_eq!((frames, dropped, parse, chain, reconnects), (5, 0, 0, 0, 0));
-        assert!(secs.is_some(), "the event age is carried");
-
-        let two_prev = status(false, 100, 0);
-        let two = status(false, 103, 2_000);
-        let (connected, secs, frames, ..) =
-            aggregate_feed_sample(&[(one, prev), (two, two_prev)]).expect("two arms");
-        assert!(connected, "any arm live reads connected");
-        assert_eq!(frames, 8, "the counters sum across arms");
-        assert!(
-            secs.is_some_and(|s| s
-                <= aggregate_feed_sample(&[(status(true, 15, 1_000), status(false, 10, 0))])
-                    .expect("one arm")
-                    .1
-                    .expect("age")),
-            "the freshest event age wins"
+        let mut previous = vec![
+            (PendingTxSource::Mevblocker, status(false, 10, 0)),
+            (PendingTxSource::Txpool, status(false, 100, 0)),
+        ];
+        publish_feed_samples(
+            &mut previous,
+            vec![
+                (PendingTxSource::Mevblocker, status(true, 15, 997_000)),
+                (PendingTxSource::Txpool, status(false, 103, 999_100)),
+            ],
+            1_000_000,
         );
+        assert_eq!(
+            recorded_feed_samples(),
+            vec![
+                ("mevblocker", true, Some(3.0), 5),
+                ("txpool", false, Some(0.9), 3),
+            ],
+            "one sample per pump: its own source, liveness, age, and delta"
+        );
+
+        // A source with no accepted event yet reports no age at all: it
+        // neither borrows nor overwrites another source's reading.
+        publish_feed_samples(
+            &mut previous,
+            vec![(PendingTxSource::Txpool, status(false, 103, 0))],
+            1_000_000,
+        );
+        assert_eq!(recorded_feed_samples(), vec![("txpool", false, None, 0)]);
+    }
+
+    /// The feed samples this thread reported at the census door.
+    fn recorded_feed_samples() -> Vec<(&'static str, bool, Option<f64>, u64)> {
+        crate::census::test_probe::take()
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::instruments::CensusEvent::BackrunFeedSample {
+                    source,
+                    connected,
+                    seconds_since_event,
+                    frames,
+                    ..
+                } => Some((source, connected, seconds_since_event, frames)),
+                _ => None,
+            })
+            .collect()
     }
 
     // ---- Engine-lifetime ownership + clean head-edge shutdown --------------

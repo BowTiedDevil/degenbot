@@ -4308,8 +4308,8 @@
         "kind": "Panel",
         "spec": {
           "id": 73,
-          "title": "Backrun feed: searcher WS connected",
-          "description": "MEVBlocker searcher pending-tx feed WS session is up (1/0). The feed watchdog tears down a frame-silent socket within 48s and reconnects, so a steady 0 means the transport (or the remote) is down; frequent 1/0 flapping matches the reconnects panel.",
+          "title": "Backrun feed: WS connected, by source",
+          "description": "Pending-transaction feed WS session per source (1 = up, 0 = down): mevblocker is the MEVBlocker searcher feed, txpool the chain-node txpool feed. The feed watchdog tears down a frame-silent socket within 48s and reconnects, so a steady 0 on one source means that transport (or the remote) is down; frequent 1/0 flapping matches the reconnects panel.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -4323,7 +4323,7 @@
                       "spec": {
                         "expr": "degenbot_backrun_feed_connected",
                         "instant": true,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}}",
                         "range": false
                       }
                     },
@@ -4387,8 +4387,8 @@
         "kind": "Panel",
         "spec": {
           "id": 74,
-          "title": "Backrun feed: accepted frames + ring drops (rate/s)",
-          "description": "Accepted pending-tx notifications per second, plus drop-oldest ring evictions (consumer lag). Zero frames with connected=1 means the conn is delivering keepalives only - the feed is up but no searcher flow is arriving.",
+          "title": "Backrun feed: accepted frames + ring drops (rate/s, by source)",
+          "description": "Accepted pending-transaction notifications per second per source, plus drop-oldest ring evictions (consumer lag). Zero frames on one source with its connected=1 means that socket is delivering keepalives only - the feed is up but no backrunnable flow is arriving.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -4400,11 +4400,11 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "sum(rate(degenbot_backrun_feed_frames_total[$__rate_interval]))",
+                        "expr": "sum by (source) (rate(degenbot_backrun_feed_frames_total[$__rate_interval]))",
                         "instant": false,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}} accepted frames/s",
                         "range": true,
-                        "legend": "Accepted frames/s"
+                        "legend": "{{source}} accepted frames/s"
                       }
                     },
                     "datasource": {
@@ -4421,11 +4421,11 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "sum(rate(degenbot_backrun_feed_dropped_ring_total[$__rate_interval]))",
+                        "expr": "sum by (source) (rate(degenbot_backrun_feed_dropped_ring_total[$__rate_interval]))",
                         "instant": false,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}} ring drops/s",
                         "range": true,
-                        "legend": "Ring drops/s"
+                        "legend": "{{source}} ring drops/s"
                       }
                     },
                     "datasource": {
@@ -4482,8 +4482,8 @@
         "kind": "Panel",
         "spec": {
           "id": 75,
-          "title": "Backrun feed: rejects + reconnects (rate/min)",
-          "description": "Parse rejects (malformed/unknown frames; tolerated by design), chain-id gate rejects (unexpected feed universe - investigate), and WS reconnects (watchdog stalls included).",
+          "title": "Backrun feed: rejects + reconnects (rate/min, by source)",
+          "description": "Per source: parse rejects (malformed/unknown frames; tolerated by design), chain-id gate rejects (unexpected feed universe - investigate), and WS reconnects (watchdog stalls included).",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -4495,11 +4495,11 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "sum(rate(degenbot_backrun_feed_rejected_parse_total[$__rate_interval])) * 60",
+                        "expr": "sum by (source) (rate(degenbot_backrun_feed_rejected_parse_total[$__rate_interval])) * 60",
                         "instant": false,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}} parse rejects/min",
                         "range": true,
-                        "legend": "Parse rejects/min"
+                        "legend": "{{source}} parse rejects/min"
                       }
                     },
                     "datasource": {
@@ -4516,11 +4516,11 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "sum(rate(degenbot_backrun_feed_rejected_chain_id_total[$__rate_interval])) * 60",
+                        "expr": "sum by (source) (rate(degenbot_backrun_feed_rejected_chain_id_total[$__rate_interval])) * 60",
                         "instant": false,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}} chain-id rejects/min",
                         "range": true,
-                        "legend": "Chain-id rejects/min"
+                        "legend": "{{source}} chain-id rejects/min"
                       }
                     },
                     "datasource": {
@@ -4537,11 +4537,11 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "sum(rate(degenbot_backrun_feed_reconnects_total[$__rate_interval])) * 60",
+                        "expr": "sum by (source) (rate(degenbot_backrun_feed_reconnects_total[$__rate_interval])) * 60",
                         "instant": false,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}} reconnects/min",
                         "range": true,
-                        "legend": "Reconnects/min"
+                        "legend": "{{source}} reconnects/min"
                       }
                     },
                     "datasource": {
@@ -4598,8 +4598,8 @@
         "kind": "Panel",
         "spec": {
           "id": 76,
-          "title": "Backrun feed: event age",
-          "description": "Seconds since the newest accepted searcher event (gauge absent until the first event lands - the series starts empty, not at 0). Growing beyond ~60s on a connected feed means no searcher flow; the panels do NOT fire on this alone because backrunnable flow is bursty.",
+          "title": "Backrun feed: event age, by source",
+          "description": "Seconds since the newest accepted event of each source (that source's gauge is absent until its first event lands - the series starts empty, not at 0). Growing beyond ~60s on a connected feed means no pending-transaction flow there; the panels do NOT fire on this alone because backrunnable flow is bursty.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -4613,7 +4613,7 @@
                       "spec": {
                         "expr": "degenbot_backrun_feed_seconds_since_event",
                         "instant": true,
-                        "legendFormat": "__auto",
+                        "legendFormat": "{{source}}",
                         "range": false
                       }
                     },
@@ -5243,7 +5243,7 @@
           {
             "kind": "RowsLayoutRow",
             "spec": {
-              "title": "Backrun searcher feed (MEVBlocker)",
+              "title": "Backrun pending-transaction feed (by source)",
               "collapse": false,
               "layout": {
                 "kind": "AutoGridLayout",

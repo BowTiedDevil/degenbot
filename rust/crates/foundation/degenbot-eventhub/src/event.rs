@@ -54,3 +54,30 @@ pub enum PendingTxSource {
     /// The chain-node txpool feed (the txpool arm).
     Txpool,
 }
+
+impl PendingTxSource {
+    /// The closed metric-label spelling of this source — the one conversion
+    /// the pending-transaction feed telemetry's `source` label carries.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mevblocker => "mevblocker",
+            Self::Txpool => "txpool",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PendingTxSource;
+
+    /// The `source` metric label's closed value set, pinned value by value:
+    /// `PendingTxSource::as_str` is the one conversion the feed telemetry
+    /// carries, so a spelling drift fails here instead of silently splitting a
+    /// Prometheus series.
+    #[test]
+    fn source_labels_are_the_closed_pair() {
+        assert_eq!(PendingTxSource::Mevblocker.as_str(), "mevblocker");
+        assert_eq!(PendingTxSource::Txpool.as_str(), "txpool");
+    }
+}

@@ -8,12 +8,14 @@
 //! The FULL telemetry gate set — run BOTH commands when touching instruments,
 //! the updater telemetry port, or this file (a 2026-10 telemetry dispatch ran
 //! only the updater-crate suites and slipped new label vocabulary past this
-//! gate):
+//! gate). Both legs select every package that emits a metric, and
+//! `--features degenbot-bot/otel` is what compiles this crate's metric tests at
+//! all: without it they are not skipped, they do not exist.
 //!
-//!     cargo test --locked --manifest-path rust/Cargo.toml \
-//!         -p degenbot-bot -p degenbot-core -p degenbot-rpc
-//!     cargo test --locked --manifest-path rust/Cargo.toml \
-//!         -p degenbot-pool-updater -p degenbot-aave -p degenbot-db \
+//!     just test-rust-nextest -p degenbot-bot -p degenbot-core -p degenbot-rpc \
+//!         -p degenbot-substrate -p degenbot-eventhub \
+//!         --features degenbot-bot/otel
+//!     just test-rust-nextest -p degenbot-pool-updater -p degenbot-aave -p degenbot-db \
 //!         --features degenbot-db/sql-ledger
 //!
 //! Plus the §9 self-metric: `degenbot.metric_series` exposes the live distinct
@@ -105,6 +107,14 @@ const ALLOWED_LABELS: &[&str] = &[
     // admission decision's enforcement point; the enum is the only conversion,
     // so no stray value can compile.
     "seam",
+    // `degenbot_backrun_feed_*{source}`: the pending-transaction feed a sample
+    // describes — a two-value closed set (`mevblocker` | `txpool`),
+    // compile-pinned by `degenbot_eventhub::PendingTxSource::as_str` (its
+    // variants are the set, its test pins both spellings). One series per
+    // provisioned pump, never a per-feed-instance or per-URL value.
+    // ADR-043 §9 cardinality review: approved — a closed two-value dimension
+    // that replaces an aggregate series rather than adding to one.
+    "source",
 ];
 
 /// Name fragments that signal an unbounded value (a cardinality bomb).

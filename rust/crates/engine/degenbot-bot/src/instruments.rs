@@ -122,13 +122,15 @@ pub struct PipelineInstruments {
     pump_seconds_since_header: Gauge<f64>,
     /// Seconds since the newest log applied to state (state-advance liveness).
     pump_seconds_since_apply: Gauge<f64>,
-    /// `MEVBlocker` searcher pending-tx feed liveness: 1 while the WS session
-    /// is up, 0 between reconnects.
+    /// Pending-transaction feed liveness per `source`: 1 while that feed's
+    /// WS session is up, 0 between reconnects.
     backrun_feed_connected: Gauge<f64>,
-    /// Age of the newest accepted searcher event; grows while the feed is
-    /// connected but silent (a parked `MEVBlocker` auction shows up here).
+    /// Age of the newest accepted event of that `source`; grows while the
+    /// feed is connected but silent (a parked `MEVBlocker` auction shows up
+    /// here).
     backrun_feed_seconds_since_event: Gauge<f64>,
-    /// Accepted pending-tx notifications (counted from sampler deltas).
+    /// Accepted pending-transaction notifications, counted from sampler
+    /// deltas, one series per `source`.
     backrun_feed_frames: Counter<u64>,
     /// Ring evictions on the feed's drop-oldest channel (consumer lag).
     backrun_feed_dropped_ring: Counter<u64>,
@@ -139,9 +141,9 @@ pub struct PipelineInstruments {
     backrun_feed_rejected_chain_id: Counter<u64>,
     /// WS session teardowns + re-establishments (incl. watchdog stalls).
     backrun_feed_reconnects: Counter<u64>,
-    /// Frame-terminal decisions by {decision, reason} — the silent-drop
-    /// killer: every drained searcher frame exits through exactly one
-    /// Bucket of this counter (`no_candidate`, `reverted`, a composed
+    /// Backrun frame-terminal decisions by {decision, reason} — the
+    /// silent-drop killer: every drained backrun frame exits through exactly
+    /// one bucket of this counter (`no_candidate`, `reverted`, a composed
     /// `bid`, ...).
     backrun_frame_observed: Counter<u64>,
     /// Engine-`Mutex` HOLD duration for a dirty solve cycle (T2 SLOWEXEC);
@@ -531,33 +533,41 @@ impl PipelineInstruments {
                 .build(),
             backrun_feed_connected: meter
                 .f64_gauge("degenbot.backrun.feed.connected")
-                .with_description("MEVBlocker searcher feed WS session is up (1) or down (0)")
+                .with_description(
+                    "Pending-transaction feed WS session is up (1) or down (0), by source",
+                )
                 .build(),
             backrun_feed_seconds_since_event: meter
                 .f64_gauge("degenbot.backrun.feed.seconds_since_event")
                 .with_description(
-                    "Seconds since the newest accepted searcher pending-tx event",
+                    "Seconds since the newest accepted pending-transaction feed event, by source",
                 )
                 .build(),
             backrun_feed_frames: meter
                 .u64_counter("degenbot.backrun.feed.frames")
-                .with_description("Accepted searcher pending-tx notifications")
+                .with_description("Accepted pending-transaction feed notifications, by source")
                 .build(),
             backrun_feed_dropped_ring: meter
                 .u64_counter("degenbot.backrun.feed.dropped_ring")
-                .with_description("Feed ring evictions (drop-oldest, consumer lag)")
+                .with_description("Feed ring evictions (drop-oldest, consumer lag), by source")
                 .build(),
             backrun_feed_rejected_parse: meter
                 .u64_counter("degenbot.backrun.feed.rejected_parse")
-                .with_description("Searcher frames dropped by parse (tolerated, counted)")
+                .with_description(
+                    "Feed frames dropped by parse (tolerated, counted), by source",
+                )
                 .build(),
             backrun_feed_rejected_chain_id: meter
                 .u64_counter("degenbot.backrun.feed.rejected_chain_id")
-                .with_description("Searcher frames rejected by the feed's chain-id gate")
+                .with_description(
+                    "Feed frames rejected by the feed's chain-id gate, by source",
+                )
                 .build(),
             backrun_feed_reconnects: meter
                 .u64_counter("degenbot.backrun.feed.reconnects")
-                .with_description("Feed WS session teardowns incl. watchdog stalls")
+                .with_description(
+                    "Feed WS session teardowns incl. watchdog stalls, by source",
+                )
                 .build(),
             backrun_frame_observed: meter
                 .u64_counter("degenbot.backrun.frame.observed")
@@ -1086,18 +1096,19 @@ impl PipelineInstruments {
         self.pump_seconds_since_apply.record(secs, &[]);
     }
 
-    /// Sample the `MEVBlocker` searcher feed into the instruments. The caller
-    /// (the backrun driver's own tick) owns the cadence and passes counter
-    /// DELTAS since its previous sample — `OTel` counters accumulate the pushes.
-    /// `seconds_since_event` is `None` until the feed's first accepted event;
-    /// `None` leaves the last recorded age standing rather than overwriting
-    /// it with a fake 0.
+    /// Sample ONE pending-transaction feed into the instruments, labelled with
+    /// its `source`. The caller (the hosted-sources sampler's own tick) owns the
+    /// cadence and passes counter DELTAS since its previous sample of that same
+    /// source — `OTel` counters accumulate the pushes. `seconds_since_event` is
+    /// `None` until that feed's first accepted event; `None` leaves the last
+    /// recorded age standing rather than overwriting it with a fake 0.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one flat sample of a closed 7-field status snapshot"
+        reason = "one flat sample of a closed 7-field status snapshot, by source"
     )]
     pub fn record_backrun_feed(
         &self,
+        source: &'static str,
         connected: bool,
         seconds_since_event: Option<f64>,
         frames: u64,
@@ -1106,17 +1117,18 @@ impl PipelineInstruments {
         rejected_chain_id: u64,
         reconnects: u64,
     ) {
+        let label = [KeyValue::new("source", source)];
         self.backrun_feed_connected
-            .record(if connected { 1.0 } else { 0.0 }, &[]);
+            .record(if connected { 1.0 } else { 0.0 }, &label);
         if let Some(secs) = seconds_since_event {
-            self.backrun_feed_seconds_since_event.record(secs, &[]);
+            self.backrun_feed_seconds_since_event.record(secs, &label);
         }
-        self.backrun_feed_frames.add(frames, &[]);
-        self.backrun_feed_dropped_ring.add(dropped_ring, &[]);
-        self.backrun_feed_rejected_parse.add(rejected_parse, &[]);
+        self.backrun_feed_frames.add(frames, &label);
+        self.backrun_feed_dropped_ring.add(dropped_ring, &label);
+        self.backrun_feed_rejected_parse.add(rejected_parse, &label);
         self.backrun_feed_rejected_chain_id
-            .add(rejected_chain_id, &[]);
-        self.backrun_feed_reconnects.add(reconnects, &[]);
+            .add(rejected_chain_id, &label);
+        self.backrun_feed_reconnects.add(reconnects, &label);
     }
 
     /// Count one frame's terminal decision. `reason` is empty for a plain
@@ -1608,6 +1620,7 @@ impl PipelineInstruments {
             CensusEvent::HeaderAge { secs } => self.set_seconds_since_header(secs),
             CensusEvent::ApplyAge { secs } => self.set_seconds_since_apply(secs),
             CensusEvent::BackrunFeedSample {
+                source,
                 connected,
                 seconds_since_event,
                 frames,
@@ -1617,6 +1630,7 @@ impl PipelineInstruments {
                 reconnects,
             } => {
                 self.record_backrun_feed(
+                    source,
                     connected,
                     seconds_since_event,
                     frames,
@@ -1811,6 +1825,66 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "the dispatch test asserts rendered Prometheus series"
+)]
+mod dispatch_tests {
+    use super::PipelineInstruments;
+    use crate::census::CensusEvent;
+    use crate::metrics::{build_prometheus_provider, render};
+    use opentelemetry::metrics::MeterProvider as _;
+
+    /// The positional forwarding arm for `CensusEvent::BackrunFeedSample`,
+    /// field by field: one event carrying a distinct value in every field lands
+    /// each value in its own family, under the event's own `source` label.
+    /// A transposed or dropped field is invisible to both the census door probe
+    /// (which records events, never instruments) and the direct-instrument test
+    /// (which never crosses `apply`).
+    #[test]
+    fn a_feed_sample_lands_every_field_under_its_own_source_series() {
+        let (provider, registry) = build_prometheus_provider().expect("provider");
+        let instruments = PipelineInstruments::new(&provider.meter("degenbot.test"));
+
+        instruments.apply(CensusEvent::BackrunFeedSample {
+            source: "txpool",
+            connected: true,
+            seconds_since_event: Some(12.5),
+            frames: 11,
+            dropped_ring: 22,
+            rejected_parse: 33,
+            rejected_chain_id: 44,
+            reconnects: 55,
+        });
+
+        let text = render(&registry);
+        for (family, expected) in [
+            ("degenbot_backrun_feed_connected", " 1"),
+            ("degenbot_backrun_feed_seconds_since_event", " 12.5"),
+            ("degenbot_backrun_feed_frames_total", " 11"),
+            ("degenbot_backrun_feed_dropped_ring_total", " 22"),
+            ("degenbot_backrun_feed_rejected_parse_total", " 33"),
+            ("degenbot_backrun_feed_rejected_chain_id_total", " 44"),
+            ("degenbot_backrun_feed_reconnects_total", " 55"),
+        ] {
+            let series = text
+                .lines()
+                .find(|line| line.starts_with(family))
+                .unwrap_or_else(|| panic!("no {family} series in:\n{text}"));
+            assert!(
+                series.contains("source=\"txpool\""),
+                "{family} must carry the event source: {series}"
+            );
+            assert!(
+                series.ends_with(expected),
+                "{family} must carry its own field value: {series}"
+            );
+        }
+    }
+}
+
 /// ADR-067: the substrate's hot paths report through the
 /// `degenbot_substrate::telemetry_port` function-pointer bundle (the
 /// substrate cannot depend on this crate's `otel`-gated instruments
@@ -1874,25 +1948,6 @@ pub fn install_substrate_telemetry_port() {
         count_backrun_frame: |kind: &str, reason: &str| {
             if let Some(p) = pipeline() {
                 p.count_backrun_frame(kind, reason);
-            }
-        },
-        record_backrun_feed: |connected,
-                              seconds_since_event,
-                              frames,
-                              dropped_ring,
-                              rejected_parse,
-                              rejected_chain_id,
-                              reconnects| {
-            if let Some(p) = pipeline() {
-                p.record_backrun_feed(
-                    connected,
-                    seconds_since_event,
-                    frames,
-                    dropped_ring,
-                    rejected_parse,
-                    rejected_chain_id,
-                    reconnects,
-                );
             }
         },
     }));

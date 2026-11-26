@@ -659,12 +659,12 @@ fn dispatch_economics_instruments_render() {
     assert!(realized.ends_with("250000000000000000"), "got: {realized}");
 }
 
-/// Backrun searcher-feed instruments render the expected Prometheus
-/// families. Counters accumulate the pushed deltas; gauges take the last
-/// recorded value; a `None` event-age (no event yet) leaves the last value
-/// standing instead of overwriting it with a fake 0.
+/// Backrun feed instruments render one labelled series per source. The
+/// counters accumulate each source's own deltas instead of one aggregate, and
+/// a source with no accepted event yet cannot overwrite another source's
+/// recorded age.
 #[test]
-fn backrun_feed_instruments_render_expected_families() {
+fn backrun_feed_instruments_render_one_series_per_source() {
     use degenbot_bot::instruments::PipelineInstruments;
     use degenbot_bot::metrics;
     use opentelemetry::metrics::MeterProvider;
@@ -673,53 +673,60 @@ fn backrun_feed_instruments_render_expected_families() {
     let meter = provider.meter("degenbot.test");
     let p = PipelineInstruments::new(&meter);
 
-    p.record_backrun_feed(true, Some(1.5), 5, 2, 1, 3, 7);
-    p.record_backrun_feed(false, None, 2, 0, 0, 0, 1);
+    p.record_backrun_feed("mevblocker", true, Some(1.5), 5, 2, 1, 3, 7);
+    p.record_backrun_feed("mevblocker", true, Some(2.5), 3, 0, 0, 0, 0);
+    p.record_backrun_feed("txpool", false, None, 2, 0, 0, 0, 1);
 
     let text = metrics::render(&registry);
+    let series = |family: &str, source: &str| -> String {
+        text.lines()
+            .find(|line| line.starts_with(family) && line.contains(&format!("source=\"{source}\"")))
+            .map(str::to_owned)
+            .unwrap_or_default()
+    };
     for family in [
         "degenbot_backrun_feed_connected",
-        "degenbot_backrun_feed_seconds_since_event",
         "degenbot_backrun_feed_frames_total",
         "degenbot_backrun_feed_dropped_ring_total",
         "degenbot_backrun_feed_rejected_parse_total",
         "degenbot_backrun_feed_rejected_chain_id_total",
         "degenbot_backrun_feed_reconnects_total",
     ] {
-        assert!(
-            text.contains(family),
-            "expected family {family} in prometheus text, got:\n{text}"
-        );
+        for source in ["mevblocker", "txpool"] {
+            assert!(
+                !series(family, source).is_empty(),
+                "missing {family} series for {source} in:\n{text}"
+            );
+        }
     }
-    let frames = text
-        .lines()
-        .find(|l| l.starts_with("degenbot_backrun_feed_frames_total"))
-        .expect("frames series missing");
     assert!(
-        frames.ends_with(" 7"),
-        "counters must accumulate, got: {frames}"
+        series("degenbot_backrun_feed_frames_total", "mevblocker").ends_with(" 8"),
+        "the counters accumulate within a source"
     );
-    let connected = text
-        .lines()
-        .find(|l| l.starts_with("degenbot_backrun_feed_connected"))
-        .expect("connected series missing");
     assert!(
-        connected.ends_with(" 0"),
-        "gauge takes the last value, got: {connected}"
+        series("degenbot_backrun_feed_frames_total", "txpool").ends_with(" 2"),
+        "a second source keeps its own counter"
     );
-    let age = text
-        .lines()
-        .find(|l| l.starts_with("degenbot_backrun_feed_seconds_since_event"))
-        .expect("age series missing");
     assert!(
-        age.ends_with(" 1.5"),
-        "None age must leave the last value standing, got: {age}"
+        series("degenbot_backrun_feed_reconnects_total", "mevblocker").ends_with(" 7"),
+        "the reconnects counter is per source"
     );
-    let reconnects = text
-        .lines()
-        .find(|l| l.starts_with("degenbot_backrun_feed_reconnects_total"))
-        .expect("reconnects series missing");
-    assert!(reconnects.ends_with(" 8"), "got: {reconnects}");
+    assert!(
+        series("degenbot_backrun_feed_reconnects_total", "txpool").ends_with(" 1"),
+        "the reconnects counter is per source"
+    );
+    assert!(
+        series("degenbot_backrun_feed_connected", "txpool").ends_with(" 0"),
+        "the gauge takes the last value of its own source"
+    );
+    assert!(
+        series("degenbot_backrun_feed_seconds_since_event", "mevblocker").ends_with(" 2.5"),
+        "one source's missing age must not overwrite another's recorded age"
+    );
+    assert!(
+        series("degenbot_backrun_feed_seconds_since_event", "txpool").is_empty(),
+        "a source that accepted no event reports no age series:\n{text}"
+    );
 }
 
 /// Backrun frame-terminal decisions render as a labeled counter over the

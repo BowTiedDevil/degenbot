@@ -91,10 +91,13 @@ pub enum CensusEvent {
     HeaderAge { secs: f64 },
     /// Age (seconds) of the newest log applied to state; grows on a freeze.
     ApplyAge { secs: f64 },
-    /// One flat sample of the searcher feed's closed 7-field status
-    /// snapshot; the caller's tick owns the cadence and passes counter
-    /// DELTAS since its previous sample.
+    /// One flat sample of ONE pending-transaction feed's closed 7-field
+    /// status snapshot; the caller's tick owns the cadence and passes
+    /// counter DELTAS since its previous sample of that same source.
+    /// `source` is the feed's closed kind (`mevblocker` | `txpool`), so the two
+    /// pumps report beside each other instead of summing into one series.
     BackrunFeedSample {
+        source: &'static str,
         connected: bool,
         seconds_since_event: Option<f64>,
         frames: u64,
