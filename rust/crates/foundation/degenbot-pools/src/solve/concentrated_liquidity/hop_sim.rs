@@ -61,6 +61,10 @@ pub struct V3RangeSwapResult {
     pub word_steps: usize,
 }
 
+pub(super) fn bounded_tail(remaining: U256, consumed_input: U256) -> bool {
+    !remaining.is_zero() && consumed_input < remaining
+}
+
 /// Simulate a V3 swap within a single tick range using integer arithmetic.
 ///
 /// Returns a [`V3RangeSwapResult`] with the consumed input and output amounts.

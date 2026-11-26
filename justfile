@@ -300,6 +300,18 @@ test-rust-affected:
     echo "pre-push: testing what this push changes: $packages"
     just test-rust-nextest $packages
 
+# Run degenbot-pools with live walk counters and capture fixtures. Default
+# builds flush WalkStats to zero, so count-identity checks must use this lane
+# and reject missing measurements rather than accepting zero == zero.
+test-pools-telemetry *args: check-toolchain
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo nextest run --locked --manifest-path rust/Cargo.toml -p degenbot-pools \
+        --profile ci --no-fail-fast \
+        --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-pools/telemetry "$@"
+
 test-rust-nextest *args: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail

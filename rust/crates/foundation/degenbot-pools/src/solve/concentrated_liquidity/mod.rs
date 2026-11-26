@@ -41,11 +41,15 @@
 //! - `hop_sim` — the canonical per-step V3 integer swap.
 //! - `word_profile` — dense-range forward word-boundary profiles.
 //! - `crossings` — crossing tables, hop assembly, and window-edge helpers.
+//! - `cursor` — traversal tuples, reentry, and edge-cache transitions.
+//! - `direction` — observed-score direction evidence at a piece edge.
+//! - `evaluation` — exact candidate evaluation and best-candidate state.
 //! - `active_set` — the active-set piecewise Möbius walk.
 //! - `entries` — the public solve entry points, [`PreparedConcentratedLiquidityHop`], and the
 //!   mixed entry's [`MixedHopView`] intake.
 //! - `memo` — the cross-block composition memo.
 //! - `path_sim` — the public byte-exact forward path simulator.
+//! - `refine` — window and stop-time profit refinement behind `Refiner`.
 //! - `window` — the kernel-side refine-window data ([`RefineBound`]) and its
 //!   exact integer clamp, with no envelope vocabulary.
 //! - `tally` — the owned walk-telemetry value: the per-solve [`WalkTally`]
@@ -70,10 +74,14 @@ pub type ConcentratedLiquidityProfileTable = Vec<Option<Arc<ConcentratedLiquidit
 
 mod active_set;
 mod crossings;
+mod cursor;
+mod direction;
 mod entries;
+mod evaluation;
 mod hop_sim;
 mod memo;
 mod path_sim;
+mod refine;
 mod tally;
 mod telemetry;
 mod window;

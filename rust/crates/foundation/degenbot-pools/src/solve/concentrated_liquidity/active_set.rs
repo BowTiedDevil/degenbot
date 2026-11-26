@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use hashbrown::HashSet;
-
 use alloy::primitives::U256;
 
 use degenbot_core::op_warn;
@@ -11,10 +9,17 @@ use super::crossings::{
     concentrated_liquidity_hop_min_input_for_output, landed_ending_range_index,
     piece_window_left_edge, piece_window_right_edge, piece_window_right_edge_evented,
 };
-use super::hop_sim::simulate_v3_range_swap;
+use super::cursor::{TerminalKind, WalkCursor, WalkTransition};
+pub(super) use super::direction::walk_profit_score;
+use super::direction::{direction_at_edge, DirectionAction, DirectionObservation};
+use super::evaluation::{ProbeKind, WalkEvaluator};
+use super::hop_sim::{bounded_tail, simulate_v3_range_swap};
+#[cfg(test)]
+pub(super) use super::refine::REFINE_BRACKET_WEI;
+pub(super) use super::refine::{RefineWindow, Refiner, REFINE_DENSE_SPAN};
 use super::tally::{WalkSection, WalkTally, WalkTelemetry};
 use super::telemetry::{event_census_record, Mark, WalkEventCensus};
-use super::window::{clamp_window_to_bound, RefineBound};
+use super::window::RefineBound;
 use super::{
     ConcentratedLiquidityCrossingTable, ConcentratedLiquidityProfileTable, IntV3TickRangeSequence,
 };
@@ -151,7 +156,7 @@ impl<'a> PieceView<'a> {
                         // sequence's modeled span ran out first: the swap goes
                         // further than the walk sees, so its census counts are
                         // lower bounds.
-                        bounded_tail: !remaining.is_zero() && ending.consumed_input < remaining,
+                        bounded_tail: bounded_tail(remaining, ending.consumed_input),
                     },
                 )
             }
@@ -268,6 +273,12 @@ pub(super) struct WalkPathOutcome {
     pub(super) facts: Vec<StepFacts>,
 }
 
+impl WalkPathOutcome {
+    pub(super) fn model_domain_exhausted(&self) -> bool {
+        !self.facts.is_empty() && self.facts.iter().all(|facts| facts.bounded_tail)
+    }
+}
+
 /// Simulate the path with SELF-DETERMINED crossings: each concentrated liquidity hop's ending
 /// range is derived from the gross input actually available at that hop
 /// (hop 0: `amount_in`; hop i: hop `i−1`'s output).
@@ -368,7 +379,7 @@ fn build_shifted_piece_hops(
 /// tuple of the simulated candidate, not anchor precision, so correctness
 /// never depends on the anchor. A piece whose optimum is a range-saturation
 /// corner (the smooth argmax runs past the pinned edge) is owned by
-/// `walk_refine_window`, which searches for the discrete peak.
+/// `Refiner::refine_window`, which searches for the discrete peak.
 #[cfg(test)]
 pub(super) fn walk_piece_anchor(hops: &[PieceView], ks: &[usize]) -> U256 {
     // Fresh single-shot reference for the doc tests: production uses the
@@ -408,93 +419,6 @@ pub(super) fn landed_any_above(landed: &[usize], ks: &[usize]) -> bool {
     landed.iter().zip(ks.iter()).any(|(a, &b)| *a > b)
 }
 
-/// Profit score as a SIGNED value (`output − input`), so ternary refinement
-/// can compare candidates on the unprofitable side without U256 underflow.
-pub(super) fn walk_profit_score(output: U256, input: U256) -> alloy::primitives::I256 {
-    use alloy::primitives::I256;
-    let o = I256::try_from(output).unwrap_or(I256::MAX);
-    let i = I256::try_from(input).unwrap_or(I256::MAX);
-    o - i
-}
-
-/// Book-keeping for the best validated candidate seen by the walk.
-pub(super) struct WalkRecorder {
-    input: U256,
-    profit: U256,
-    hop_outputs: Vec<U256>,
-    /// The gas census at the recorded best — projected from that evaluation's
-    /// own step facts, so the solve hands admission the walk's counts without
-    /// a second walk.
-    census: Vec<Option<SwapWalkCensus>>,
-    /// Best signed score across every evaluated candidate (including
-    /// unprofitable ones) — the direction test's reference level.
-    top_score: alloy::primitives::I256,
-    /// Reused evaluation buffers; only a new best result is cloned out.
-    scratch: WalkPathOutcome,
-}
-
-impl WalkRecorder {
-    pub(super) fn new() -> Self {
-        Self {
-            input: U256::ZERO,
-            profit: U256::ZERO,
-            hop_outputs: Vec::new(),
-            census: Vec::new(),
-            top_score: alloy::primitives::I256::MIN,
-            scratch: WalkPathOutcome::default(),
-        }
-    }
-
-    /// The walk's best-so-far profit as a non-negative output−input level
-    /// (zero until the walk finds its first positive-profit candidate). The
-    /// Loop-21 envelope clamp uses it as the threshold every kept input must
-    /// still be able to beat.
-    fn best_floor(&self) -> U256 {
-        if self.top_score <= alloy::primitives::I256::ZERO {
-            return U256::ZERO;
-        }
-        U256::try_from(self.top_score).unwrap_or(U256::ZERO)
-    }
-
-    /// Simulate `candidate`, update the bests, and borrow the reusable outcome
-    /// until the next evaluation (the caller needs `final_output` for direction
-    /// decisions). Winning hop outputs and census data are cloned separately.
-    fn eval_and_record(
-        &mut self,
-        candidate: U256,
-        hops: &[PieceView],
-        tally: &mut WalkTally,
-    ) -> &WalkPathOutcome {
-        let Self {
-            input,
-            profit,
-            hop_outputs,
-            census,
-            top_score,
-            scratch,
-        } = self;
-        simulate_walk_path_into(candidate, hops, tally, scratch);
-        let score = walk_profit_score(scratch.final_output, candidate);
-        if score > *top_score {
-            *top_score = score;
-        }
-        if scratch.final_output > candidate {
-            let candidate_profit = scratch.final_output - candidate;
-            if candidate_profit > *profit {
-                *profit = candidate_profit;
-                *input = candidate;
-                hop_outputs.clone_from(&scratch.hop_outputs);
-                *census = hops
-                    .iter()
-                    .zip(scratch.facts.iter())
-                    .map(|(hop, &facts)| hop.census(facts))
-                    .collect();
-            }
-        }
-        scratch
-    }
-}
-
 fn anchor_sweep_mode(cfg: &SolveRuntimeConfig) -> AnchorSweep {
     cfg.anchor_sweep
 }
@@ -516,154 +440,16 @@ fn single_piece_saturation_edge(hops: &[PieceView]) -> Option<U256> {
     hops.first()?.bounded_first_range()
 }
 
-/// Maximum width the refine ternary settles to before the final probe grid.
-/// `P(x)` per piece is concave with a shallow peak for liquid pools, so a
-/// ~10⁶-wei bracket already contains a profit-optimal input; the caller pins
-/// `hi` to the ≤4-wei right edge in the bounded (range-saturation) case, so
-/// the grid always captures a corner max exactly. Measured to keep the
-/// returned profit within ε of the exact-wei optimum (see the profit-ε gate
-/// + the corner-profit test).
-pub(super) const REFINE_BRACKET_WEI: u64 = 1_000_000;
-/// Points probed across the final bracket (endpoints + interior) when the
-/// bracket is wide. Concavity ⇒ the argmax sits in `[l, r]`; the grid (both
-/// endpoints included) catches a flat interior top or an edge/corner max.
-const REFINE_GRID_POINTS: u64 = 33;
-/// Final-bracket width (wei) at/below which the refine sweeps to the wei
-/// instead of using the coarse grid — narrow brackets (small ranges) may peak
-/// sharply in the interior, so exactness there is worth the (≤1025) probes.
-const REFINE_DENSE_SPAN: u64 = 1024;
-/// Compile-time stance for the anchor-overshoot re-entry (`refine_adaptive_
-/// anchor_overshoot`). A `SolveRuntimeConfig` field would require editing the
-/// exhaustive struct literal in `degenbot-bot`'s engine lifecycle, outside
-/// this crate; benchmarked ON (the walk-side cost is one extra refine only on
-/// the deep-book paths whose fee-dominated entry hides the peak, and zero on
-/// the light books the default profile is tuned for).
+/// Compile-time stance for anchor-overshoot re-entry. A
+/// `SolveRuntimeConfig` field would require editing the exhaustive struct
+/// literal in `degenbot-bot`'s engine lifecycle, outside this crate. The extra
+/// refine runs only on deep-book paths whose fee-dominated entry hides the peak.
 const REFINE_ADAPTIVE_ANCHOR_OVERSHOOT: bool = true;
-/// Minimum walk-piece count (`Σ range counts + 2`) below which the re-entry
-/// stance stays dormant. The A/B census's failures all sit on 250-750-range
-/// books; under this many pieces the walk's concavity premise holds, so the
-/// stance would only shuffle equal-profit plateau points.
+/// Minimum walk-piece count (`Σ range counts + 2`) below which re-entry
+/// stays dormant. Re-entry targets deep books whose fee-dominated leading
+/// ranges can hide the peak; on small books it only shuffles equal-profit
+/// plateau points.
 const REFINE_ADAPTIVE_MIN_TOTAL_PIECES: usize = 64;
-
-/// Maximize profit over the piece window `[lo, hi]`: ternary to a coarse
-/// bracket, then a probe grid over that bracket (or a wei-precise sweep for
-/// narrow brackets).
-///
-/// Returns `(piece_argmax_x, piece_best_score)` — the location is informational
-/// (candidates feed the shared [`WalkRecorder`], which owns the global argmax).
-///
-/// `P(x)` is concave (the EVM floor staircase perturbs it at wei scale
-/// only), so ternary converges to the argmax neighborhood; the grid/sweep
-/// picks the maximizer. This is a **profit-ε** search (not exact-wei): the
-/// flat interior top makes the coarse grid profit-equivalent, and the bounded
-/// corner is captured because `hi` is the pinned right edge.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the walk-domain refine carry (window pair + hint + recorder + runtime stance + per-solve tally) is coherent as a flat signature"
-)]
-pub(super) fn walk_refine_window(
-    hops: &[PieceView],
-    lo: U256,
-    hi: U256,
-    rec: &mut WalkRecorder,
-    piece_anchor: Option<U256>,
-    cfg: &SolveRuntimeConfig,
-    env: Option<&[RefineBound]>,
-    tally: &mut WalkTally,
-) -> (U256, alloy::primitives::I256) {
-    use alloy::primitives::I256;
-    // Loop-21 envelope pruning (`envelope_pruned_refine`): the composed bound
-    // pointwise-dominates O(x), so any input with bound(x) − x < best cannot
-    // beat the walk's best candidate — clamp the window to the undisproved
-    // region (exact per-line half-intervals) and never probe a disproven wei.
-    let mut lo = lo;
-    let mut hi = hi;
-    if let Some(env) = env {
-        match clamp_window_to_bound(env, lo, hi, rec.best_floor()) {
-            Some((clamped_lo, clamped_hi)) => {
-                lo = clamped_lo;
-                hi = clamped_hi;
-            }
-            None => {
-                // The envelope disproves the entire window — zero sims.
-                return (lo, I256::MIN);
-            }
-        }
-        if lo > hi {
-            return (lo, I256::MIN);
-        }
-    }
-    // Loop-19 model-anchor bracket (`refine_model_anchor`): the piece's
-    // smooth Möbius anchor has P′(x) = 0 and the EVM floor staircase
-    // perturbs the top at wei scale (see REFINE_BRACKET_WEI), so when this
-    // window's OWN anchor is inside, start the ternary from its
-    // ±REFINE_BRACKET_WEI bracket instead of the full window. Neighbor
-    // refinements pass `piece_anchor = None` — a different piece's anchor is
-    // not evidence for this window, so they keep the full search.
-    if let Some(anchor) = piece_anchor.filter(|a| cfg.refine_model_anchor && *a >= lo && *a <= hi) {
-        lo = anchor
-            .saturating_sub(U256::from(REFINE_BRACKET_WEI))
-            .max(lo);
-        hi = anchor
-            .saturating_add(U256::from(REFINE_BRACKET_WEI))
-            .min(hi);
-    }
-    let mut argmax_x = lo;
-    let mut best_score = I256::MIN;
-    // phase 0 = ternary narrowing, phase 1 = final grid / dense sweep.
-    let mut probe = |x: U256, hops: &[PieceView], rec: &mut WalkRecorder, phase: u8| -> I256 {
-        tally.bump_refine_sims(1);
-        if phase == 0 {
-            tally.bump_ternary_sims(1);
-        } else {
-            tally.bump_grid_sims(1);
-        }
-        let o = rec.eval_and_record(x, hops, tally);
-        let s = walk_profit_score(o.final_output, x);
-        if s > best_score {
-            best_score = s;
-            argmax_x = x;
-        }
-        s
-    };
-    let mut l = lo;
-    let mut r = hi;
-    while r.saturating_sub(l) > U256::from(REFINE_BRACKET_WEI) {
-        let third = ((r - l) / U256::from(3u64)).max(U256::ONE);
-        let m1 = l + third;
-        let m2 = r - third;
-        let s1 = probe(m1, hops, rec, 0);
-        let s2 = probe(m2, hops, rec, 0);
-        if s1 < s2 {
-            l = m1 + U256::from(1u64);
-        } else {
-            r = m2.saturating_sub(U256::from(1u64));
-        }
-    }
-    let span = r.saturating_sub(l);
-    if span <= U256::from(REFINE_DENSE_SPAN) {
-        // Narrow bracket → wei-precise sweep (cheap + exact for sharp peaks).
-        let mut x = l;
-        loop {
-            probe(x, hops, rec, 1);
-            if x >= r {
-                break;
-            }
-            x += U256::from(1u64);
-        }
-    } else {
-        // Wide bracket → coarse probe grid (endpoints + interior). Concavity ⇒
-        // argmax in [l, r]; endpoints l (left) and r (the pinned right edge in
-        // the bounded case) are both probed, so an interior flat top or a
-        // range-saturation corner is both captured at profit-ε.
-        let n = REFINE_GRID_POINTS;
-        for i in 0..n {
-            let x = l + (span * U256::from(i)) / U256::from(n - 1);
-            probe(x, hops, rec, 1);
-        }
-    }
-    (argmax_x, best_score)
-}
 
 /// One path's walk-combinator counters: the FULL set, so
 /// solve telemetry can name the real cost driver — `sims × per-sim word_steps`
@@ -705,26 +491,26 @@ pub struct WalkStats {
     /// `compute_swap_step_v3` word-boundary steps inside every sim — the
     /// per-simulation cost driver for dense (many-word) concentrated liquidity ranges.
     pub word_steps: usize,
-    /// Stop-time refinement probes (`walk_refine_window` ternary + grid).
+    /// Stop-time refinement probes (`Refiner::refine_window` ternary + grid).
     pub refine_sims: usize,
     /// Ternary-narrowing phase sims (subset of `refine_sims`).
     pub ternary_sims: usize,
     /// Final grid / dense-sweep phase sims (subset of `refine_sims`).
     pub grid_sims: usize,
-    /// Loop-13: left-window-edge bisection/scan probes.
+    /// Left-window-edge bisection/scan probes.
     pub left_edge_sims: usize,
-    /// Loop-13: right-window-edge (seeded) bisection probes.
+    /// Right-window-edge (seeded) bisection probes.
     pub right_edge_sims: usize,
-    /// Loop-13: transitional-anchor ±2 sweep probes.
+    /// Anchor-sweep probes.
     pub anchor_sims: usize,
     /// Event-solver pieces accepted on the verify probes (exact edge).
     pub event_solver_ok: usize,
     /// Event-solver pieces that fell back to grow + bisection.
     pub event_solver_fallbacks: usize,
-    /// Largest word-boundary count any range reached (Q3 dense telemetry;
+    /// Largest word-boundary count any range reached (dense-book telemetry;
     /// the one-shot alert is the CONSUMER's decision — the walk reports).
     pub max_dense_words: usize,
-    /// Loop-15 census tally (predicted vs bisected first-above). All-zero
+    /// Event census tally (predicted vs bisected first-above). All-zero
     /// unless the runtime census gate is on (`SolveRuntimeConfig::
     /// walk_event_census`) — and, like every field here, needs the
     /// `telemetry` feature first (see the struct-level counter policy).
@@ -815,17 +601,27 @@ impl WalkOutcome {
         }
     }
 }
-///    ([`piece_window_left_edge`] / [`piece_window_right_edge`]; consecutive
-///    pieces share window edges, so the left edge reuses the previous
-///    piece's right edge).
-/// 3. Direction test: straddle probes at ±64 around the right edge with
-///    +1-wei staircase tolerance. Climbing ⇒ advance ONE piece (never
-///    hopscotch past unrefined pieces — concavity makes the refined
-///    piece-maxima sequence unimodal, so consecutive visits cannot vault
-///    the peak).
-/// 4. Stop: refine the current piece AND its forward neighbor with a
-///    windowed ternary + dense sweep ([`walk_refine_window`]) — refinement
-///    is what makes the walk exact at range-saturation corners.
+/// Active-set path search:
+/// 1. Build the current piece's shifted Möbius anchor.
+/// 2. Compute the piece window with [`piece_window_left_edge`] and
+///    [`piece_window_right_edge`]; consecutive pieces share window edges, so
+///    the left edge reuses the previous piece's right edge.
+/// 3. Compare a fixed rear probe at `max(x_r - 64, x_l)` with forward probes
+///    at `x_r + span`, starting at 64 and doubling. Advance one piece when
+///    `score_fwd >= score_back`; equality advances. Otherwise stop only when
+///    every hop reports `bounded_tail` or the forward input reaches
+///    `U256::MAX`. A hop without bounded-tail evidence, including constant
+///    product, leaves input saturation as the terminator. Concavity makes the
+///    refined piece-maxima sequence unimodal, so consecutive visits cannot
+///    vault the peak.
+/// 4. Stop and refine the current piece AND its forward neighbor with a
+///    windowed ternary + dense sweep ([`Refiner::refine_window`]) so corner maxima
+///    and edge-straddling peaks are considered.
+///
+/// The direction rule uses observed scores without a fixed wei tolerance. It
+/// does not remove the smooth concavity/unimodality contract used by ternary
+/// refinement and by skipping climbed-piece refinement, and is not an
+/// arbitrary-non-unimodal global-optimality guarantee.
 ///
 /// Termination is structural: each advance moves the tuple strictly forward
 /// in the product order and landed tuples never retreat along an
@@ -920,7 +716,7 @@ fn solve_active_set_path_inner(
         x_l: U256,
         x_r: Option<U256>,
         anchor: Option<U256>,
-        rec: &mut WalkRecorder,
+        rec: &mut WalkEvaluator,
         refine_neighbor: bool,
         cfg: &SolveRuntimeConfig,
         env: Option<&[RefineBound]>,
@@ -935,17 +731,25 @@ fn solve_active_set_path_inner(
                 .max(x_l.saturating_add(U256::from(1024u64)))
         });
         if x_l <= hi_current {
-            walk_refine_window(hops, x_l, hi_current, rec, anchor, cfg, env, tally);
+            Refiner::new(rec).refine_window(
+                RefineWindow {
+                    lo: x_l,
+                    hi: hi_current,
+                },
+                anchor,
+                cfg,
+                env,
+                tally,
+            );
         }
         // Gated forward-neighbor refine: a full ternary +
         // grid over the neighbor window runs on climbing stops (edge can
         // straddle a peak) and — on falling stops — only when a cheap coarse
         // 33-point evidence grid finds the neighbor competitive within a
-        // 0.1% grace band of the walk's best score. The absolute skip was
-        // measured WRONG by the fine-grid oracle (deep-liquidity family):
-        // the ±64 straddle probe can land past a thin neighbor piece, so a
-        // falling probe does NOT bound the neighbor's interior — the coarse
-        // grid must adjudicate instead. Direct wei corner probes at the
+        // 0.1% grace band of the walk's best score. The ±64 straddle probe
+        // can land past a thin neighbor piece, so a falling probe does NOT
+        // bound the neighbor's interior — the coarse grid must adjudicate
+        // instead. Direct wei corner probes at the
         // shared edge (F1 per-piece analogue) run in every fall.
         if !refine_neighbor {
             let Some(xr) = x_r else {
@@ -968,21 +772,27 @@ fn solve_active_set_path_inner(
                 // spans [n_l, n_hi] (covers +2 whenever span >= 2); the coarse
                 // grid's first point is n_l (+1).
                 if span < U256::from(2u64) {
-                    rec.eval_and_record(xr + U256::from(2u64), hops, tally);
+                    rec.observe(xr + U256::from(2u64), ProbeKind::Candidate, tally);
                 }
                 let mut best_coarse = alloy::primitives::I256::MIN;
                 for i in 0..33u64 {
                     let x = n_l + (span * U256::from(i)) / U256::from(32u64);
-                    let o = rec.eval_and_record(x, hops, tally);
+                    let o = rec.observe(x, ProbeKind::Candidate, tally);
                     let s = walk_profit_score(o.final_output, x);
                     if s > best_coarse {
                         best_coarse = s;
                     }
                 }
-                let grace = rec.top_score.max(alloy::primitives::I256::ZERO)
+                let grace = rec.top_score().max(alloy::primitives::I256::ZERO)
                     / alloy::primitives::I256::from_raw(alloy::primitives::U256::from(1_000u64));
-                if best_coarse + grace >= rec.top_score {
-                    walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env, tally);
+                if best_coarse + grace >= rec.top_score() {
+                    Refiner::new(rec).refine_window(
+                        RefineWindow { lo: n_l, hi: n_hi },
+                        None,
+                        cfg,
+                        env,
+                        tally,
+                    );
                 }
             }
             return;
@@ -1001,7 +811,13 @@ fn solve_active_set_path_inner(
                 .max(n_l.saturating_add(U256::from(1024u64)))
         });
         if n_l <= n_hi {
-            walk_refine_window(hops, n_l, n_hi, rec, None, cfg, env, tally);
+            Refiner::new(rec).refine_window(
+                RefineWindow { lo: n_l, hi: n_hi },
+                None,
+                cfg,
+                env,
+                tally,
+            );
         }
     }
 
@@ -1013,52 +829,39 @@ fn solve_active_set_path_inner(
     // The anchor fixed-point re-entry is scoped to wide/deep books; on the
     // small synthetic corpora it only perturbs equal-profit plateau tie-breaking.
     let wide_book = iteration_cap >= REFINE_ADAPTIVE_MIN_TOTAL_PIECES;
-    // Latched once the degenerate-leading-piece trigger fires, so the anchor
-    // fixed-point chain can continue across the (non-degenerate) pieces it
-    // lands in; ordinary wide-book stops never set it.
-    let mut anchor_reentry_active = false;
-
-    let mut ks = vec![0usize; hops.len()];
-    let mut visited: HashSet<Vec<usize>> = HashSet::new();
-    let mut rec = WalkRecorder::new();
+    let mut cursor = WalkCursor::new(hops.len());
+    let mut rec = WalkEvaluator::new(hops);
     // Direct (non-recorder) probes share one outcome across walked pieces.
     let mut probe_outcome = WalkPathOutcome::default();
-    // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
-    // so the Möbius fold reuses prefix partials (byte-exact — see
+    // Anchor memoization: consecutive pieces share tuple prefixes, so the
+    // Möbius fold reuses prefix partials (byte-exact — see
     // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
     // within a solve.
     let mut anchor_memo = crate::solve::mobius_shifted_piece::ShiftedPieceComposer::new();
-    // window boundaries, so it doubles as the next piece's left-edge scan
-    // start (saves a full bisection per visited piece).
-    let mut prev_right_edge: Option<U256> = None;
-    // Bracket warm start for the right-edge bisection: the prior
-    // piece's (edge, confirm_hi) pair. ks only advances componentwise, so
-    // the prior edge remains a lower bound; the seeded helper re-validates
-    // confirm_hi with a single probe. Byte-identical to the cold path.
-    let mut right_bracket: Option<(U256, U256)> = None;
 
     let single_piece_path = hops.iter().all(PieceView::single_piece);
 
     for _ in 0..iteration_cap {
-        if !visited.insert(ks.clone()) {
+        if let Err(terminal) = cursor.begin_piece() {
+            cursor.apply(WalkTransition::Terminal(terminal));
             break;
         }
         tally.bump_pieces(1);
+        let ks = cursor.ks();
 
         // Transitional anchor: extra candidates (±2 sweep) and edge-growth
         // hint; never trusted for the direction decision.
-        // Loop-17 A/B (EXPERIMENTAL, default ON): `DEGENBOT_WALK_ANCHOR_SWEEP=0`
-        // disables the ±2 probe set to measure its value. The anchor VALUE is
-        // still computed and used as the window-edge hint either way.
+        // `DEGENBOT_WALK_ANCHOR_SWEEP=0` disables the ±2 probe set. The
+        // anchor VALUE is still computed and used as the window-edge hint either way.
         let sweep = anchor_sweep_mode(cfg);
         let anchor_all_t0 = std::time::Instant::now();
         let anchor_build_t0 = std::time::Instant::now();
-        let anchor_pieces = build_shifted_piece_hops(hops, &ks);
+        let anchor_pieces = build_shifted_piece_hops(hops, ks);
         tally.add_anchor_build_ns(
             u64::try_from(anchor_build_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
         let anchor_compose_t0 = std::time::Instant::now();
-        let anchor_coeffs = anchor_memo.piece_coefficients(&anchor_pieces, &ks);
+        let anchor_coeffs = anchor_memo.piece_coefficients(&anchor_pieces, ks);
         tally.add_anchor_compose_ns(
             u64::try_from(anchor_compose_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
@@ -1090,7 +893,7 @@ fn solve_active_set_path_inner(
                 if candidate.is_zero() {
                     continue;
                 }
-                rec.eval_and_record(candidate, hops, tally);
+                rec.observe(candidate, ProbeKind::Candidate, tally);
             }
             let anchor_delta = tally.sims() - anchor_t0;
             tally.bump_anchor_sims(anchor_delta);
@@ -1113,18 +916,15 @@ fn solve_active_set_path_inner(
             // 0/MAX (the corner is the floor). Pure-CP (no corner) → skip.
             if let Some(e) = sat {
                 if e > U256::ZERO {
-                    rec.eval_and_record(e, hops, tally);
-                    rec.eval_and_record(e - U256::from(1), hops, tally);
+                    rec.observe(e, ProbeKind::Candidate, tally);
+                    rec.observe(e - U256::from(1), ProbeKind::Candidate, tally);
                 }
             }
             let hi = sat.map_or(anchor.max(U256::from(1024)), |e| e.max(anchor));
             if hi > U256::ZERO {
                 let rq_mk = Mark::start(tally);
-                walk_refine_window(
-                    hops,
-                    U256::ZERO,
-                    hi,
-                    &mut rec,
+                Refiner::new(&mut rec).refine_window(
+                    RefineWindow { lo: U256::ZERO, hi },
                     Some(anchor),
                     cfg,
                     env,
@@ -1132,6 +932,7 @@ fn solve_active_set_path_inner(
                 );
                 rq_mk.commit(tally, WalkSection::Refine);
             }
+            cursor.apply(WalkTransition::Terminal(TerminalKind::UnboundedRefine));
             break;
         }
 
@@ -1141,7 +942,7 @@ fn solve_active_set_path_inner(
         let le_mk = Mark::start(tally);
         let x_l = if ks.iter().all(|&k| k == 0) {
             U256::ZERO
-        } else if let Some(prev) = prev_right_edge {
+        } else if let Some(prev) = cursor.prev_right_edge() {
             let mut found = None;
             for d in 1u64..=9 {
                 let probe = prev + U256::from(d);
@@ -1158,10 +959,10 @@ fn solve_active_set_path_inner(
             }
             match found {
                 Some(x) => x,
-                None => piece_window_left_edge(hops, &ks, anchor, tally),
+                None => piece_window_left_edge(hops, ks, anchor, tally),
             }
         } else {
-            piece_window_left_edge(hops, &ks, anchor, tally)
+            piece_window_left_edge(hops, ks, anchor, tally)
         };
 
         // Skipped tuple: `x_l` lands strictly ABOVE `ks` in some component —
@@ -1170,25 +971,26 @@ fn solve_active_set_path_inner(
         {
             simulate_walk_path_into(x_l, hops, tally, &mut probe_outcome);
             if probe_outcome.landed != ks {
-                if landed_any_above(&probe_outcome.landed, &ks) {
-                    ks = std::mem::take(&mut probe_outcome.landed);
-                    prev_right_edge = None;
+                if landed_any_above(&probe_outcome.landed, ks) {
+                    let next = std::mem::take(&mut probe_outcome.landed);
+                    cursor.apply(WalkTransition::SkippedTuple { next });
                     le_mk.commit(tally, WalkSection::Edge);
                     continue;
                 }
                 // landed BELOW ks means the left-edge search went wrong;
                 // fall back to a full edge computation before giving up.
-                let x_l_full = piece_window_left_edge(hops, &ks, anchor, tally);
+                let x_l_full = piece_window_left_edge(hops, ks, anchor, tally);
                 simulate_walk_path_into(x_l_full, hops, tally, &mut probe_outcome);
                 if probe_outcome.landed != ks {
-                    if landed_any_above(&probe_outcome.landed, &ks) {
-                        ks = std::mem::take(&mut probe_outcome.landed);
-                        prev_right_edge = None;
+                    if landed_any_above(&probe_outcome.landed, ks) {
+                        let next = std::mem::take(&mut probe_outcome.landed);
+                        cursor.apply(WalkTransition::SkippedTuple { next });
                         le_mk.commit(tally, WalkSection::Edge);
                         continue;
                     }
+                    cursor.apply(WalkTransition::Terminal(TerminalKind::DegenerateNoRefine));
                     le_mk.commit(tally, WalkSection::Edge);
-                    break; // degenerate piece — terminate with what we have
+                    break;
                 }
             }
         }
@@ -1197,24 +999,24 @@ fn solve_active_set_path_inner(
         let re_mk = Mark::start(tally);
         let (x_r, right_confirm_hi) = piece_window_right_edge_evented(
             hops,
-            &ks,
+            ks,
             anchor,
-            right_bracket.map(|b| b.0),
-            right_bracket.map(|b| b.1),
+            cursor.right_bracket().map(|b| b.0),
+            cursor.right_bracket().map(|b| b.1),
             cfg,
             tally,
         );
-        // Loop-15 census (`DEGENBOT_WALK_EVENT_CENSUS=1`): the nested
+        // Event census (`DEGENBOT_WALK_EVENT_CENSUS=1`): the nested
         // ceil-inversion's prediction vs this bisection bracket. No-op
         // (one bool load) when the gate is unset.
-        event_census_record(hops, &ks, x_r, right_confirm_hi, cfg, tally);
+        event_census_record(hops, ks, x_r, right_confirm_hi, cfg, tally);
         re_mk.commit(tally, WalkSection::Redge);
         let Some(xr) = x_r else {
             // Terminal piece (unbounded right): refine and finish.
             let term_mk = Mark::start(tally);
             refine_at_stop(
                 hops,
-                &ks,
+                ks,
                 x_l,
                 None,
                 Some(anchor),
@@ -1225,45 +1027,32 @@ fn solve_active_set_path_inner(
                 tally,
             );
             term_mk.commit(tally, WalkSection::Refine);
+            cursor.apply(WalkTransition::Terminal(TerminalKind::UnboundedRefine));
             break;
         };
-        prev_right_edge = Some(xr);
-        right_bracket = Some((xr, right_confirm_hi));
+        cursor.record_right_edge(xr, right_confirm_hi);
 
-        // Loop-17 anchor memoization: consecutive pieces share tuple prefixes,
-        // so the Möbius fold reuses prefix partials (byte-exact — see
-        // `ShiftedPieceComposer`). One composer per solve; `hops` is immutable
-        // within a solve.
-        // Direction comes only from observed scores. A negative local
-        // straddle is inconclusive, so widen the forward observation until it
-        // agrees or the path is exhausted instead of assigning a tolerance.
+        // Direction uses rear parity, not a zero crossing or wei tolerance.
+        // A negative local straddle is inconclusive, so widen the forward
+        // observation until it reaches the rear score or the path terminates.
         let di_mk = Mark::start(tally);
-        let back = xr.saturating_sub(U256::from(64u64)).max(x_l);
-        let score_back =
-            walk_profit_score(rec.eval_and_record(back, hops, tally).final_output, back);
-        let mut direction_span = U256::from(64u64);
-        let climbing = loop {
-            let fwd = xr.saturating_add(direction_span);
-            let outcome = rec.eval_and_record(fwd, hops, tally);
-            let score_fwd = walk_profit_score(outcome.final_output, fwd);
-            let forward_exhausted =
-                !outcome.facts.is_empty() && outcome.facts.iter().all(|facts| facts.bounded_tail);
-            if score_fwd >= score_back {
-                break true;
-            }
-            if forward_exhausted || fwd == U256::MAX {
-                break false;
-            }
-            direction_span = direction_span.saturating_mul(U256::from(2u64));
-        };
+        let decision = direction_at_edge(x_l, xr, |candidate| {
+            let outcome = rec.observe(candidate, ProbeKind::Candidate, tally);
+            DirectionObservation::from_output(
+                outcome.final_output,
+                candidate,
+                outcome.model_domain_exhausted(),
+            )
+        });
+        let climbing = decision.action == DirectionAction::Advance;
         let advance = if climbing {
-            landed_beyond(hops, xr, &ks, tally)
+            landed_beyond(hops, xr, ks, tally)
         } else {
             None
         };
         di_mk.commit(tally, WalkSection::Dir);
         if let Some(next) = advance {
-            ks = next;
+            cursor.apply(WalkTransition::Advance { next });
             continue;
         }
         // Anchor fixed-point re-entry (`REFINE_ADAPTIVE_ANCHOR_OVERSHOOT`): a
@@ -1285,11 +1074,11 @@ fn solve_active_set_path_inner(
         let degenerate_lead = xr.saturating_sub(x_l) <= U256::from(REFINE_DENSE_SPAN);
         if REFINE_ADAPTIVE_ANCHOR_OVERSHOOT
             && wide_book
-            && (anchor_reentry_active || degenerate_lead)
+            && (cursor.anchor_reentry_active() || degenerate_lead)
             && !climbing
         {
             simulate_walk_path_into(anchor, hops, tally, &mut probe_outcome);
-            if probe_outcome.landed != ks && !visited.contains(&probe_outcome.landed) {
+            if probe_outcome.landed != ks && !cursor.has_visited(&probe_outcome.landed) {
                 let reentry_ks = std::mem::take(&mut probe_outcome.landed);
                 // Run the full stop-time refine (current window + gated forward
                 // neighbor) before leaving, so the extra exploration only adds
@@ -1297,7 +1086,7 @@ fn solve_active_set_path_inner(
                 // have refined.
                 refine_at_stop(
                     hops,
-                    &ks,
+                    ks,
                     x_l,
                     Some(xr),
                     Some(anchor),
@@ -1307,33 +1096,33 @@ fn solve_active_set_path_inner(
                     env,
                     tally,
                 );
-                anchor_reentry_active = true;
-                ks = reentry_ks;
-                prev_right_edge = None;
-                right_bracket = None;
+                cursor.apply(WalkTransition::AnchorReentry { next: reentry_ks });
                 continue;
             }
         }
+        let terminal = TerminalKind::StopRefine { climbing };
         let term_mk = Mark::start(tally);
         refine_at_stop(
             hops,
-            &ks,
+            ks,
             x_l,
             Some(xr),
             Some(anchor),
             &mut rec,
-            climbing,
+            terminal.refine_neighbor().unwrap_or(climbing),
             cfg,
             env,
             tally,
         );
         term_mk.commit(tally, WalkSection::Refine);
+        cursor.apply(WalkTransition::Terminal(terminal));
         break;
     }
+    cursor.apply(WalkTransition::Terminal(TerminalKind::CapExhausted));
 
     // Post-hoc telemetry: the walk now visits every initialized tick in
     // the swap direction (no `max_ranges` cap). The solver's own bounds
-    // (`iteration_cap`, `prune`, `REFINE_GRID_POINTS`) prevent runaway cost,
+    // the iteration cap and bounded refinement searches prevent runaway cost,
     // but a pathological pool can still burn excessive pieces or
     // simulations. Surface those cases for diagnosis (not for screening —
     // the solve still completes and returns its result).
@@ -1360,14 +1149,5 @@ fn solve_active_set_path_inner(
         );
     }
 
-    if rec.profit.is_zero() {
-        None
-    } else {
-        Some(WalkSolution {
-            optimal_input: rec.input,
-            profit: rec.profit,
-            hop_outputs: rec.hop_outputs,
-            census: rec.census,
-        })
-    }
+    rec.into_solution()
 }

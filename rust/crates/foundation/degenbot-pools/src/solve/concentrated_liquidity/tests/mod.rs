@@ -14,7 +14,9 @@ use degenbot_math::v2::{IntHopState, SimulationResult, StepOutcome};
 
 use super::active_set::*;
 use super::crossings::*;
+use super::direction::{direction_at_edge, DirectionAction, DirectionObservation, StopReason};
 use super::entries::*;
+use super::evaluation::*;
 use super::hop_sim::*;
 use super::memo::*;
 use super::tally::WalkTally;
@@ -2796,7 +2798,7 @@ fn concentrated_liquidity_path_solver_matches_uncapped_reference_across_late_liq
             let reference = reference_uncapped_concentrated_liquidity_solve(&[&seq1, &seq2]);
             let solver_profit = solver.map_or(U256::ZERO, |result| result.profit);
             let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
-            // Loop-15: 2-wei documented epsilon. The 700/1e14 member's
+            // The 2-wei documented epsilon covers the 700/1e14 member's
             // optimum sits on a hyperflat top (~9k wei wide at <1 wei of
             // real slope) whose discrete maximum is rounding-aliasing —
             // sample-alignment luck decides the last wei (the exact-edge
@@ -2884,9 +2886,9 @@ fn active_set_walk_piece_and_simulation_counts_are_bounded() {
         "3-hop: pieces_visited={pieces} path_simulations={sims} refine_sims={refine_sims} (ternary={ternary_sims} grid={grid_sims}) word_steps={word_steps}"
     );
     assert!(pieces <= 24 + 2);
-    // Seeded-bracket regression contract: 251 measured with the
-    // warm start; 300 keeps headroom.
-    assert!(sims <= 300);
+    // Integer-discontinuity direction widening measures 372 sims on this
+    // fixture; 384 is the narrow regression ceiling for that correctness fix.
+    assert!(sims <= 384);
     #[cfg(not(feature = "telemetry"))]
     assert_eq!(
         (pieces, sims),
@@ -2927,9 +2929,14 @@ fn walk_outcome_max_dense_words_is_per_path() {
         "fixture must carry a >=128-word-boundary ending range"
     );
 
-    // Solve 1: the dense path — its own walk must step the dense range.
+    // Solve 1: the proven profitable deep two-hop geometry, with the dense
+    // ending range on its first leg.
+    let mut liquidities = vec![1_000_000_000u128; 10];
+    liquidities.push(10_000_000_000_000u128);
+    liquidities.push(1_000_000_000u128);
+    let tail = multi_range_sequence(0, 60, false, &liquidities);
     let dense_out = derive_and_solve_concentrated_liquidity_piecewise(
-        &[&dense],
+        &[&dense, &tail],
         &SolveRuntimeConfig::default(),
     );
     assert!(dense_out.stats.sims > 0, "dense fixture must run the walk");
@@ -3241,7 +3248,7 @@ fn exact_shifted_anchor_lands_on_piece_where_transitional_overshoots() {
 /// The fixture family drives hop 1's crossing content high (several
 /// thin ranges) so the shift term is material; members where the solved
 /// optimum is NOT interior are skipped (they exercise the corner lane,
-/// which `walk_refine_window` owns).
+/// which `Refiner::refine_window` owns).
 #[test]
 fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
     let mut interior_members = 0usize;
@@ -3277,12 +3284,9 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                 else {
                     continue;
                 };
-                let mut rec = WalkRecorder::new();
-                let (_argmax_x, piece_best_score) = walk_refine_window(
-                    &hops,
-                    x_l,
-                    x_r,
-                    &mut rec,
+                let mut rec = WalkEvaluator::new(&hops);
+                let (_argmax_x, piece_best_score) = Refiner::new(&mut rec).refine_window(
+                    RefineWindow { lo: x_l, hi: x_r },
                     Some(anchor),
                     &SolveRuntimeConfig::default(),
                     None,
@@ -3859,19 +3863,43 @@ fn dense_edge_direction_guard_on_captured_pool() {
         "dense path under-shoot: solver {profit} < fine oracle {oracle_profit} - eps {eps} (x*={xr})"
     );
 
-    // The ±64 direction-test straddle at the optimum agrees with the fine
-    // oracle's local slope: the solver's climb/stop decision on a dense edge
-    // is not torn by the per-boundary rounding staircase.
-    let back = xr.saturating_sub(U256::from(64));
-    let fwd = xr.saturating_add(U256::from(64));
-    let sb = walk_profit_score(o(back), back);
-    let sf = walk_profit_score(o(fwd), fwd);
-    let straddle_climbing = sf + I256::ONE >= sb;
+    // The production multiscale direction decision at the optimum agrees
+    // with the fine oracle's local slope, without a fixed wei tolerance.
+    let mut tally = WalkTally::default();
+    let decision = direction_at_edge(U256::ZERO, xr, |input| {
+        let outcome = simulate_walk_path(input, &hops, &mut tally);
+        DirectionObservation::from_output(
+            outcome.final_output,
+            input,
+            outcome.model_domain_exhausted(),
+        )
+    });
+    let climbing = decision.action == DirectionAction::Advance;
     // Fine-oracle truth: profit is flat-to-falling at/just past the optimum,
     // so it must agree that the edge is not climbing.
     let oracle_rising = p(xr.saturating_add(U256::from(258))) >= profit;
     assert_eq!(
-        straddle_climbing, oracle_rising,
-        "dense-edge ±64 direction test ({straddle_climbing}) disagrees with the fine oracle ({oracle_rising}) at x*={xr}"
+        climbing, oracle_rising,
+        "dense-edge multiscale direction ({climbing}) disagrees with the fine oracle ({oracle_rising}) at x*={xr}"
     );
+}
+
+#[test]
+fn mixed_constant_product_direction_stops_at_input_saturation() {
+    let v2 = IntHopState::new(U256::ZERO, U256::ZERO, 997_000, 1_000_000);
+    let seq = multi_range_sequence(0, 60, true, &[1_000_000_000_000u128; 2]);
+    let hops = [
+        PieceView::constant_product(&v2),
+        concentrated_liquidity_walk_hop(&seq, None),
+    ];
+    let mut tally = WalkTally::default();
+    let decision = direction_at_edge(U256::ZERO, U256::ZERO, |input| {
+        let outcome = simulate_walk_path(input, &hops, &mut tally);
+        assert!(!outcome.model_domain_exhausted());
+        DirectionObservation::from_output(outcome.final_output, input, false)
+    });
+    assert_eq!(decision.action, DirectionAction::Stop);
+    assert_eq!(decision.stop_reason, Some(StopReason::InputSaturated));
+    assert_eq!(decision.probes, 252);
+    assert_eq!(decision.final_span, U256::MAX);
 }

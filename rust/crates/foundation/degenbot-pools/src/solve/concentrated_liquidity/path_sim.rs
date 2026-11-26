@@ -13,7 +13,7 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 
 use super::entries::PreparedConcentratedLiquidityHop;
-use super::hop_sim::simulate_v3_range_swap;
+use super::hop_sim::{bounded_tail, simulate_v3_range_swap};
 use super::tally::WalkTally;
 use super::IntV3TickRangeSequence;
 use crate::state::int_v3_hop::SwapWalkCensus;
@@ -113,7 +113,7 @@ impl ConcentratedLiquidityPathSim {
             // modeled span ran out first (the landing range is the last one and
             // its exit was consumed): the swap goes further than the walk sees,
             // so both census counts are lower bounds.
-            let bounded_tail = !remaining.is_zero() && ending.consumed_input < remaining;
+            let bounded_tail = bounded_tail(remaining, ending.consumed_input);
             let out = crossing.crossing_output.saturating_add(ending.output);
             census.push(hop.int_seq.swap_census(k, ending.word_steps, bounded_tail));
             landed.push(k);
@@ -133,7 +133,9 @@ impl ConcentratedLiquidityPathSim {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::solve::concentrated_liquidity::active_set::{simulate_walk_path, PieceView};
+    use crate::solve::concentrated_liquidity::active_set::{
+        simulate_walk_path, PieceView, WalkPathOutcome,
+    };
     use crate::solve::concentrated_liquidity::crossings::{
         build_concentrated_liquidity_crossing_table, concentrated_liquidity_walk_hop,
     };
@@ -354,5 +356,15 @@ mod tests {
         assert_eq!(out.final_output, U256::ZERO);
         assert_eq!(out.hop_outputs, vec![U256::ZERO, U256::ZERO]);
         assert_eq!(out.landed, vec![0, 0]);
+        assert_eq!(out.census, [None, None]);
+
+        let hops = [
+            concentrated_liquidity_walk_hop(&a, None),
+            concentrated_liquidity_walk_hop(&b, None),
+        ];
+        let walk = simulate_walk_path(U256::ZERO, &hops, &mut WalkTally::default());
+        assert!(walk.facts.iter().all(|facts| !facts.bounded_tail));
+        assert!(!walk.model_domain_exhausted());
+        assert!(!WalkPathOutcome::default().model_domain_exhausted());
     }
 }
