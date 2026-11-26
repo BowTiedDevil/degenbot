@@ -544,7 +544,7 @@ crate::config_schema! {
         walk_event_solver_legacy [bool_not] = false, env = "DEGENBOT_WALK_EVENT_SOLVER", def = "false",
             doc = "Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag).";
         walk_event_census [bool] = false, env = "DEGENBOT_WALK_EVENT_CENSUS", def = "false",
-            doc = "Loop-15 nested event census counters in the concentrated liquidity walker (`1` enables).";
+            doc = "Nested event census counters in the concentrated liquidity walker (`1` enables).";
         walk_anchor_sweep [enum AnchorSweep Off CenterOnly Full] = AnchorSweep::Full, env = "DEGENBOT_WALK_ANCHOR_SWEEP", def = "full",
             doc = "Walk anchor-sweep posture: `off` (0), `center-only` (2), or `full` (default/anything else).";
         envelope_max_tangent_lines [usize] = 32, env = "DEGENBOT_ENVELOPE_MAX_TANGENT_LINES", def = "32",

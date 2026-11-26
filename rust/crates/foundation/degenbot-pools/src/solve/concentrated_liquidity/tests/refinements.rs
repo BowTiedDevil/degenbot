@@ -1,10 +1,9 @@
-//! Loop-19/20/21 experiment harness: A/B stance measurements + invariants.
+//! Refinement and bound-stance measurements with behavioral invariants.
 //!
-//! Contains the always-on soundness invariants (envelope never under-cuts the
-//! oracle; the walker never loses to a dense scan; stance changes never move
-//! the argmax) plus printed A/B tables for: Loop-19 model-anchor refine,
-//! Loop-20 mass-weighted tangent sampling, Loop-21 envelope-pruned refine
-//! windows, and the Loop-15 event-solver A/B.
+//! Contains soundness invariants (the envelope never under-cuts the oracle,
+//! the walker tracks a dense scan, and stance changes preserve the argmax)
+//! plus comparison tables for model-anchor refinement, mass-weighted tangent
+//! sampling, envelope-pruned windows, and the event solver.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -243,10 +242,10 @@ pub(super) fn concentrated_liquidity_corpus() -> Vec<(String, Vec<IntV3TickRange
     out
 }
 
-// ------------------------------------------------------- Loop-6 invariants --
+// ------------------------------------------- Envelope and scan invariants --
 
 #[test]
-fn dbg_loop6_and_mixed_bound() {
+fn mixed_bound_debug_readout() {
     for (name, seqs) in concentrated_liquidity_corpus() {
         if name != "case1" {
             continue;
@@ -300,7 +299,7 @@ fn dbg_loop6_and_mixed_bound() {
 }
 
 #[test]
-fn loop6_walker_dominates_dense_scan_and_envelope_never_undercuts() {
+fn walker_matches_dense_scan_and_envelope_never_undercuts() {
     for (name, seqs) in concentrated_liquidity_corpus() {
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         let (tables, _prep) = cp_seq_tables(&refs);
@@ -376,10 +375,10 @@ fn loop6_walker_dominates_dense_scan_and_envelope_never_undercuts() {
     }
 }
 
-// -------------------------------------------------- Loop-19 model anchor ----
+// ----------------------------------------------------- Model-anchor refine --
 
 #[test]
-fn loop19_model_anchor_refine_is_argmax_equal_and_saves_sims() {
+fn default_refinement_matches_dense_scan_with_model_anchor_comparison() {
     for (name, seqs) in concentrated_liquidity_corpus() {
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         let cfg_off = SolveRuntimeConfig::default();
@@ -389,12 +388,11 @@ fn loop19_model_anchor_refine_is_argmax_equal_and_saves_sims() {
         };
         let a = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg_off);
         let b = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg_on);
-        // REJECTED HYPOTHESIS (Loop-19): the ±REFINE_BRACKET_WEI model-anchor
-        // bracket is NOT sufficient on wei-scale synthetic reserves — the
-        // stance measurably LOWERS the found profit (the smooth Möbius anchor
-        // and the discrete top are further apart than one bracket width when
-        // the piece's price span is small). The stance stays opt-in-off; this
-        // harness documents the loss instead of gating on equality.
+        // The ±REFINE_BRACKET_WEI model-anchor bracket is not sufficient on
+        // wei-scale synthetic reserves: the smooth Möbius anchor and discrete
+        // top can be further apart than one bracket width when the piece's
+        // price span is small. The stance stays opt-in-off; this harness
+        // records its profit and simulation delta without requiring equality.
         let profit_off = a
             .result
             .as_ref()
@@ -410,22 +408,23 @@ fn loop19_model_anchor_refine_is_argmax_equal_and_saves_sims() {
             "{name}: default refinement under-shoots the independent dense scan: walk={profit_off} scan={scan_best}"
         );
         if profit_off > U256::ZERO {
+            let (delta_kind, delta) = if profit_off >= profit_on {
+                ("reduction", profit_off - profit_on)
+            } else {
+                ("increase", profit_on - profit_off)
+            };
             println!(
-                "{name}: profit off={} on={} (reduction {}) · sims off={} on={}",
-                profit_off,
-                profit_on,
-                profit_off - profit_on,
-                a.stats.sims,
-                b.stats.sims
+                "{name}: profit off={} on={} ({delta_kind} {delta}) · sims off={} on={}",
+                profit_off, profit_on, a.stats.sims, b.stats.sims
             );
         }
     }
 }
 
-// ------------------------------------------------- Loop-20 mass sampling ----
+// ------------------------------------------------------ Mass-weighted sampling --
 
 #[test]
-fn loop20_mass_sampling_stays_sound_and_measures_tightness() {
+fn mass_sampling_bounds_stay_sound_and_measure_tightness() {
     let state = 0x5eed_1234u64;
     let mut even_worse = 0usize;
     let mut fat_cases = 0usize;
@@ -501,15 +500,13 @@ fn loop20_mass_sampling_stays_sound_and_measures_tightness() {
             b_even, b_mass, oracle_best
         );
     }
-    println!(
-        "Loop-20 summary: mass sampling tighter (bound closer) in {even_worse}/{fat_cases} cases"
-    );
+    println!("mass-sampling summary: tighter bounds in {even_worse}/{fat_cases} cases");
 }
 
-// ------------------------------------------------ Loop-21 envelope pruning --
+// --------------------------------------------------- Envelope-pruned refine --
 
 #[test]
-fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
+fn envelope_pruned_refinement_preserves_argmax_without_extra_sims() {
     let mut total_off = 0usize;
     let mut total_on = 0usize;
     for (name, seqs) in concentrated_liquidity_corpus() {
@@ -528,7 +525,7 @@ fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
         let on = solve_concentrated_liquidity_piecewise(&prep, None, None, &cfg, bounds.as_deref());
         assert_eq!(
             off.result, on.result,
-            "{name}: Loop-21 pruned refine moved the argmax"
+            "{name}: envelope-pruned refine moved the argmax"
         );
         assert!(
             on.stats.sims <= off.stats.sims,
@@ -543,13 +540,13 @@ fn loop21_envelope_pruned_refine_is_argmax_equal_and_never_loses_sims() {
             off.stats.refine_sims, on.stats.refine_sims, off.stats.sims, on.stats.sims
         );
     }
-    println!("Loop-21 totals: sims off={total_off} on={total_on}");
+    println!("envelope-prune totals: sims off={total_off} on={total_on}");
 }
 
-// ------------------------------------------------- Loop-15 event solver A/B -
+// --------------------------------------------------- Event-solver comparison --
 
 #[test]
-fn loop15_event_solver_agrees_with_legacy_bisection() {
+fn event_solver_preserves_legacy_bisection_profit() {
     for (name, seqs) in concentrated_liquidity_corpus() {
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         let cfg_new = SolveRuntimeConfig::default();
@@ -575,9 +572,9 @@ fn loop15_event_solver_agrees_with_legacy_bisection() {
             } else {
                 rb.optimal_input - ra.optimal_input
             };
-            // MEASURED (Loop-15): equal-profit plateau points can sit up to
-            // ~3.4e6 wei apart across stances — same profit, different input
-            // commitments (delivery policy may care: min-input tiebreak).
+            // Equal-profit plateau points can be far apart across stances:
+            // same profit, different input commitments (delivery policy may
+            // care about a min-input tiebreak).
             println!("{name}: stance input Δ={d} wei at equal profit");
         }
         println!(
@@ -587,18 +584,13 @@ fn loop15_event_solver_agrees_with_legacy_bisection() {
     }
 }
 
-// anchor_sweep modes agree (Loop-17 measurement)
+// Anchor-sweep profit and exact-output equivalence
 
 #[test]
-fn loop17_anchor_sweep_modes_agree() {
+fn anchor_sweep_modes_preserve_profit_and_exact_outputs() {
     for (name, seqs) in concentrated_liquidity_corpus() {
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
-        let mut results: Vec<(
-            Option<crate::solve::concentrated_liquidity::WalkStats>,
-            Option<crate::solve::concentrated_liquidity::WalkSolution>,
-        )> = Vec::new(); // placeholder
-        let mut sims = Vec::new();
-        let mut result_first: Option<crate::solve::concentrated_liquidity::WalkSolution> = None;
+        let mut results = Vec::new();
         for (label, sweep) in [
             ("Full", AnchorSweep::Full),
             ("CenterOnly", AnchorSweep::CenterOnly),
@@ -610,9 +602,6 @@ fn loop17_anchor_sweep_modes_agree() {
             };
             let outcome = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg);
             let res = outcome.result.clone();
-            if result_first.is_none() {
-                result_first = res.clone();
-            }
             if let Some(solution) = &res {
                 let sim = ConcentratedLiquidityPathSim::new(&refs, None);
                 let exact = sim.output(solution.optimal_input);
@@ -626,22 +615,30 @@ fn loop17_anchor_sweep_modes_agree() {
                     "{name}: sweep {label} returned inexact profit"
                 );
             }
+            results.push((label, res, outcome.stats.sims));
+        }
+        let baseline_profit = results
+            .first()
+            .and_then(|(_, result, _)| result.as_ref().map(|solution| solution.profit));
+        for (label, result, _) in results.iter().skip(1) {
             assert_eq!(
-                res.as_ref().map(|solution| solution.profit),
-                result_first.as_ref().map(|solution| solution.profit),
+                result.as_ref().map(|solution| solution.profit),
+                baseline_profit,
                 "{name}: sweep {label} moved the profit optimum"
             );
-            sims.push((label, outcome.stats.sims));
-            results.push((None, None));
         }
+        let sims: Vec<_> = results
+            .iter()
+            .map(|(label, _, sims)| (*label, *sims))
+            .collect();
         println!("{name}: sweep-sims {sims:?}");
     }
 }
 
-// mixed-path Loop-21 equality through solve_piecewise
+// Mixed-path envelope-pruning equality through solve_piecewise
 
 #[test]
-fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
+fn mixed_path_envelope_pruned_refinement_preserves_argmax() {
     // V2 → concentrated liquidity → V2 with a rich middle pool
     let v2s = [v2_hop(1000, 2000), v2_hop(2000, 500)];
     let seqs = [local_seq(
@@ -670,7 +667,10 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
     ];
     let off = solve_piecewise(&hops, None, None, &cfg, None);
     let on = solve_piecewise(&hops, None, None, &cfg, Some(&bounds));
-    assert_eq!(off.result, on.result, "Loop-21 moved the mixed-path argmax");
+    assert_eq!(
+        off.result, on.result,
+        "envelope pruning moved the mixed-path argmax"
+    );
     assert!(on.stats.sims <= off.stats.sims);
     println!(
         "mixed: sims off={} on={} refine off={} on={}",
@@ -679,7 +679,7 @@ fn loop21_mixed_path_pruned_refine_is_argmax_equal() {
 }
 
 #[test]
-fn loop19_and_21_stance_messages_are_quiet_on_single_piece_paths() {
+fn refinement_stances_are_quiet_on_single_piece_paths() {
     // single-range concentrated liquidity hop: refine runs once with the corner guard; both
     // stances must produce the identical iterate.
     let seqs = [local_seq(

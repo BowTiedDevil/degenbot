@@ -21,7 +21,7 @@ pub struct RefineBound {
     pub c: I512,
 }
 
-/// Loop-21: intersect the refine window `[lo, hi]` with the inputs the
+/// Intersect the refine window `[lo, hi]` with the inputs the
 /// composed bound cannot disprove: for the walk's best-so-far profit `best`
 /// (output − input), any x with `bound(x) − x < best` can never beat the
 /// walk's argmax (the lines dominate the true output pointwise), so the

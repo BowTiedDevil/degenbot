@@ -221,9 +221,9 @@ candidate", exactly today's semantics.
   `MissingTickWord` propagation); a tick-sparse pool with 40 boundary words
   and an initialized tick 10,354 ticks away is fully reachable — the fixture
   failure mode disappears structurally, not by re-shaping the filter.
-- `gen_ticks` budget remains as a work ceiling, now hit only by genuinely
-  deep walks, not by boundary-tick interleaving arithmetic
-  (`max_ranges*4+16`).
+- `gen_ticks` has no independent correctness or work cap: it terminates at
+  `MIN_TICK` / `MAX_TICK`. Sparse data produces the named `MissingTickWord`
+  model gap rather than silently shortening the walk.
 
 `PXSY47` then unifies the validation objective with the step-faithful
 sequential walker (`v3_simulate_swap`'s `compute_swap_step_v3` loop
@@ -358,12 +358,19 @@ surfaced:
    the two-layer discipline of `anchored_mobius_solve` generalized to windows.
 2. **The EVM floor staircase rules out pointwise direction tests.** The
    discrete profit can jog around a piece edge, so a local negative probe is
-   not evidence of the wider trend. The direction test starts with straddle
-   probes at ±64 around the right edge and doubles the forward span until the
-   observed score is non-negative or the path is exhausted. On stop it refines
-   the current piece AND its forward neighbor (a peak straddling the edge is
-   never mis-attributed). No fixed profit tolerance or smooth-curve direction
-   assumption is used.
+   not evidence of the wider trend. The direction test compares a fixed rear
+   probe at `max(x_r - 64, x_l)` with forward probes at `x_r + span`, starting
+   at 64 and doubling. It advances when `score_fwd >= score_back`; equality
+   advances. Otherwise it stops only when every hop reports `bounded_tail` or
+   the forward input reaches `U256::MAX`. A hop without bounded-tail evidence,
+   including constant product, leaves input saturation as the terminator. On
+   stop it refines the current piece AND its forward neighbor (a peak
+   straddling the edge is never mis-attributed).
+
+   This observation-driven rule removes the fixed wei tolerance, not the
+   smooth concavity/unimodality contract used by ternary refinement and by
+   skipping climbed-piece refinement. It does not claim global optimality for
+   arbitrary non-unimodal curves.
 3. **One-piece steps, no hopscotch** in the transitional version: the walk
    visits consecutive pieces only, which by concavity cannot vault the
    peak. Exact anchors (`EHSWSX`) re-enable hopping past clearly-climbing

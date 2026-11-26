@@ -172,7 +172,7 @@ impl WalkEventCensus {
     }
 }
 
-/// Loop-17 section census helper: records (wall ns, sims, sim wall ns)
+/// Section census helper: records (wall ns, sims, sim wall ns)
 /// between `Mark::start()` and `commit`, attributing them to a section.
 pub(super) struct Mark {
     #[cfg(feature = "telemetry")]
