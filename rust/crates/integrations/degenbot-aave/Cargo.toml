@@ -22,6 +22,10 @@ degenbot-config.workspace = true
 degenbot-db = { workspace = true, features = ["writer"] }
 degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
+# The refresh's independent parent-block reads fan out with a bounded width
+# (`buffered`), the same declaration the header acquisition in `degenbot-rpc`
+# carries.
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 rusqlite = { version = "^0.43" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }

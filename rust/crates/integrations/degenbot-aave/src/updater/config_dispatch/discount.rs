@@ -3,9 +3,11 @@
 //! The per-tx discount snapshot pre-pass ([`build_discount_snapshot`], the
 //! 3-way hybrid: DB cache → RPC `getDiscountPercent` (pre-deprecation only)
 //! → V4+ deprecation zero), the three discount-config event dispatchers (each
-//! reading the GHO asset through the ctx-owned always-fresh accessor), the
+//! reading the GHO asset through the ctx-owned always-fresh accessor), and the
 //! stkAAVE transfer channel (the canonical + only stkAAVE balance-mutation
-//! path) with the NULL-balance backfill, + the post-apply discount refresh.
+//! path) with the NULL-balance backfill. The post-apply discount refresh is NOT
+//! here: it composes at the transaction sequencer (`run::resolution`), which owns
+//! every settled read position.
 //!
 //! The pre-pass consumes the vToken revision its caller re-resolved per
 //! transaction (stage 1 of `ChunkContext::begin_dispatch`) — with the
@@ -23,14 +25,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::projection::ConfigurationEffect;
-#[cfg(test)]
-use crate::ray_mul;
 use alloy::primitives::{Address, Bytes, U256};
-#[cfg(test)]
-use degenbot_db::{DebtPositionRefreshContext, DegenbotDb};
 use degenbot_rpc::chain_evidence::BlockReads;
-#[cfg(test)]
-use rusqlite::Connection;
 
 use super::context::ChunkContext;
 use super::{
@@ -354,83 +350,4 @@ pub(super) async fn build_discount_snapshot(
 /// Decode the first topic word as an `Address` (the low 20 bytes).
 fn topic_to_address(topic: alloy::primitives::B256) -> Address {
     Address::from_slice(&topic.as_slice()[12..])
-}
-
-// ── the discount-refresh post-apply pass ─────────────────────────────
-
-/// The (C) discount-refresh post-apply pass. For one `GhoRefreshDiscount`
-/// signal (one V1-V3 GHO mint/burn that set `should_refresh_discount`),
-/// recompute `aave_v3_users.gho_discount` from the POST-APPLY debt balance +
-/// the user's stkAAVE balance.
-///
-/// 1. Read the debt position's `(user_id, user_address, scaled_balance,
-///    last_index, stk_aave_balance)` from `conn` — the POST-apply values
-///    (the `ScaledTokenMint`/`Burn` apply landed them just before this call).
-/// 2. `get_or_init_stk_aave_balance`: if `stk_aave_balance` is `None` (the
-///    user never touched by a stkAAVE `Staked`/`Transfer` yet — the 890
-///    `None` + the 1042 missing), `balanceOf(address)` `eth_call` on the
-///    discount-token (stkAAVE) at **`block_number - 1`** (the PREVIOUS
-///    block — the balance check is BEFORE any events in the current block;
-///    an off-by-one here causes a divergence class) → SET
-///    `aave_v3_users.stk_aave_balance`.
-/// 3. `debt_balance = ray_mul(scaled_balance, last_index, None)` (HALF_UP —
-///    matches the byte-exact `accrue_debt_on_action` path).
-/// 4. `gho_discount = calculate_gho_discount_rate(debt_balance,
-///    stk_aave_balance)` → `i64`.
-/// 5. Write `aave_v3_users.gho_discount` (the DB-cache path #1 of
-///    `build_discount_snapshot` reads this on the next tx → correct discount
-///    → GHO debt accrual converges).
-///
-/// `discount_token` is the chain's (freshly-per-tx-resolved)
-/// `v_gho_discount_token` — `None` (no discount token configured) → no-op.
-#[cfg(test)]
-pub(crate) async fn refresh_gho_discount(
-    reads: &BlockReads<'_>,
-    conn: &Connection,
-    position_id: i64,
-    discount_token: Option<Address>,
-) -> Result<(), ConfigDispatchError> {
-    let Some(discount_token) = discount_token else {
-        return Ok(());
-    };
-    // 1. POST-apply debt-position context.
-    let ctx: DebtPositionRefreshContext =
-        DegenbotDb::lookup_debt_position_refresh_context_on_conn(conn, position_id)?;
-    // 2. get_or_init_stk_aave_balance (balanceOf at block-1 if None).
-    let stk_aave_balance = if let Some(b) = ctx.stk_aave_balance {
-        b
-    } else {
-        let user_addr: Address = ctx.user_address.parse().map_err(|_| {
-            ConfigDispatchError::DecodeShape(format!(
-                "bad user_address in refresh: {}",
-                ctx.user_address
-            ))
-        })?;
-        let ret = reads
-            .call(
-                discount_token,
-                encode_single_address_call("balanceOf(address)", &user_addr),
-            )
-            .await?;
-        let balance = require_word0_u256(&ret, "balanceOf(address)", &discount_token)?;
-        DegenbotDb::set_user_stk_aave_balance_on_conn(conn, ctx.user_id, balance)?;
-        balance
-    };
-    // 3. debt_balance = ray_mul(scaled, last_index) — HALFUP (Python default).
-    let debt_index = ctx.last_index.unwrap_or(U256::ZERO);
-    let debt_balance = ray_mul(ctx.scaled_balance, debt_index, None).map_err(|e| {
-        ConfigDispatchError::DecodeShape(format!("ray_mul overflow in refresh: {e}"))
-    })?;
-    // 4. + 5. compute + write gho_discount.
-    #[cfg(test)]
-    let rate = crate::gho_processor::calculate_gho_discount_rate(debt_balance, stk_aave_balance)
-        .map_err(|e| {
-            ConfigDispatchError::DecodeShape(format!("calculate_gho_discount_rate: {e}"))
-        })?;
-    DegenbotDb::apply_gho_discount_percent_updated_on_conn(
-        conn,
-        ctx.user_id,
-        discount_to_i64(rate),
-    )?;
-    Ok(())
 }

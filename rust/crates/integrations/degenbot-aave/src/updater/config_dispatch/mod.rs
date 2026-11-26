@@ -1077,66 +1077,6 @@ mod tests {
         }
     }
 
-    /// The post-apply discount refresh's `balanceOf` read has the same
-    /// contract: a short return word aborts the refresh, never caches a zero
-    /// stkAAVE balance.
-    #[test]
-    fn refresh_gho_discount_short_balance_return_aborts_naming_read_and_target() {
-        let (db, _seed) = db_seeded();
-        let discount_token = Address::from([0xd1; 20]);
-        let user_addr = Address::repeat_byte(0x42);
-        let conn = db.lock();
-        let user_id: i64 = conn
-            .query_row(
-                "SELECT id FROM aave_v3_users WHERE address = ?1",
-                params![checksum(&user_addr)],
-                |r| r.get(0),
-            )
-            .unwrap();
-        conn.execute(
-            "INSERT INTO aave_v3_debt_positions (user_id, asset_id, balance, last_index) \
-             VALUES (?1, 1, '1000', '1000000000000000000000000000')",
-            params![user_id],
-        )
-        .unwrap();
-        let position_id = conn.last_insert_rowid();
-        // The refresh reads the transaction's PARENT anchor: block 99's own
-        // exact identity, pinned by hash like every other read position.
-        let parent = degenbot_core::canonical_head::ChainAnchor::new(
-            1,
-            99,
-            B256::repeat_byte(0x99),
-            B256::repeat_byte(0x98),
-        )
-        .unwrap();
-        let key = eth_call_hash_key(
-            &address_arg_input("balanceOf(address)", &user_addr),
-            &format!("0x{}", alloy::hex::encode(discount_token)),
-            &format!("{}", parent.hash()),
-        );
-        let transport =
-            CassetteReplayTransport::new(test_cassette(vec![(key, "0x01".to_string())]));
-        let provider = transport.as_alloy_provider();
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(discount::refresh_gho_discount(
-                &BlockReads::at(&provider, parent),
-                &conn,
-                position_id,
-                Some(discount_token),
-            ))
-            .expect_err("a short balanceOf return must abort the refresh, never cache zero");
-        match err {
-            ConfigDispatchError::DecodeShape(msg) => {
-                assert!(msg.contains("balanceOf"), "names the read: {msg}");
-                assert!(
-                    msg.contains(&checksum(&discount_token)),
-                    "names the target: {msg}"
-                );
-            }
-            other => panic!("expected DecodeShape, got {other:?}"),
-        }
-    }
-
     /// A dummy `AlloyProvider` pointing at a dead URL. Used for path #1 / #3
     /// tests (which short-circuit before any `eth_call`). Path #2 tests need
     /// a live node + are `#[ignore]`-gated.

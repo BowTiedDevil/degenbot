@@ -1,13 +1,14 @@
 //! The scripted chain the activation and verification seams read against.
 //!
-//! One exact head block, one answer per `(target, selector)`, and the code each
-//! address holds there. Every hash-pinned read must name that head's hash, so a
-//! seam that reads at an ambient position (or at a second block) fails here
-//! instead of passing on a tolerant double.
+//! One exact head block (and its parent), one answer per `(target, selector)`,
+//! and the code each address holds there. Every hash-pinned read must name one
+//! of those two blocks' hashes, so a seam that reads at an ambient position (or
+//! at a third block) fails here instead of passing on a tolerant double.
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -27,10 +28,13 @@ const DEFAULT_CODE: [u8; 2] = [0x60, 0x00];
 /// The chain id every fixture serves.
 pub(crate) const CHAIN_ID: u64 = 1;
 
-/// The height (and identity) every fixture serves.
+/// The height (and identity) every fixture serves, and its parent — the one pre-
+/// block read position the refresh's parent anchors resolve to.
 pub(crate) const HEAD_NUMBER: u64 = 100;
 pub(crate) const HEAD_HASH: B256 = B256::new([0xaa; 32]);
 pub(crate) const HEAD_PARENT: B256 = B256::new([0xbb; 32]);
+pub(crate) const PARENT_NUMBER: u64 = HEAD_NUMBER - 1;
+pub(crate) const PARENT_HASH: B256 = B256::new([0xcc; 32]);
 
 /// What one scripted `eth_call` answers.
 #[derive(Debug, Clone)]
@@ -76,11 +80,13 @@ struct ChainState {
     stall_calls: bool,
 }
 
-/// A chain that answers one exact head block and refuses everything else.
+/// A chain that answers one exact head block and its parent, and refuses
+/// everything else.
 #[derive(Clone)]
 pub(crate) struct ScriptedChain {
     state: Arc<Mutex<ChainState>>,
     issued: Arc<Mutex<Vec<Issued>>>,
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl ScriptedChain {
@@ -93,6 +99,7 @@ impl ScriptedChain {
                 stall_calls: false,
             })),
             issued: Arc::new(Mutex::new(Vec::new())),
+            in_flight: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -118,6 +125,33 @@ impl ScriptedChain {
     pub(crate) fn stall_calls(self) -> Self {
         self.state.lock().unwrap().stall_calls = true;
         self
+    }
+
+    /// The `eth_call`s that reached the transport and are still parked. With
+    /// [`Self::stall_calls`] this is the caller's concurrent width: every request
+    /// the seam issued and has not been answered parks here.
+    pub(crate) fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::SeqCst)
+    }
+
+    /// Record a parked request exactly as a served one: its wire form on the
+    /// issued ledger, and one more call the transport has not answered.
+    fn begin_stalled(&self, req: &RequestPacket) {
+        let record = |single: &SerializedRequest| {
+            let params = single
+                .params()
+                .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
+                .unwrap_or(Value::Null);
+            self.issued.lock().unwrap().push(Issued {
+                method: single.method().to_string(),
+                params,
+            });
+            self.in_flight.fetch_add(1, Ordering::SeqCst);
+        };
+        match req {
+            RequestPacket::Single(single) => record(single),
+            RequestPacket::Batch(batch) => batch.iter().for_each(record),
+        }
     }
 
     /// Script `to` as an address that holds no code at the head block.
@@ -193,12 +227,17 @@ impl ScriptedChain {
     }
 }
 
-/// Whether `id` names the fixture's exact head block, as EIP-1898 states it.
-fn names_head(id: Option<&Value>) -> bool {
+/// Whether `id` names one of the fixture's exact blocks (the head or its parent),
+/// as EIP-1898 states it.
+fn names_pinned(id: Option<&Value>) -> bool {
     let Some(id) = id else { return false };
     let hash = id.get("blockHash").and_then(Value::as_str);
     let canonical = id.get("requireCanonical").and_then(Value::as_bool);
-    hash == Some(format!("{HEAD_HASH}").as_str()) && canonical == Some(true)
+    canonical == Some(true)
+        && matches!(
+            hash,
+            Some(hash) if hash == format!("{HEAD_HASH}") || hash == format!("{HEAD_PARENT}")
+        )
 }
 
 fn success(value: &Value) -> ResponsePayload {
@@ -229,19 +268,23 @@ fn reply(chain: &ScriptedChain, req: &SerializedRequest) -> ResponsePayload {
                 .get(0)
                 .and_then(Value::as_str)
                 .and_then(|raw| u64::from_str_radix(raw.trim_start_matches("0x"), 16).ok());
-            if asked == Some(HEAD_NUMBER) {
-                success(&json!({
-                    "number": format!("0x{HEAD_NUMBER:x}"),
-                    "hash": format!("{HEAD_HASH}"),
-                    "parentHash": format!("{HEAD_PARENT}"),
-                }))
-            } else {
-                success(&Value::Null)
+            let header = match asked {
+                Some(HEAD_NUMBER) => Some((HEAD_NUMBER, HEAD_HASH, HEAD_PARENT)),
+                Some(PARENT_NUMBER) => Some((PARENT_NUMBER, HEAD_PARENT, PARENT_HASH)),
+                _ => None,
+            };
+            match header {
+                Some((number, hash, parent)) => success(&json!({
+                    "number": format!("0x{number:x}"),
+                    "hash": format!("{hash}"),
+                    "parentHash": format!("{parent}"),
+                })),
+                None => success(&Value::Null),
             }
         }
         "eth_getLogs" => success(&json!([])),
         "eth_getCode" | "eth_call" => {
-            if !names_head(params.get(1)) {
+            if !names_pinned(params.get(1)) {
                 return refusal(
                     -32_000,
                     format!(
@@ -299,6 +342,7 @@ impl tower::Service<RequestPacket> for ScriptedChain {
             let stalled = matches!(&req, RequestPacket::Single(single) if single.method() == "eth_call")
                 || matches!(&req, RequestPacket::Batch(batch) if batch.iter().any(|single| single.method() == "eth_call"));
             if stalled {
+                chain.begin_stalled(&req);
                 return Box::pin(std::future::pending());
             }
         }

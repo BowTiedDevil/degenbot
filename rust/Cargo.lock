@@ -2315,6 +2315,7 @@ dependencies = [
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-rpc",
+ "futures-util",
  "rusqlite",
  "serde_json",
  "tempfile",
