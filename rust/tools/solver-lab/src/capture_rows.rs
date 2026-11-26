@@ -42,43 +42,11 @@ pub fn str_field(v: &Value, k: &str) -> Result<String, String> {
 /// `liquidity`, `sqrt_price_x96`, `gamma_numer`, `fee_denom`, `zero_for_one`, a
 /// non-string word-boundary price, or the integer parser's own message).
 pub fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
-    let wbp = v
-        .get("word_boundary_prices")
-        .and_then(Value::as_array)
-        .ok_or("word_boundary_prices")?
-        .iter()
-        .map(|w| {
-            w.as_str()
-                .ok_or_else(|| "wbp not a string".to_string())
-                .and_then(u256)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let liquidity = str_field(v, "liquidity")?
-        .parse::<u128>()
-        .map_err(|e| e.to_string())?;
-    Ok(IntV3TickRangeHop {
-        liquidity,
-        sqrt_price_x96: u256(&str_field(v, "sqrt_price_x96")?)?,
-        sqrt_price_lower_x96: u256(&str_field(v, "sqrt_price_lower_x96")?)?,
-        sqrt_price_upper_x96: u256(&str_field(v, "sqrt_price_upper_x96")?)?,
-        gamma_numer: v
-            .get("gamma_numer")
-            .and_then(Value::as_u64)
-            .ok_or("gamma_numer")?,
-        fee_denom: v
-            .get("fee_denom")
-            .and_then(Value::as_u64)
-            .ok_or("fee_denom")?,
-        zero_for_one: v
-            .get("zero_for_one")
-            .and_then(Value::as_bool)
-            .ok_or("zero_for_one")?,
-        word_boundary_prices: wbp,
-    })
+    degenbot_pools::solve::capture::parse_capture_range(v, 0, 0).map_err(|error| error.to_string())
 }
 
 /// Resolve the capture path: CLI arg 1 if present, else the named default
-/// fixture resolved through `capture_fixture::fixture_path`.
+/// fixture resolved through `solve::fixtures`.
 #[must_use]
 pub fn capture_arg(args: &[String], default_fixture: &str) -> String {
     args.get(1).cloned().unwrap_or_else(|| {

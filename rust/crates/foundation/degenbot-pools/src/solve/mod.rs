@@ -53,6 +53,13 @@ pub mod concentrated_liquidity;
 
 pub mod runtime;
 
+// Capture-row reconstruction shared by unit tests, integration replay, and
+// solver-lab. Pure parsing only: no zstd dependency and no curated door API.
+// Integration tests build the library without cfg(test), so this doc-hidden
+// module is available in every build; compressed fixture I/O stays gated.
+#[doc(hidden)]
+pub mod capture;
+
 // Fixture I/O: transparent .zst corpus decode (ADR-084 D3). Feature-gated so
 // the C-build dependency (zstd) stays out of every default dependency tree;
 // test lanes enable `capture-fixtures` explicitly.

@@ -19,6 +19,8 @@
     clippy::unreadable_literal
 )]
 
+use std::sync::Arc;
+
 use crate::state::v3_state::ConcentratedLiquiditySlotLayout;
 use crate::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use crate::TickInfo;
@@ -28,7 +30,8 @@ use hashbrown::HashMap;
 
 use crate::solve::bounded_brent::{minimize_scalar_bounded, DEFAULT_MAXFUN};
 use crate::solve::concentrated_liquidity::{
-    ConcentratedLiquidityPathSim, IntV3TickRangeHop, IntV3TickRangeSequence,
+    solve_concentrated_liquidity_piecewise, ConcentratedLiquidityPathSim, IntV3TickRangeSequence,
+    PreparedConcentratedLiquidityHop, WalkNsCensus, WalkOutcome, WalkTelemetry,
 };
 use crate::solve::runtime::SolveRuntimeConfig;
 
@@ -502,7 +505,7 @@ fn refine_window_matches_brent_helper_on_stress_books() {
                 Some(w) if w.3 >= bps => w,
                 _ => (path.id, walk_profit, helper, bps),
             });
-            if bps > 250.0 {
+            if U512::from(gap) * U512::from(40u64) > U512::from(helper) {
                 actionable.push(format!(
                     "id={} family={} ranges={:?} walk_x={walk_x} walk_profit={walk_profit} helper_profit={helper} gap_bps={bps:.2} pieces={} refine_sims={}",
                     path.id, path.family, path.ranges, walk.stats.pieces, walk.stats.refine_sims,
@@ -517,7 +520,7 @@ fn refine_window_matches_brent_helper_on_stress_books() {
     );
     if let Some((id, wp, hp, bps)) = worst {
         assert!(
-            bps < 10.0,
+            U512::from(hp.saturating_sub(wp)) * U512::from(1_000u64) < U512::from(hp),
             "residual plateau tie on path {id} exceeds the 10 bps noise cap: walk={wp} helper={hp} gap_bps={bps}"
         );
         println!(
@@ -541,43 +544,7 @@ fn captured_anchor_sequences(path_id: u64) -> Vec<IntV3TickRangeSequence> {
 }
 
 fn sequences_from_capture_row(row: &serde_json::Value) -> Vec<IntV3TickRangeSequence> {
-    let seqs: Vec<IntV3TickRangeSequence> = row["hops"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|hop| {
-            let ranges = hop
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|item| IntV3TickRangeHop {
-                    liquidity: item["liquidity"].as_str().unwrap().parse().unwrap(),
-                    sqrt_price_x96: item["sqrt_price_x96"].as_str().unwrap().parse().unwrap(),
-                    sqrt_price_lower_x96: item["sqrt_price_lower_x96"]
-                        .as_str()
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                    sqrt_price_upper_x96: item["sqrt_price_upper_x96"]
-                        .as_str()
-                        .unwrap()
-                        .parse()
-                        .unwrap(),
-                    gamma_numer: item["gamma_numer"].as_u64().unwrap(),
-                    fee_denom: item["fee_denom"].as_u64().unwrap(),
-                    zero_for_one: item["zero_for_one"].as_bool().unwrap(),
-                    word_boundary_prices: item["word_boundary_prices"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|value| value.as_str().unwrap().parse().unwrap())
-                        .collect(),
-                })
-                .collect();
-            IntV3TickRangeSequence::new(ranges).unwrap()
-        })
-        .collect();
-    seqs
+    crate::solve::capture::parse_capture_hops(row["hops"].as_array().unwrap()).unwrap()
 }
 
 fn truncate_sequences(
@@ -593,19 +560,29 @@ fn truncate_sequences(
         .collect()
 }
 
+fn solve_with_section_telemetry(refs: &[&IntV3TickRangeSequence]) -> (WalkOutcome, WalkNsCensus) {
+    let prepared: Vec<_> = refs
+        .iter()
+        .map(|seq| {
+            PreparedConcentratedLiquidityHop::derive(Arc::new(IntV3TickRangeSequence::clone(seq)))
+        })
+        .collect();
+    let telemetry = WalkTelemetry::new();
+    let outcome = solve_concentrated_liquidity_piecewise(
+        &prepared,
+        None,
+        Some(&telemetry),
+        &SolveRuntimeConfig::default(),
+        None,
+    );
+    (outcome, telemetry.drain_ns())
+}
+
 fn assert_mobius_matches_brent(label: &str, seqs: &[IntV3TickRangeSequence]) {
     let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
-    let walk =
-        crate::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
-            &refs,
-            &SolveRuntimeConfig::default(),
-        );
+    let (walk, _ns) = solve_with_section_telemetry(&refs);
     let walk_solution = walk.result.as_ref().unwrap();
-    let repeated =
-        crate::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
-            &refs,
-            &SolveRuntimeConfig::default(),
-        );
+    let (repeated, _) = solve_with_section_telemetry(&refs);
     assert_eq!(
         walk.result, repeated.result,
         "{label}: nondeterministic solve"
@@ -621,11 +598,30 @@ fn assert_mobius_matches_brent(label: &str, seqs: &[IntV3TickRangeSequence]) {
         exact.final_output - walk_solution.optimal_input,
         "{label}: profit diverged from exact path output"
     );
+    assert_eq!(
+        walk_solution.census, exact.census,
+        "{label}: gas census diverged from exact path output"
+    );
+    #[cfg(feature = "telemetry")]
+    if matches!(label, "path 4 uncut" | "path 105 uncut") {
+        assert!(
+            walk.stats.pieces > 0
+                && walk.stats.sims > 0
+                && walk.stats.refine_sims > 0
+                && walk.stats.ternary_sims > 0
+                && walk.stats.grid_sims > 0
+                && walk.stats.anchor_sims > 0
+                && _ns.dir_sims > 0
+                && _ns.refine_sims > 0,
+            "{label}: required telemetry is unmeasured: stats={:?} ns={_ns:?}",
+            walk.stats,
+        );
+    }
     let (brent_x, brent_profit) = brent_helper_run(&sim);
     let gap = brent_profit.saturating_sub(walk_solution.profit);
     let gap_bps = 10_000.0 * u256_to_f64(gap) / u256_to_f64(brent_profit);
     assert!(
-        gap_bps < 10.0,
+        U512::from(gap) * U512::from(1_000u64) < U512::from(brent_profit),
         "{label}: Mobius forfeited {gap_bps:.2} bps to production Brent: walk_x={} walk_profit={} brent_x={brent_x} brent_profit={brent_profit}",
         walk_solution.optimal_input,
         walk_solution.profit,

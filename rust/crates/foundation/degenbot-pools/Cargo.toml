@@ -27,7 +27,7 @@ tracing = { version = "^0.1" }
 serde_json = { version = "^1.0" }
 # Exact rational integer arithmetic for the Möbius shifted-piece kernel.
 num-bigint = { version = "^0.5" }
-# Capture-fixture transparent decompress (src/solve/capture_fixture.rs); large
+# Capture-fixture transparent decompress (src/solve/fixtures.rs); large
 # fixtures ship as .jsonl.zst, readers decode in memory. Optional behind
 # `capture-fixtures` (ADR-084 D3): the C-build dependency is fixture machinery,
 # not part of the value/solve charter, so `cargo add degenbot-pools` (and every
