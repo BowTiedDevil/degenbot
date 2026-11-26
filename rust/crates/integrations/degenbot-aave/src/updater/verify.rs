@@ -569,10 +569,6 @@ pub fn compare_position_truth(
 
 // ── stkAAVE balance + GHO discount verification ─────────────────────────
 
-/// The GHO vToken revision at which the discount mechanism is deprecated
-/// At revision ≥ 4, `getDiscountPercent` is removed; the verify skips.
-const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
-
 /// keccak256("getDiscountPercent(address)")[0..4] = `0x6c53272b`.
 const GET_DISCOUNT_PERCENT_SELECTOR: [u8; 4] = [0x6c, 0x53, 0x27, 0x2b];
 
@@ -744,7 +740,9 @@ fn gho_discount_target(
         )
         .ok()
         .flatten();
-    if revision.is_none_or(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION) {
+    if revision
+        .is_none_or(|r| u32::try_from(r).is_ok_and(crate::updater::revision::gho_discount_retired))
+    {
         return Ok(None);
     }
     Ok(Some((v_token_id, v_token_address)))
@@ -1329,12 +1327,17 @@ mod tests {
     fn a_deprecated_discount_revision_skips_the_getter() {
         let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
         let conn = db.lock();
-        seed_gho_substrate(&conn, GHO_DISCOUNT_DEPRECATION_REVISION);
+        seed_gho_substrate(
+            &conn,
+            crate::updater::revision::RevisionChange::GhoDiscountRetirement
+                .introduced_at()
+                .into(),
+        );
 
         assert_eq!(
             gho_discount_target(&conn, 1, 1).unwrap(),
             None,
-            "revision {GHO_DISCOUNT_DEPRECATION_REVISION} retired the getter"
+            "the retiring revision retired the getter"
         );
 
         conn.execute(

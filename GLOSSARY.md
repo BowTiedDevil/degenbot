@@ -951,6 +951,36 @@ _Avoid_: "offline bench", "fixture benchmark"
 One logical protocol entity's lifetime between replacements, identified by the canonical event that activated it. Entity generation is distinct from a block epoch's sequence and a contract's reported revision.
 _Avoid_: "generation" for epoch sequencing or contract revision; "revision" for entity replacement.
 
+**Protocol context** (`ProtocolContext`):
+The market a receipt is read against: its Pool identity, the emitter roles its rows
+track (each reserve's aToken and vToken, the GHO discount token), and the revisions it
+reported (`ReportedRevisions`). It is the input the report catalog is consulted with,
+so one receipt can never be classified against another market's tokens.
+_Avoid_: a bare `(tokens, pool)` parameter pair; treating the reported revision as a
+claim about what the chain could have emitted.
+
+**Protocol event catalog** (`REPORT_CATALOG`):
+The Aave-owned table that gives each neutral non-operation report — keyed by the report
+and the emitter role that states it — the ownership role the market's projection reads
+(`NonOperationRole`), plus the open-ended range of revisions that introduced it. The
+same signature from another emitter role is not the same statement: a known report from
+an emitter that does not state it, and an unknown topic from any tracked contract, both
+fail closed rather than becoming `OutOfScope`. GHO discount-token reports are keyed by
+`TokenType::GhoDiscount`, so a tracked aToken or vToken cannot inherit them.
+_Avoid_: a raw topic-to-role table; keying a report on the emitter set alone; sweeping an
+unplaceable market log into the ignored pile; a "position manager" approval as an
+allowance report (it is an `AuthorizationReport`).
+
+**Aave revision policy** (`degenbot_aave::updater::revision`):
+The one home of the revision thresholds the updater reads — the Pool revision that
+floors scaled amounts and the GHO vToken revision that retires the discount — stated as
+open-ended introduction ranges (`RevisionRange`, `from..`) rather than per-revision
+constants. A consumer names the behaviour (`scaled_amount_flooring`,
+`gho_discount_retired`), never a revision literal, so a later compatible revision needs
+no new constant and a threshold move is one edit.
+_Avoid_: a revision literal per consumer; a closed upper bound a later compatible
+revision would falsify.
+
 **Market reset**:
 Purging one market's rows and re-initializing through the activate seam under a single
 transaction, leaving the market observationally identical to a fresh cold boot.

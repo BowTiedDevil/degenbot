@@ -1980,12 +1980,14 @@ impl OperationReducer<'_> {
                 })?;
             let index = ev.index.unwrap_or_default();
             let balance_increase = ev.balance_increase.unwrap_or_default();
-            // The revision split: rev >= 9 → CEIL, rev <= 8 → HALF_UP.
-            let scaled_amount = if op.pool_revision >= 9 {
-                crate::ray_div_ceil(minted_amount, index)?
-            } else {
-                ray_div(minted_amount, index, Some(crate::RayRounding::HalfUp))?
-            };
+            // The revision split: a flooring Pool revision → CEIL, before it →
+            // HALF_UP.
+            let scaled_amount =
+                if crate::updater::revision::scaled_amount_flooring(op.pool_revision) {
+                    crate::ray_div_ceil(minted_amount, index)?
+                } else {
+                    ray_div(minted_amount, index, Some(crate::RayRounding::HalfUp))?
+                };
             let processor = ScaledTokenProcessor::collateral();
             let event_data = ScaledTokenEventData {
                 value: ev.amount,

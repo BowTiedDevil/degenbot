@@ -22,6 +22,8 @@ pub mod operations;
 pub mod operations_parser;
 pub mod processors;
 pub mod projection;
+pub mod protocol_events;
+pub mod revision;
 pub mod run;
 pub mod transaction_processor;
 pub mod verify;
@@ -47,6 +49,11 @@ pub use projection::{
     PositionSubject, ProjectionError, ProjectionView, CHECKPOINT_ENCODING_VERSION,
     DELTA_ENCODING_VERSION,
 };
+pub use protocol_events::{
+    catalog_entry, EmitterRole, ProtocolContext, ProtocolReport, ReportAnswer, ReportCatalogEntry,
+    ReportEmitter, ReportedRevisions, REPORT_CATALOG,
+};
+pub use revision::{gho_discount_retired, scaled_amount_flooring, RevisionChange, RevisionRange};
 pub use run::{
     activate_aave_market, activate_aave_market_on_conn, apply_aave_chunk_writes_on_conn,
     deactivate_aave_market, fetch_activation_metadata_at, reset_market_to_cold_boot,

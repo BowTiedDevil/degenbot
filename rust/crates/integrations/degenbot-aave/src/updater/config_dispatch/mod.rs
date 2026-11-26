@@ -104,11 +104,6 @@ use discount::{
 };
 use revision::{resolve_contract_revision_updated, resolve_upgraded};
 
-/// The GHO-discount deprecation revision (V4+). At vToken revision ≥ this value,
-/// the discount mechanism is deprecated → the effective discount is always 0
-/// (`build_discount_snapshot` path #3; `is_discount_supported` gate).
-pub(crate) const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
-
 // ── error ──────────────────────────────────────────────────────────────────
 
 /// A config-event dispatch failure.
@@ -1452,19 +1447,25 @@ mod tests {
         }
     }
 
+    /// Parity-gate pin: the gate is `revision < 4`, read from the revision
+    /// policy's one threshold rather than restated here.
     #[test]
     fn is_discount_supported_gate_is_revision_lt_4() {
-        // Parity-gate pin: the gate is `revision < 4` (matches the Python
-        // `revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION`).
-        let _: u32 = GHO_DISCOUNT_DEPRECATION_REVISION;
-        let supported = [1_u32, 2, 3]
-            .iter()
-            .all(|r| *r < GHO_DISCOUNT_DEPRECATION_REVISION);
-        let deprecated = [4_u32, 5, 6]
-            .iter()
-            .all(|r| *r >= GHO_DISCOUNT_DEPRECATION_REVISION);
-        assert!(supported, "V1/V2/V3 support discount");
-        assert!(deprecated, "V4+ deprecates");
+        use crate::updater::revision::{gho_discount_retired, RevisionChange};
+
+        assert_eq!(
+            RevisionChange::GhoDiscountRetirement.introduced_at(),
+            4,
+            "the vToken revision that retires the discount"
+        );
+        assert!(
+            [0_u32, 1, 2, 3].iter().all(|r| !gho_discount_retired(*r)),
+            "V1/V2/V3 support discount"
+        );
+        assert!(
+            [4_u32, 5, 6].iter().all(|r| gho_discount_retired(*r)),
+            "V4+ deprecates"
+        );
     }
 
     // ── the pure-decode tests ─────────────────────────────────

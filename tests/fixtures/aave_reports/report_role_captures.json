@@ -1,0 +1,329 @@
+{
+  "schema": "degenbot.aave.report-role-captures/v1",
+  "provenance": {
+    "source": "live reth archive node eth_getTransactionReceipt logs; the rev1/rev5/rev9/rev11 captures the committed wave-3/T0A work recorded",
+    "note": "One entry per captured report: the contract role that emitted it, the revision the capture reports, the exact block/transaction/log identity, the complete topics and payload, the neutral decoder's report name, and the ownership role the Aave market gives it."
+  },
+  "market": {
+    "chain_id": 1,
+    "pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+  },
+  "cases": [
+    {
+      "id": "rev1_gho_token_link_reports",
+      "reported_revision": {
+        "governs": "GHO_VTOKEN",
+        "value": 1
+      },
+      "implementation": null,
+      "logs": [
+        {
+          "contract_role": "aToken",
+          "emitter": "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977",
+          "block_number": 17699249,
+          "block_hash": "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58",
+          "transaction_hash": "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b",
+          "transaction_index": 13,
+          "log_index": 87,
+          "topics": [
+            "0x9a2092516d2c53586ed59ca6d2878442977a16f16e1c85ac0a8a8cd9cb024666",
+            "0x000000000000000000000000786dbff3f1292ae8f92ea68cf93c30b34b1ed04b"
+          ],
+          "data": "0x",
+          "report": "VariableDebtTokenSet",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "aToken",
+          "emitter": "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977",
+          "block_number": 17699249,
+          "block_hash": "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58",
+          "transaction_hash": "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b",
+          "transaction_index": 13,
+          "log_index": 88,
+          "topics": [
+            "0x13f4413d8d93a259bd6c10f35095371f30ed50f81a73407e52e9f02000d5d16b",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "0x000000000000000000000000464c71f6c2f760dda6093dcb91c24c39e5d6e18c"
+          ],
+          "data": "0x",
+          "report": "GhoTreasuryUpdated",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "vToken",
+          "emitter": "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B",
+          "block_number": 17699249,
+          "block_hash": "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58",
+          "transaction_hash": "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b",
+          "transaction_index": 13,
+          "log_index": 89,
+          "topics": [
+            "0x07cba78d3a9bb0cf2cb0e30140558e278b50a2ba6da2e13369a0d9113034548b",
+            "0x00000000000000000000000000907f9921424583e7ffbfedf84f92b7b2be4977"
+          ],
+          "data": "0x",
+          "report": "ATokenSet",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699249,
+          "block_hash": "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58",
+          "transaction_hash": "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b",
+          "transaction_index": 13,
+          "log_index": 92,
+          "topics": [
+            "0x62bbced765bccc9ed93d0bae1b2a8c86e13b4663f8bf27d5936d9d619194c8a9",
+            "0x000000000000000000000000786dbff3f1292ae8f92ea68cf93c30b34b1ed04b"
+          ],
+          "data": "0x",
+          "report": "GhoDebtTokenChanged",
+          "expected_role": "market configuration"
+        }
+      ]
+    },
+    {
+      "id": "rev5_discount_token_index_and_delegation_reports",
+      "reported_revision": {
+        "governs": "DISCOUNT_TOKEN",
+        "value": 5
+      },
+      "implementation": null,
+      "logs": [
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 18454069,
+          "block_hash": "0x95a70030118aa47f6bbe78300fe5aa2d6a14c03c39e4773cd511b6d36aa5846b",
+          "transaction_hash": "0x7e7f7adda9ab6af8fc05a248ed2bb0eaf9b53886cfb461d2fb768ce4d0d02a8c",
+          "transaction_index": 15,
+          "log_index": 118,
+          "topics": [
+            "0xc3d1bf52795a20771ee6de3e59948fd83e10db956122d4709a3b86c512963855",
+            "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "report": "PendingAdminChanged",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 18454069,
+          "block_hash": "0x95a70030118aa47f6bbe78300fe5aa2d6a14c03c39e4773cd511b6d36aa5846b",
+          "transaction_hash": "0x7e7f7adda9ab6af8fc05a248ed2bb0eaf9b53886cfb461d2fb768ce4d0d02a8c",
+          "transaction_index": 15,
+          "log_index": 124,
+          "topics": [
+            "0x83a9ddad961dcb7c6894c9585a16ff7792c2ec8281256a3cc7303ae830152dcf",
+            "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "report": "RoleClaimed",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17824467,
+          "block_hash": "0xb1f119ad9186d6b0447132789f283a76ec4be9bc78cd15303d7f5075c292c8e1",
+          "transaction_hash": "0x92acbe5d2f09da6032f481ac4610825e9af7a423bf26f77988b65f8c83f3b0e3",
+          "transaction_index": 82,
+          "log_index": 292,
+          "topics": [
+            "0xe8d51c8e11bd570db1734c8ec775785330e77007feed45c43b608ef33ff914bd",
+            "0x000000000000000000000000167c606be99dbf5a8af61e1983e5b309e8fa2ae7",
+            "0x0000000000000000000000001ae6dcbc88d6f81a7bcfccc7198397d776f3592e"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "report": "DelegateChanged",
+          "expected_role": "allowance report"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699277,
+          "block_hash": "0x02baf4aeaeba75e020a93706c6c8add928d3040e2bd1685355772d2dc9c6b634",
+          "transaction_hash": "0x7ef07bae613c423a7c11ab1be6e4899db837312a6fef47522fc0af260f2a6fe3",
+          "transaction_index": 76,
+          "log_index": 321,
+          "topics": [
+            "0x5777ca300dfe5bead41006fbce4389794dbc0ed8d6cccebfaf94630aa04184bc",
+            "0x0000000000000000000000004da27a545c0c5b758a6ba100e3a049001de870f5"
+          ],
+          "data": "0x000000000000000000000000000000000000000000000001696a636d44852dcc",
+          "report": "AssetIndexUpdated",
+          "expected_role": "rewards accounting"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699277,
+          "block_hash": "0x02baf4aeaeba75e020a93706c6c8add928d3040e2bd1685355772d2dc9c6b634",
+          "transaction_hash": "0x7ef07bae613c423a7c11ab1be6e4899db837312a6fef47522fc0af260f2a6fe3",
+          "transaction_index": 76,
+          "log_index": 322,
+          "topics": [
+            "0xbb123b5c06d5408bbea3c4fef481578175cfb432e3b482c6186f02ed9086585b",
+            "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77",
+            "0x0000000000000000000000004da27a545c0c5b758a6ba100e3a049001de870f5"
+          ],
+          "data": "0x000000000000000000000000000000000000000000000001696a636d44852dcc",
+          "report": "UserIndexUpdated",
+          "expected_role": "rewards accounting"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699277,
+          "block_hash": "0x02baf4aeaeba75e020a93706c6c8add928d3040e2bd1685355772d2dc9c6b634",
+          "transaction_hash": "0x7ef07bae613c423a7c11ab1be6e4899db837312a6fef47522fc0af260f2a6fe3",
+          "transaction_index": 76,
+          "log_index": 329,
+          "topics": [
+            "0xa0a19463ee116110c9b282012d9b65cc5522dc38a9520340cbaf3142e550127f",
+            "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000056bc75e2d631000000000000000000000000000000000000000000000000000000000000000000000",
+          "report": "DelegatedPowerChanged",
+          "expected_role": "allowance report"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699305,
+          "block_hash": "0xe99f4e137b9dc3caf06ecb2c571ce489130c0799373e73f37a0fffe0ba829ce8",
+          "transaction_hash": "0x411a900563fd4bf5091a56651b22a0d621f0bd5d0319d05948a1510a6df12b1b",
+          "transaction_index": 127,
+          "log_index": 325,
+          "topics": [
+            "0x2468f9268c60ad90e2d49edb0032c8a001e733ae888b3ab8e982edf535be1a76"
+          ],
+          "data": "0x0000000000000000000000006b62909ad3f315833a5e5062b670034a3016910b0000000000000000000000000000000000000000000000006bc387c95b2fc39d",
+          "report": "RewardsAccrued",
+          "expected_role": "rewards accounting"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 22638170,
+          "block_hash": "0x0da0fdd7093f650472f8e1e825ebd652b670a418ea38050081dcf9954985f71d",
+          "transaction_hash": "0xaa900e1ac9ece8a1a0db38c111ccfe5b5fb735a838278995a7e6534a8fc32a63",
+          "transaction_index": 56,
+          "log_index": 338,
+          "topics": [
+            "0x87fa03892a0556cb6b8f97e6d533a150d4d55fcbf275fff5fa003fa636bcc7fa",
+            "0x0000000000000000000000004da27a545c0c5b758a6ba100e3a049001de870f5"
+          ],
+          "data": "0x000000000000000000000000000000000000000000000000000cf3ddb8be5d55",
+          "report": "AssetConfigUpdated",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 22638170,
+          "block_hash": "0x0da0fdd7093f650472f8e1e825ebd652b670a418ea38050081dcf9954985f71d",
+          "transaction_hash": "0xaa900e1ac9ece8a1a0db38c111ccfe5b5fb735a838278995a7e6534a8fc32a63",
+          "transaction_index": 56,
+          "log_index": 347,
+          "topics": [
+            "0xb79c2d6c7f5c95eec9dc05affc0ed002620a4ec6d72b7b0744cc8638168c600a"
+          ],
+          "data": "0x00000000000000000000000000000000000000000000000000000000000007d0",
+          "report": "MaxSlashablePercentageChanged",
+          "expected_role": "market configuration"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 17699689,
+          "block_hash": "0x6fa39364eb137b759563c2e2d6430066751f8dabe7a647b23f09ef4d29ad6b0a",
+          "transaction_hash": "0x50cdffe9a2ae653c46b8e057bd665d26d365c50558c96db401dd21514dc4d598",
+          "transaction_index": 132,
+          "log_index": 357,
+          "topics": [
+            "0x9310ccfcb8de723f578a9e4282ea9f521f05ae40dc08f3068dfad528a65ee3c7",
+            "0x0000000000000000000000009f07a0233abc178428aa9a18baef3188f093a7d0",
+            "0x0000000000000000000000004da27a545c0c5b758a6ba100e3a049001de870f5"
+          ],
+          "data": "0x0000000000000000000000000000000000000000000000004a868b7352b2fa66",
+          "report": "RewardsClaimed",
+          "expected_role": "rewards accounting"
+        },
+        {
+          "contract_role": "ghoDiscount",
+          "emitter": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+          "block_number": 18763122,
+          "block_hash": "0x85e1e99c2aa4344f2d8f6b6600fdf64cb1da5f1c039aec1a6726e48eb4e4e6c2",
+          "transaction_hash": "0x3991c229452ce82fb530fe6200094619b1d53ea6bf1ef4d4b0427363de9d0375",
+          "transaction_index": 255,
+          "log_index": 422,
+          "topics": [
+            "0x8a05f911d8ab7fc50fec37ef4ba7f9bfcb1a3c191c81dcd824ad0946c4e20d65",
+            "0x0000000000000000000000001f847fd5e08fb559a69280a14e7e904e6dbff81f"
+          ],
+          "data": "0x000000000000000000000000000000000000000000000000b447a45ad02f832e",
+          "report": "Cooldown",
+          "expected_role": "rewards accounting"
+        }
+      ]
+    },
+    {
+      "id": "rev9_pool_position_manager_approval",
+      "reported_revision": {
+        "governs": "POOL",
+        "value": 9
+      },
+      "implementation": null,
+      "logs": [
+        {
+          "contract_role": "pool",
+          "emitter": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+          "block_number": 23105903,
+          "block_hash": "0x1c967ead522aac509e69dd23f2c0b0c74b42c43c1340cd8ca0ea81c3a2024401",
+          "transaction_hash": "0x59cb182caf4d5f99f75050578f93e873ca84674012256cc8ee75cfdd7d4737f8",
+          "transaction_index": 242,
+          "log_index": 568,
+          "topics": [
+            "0x540e692f36c2fa13e7583c4deeffd91ce6bc04f91e7d84f295d9d858372875fc",
+            "0x000000000000000000000000d611d10cf51552227cab601a3788a6be52d53ae0",
+            "0x000000000000000000000000d611d10cf51552227cab601a3788a6be52d53ae0"
+          ],
+          "data": "0x",
+          "report": "PositionManagerApproved",
+          "expected_role": "authorization report"
+        }
+      ]
+    },
+    {
+      "id": "rev11_pool_position_manager_revocation",
+      "reported_revision": {
+        "governs": "POOL",
+        "value": 11
+      },
+      "implementation": null,
+      "logs": [
+        {
+          "contract_role": "pool",
+          "emitter": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+          "block_number": 26036607,
+          "block_hash": "0x81de53198111fc56b7ce96d41bd92ae683be19357b2f8d8a266c3e854a863bf1",
+          "transaction_hash": "0x18a9f88fca2c29fd83d41a3d19cc7e0c84042fae4040cfea3a5a613a9acaedb9",
+          "transaction_index": 46,
+          "log_index": 165,
+          "topics": [
+            "0x08c92c3870d10c79e9673fecea8f4ff261f8e6b661067d9ca63fd777882bff15",
+            "0x0000000000000000000000002c143f9c8a3da16dbabbb7bf1679cb8e070a3245",
+            "0x000000000000000000000000366d12b5c7840d88212e6f78c8cd578275be8f8d"
+          ],
+          "data": "0x",
+          "report": "PositionManagerRevoked",
+          "expected_role": "authorization report"
+        }
+      ]
+    }
+  ]
+}

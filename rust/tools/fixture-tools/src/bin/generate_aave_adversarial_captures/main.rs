@@ -101,7 +101,8 @@ use std::sync::Arc;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::transports::Transport as _;
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RunSpec, VerifyPolicy,
+    run_aave_update, run_aave_update_on_db, AaveUpdateReport, NoProgress, RevisionChange, RunSpec,
+    VerifyPolicy,
 };
 use degenbot_db::sql_ledger::LedgerDb;
 use degenbot_db::DegenbotDb;
@@ -156,12 +157,6 @@ fn aave_upgraded_topic() -> B256 {
 fn erc20_transfer_topic() -> B256 {
     alloy::primitives::b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 }
-
-/// The GHO-discount deprecation revision (the config dispatch's constant):
-/// the revival fixture's vToken revision (1) must sit BELOW it for the
-/// discount path to be live on the fixture chain. A static assertion here
-/// keeps the fixture's premise load-bearing if the constant moves.
-const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
 
 /// The seeded aToken/vToken revision (the recorder's `AAVE_SEED_TOKEN_REVISION`
 /// convention): era-accurate for the discount-era fixture chain.
@@ -309,8 +304,8 @@ fn discount_answer_word() -> [u8; 32] {
 /// contract's block lane. The static assertion pins the fixture premise:
 /// the recorded revision sits below the deprecation revision.
 const _: () = assert!(
-    (GHO_DISCOUNT_DEPRECATION_REVISION as u64) > 1,
-    "the revival fixture's premise (DEBT_TOKEN_REVISION 1 < deprecation revision 4) moved"
+    RevisionChange::GhoDiscountRetirement.introduced_at() > 1,
+    "the revival fixture's premise (DEBT_TOKEN_REVISION 1 < the retiring revision) moved"
 );
 
 fn impl_revision_word() -> [u8; 32] {

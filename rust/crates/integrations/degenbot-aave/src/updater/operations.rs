@@ -31,15 +31,10 @@ use std::collections::HashSet;
 
 // ── parity tolerance constants ────────────────────────────────────────────
 
-/// Pool revisions at-or-above this use flooring ray division which can cause
-/// ±2 wei deviations when the Pool scales the underlying amount before
-/// handing it to the aToken/vToken contract. The matching gate
-/// `TransactionOperationsParser::amounts_match` widens the equality by
-/// [`TOKEN_AMOUNT_MATCH_TOLERANCE`]
-/// wei on those revisions.
-pub const SCALED_AMOUNT_POOL_REVISION: u32 = 9;
-/// The ±wei tolerance applied on pool revisions >=
-/// [`SCALED_AMOUNT_POOL_REVISION`].
+/// The ±wei tolerance the matching gates allow on Pool revisions that floor
+/// scaled amounts (`revision::scaled_amount_flooring`), where the Pool's
+/// flooring ray division can deviate when it scales the underlying amount
+/// before handing it to the aToken/vToken contract.
 pub const TOKEN_AMOUNT_MATCH_TOLERANCE: u64 = 2;
 
 // ── enums ─────────────────────────────────────────────────────────────────

@@ -44,9 +44,11 @@
 use super::run::substrate::ChunkSubstrate;
 use crate::operations::{
     Operation, OperationType, ScaledTokenEvent, ScaledTokenEventData, ScaledTokenEventType,
-    TokenType, SCALED_AMOUNT_POOL_REVISION, TOKEN_AMOUNT_MATCH_TOLERANCE,
+    TokenType, TOKEN_AMOUNT_MATCH_TOLERANCE,
 };
 use crate::updater::evidence::TransactionEvidence;
+use crate::updater::protocol_events::{ProtocolContext, ReportedRevisions};
+use crate::updater::revision;
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 use degenbot_core::address_utils::address_to_checksum_string;
@@ -222,12 +224,12 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
 
     // ── the matching fns (no `&self` — pure helpers, exposed for tests) ──
 
-    /// The parity-critical tolerance gate. Pool revision ≥
-    /// [`SCALED_AMOUNT_POOL_REVISION`] → allow ±[`TOKEN_AMOUNT_MATCH_TOLERANCE`]
-    /// wei; otherwise exact match.
+    /// The parity-critical tolerance gate. A Pool revision that floors scaled
+    /// amounts (`revision::scaled_amount_flooring`) → allow
+    /// ±[`TOKEN_AMOUNT_MATCH_TOLERANCE`] wei; otherwise exact match.
     #[must_use]
     pub fn amounts_match(calculated: U256, expected: U256, pool_revision: u32) -> bool {
-        if pool_revision >= SCALED_AMOUNT_POOL_REVISION {
+        if revision::scaled_amount_flooring(pool_revision) {
             amounts_match_with_tolerance(calculated, expected, TOKEN_AMOUNT_MATCH_TOLERANCE)
         } else {
             calculated == expected
@@ -402,14 +404,19 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
         let ownership = EventOwnership::classify(&scaled_events);
         // Step 2c: the receipt's total census — every log is an operation's, a
         // recognized role, or deliberately out of scope, before any operation
-        // exists. The parse then claims into it and closes it.
-        let mut receipt = ReceiptOwnership::classify(
-            &decoded,
-            &scaled_events,
-            &ownership,
-            &tokens,
+        // exists. The catalog is read against the market's own identity: its
+        // Pool, the emitter roles its rows track, and the Pool revision it
+        // reported. The parse then claims into it and closes it.
+        let context = ProtocolContext::new(
             self.pool_address,
-        )?;
+            tokens,
+            ReportedRevisions {
+                pool: Some(self.pool_revision),
+                ..ReportedRevisions::default()
+            },
+        );
+        let mut receipt =
+            ReceiptOwnership::classify(&decoded, &scaled_events, &ownership, &context)?;
 
         // Step 3: group into operations. The claim set starts with every log the
         // receipt already settled as a terminal role: a builder that consults it

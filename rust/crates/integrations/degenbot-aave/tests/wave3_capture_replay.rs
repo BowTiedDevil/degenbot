@@ -50,7 +50,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use degenbot_aave::updater::{
-    run_aave_update, run_aave_update_on_db, NoProgress, RunSpec, VerifyPolicy,
+    run_aave_update, run_aave_update_on_db, NoProgress, RevisionChange, RunSpec, VerifyPolicy,
 };
 use degenbot_db::sql_ledger::{dump_tables_golden_json, ledger_golden_json, LedgerDb};
 use degenbot_db::DegenbotDb;
@@ -137,8 +137,11 @@ const W3_S2_ATOKEN_2: &str = "0x5454545454545454545454545454545454545454";
 /// The seeded aToken/vToken revision (era-accurate for the discount-era
 /// fixture chain; the revival probe seeds the deprecation revision instead).
 const SEED_TOKEN_REVISION: i64 = 1;
-/// The deprecation revision (the revival probe's premise-killer).
-const GHO_DISCOUNT_DEPRECATION_REVISION: i64 = 4;
+/// The deprecation revision (the revival probe's premise-killer), read from the
+/// revision policy rather than restated.
+fn gho_discount_deprecation_revision() -> i64 {
+    i64::from(RevisionChange::GhoDiscountRetirement.introduced_at())
+}
 /// The seeded `POOL`/`POOL_CONFIGURATOR` revisions (the generator's seed shape).
 const SEED_POOL_REVISION: i64 = 11;
 const SEED_CONFIGURATOR_REVISION: i64 = 8;
@@ -795,7 +798,7 @@ fn wave3_generated_captures_replay_to_the_committed_goldens() {
     let s3_probe = replay_probe(
         s3_name,
         &ScenarioSeed::S3,
-        GHO_DISCOUNT_DEPRECATION_REVISION,
+        gho_discount_deprecation_revision(),
         None,
         None,
     );

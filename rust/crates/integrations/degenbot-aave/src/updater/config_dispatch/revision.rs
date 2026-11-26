@@ -23,8 +23,10 @@ use crate::projection::ConfigurationEffect;
 use alloy::primitives::Address;
 use degenbot_rpc::chain_evidence::BlockReads;
 
+use crate::updater::revision::gho_discount_retired;
+
 use super::context::{ChunkContext, RevisionMemo};
-use super::{checksum, discount_to_i64, ConfigDispatchError, GHO_DISCOUNT_DEPRECATION_REVISION};
+use super::{checksum, discount_to_i64, ConfigDispatchError};
 
 // ── upgrade-transition event resolvers ───────────────────────
 
@@ -71,7 +73,8 @@ pub(crate) struct ProxyCreationResolution {
 ///    aToken / `DEBT_TOKEN_REVISION()` for vToken) at `block_number`.
 /// 3. For a vToken upgrade, the GHO-discount-deprecation fires when the
 ///    upgraded vToken IS the GHO vToken (`gho_asset.v_token_address` matches)
-///    and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4). It clears
+///    and the new revision retires the discount (`revision::gho_discount_retired`).
+///    It clears
 ///    `v_gho_discount_token`/`v_gho_discount_rate_strategy` and bulk-resets
 ///    all users' `gho_discount` to 0 (the apply fn does the writes).
 pub(super) async fn resolve_upgraded(
@@ -123,9 +126,7 @@ pub(super) async fn resolve_upgraded(
             .as_ref()
             .and_then(|g| g.v_token_address.as_deref())
             .is_some_and(|addr| addr == proxy_str);
-        if matches_gho_vtoken
-            && u32::try_from(new_revision_i64).is_ok_and(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION)
-        {
+        if matches_gho_vtoken && u32::try_from(new_revision_i64).is_ok_and(gho_discount_retired) {
             gho_asset.map(|g| g.id)
         } else {
             None

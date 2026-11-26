@@ -11,9 +11,9 @@
 //!
 //! [`OutOfScope`] is the third arm, and it means deliberately irrelevant, never
 //! unknown. A log emitted by this market's Pool or by one of its tracked tokens
-//! that the decoder cannot name is an ingress error — refused, not swept into
-//! the ignored pile — while another protocol's log in the same transaction is
-//! genuinely this market's business to ignore.
+//! that the protocol-event catalog cannot place is an ingress error — refused,
+//! not swept into the ignored pile — while another protocol's log in the same
+//! transaction is genuinely this market's business to ignore.
 //!
 //! The ledger is built ONCE per transaction, before any operation exists, and
 //! the parse claims into it afterwards: an operation owns the logs it consumes.
@@ -23,11 +23,9 @@
 //! leftover list nobody reads.
 
 use super::util::{CompanionSide, EventDisposition, EventOwnership};
-use super::{
-    log_idx_value, Address, Log, Operation, ScaledTokenEvent, ScaledTokenEventType, TokenType,
-};
+use super::{log_idx_value, Address, Log, Operation, ScaledTokenEvent, ScaledTokenEventType};
 use crate::updater::config_dispatch::tracks_proxy_id;
-use alloy::primitives::B256;
+use crate::updater::protocol_events::{ProtocolContext, ReportAnswer};
 use degenbot_decoders::aave_event_decoder::DecodedAaveEvent;
 use std::collections::BTreeMap;
 
@@ -87,9 +85,16 @@ pub enum NonOperationRole {
     /// The pool's `FlashLoan` report. A flash loan moves no scaled balance, so the
     /// market's projection deliberately emits no operation for one.
     FlashLoan,
-    /// A token allowance, credit-delegation, or governance-power delegation report.
-    /// None moves a balance, so the market's projection deliberately reads none.
+    /// A token allowance, credit-delegation, or governance-power delegation report
+    /// (`Approval`, `BorrowAllowanceDelegated`, `DelegatedPowerChanged`,
+    /// `DelegateChanged`). None moves a balance, so the market's projection
+    /// deliberately reads none.
     AllowanceReport,
+    /// The Pool's position-manager authorization report
+    /// (`PositionManagerApproved`/`PositionManagerRevoked`). It authorizes a
+    /// position manager for a user and moves no balance, so the market's
+    /// projection deliberately reads none.
+    AuthorizationReport,
     /// The pool's deficit-coverage report (`DeficitCovered`). The covered
     /// positions' balance reports carry the movement.
     DeficitCoverageReport,
@@ -116,6 +121,7 @@ impl NonOperationRole {
             Self::RewardsAccounting => "rewards accounting",
             Self::FlashLoan => "flash loan",
             Self::AllowanceReport => "allowance report",
+            Self::AuthorizationReport => "authorization report",
             Self::DeficitCoverageReport => "deficit coverage report",
             Self::FeeDistribution => "fee distribution",
         }
@@ -321,60 +327,48 @@ impl ReceiptOwnership {
     ///
     /// Each entry pairs one receipt log with the decoder's answer for that same
     /// log, in the receipt's order; `scaled` holds the market's decoded
-    /// scaled-token events and `movements` their pairing; `tokens` names the
-    /// emitters this market tracks and `pool` is the market's Pool contract.
+    /// scaled-token events and `movements` their pairing; `context` is the
+    /// market the receipt is read against (its Pool, its tracked emitter roles,
+    /// and the revisions it reported).
     ///
     /// A log Aave's vocabulary names is an operation's, unless its own role says it
     /// carries no operation; a token event from an emitter this market does not
     /// track is `OutOfScope`; another contract's log is `OutOfScope`; and a log one
-    /// of this market's contracts emits that the decoder cannot name is a refusal.
+    /// of this market's contracts emits that the catalog cannot place — an
+    /// unknown topic, or a known topic from an emitter role that does not state
+    /// it — is a refusal.
     ///
     /// # Errors
     ///
     /// [`OwnershipRefusal::UnrecognizedLog`] when a market contract emits a log the
-    /// decoder cannot name.
+    /// catalog cannot place.
     pub(super) fn classify(
         receipt: &[DecodedReceiptLog<'_>],
         scaled: &[ScaledTokenEvent<'_>],
         movements: &EventOwnership,
-        tokens: &BTreeMap<Address, TokenType>,
-        pool: Address,
+        context: &ProtocolContext,
     ) -> Result<Self, OwnershipRefusal> {
         let mut slots = BTreeMap::new();
         for receipt_log in receipt {
             let log = receipt_log.log();
             let log_index = log_idx_value(log);
-            let emitter = log.address();
             let slot = match receipt_log.decoded() {
-                Some(event) => {
-                    if let Some(token) = token_emitter(event) {
-                        if !tokens.contains_key(&token) {
-                            slots.insert(log_index, Slot::OutOfScope(OutOfScope::UntrackedToken));
-                            continue;
-                        }
-                    } else if pool_owned_event(event) && emitter != pool {
-                        slots.insert(log_index, Slot::OutOfScope(OutOfScope::ForeignEmitter));
-                        continue;
+                Some(event) => aave_slot(event, log, log_index, scaled, movements, context)?,
+                None => match context.classify_report(log) {
+                    ReportAnswer::Role(role) => Slot::Role(role),
+                    ReportAnswer::ForeignEmitter => Slot::OutOfScope(OutOfScope::ForeignEmitter),
+                    ReportAnswer::Unrecognized => {
+                        return Err(OwnershipRefusal::UnrecognizedLog {
+                            log_index,
+                            emitter: log.address(),
+                            topic: log
+                                .topics()
+                                .first()
+                                .map(|topic| alloy::hex::encode(topic.as_slice()))
+                                .unwrap_or_default(),
+                        })
                     }
-                    aave_slot(event, log_index, scaled, movements, pool)?
-                }
-                None => {
-                    if emitter == pool || tokens.contains_key(&emitter) {
-                        unmodeled_role_emitted_by(log, emitter, pool, tokens).ok_or_else(|| {
-                            OwnershipRefusal::UnrecognizedLog {
-                                log_index,
-                                emitter,
-                                topic: log
-                                    .topics()
-                                    .first()
-                                    .map(|topic| alloy::hex::encode(topic.as_slice()))
-                                    .unwrap_or_default(),
-                            }
-                        })?
-                    } else {
-                        Slot::OutOfScope(OutOfScope::ForeignEmitter)
-                    }
-                }
+                },
             };
             slots.insert(log_index, slot);
         }
@@ -525,8 +519,12 @@ fn token_emitter(event: &DecodedAaveEvent) -> Option<Address> {
     }
 }
 
-/// One Aave-vocabulary log's slot: an operation's, or the one role that
-/// deliberately carries none.
+/// One decoded Aave-vocabulary log's slot: an operation's, or the role its
+/// statement carries.
+///
+/// The emitter is half the identity: a Pool-owned statement from another
+/// contract, and a token report from a series this market does not track, are
+/// both out of scope before their payload is read.
 ///
 /// # Errors
 ///
@@ -535,11 +533,20 @@ fn token_emitter(event: &DecodedAaveEvent) -> Option<Address> {
 /// is contradictory evidence.
 fn aave_slot(
     event: &DecodedAaveEvent,
+    log: &Log,
     log_index: u64,
     scaled: &[ScaledTokenEvent<'_>],
     movements: &EventOwnership,
-    pool: Address,
+    context: &ProtocolContext,
 ) -> Result<Slot, OwnershipRefusal> {
+    if pool_owned_event(event) && !context.is_pool(log.address()) {
+        return Ok(Slot::OutOfScope(OutOfScope::ForeignEmitter));
+    }
+    if let Some(token) = token_emitter(event) {
+        if context.token_role(token).is_none() {
+            return Ok(Slot::OutOfScope(OutOfScope::UntrackedToken));
+        }
+    }
     Ok(match event {
         DecodedAaveEvent::Supply(_)
         | DecodedAaveEvent::Borrow(_)
@@ -593,7 +600,7 @@ fn aave_slot(
                         emitter: token_emitter(event).unwrap_or(Address::ZERO),
                         topic: "unclassified token event".to_string(),
                     })?;
-            movement_slot(disposition, log_index, scaled, pool)
+            movement_slot(disposition, log_index, scaled, context.pool())
         }
     })
 }
@@ -650,116 +657,6 @@ fn movement_slot(
     }
 }
 
-/// `keccak256("FlashLoan(address,address,address,uint256,uint8,uint256,uint16)")`.
-const AAVE_FLASH_LOAN_TOPIC: B256 =
-    alloy::primitives::b256!("0xefefaba5e921573100900a3ad9cf29f222d995fb3b6045797eaea7521bd8d6f0");
-
-/// `keccak256("IsolationModeTotalDebtUpdated(address,uint256)")` — the pool's
-/// isolation-debt state report.
-const AAVE_ISOLATION_MODE_TOTAL_DEBT_TOPIC: B256 =
-    alloy::primitives::b256!("0xaef84d3b40895fd58c561f3998000f0583abb992a52fbdc99ace8e8de4d676a5");
-
-/// `keccak256("DeficitCovered(address,address,uint256)")` — the pool's report that a
-/// deficit was covered. The covered positions' own balance reports carry the
-/// movement, so the pool's report is a state role.
-const AAVE_DEFICIT_COVERED_TOPIC: B256 =
-    alloy::primitives::b256!("0x84b203e49f1a4b553088061534231969a68ad1c81be192205e96d23a206cb26a");
-
-/// `keccak256("PositionManagerApproved(address,address)")` — the Pool revision 9
-/// position-manager authorization report.
-const AAVE_POSITION_MANAGER_APPROVED_TOPIC: B256 =
-    alloy::primitives::b256!("0x540e692f36c2fa13e7583c4deeffd91ce6bc04f91e7d84f295d9d858372875fc");
-
-/// `keccak256("PositionManagerRevoked(address,address)")` — the Pool revision 11
-/// position-manager authorization report.
-const AAVE_POSITION_MANAGER_REVOKED_TOPIC: B256 =
-    alloy::primitives::b256!("0x08c92c3870d10c79e9673fecea8f4ff261f8e6b661067d9ca63fd777882bff15");
-
-/// `keccak256("FeesDistributedToTreasury(address,address,uint256)")` — a scaled token's
-/// fee-distribution report.
-const SCALED_TOKEN_FEE_DISTRIBUTION_TOPIC: B256 =
-    alloy::primitives::b256!("0xb29fcda740927812f5a71075b62e132bead3769a455319c29b9a1cc461a65475");
-
-/// `keccak256("BorrowAllowanceDelegated(address,address,address,uint256)")` — a debt
-/// token's credit-delegation report.
-const DEBT_BORROW_ALLOWANCE_TOPIC: B256 =
-    alloy::primitives::b256!("0xda919360433220e13b51e8c211e490d148e61a3bd53de8c097194e458b97f3e1");
-
-/// `keccak256("Approval(address,address,uint256)")`.
-const ERC20_APPROVAL_TOPIC: B256 =
-    alloy::primitives::b256!("0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925");
-
-/// `keccak256("Initialized(address,address,address,address,uint8,string,string,bytes)")` — a
-/// scaled token's own initialization report (implementation upgrade), emitted with
-/// the reserve's underlying and the Pool as indexed fields.
-const SCALED_TOKEN_INITIALIZED_TOPIC: B256 =
-    alloy::primitives::b256!("0xb19e051f8af41150ccccb3fc2c2d8d15f4a4cf434f32a559ba75fe73d6eea20b");
-
-/// `keccak256("Initialized(address,address,address,uint8,string,string,bytes)")` — the
-/// debt token's variant of the same initialization report.
-const SCALED_TOKEN_INITIALIZED_DEBT_TOPIC: B256 =
-    alloy::primitives::b256!("0x40251fbfb6656cfa65a00d7879029fec1fad21d28fdcff2f4f68f52795b74f2c");
-
-/// `keccak256("VariableDebtTokenSet(address)")` — the GHO aToken's link report.
-const GHO_VARIABLE_DEBT_TOKEN_SET_TOPIC: B256 =
-    alloy::primitives::b256!("0x9a2092516d2c53586ed59ca6d2878442977a16f16e1c85ac0a8a8cd9cb024666");
-
-/// `keccak256("ATokenSet(address)")` — the GHO vToken's reciprocal link report.
-const GHO_ATOKEN_SET_TOPIC: B256 =
-    alloy::primitives::b256!("0x07cba78d3a9bb0cf2cb0e30140558e278b50a2ba6da2e13369a0d9113034548b");
-
-/// `keccak256("GhoTreasuryUpdated(address,address)")` — the GHO aToken's treasury report.
-const GHO_TREASURY_UPDATED_TOPIC: B256 =
-    alloy::primitives::b256!("0x13f4413d8d93a259bd6c10f35095371f30ed50f81a73407e52e9f02000d5d16b");
-
-/// `keccak256("GHODebtTokenChanged(address)")` — the GHO discount token's debt-token report.
-const GHO_DEBT_TOKEN_CHANGED_TOPIC: B256 =
-    alloy::primitives::b256!("0x62bbced765bccc9ed93d0bae1b2a8c86e13b4663f8bf27d5936d9d619194c8a9");
-
-/// `keccak256("AssetIndexUpdated(address,uint256)")` — the GHO discount token's rewards index.
-const GHO_ASSET_INDEX_UPDATED_TOPIC: B256 =
-    alloy::primitives::b256!("0x5777ca300dfe5bead41006fbce4389794dbc0ed8d6cccebfaf94630aa04184bc");
-
-/// `keccak256("UserIndexUpdated(address,address,uint256)")` — per-user rewards accounting.
-const GHO_USER_INDEX_UPDATED_TOPIC: B256 =
-    alloy::primitives::b256!("0xbb123b5c06d5408bbea3c4fef481578175cfb432e3b482c6186f02ed9086585b");
-
-/// `keccak256("DelegatedPowerChanged(address,uint256,uint8)")` — governance-power delegation.
-const GHO_DELEGATED_POWER_CHANGED_TOPIC: B256 =
-    alloy::primitives::b256!("0xa0a19463ee116110c9b282012d9b65cc5522dc38a9520340cbaf3142e550127f");
-
-/// `keccak256("RewardsAccrued(address,uint256)")` — accrued rewards accounting.
-const GHO_REWARDS_ACCRUED_TOPIC: B256 =
-    alloy::primitives::b256!("0x2468f9268c60ad90e2d49edb0032c8a001e733ae888b3ab8e982edf535be1a76");
-
-/// `keccak256("RewardsClaimed(address,address,uint256)")` — direct stkAAVE rewards claims.
-const GHO_REWARDS_CLAIMED_TOPIC: B256 =
-    alloy::primitives::b256!("0x9310ccfcb8de723f578a9e4282ea9f521f05ae40dc08f3068dfad528a65ee3c7");
-
-/// `keccak256("DelegateChanged(address,address,uint8)")` — delegation-target accounting.
-const GHO_DELEGATE_CHANGED_TOPIC: B256 =
-    alloy::primitives::b256!("0xe8d51c8e11bd570db1734c8ec775785330e77007feed45c43b608ef33ff914bd");
-
-/// `keccak256("PendingAdminChanged(address,uint256)")` — pending-admin configuration.
-const GHO_PENDING_ADMIN_CHANGED_TOPIC: B256 =
-    alloy::primitives::b256!("0xc3d1bf52795a20771ee6de3e59948fd83e10db956122d4709a3b86c512963855");
-
-/// `keccak256("RoleClaimed(address,uint256)")` — admin-role claim configuration.
-const GHO_ROLE_CLAIMED_TOPIC: B256 =
-    alloy::primitives::b256!("0x83a9ddad961dcb7c6894c9585a16ff7792c2ec8281256a3cc7303ae830152dcf");
-
-/// `keccak256("Cooldown(address,uint256)")` — staking cooldown accounting.
-const GHO_COOLDOWN_TOPIC: B256 =
-    alloy::primitives::b256!("0x8a05f911d8ab7fc50fec37ef4ba7f9bfcb1a3c191c81dcd824ad0946c4e20d65");
-
-/// `keccak256("AssetConfigUpdated(address,uint256)")` — asset configuration.
-const GHO_ASSET_CONFIG_UPDATED_TOPIC: B256 =
-    alloy::primitives::b256!("0x87fa03892a0556cb6b8f97e6d533a150d4d55fcbf275fff5fa003fa636bcc7fa");
-
-/// `keccak256("MaxSlashablePercentageChanged(uint256)")` — slashing configuration.
-const GHO_MAX_SLASHABLE_PERCENTAGE_CHANGED_TOPIC: B256 =
-    alloy::primitives::b256!("0xb79c2d6c7f5c95eec9dc05affc0ed002620a4ec6d72b7b0744cc8638168c600a");
-
 /// Whether the event is the Pool contract's own report: the operation anchors,
 /// the pool's state and position reports, and its treasury mint.
 ///
@@ -783,76 +680,19 @@ fn pool_owned_event(event: &DecodedAaveEvent) -> bool {
     )
 }
 
-/// The role of a log one of this market's contracts emits that the decoder
-/// deliberately does not name, or `None` when the topic is genuinely unknown.
-///
-/// Aave's Pool reports flash loans and its scaled tokens report allowances; the
-/// market's projection reads scaled balances, and neither moves one. Those two
-/// are recognized vocabulary, so they are roles — every other topic from a market
-/// contract is an ingress error.
-fn unmodeled_role_emitted_by(
-    log: &Log,
-    emitter: Address,
-    pool: Address,
-    tokens: &BTreeMap<Address, TokenType>,
-) -> Option<Slot> {
-    let topic = log.topics().first()?;
-    if emitter == pool && *topic == AAVE_FLASH_LOAN_TOPIC {
-        return Some(Slot::Role(NonOperationRole::FlashLoan));
-    }
-    if emitter == pool && *topic == AAVE_DEFICIT_COVERED_TOPIC {
-        return Some(Slot::Role(NonOperationRole::DeficitCoverageReport));
-    }
-    if emitter == pool
-        && (*topic == AAVE_POSITION_MANAGER_APPROVED_TOPIC
-            || *topic == AAVE_POSITION_MANAGER_REVOKED_TOPIC)
-    {
-        return Some(Slot::Role(NonOperationRole::AllowanceReport));
-    }
-    if emitter == pool && *topic == AAVE_ISOLATION_MODE_TOTAL_DEBT_TOPIC {
-        return Some(Slot::Role(NonOperationRole::IsolationDebtReport));
-    }
-    if tokens.contains_key(&emitter)
-        && (*topic == SCALED_TOKEN_INITIALIZED_TOPIC
-            || *topic == SCALED_TOKEN_INITIALIZED_DEBT_TOPIC
-            || *topic == GHO_VARIABLE_DEBT_TOKEN_SET_TOPIC
-            || *topic == GHO_ATOKEN_SET_TOPIC
-            || *topic == GHO_TREASURY_UPDATED_TOPIC
-            || *topic == GHO_DEBT_TOKEN_CHANGED_TOPIC
-            || *topic == GHO_PENDING_ADMIN_CHANGED_TOPIC
-            || *topic == GHO_ROLE_CLAIMED_TOPIC
-            || *topic == GHO_ASSET_CONFIG_UPDATED_TOPIC
-            || *topic == GHO_MAX_SLASHABLE_PERCENTAGE_CHANGED_TOPIC)
-    {
-        return Some(Slot::Role(NonOperationRole::MarketConfiguration));
-    }
-    if tokens.contains_key(&emitter)
-        && (*topic == GHO_ASSET_INDEX_UPDATED_TOPIC
-            || *topic == GHO_USER_INDEX_UPDATED_TOPIC
-            || *topic == GHO_REWARDS_ACCRUED_TOPIC
-            || *topic == GHO_REWARDS_CLAIMED_TOPIC
-            || *topic == GHO_COOLDOWN_TOPIC)
-    {
-        return Some(Slot::Role(NonOperationRole::RewardsAccounting));
-    }
-    if tokens.contains_key(&emitter)
-        && (*topic == ERC20_APPROVAL_TOPIC
-            || *topic == DEBT_BORROW_ALLOWANCE_TOPIC
-            || *topic == GHO_DELEGATED_POWER_CHANGED_TOPIC
-            || *topic == GHO_DELEGATE_CHANGED_TOPIC)
-    {
-        return Some(Slot::Role(NonOperationRole::AllowanceReport));
-    }
-    if tokens.contains_key(&emitter) && *topic == SCALED_TOKEN_FEE_DISTRIBUTION_TOPIC {
-        return Some(Slot::Role(NonOperationRole::FeeDistribution));
-    }
-    None
-}
-
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::operations::TokenType;
+    use crate::updater::protocol_events::{
+        catalog_entry, EmitterRole, ProtocolContext, ProtocolReport, ReportAnswer,
+        ReportedRevisions, REPORT_CATALOG,
+    };
+    use crate::updater::revision::RevisionRange;
+    use alloy::primitives::Log as AlloyLog;
+    use alloy::primitives::{Bytes, B256};
+    use degenbot_decoders::aave_report_decoder::decode_aave_report_log;
     use std::collections::BTreeMap;
 
     fn ledger(slots: &[(u64, Slot)]) -> ReceiptOwnership {
@@ -965,595 +805,6 @@ mod tests {
         );
     }
 
-    #[test]
-    #[expect(clippy::too_many_lines)]
-    fn captured_rev1_gho_token_link_reports_are_market_configuration() {
-        use alloy::primitives::{Bytes, Log as AlloyLog};
-
-        let collateral_token: Address = "0x00907f9921424583e7ffBfEdf84F92B7B2Be4977"
-            .parse()
-            .unwrap();
-        let debt_token: Address = "0x786dBff3f1292ae8F92ea68Cf93c30b34B1ed04B"
-            .parse()
-            .unwrap();
-        let discount_strategy: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
-            .parse()
-            .unwrap();
-        let transaction: B256 =
-            "0xae8e542d4fdb5a6a33eeb129bb80f9bf23a1ceb3ef5f6caed1fd634ae3730c0b"
-                .parse()
-                .unwrap();
-        let make_log = |emitter: Address, topics: &[B256], index: u64| Log {
-            inner: AlloyLog::new_unchecked(emitter, topics.to_vec(), Bytes::new()),
-            block_hash: Some(
-                "0xd6af9d366c145bbdebd34ce7fc1fa7bc52dc81c2d4f5de3881c11210d343ab58"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(17_699_249),
-            block_timestamp: None,
-            transaction_hash: Some(transaction),
-            transaction_index: Some(13),
-            log_index: Some(index),
-            removed: false,
-        };
-        let logs = [
-            make_log(
-                collateral_token,
-                &[
-                    alloy::primitives::b256!(
-                        "0x9a2092516d2c53586ed59ca6d2878442977a16f16e1c85ac0a8a8cd9cb024666"
-                    ),
-                    debt_token.into_word(),
-                ],
-                87,
-            ),
-            make_log(
-                collateral_token,
-                &[
-                    alloy::primitives::b256!(
-                        "0x13f4413d8d93a259bd6c10f35095371f30ed50f81a73407e52e9f02000d5d16b"
-                    ),
-                    B256::ZERO,
-                    alloy::primitives::b256!(
-                        "0x000000000000000000000000464c71f6c2f760dda6093dcb91c24c39e5d6e18c"
-                    ),
-                ],
-                88,
-            ),
-            make_log(
-                debt_token,
-                &[
-                    alloy::primitives::b256!(
-                        "0x07cba78d3a9bb0cf2cb0e30140558e278b50a2ba6da2e13369a0d9113034548b"
-                    ),
-                    collateral_token.into_word(),
-                ],
-                89,
-            ),
-            make_log(
-                discount_strategy,
-                &[
-                    alloy::primitives::b256!(
-                        "0x62bbced765bccc9ed93d0bae1b2a8c86e13b4663f8bf27d5936d9d619194c8a9"
-                    ),
-                    debt_token.into_word(),
-                ],
-                92,
-            ),
-        ];
-        let tokens = BTreeMap::from([
-            (collateral_token, TokenType::Atoken),
-            (debt_token, TokenType::Vtoken),
-            (discount_strategy, TokenType::GhoDiscount),
-        ]);
-        let receipt = undecoded(&logs.iter().collect::<Vec<_>>());
-        let ownership = ReceiptOwnership::classify(
-            &receipt,
-            &[],
-            &EventOwnership::default(),
-            &tokens,
-            Address::ZERO,
-        )
-        .unwrap();
-
-        assert_eq!(
-            ownership.owner(87),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(88),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(89),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(92),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-    }
-
-    #[test]
-    #[expect(clippy::too_many_lines)]
-    fn captured_rev5_discount_token_index_and_delegation_reports_are_classified() {
-        use alloy::primitives::{Bytes, Log as AlloyLog};
-
-        let discount_token: Address = "0x4da27a545c0c5B758a6BA100e3a049001de870f5"
-            .parse()
-            .unwrap();
-        let log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x5777ca300dfe5bead41006fbce4389794dbc0ed8d6cccebfaf94630aa04184bc"
-                    ),
-                    discount_token.into_word(),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "000000000000000000000000000000000000000000000001696a636d44852dcc",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            block_hash: Some(
-                "0x02baf4aeaeba75e020a93706c6c8add928d3040e2bd1685355772d2dc9c6b634"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(17_699_277),
-            block_timestamp: None,
-            transaction_hash: Some(
-                "0x7ef07bae613c423a7c11ab1be6e4899db837312a6fef47522fc0af260f2a6fe3"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(76),
-            log_index: Some(321),
-            removed: false,
-        };
-        let user_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0xbb123b5c06d5408bbea3c4fef481578175cfb432e3b482c6186f02ed9086585b"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77"
-                    ),
-                    discount_token.into_word(),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "000000000000000000000000000000000000000000000001696a636d44852dcc",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            log_index: Some(322),
-            ..log.clone()
-        };
-        let delegation_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0xa0a19463ee116110c9b282012d9b65cc5522dc38a9520340cbaf3142e550127f"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x000000000000000000000000ca1f6d7d8e902617f8bdd87866e00f9844c40a77"
-                    ),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "0000000000000000000000000000000000000000000000056bc75e2d631000000000000000000000000000000000000000000000000000000000000000000000",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            log_index: Some(329),
-            ..log.clone()
-        };
-        let rewards_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![alloy::primitives::b256!(
-                    "0x2468f9268c60ad90e2d49edb0032c8a001e733ae888b3ab8e982edf535be1a76"
-                )],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "0000000000000000000000006b62909ad3f315833a5e5062b670034a3016910b0000000000000000000000000000000000000000000000006bc387c95b2fc39d",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            block_hash: Some(
-                "0xe99f4e137b9dc3caf06ecb2c571ce489130c0799373e73f37a0fffe0ba829ce8"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(17_699_305),
-            transaction_hash: Some(
-                "0x411a900563fd4bf5091a56651b22a0d621f0bd5d0319d05948a1510a6df12b1b"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(127),
-            log_index: Some(325),
-            ..log.clone()
-        };
-        let direct_claim_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x9310ccfcb8de723f578a9e4282ea9f521f05ae40dc08f3068dfad528a65ee3c7"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x0000000000000000000000009f07a0233abc178428aa9a18baef3188f093a7d0"
-                    ),
-                    discount_token.into_word(),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "0000000000000000000000000000000000000000000000004a868b7352b2fa66",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            block_hash: Some(
-                "0x6fa39364eb137b759563c2e2d6430066751f8dabe7a647b23f09ef4d29ad6b0a"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(17_699_689),
-            transaction_hash: Some(
-                "0x50cdffe9a2ae653c46b8e057bd665d26d365c50558c96db401dd21514dc4d598"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(132),
-            log_index: Some(357),
-            ..log.clone()
-        };
-        let delegate_change_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0xe8d51c8e11bd570db1734c8ec775785330e77007feed45c43b608ef33ff914bd"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x000000000000000000000000167c606be99dbf5a8af61e1983e5b309e8fa2ae7"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x0000000000000000000000001ae6dcbc88d6f81a7bcfccc7198397d776f3592e"
-                    ),
-                ],
-                Bytes::from([0_u8; 32].as_slice()),
-            ),
-            block_hash: Some(
-                "0xb1f119ad9186d6b0447132789f283a76ec4be9bc78cd15303d7f5075c292c8e1"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(17_824_467),
-            transaction_hash: Some(
-                "0x92acbe5d2f09da6032f481ac4610825e9af7a423bf26f77988b65f8c83f3b0e3"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(82),
-            log_index: Some(292),
-            ..log.clone()
-        };
-        let pending_admin_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0xc3d1bf52795a20771ee6de3e59948fd83e10db956122d4709a3b86c512963855"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
-                    ),
-                ],
-                Bytes::from([0_u8; 32].as_slice()),
-            ),
-            block_hash: Some(
-                "0x95a70030118aa47f6bbe78300fe5aa2d6a14c03c39e4773cd511b6d36aa5846b"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(18_454_069),
-            transaction_hash: Some(
-                "0x7e7f7adda9ab6af8fc05a248ed2bb0eaf9b53886cfb461d2fb768ce4d0d02a8c"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(15),
-            log_index: Some(118),
-            ..log.clone()
-        };
-        let role_claimed_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x83a9ddad961dcb7c6894c9585a16ff7792c2ec8281256a3cc7303ae830152dcf"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x0000000000000000000000005300a1a15135ea4dc7ad5a167152c01efc9b192a"
-                    ),
-                ],
-                Bytes::from([0_u8; 32].as_slice()),
-            ),
-            log_index: Some(124),
-            ..pending_admin_log.clone()
-        };
-        let cooldown_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x8a05f911d8ab7fc50fec37ef4ba7f9bfcb1a3c191c81dcd824ad0946c4e20d65"
-                    ),
-                    alloy::primitives::b256!(
-                        "0x0000000000000000000000001f847fd5e08fb559a69280a14e7e904e6dbff81f"
-                    ),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "000000000000000000000000000000000000000000000000b447a45ad02f832e",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            block_hash: Some(
-                "0x85e1e99c2aa4344f2d8f6b6600fdf64cb1da5f1c039aec1a6726e48eb4e4e6c2"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(18_763_122),
-            transaction_hash: Some(
-                "0x3991c229452ce82fb530fe6200094619b1d53ea6bf1ef4d4b0427363de9d0375"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(255),
-            log_index: Some(422),
-            ..log.clone()
-        };
-        let asset_config_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x87fa03892a0556cb6b8f97e6d533a150d4d55fcbf275fff5fa003fa636bcc7fa"
-                    ),
-                    discount_token.into_word(),
-                ],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "000000000000000000000000000000000000000000000000000cf3ddb8be5d55",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            block_hash: Some(
-                "0x0da0fdd7093f650472f8e1e825ebd652b670a418ea38050081dcf9954985f71d"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(22_638_170),
-            transaction_hash: Some(
-                "0xaa900e1ac9ece8a1a0db38c111ccfe5b5fb735a838278995a7e6534a8fc32a63"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(56),
-            log_index: Some(338),
-            ..log.clone()
-        };
-        let max_slashable_log = Log {
-            inner: AlloyLog::new_unchecked(
-                discount_token,
-                vec![alloy::primitives::b256!(
-                    "0xb79c2d6c7f5c95eec9dc05affc0ed002620a4ec6d72b7b0744cc8638168c600a"
-                )],
-                Bytes::from(
-                    alloy::hex::decode(
-                        "00000000000000000000000000000000000000000000000000000000000007d0",
-                    )
-                    .unwrap(),
-                ),
-            ),
-            log_index: Some(347),
-            ..asset_config_log.clone()
-        };
-        let logs = [
-            rewards_log,
-            log,
-            user_log,
-            delegation_log,
-            direct_claim_log,
-            delegate_change_log,
-            pending_admin_log,
-            role_claimed_log,
-            cooldown_log,
-            asset_config_log,
-            max_slashable_log,
-        ];
-        let tokens = BTreeMap::from([(discount_token, TokenType::GhoDiscount)]);
-        let receipt = undecoded(&logs.iter().collect::<Vec<_>>());
-        let ownership = ReceiptOwnership::classify(
-            &receipt,
-            &[],
-            &EventOwnership::default(),
-            &tokens,
-            Address::ZERO,
-        )
-        .unwrap();
-
-        assert_eq!(
-            ownership.owner(325),
-            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
-        );
-        assert_eq!(
-            ownership.owner(321),
-            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
-        );
-        assert_eq!(
-            ownership.owner(322),
-            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
-        );
-        assert_eq!(
-            ownership.owner(329),
-            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
-        );
-        assert_eq!(
-            ownership.owner(357),
-            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
-        );
-        assert_eq!(
-            ownership.owner(292),
-            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
-        );
-        assert_eq!(
-            ownership.owner(118),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(124),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(422),
-            Some(LogOwner::Role(NonOperationRole::RewardsAccounting))
-        );
-        assert_eq!(
-            ownership.owner(338),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-        assert_eq!(
-            ownership.owner(347),
-            Some(LogOwner::Role(NonOperationRole::MarketConfiguration))
-        );
-    }
-
-    #[test]
-    fn captured_rev9_pool_position_manager_approval_is_an_allowance_report() {
-        use alloy::primitives::{Bytes, Log as AlloyLog};
-
-        let pool: Address = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-            .parse()
-            .unwrap();
-        let position_manager: Address = "0xd611d10cf51552227cab601a3788a6be52d53ae0"
-            .parse()
-            .unwrap();
-        let log = Log {
-            inner: AlloyLog::new_unchecked(
-                pool,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x540e692f36c2fa13e7583c4deeffd91ce6bc04f91e7d84f295d9d858372875fc"
-                    ),
-                    position_manager.into_word(),
-                    position_manager.into_word(),
-                ],
-                Bytes::new(),
-            ),
-            block_hash: Some(
-                "0x1c967ead522aac509e69dd23f2c0b0c74b42c43c1340cd8ca0ea81c3a2024401"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(23_105_903),
-            block_timestamp: None,
-            transaction_hash: Some(
-                "0x59cb182caf4d5f99f75050578f93e873ca84674012256cc8ee75cfdd7d4737f8"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(242),
-            log_index: Some(568),
-            removed: false,
-        };
-        let ownership = ReceiptOwnership::classify(
-            &undecoded(&[&log]),
-            &[],
-            &EventOwnership::default(),
-            &BTreeMap::new(),
-            pool,
-        )
-        .unwrap();
-
-        assert_eq!(
-            ownership.owner(568),
-            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
-        );
-    }
-
-    #[test]
-    fn captured_rev11_pool_position_manager_revocation_is_an_allowance_report() {
-        use alloy::primitives::{Bytes, Log as AlloyLog};
-
-        let pool: Address = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-            .parse()
-            .unwrap();
-        let user: Address = "0x2c143f9c8a3da16dbabbb7bf1679cb8e070a3245"
-            .parse()
-            .unwrap();
-        let position_manager: Address = "0x366d12b5c7840d88212e6f78c8cd578275be8f8d"
-            .parse()
-            .unwrap();
-        let log = Log {
-            inner: AlloyLog::new_unchecked(
-                pool,
-                vec![
-                    alloy::primitives::b256!(
-                        "0x08c92c3870d10c79e9673fecea8f4ff261f8e6b661067d9ca63fd777882bff15"
-                    ),
-                    user.into_word(),
-                    position_manager.into_word(),
-                ],
-                Bytes::new(),
-            ),
-            block_hash: Some(
-                "0x81de53198111fc56b7ce96d41bd92ae683be19357b2f8d8a266c3e854a863bf1"
-                    .parse()
-                    .unwrap(),
-            ),
-            block_number: Some(26_036_607),
-            block_timestamp: None,
-            transaction_hash: Some(
-                "0x18a9f88fca2c29fd83d41a3d19cc7e0c84042fae4040cfea3a5a613a9acaedb9"
-                    .parse()
-                    .unwrap(),
-            ),
-            transaction_index: Some(46),
-            log_index: Some(165),
-            removed: false,
-        };
-        let ownership = ReceiptOwnership::classify(
-            &undecoded(&[&log]),
-            &[],
-            &EventOwnership::default(),
-            &BTreeMap::new(),
-            pool,
-        )
-        .unwrap();
-
-        assert_eq!(
-            ownership.owner(165),
-            Some(LogOwner::Role(NonOperationRole::AllowanceReport))
-        );
-    }
-
     /// The census counts every slot exactly once, by owner class.
     #[test]
     fn the_census_counts_every_log_once() {
@@ -1570,5 +821,581 @@ mod tests {
         assert_eq!(census.out_of_scope, 1);
         assert_eq!(census.total(), 3);
         assert_eq!(ownership.len(), 3);
+    }
+
+    // ── the captured report-role cases (data-driven) ──────────────────────
+
+    /// The committed data-driven capture fixtures: every log of the rev1/rev5/
+    /// rev9/rev11 captures with the contract role that emitted it, the revision
+    /// the capture reports, the exact block/transaction/log identity, the
+    /// complete topics and payload, the neutral decoder's report name, and the
+    /// ownership role the market gives it.
+    const ROLE_CAPTURES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../tests/fixtures/aave_reports/report_role_captures.json"
+    );
+
+    /// Which contract's reported revision a case states.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RevisionGoverns {
+        Pool,
+        GhoVtoken,
+        DiscountToken,
+    }
+
+    struct CapturedLog {
+        role: Option<TokenType>,
+        report: String,
+        expected: NonOperationRole,
+        log: Log,
+    }
+
+    struct CapturedCase {
+        id: String,
+        reported_revision: u32,
+        revision_governs: RevisionGoverns,
+        pool: Address,
+        logs: Vec<CapturedLog>,
+    }
+
+    fn role_named(name: &str) -> NonOperationRole {
+        match name {
+            "market configuration" => NonOperationRole::MarketConfiguration,
+            "rewards accounting" => NonOperationRole::RewardsAccounting,
+            "allowance report" => NonOperationRole::AllowanceReport,
+            "authorization report" => NonOperationRole::AuthorizationReport,
+            other => panic!("the fixture names an unmodelled role: {other}"),
+        }
+    }
+
+    fn token_role_named(name: &str) -> Option<TokenType> {
+        match name {
+            "pool" => None,
+            "aToken" => Some(TokenType::Atoken),
+            "vToken" => Some(TokenType::Vtoken),
+            "ghoDiscount" => Some(TokenType::GhoDiscount),
+            other => panic!("the fixture names an unmodelled contract role: {other}"),
+        }
+    }
+
+    fn captured_cases() -> Vec<CapturedCase> {
+        let bytes = std::fs::read(ROLE_CAPTURES).expect("the committed role captures exist");
+        let document: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("the role captures are JSON");
+        assert_eq!(
+            document["schema"], "degenbot.aave.report-role-captures/v1",
+            "the fixture states its schema"
+        );
+        let pool: Address = document["market"]["pool"]
+            .as_str()
+            .expect("the market states its Pool")
+            .parse()
+            .expect("the Pool address parses");
+        document["cases"]
+            .as_array()
+            .expect("the fixture carries its cases")
+            .iter()
+            .map(|case| captured_case(case, pool))
+            .collect()
+    }
+
+    fn captured_case(case: &serde_json::Value, pool: Address) -> CapturedCase {
+        let reported = &case["reported_revision"];
+        let value = u32::try_from(
+            reported["value"]
+                .as_u64()
+                .expect("the case states its reported revision"),
+        )
+        .expect("a revision fits in u32");
+        let governs = match reported["governs"]
+            .as_str()
+            .expect("the case names its governor")
+        {
+            "POOL" => RevisionGoverns::Pool,
+            "GHO_VTOKEN" => RevisionGoverns::GhoVtoken,
+            "DISCOUNT_TOKEN" => RevisionGoverns::DiscountToken,
+            other => panic!("the fixture names an unmodelled revision governor: {other}"),
+        };
+        CapturedCase {
+            id: case["id"]
+                .as_str()
+                .expect("the case states its id")
+                .to_string(),
+            reported_revision: value,
+            revision_governs: governs,
+            pool,
+            logs: case["logs"]
+                .as_array()
+                .expect("the case carries its logs")
+                .iter()
+                .map(captured_log)
+                .collect(),
+        }
+    }
+
+    fn captured_log(entry: &serde_json::Value) -> CapturedLog {
+        let topics: Vec<B256> = entry["topics"]
+            .as_array()
+            .expect("the log states its topics")
+            .iter()
+            .map(|topic| {
+                topic
+                    .as_str()
+                    .expect("a topic is a hex string")
+                    .parse()
+                    .expect("a topic is 32 bytes")
+            })
+            .collect();
+        let data = alloy::hex::decode(
+            entry["data"]
+                .as_str()
+                .expect("the log states its data")
+                .trim_start_matches("0x"),
+        )
+        .expect("the payload is hex");
+        CapturedLog {
+            role: token_role_named(
+                entry["contract_role"]
+                    .as_str()
+                    .expect("the log states its contract role"),
+            ),
+            report: entry["report"]
+                .as_str()
+                .expect("the log states its report")
+                .to_string(),
+            expected: role_named(
+                entry["expected_role"]
+                    .as_str()
+                    .expect("the log states its expected role"),
+            ),
+            log: Log {
+                inner: AlloyLog::new_unchecked(
+                    entry["emitter"]
+                        .as_str()
+                        .expect("the log states its emitter")
+                        .parse()
+                        .expect("the emitter address parses"),
+                    topics,
+                    Bytes::from(data),
+                ),
+                block_hash: Some(
+                    entry["block_hash"]
+                        .as_str()
+                        .expect("the log states its block hash")
+                        .parse()
+                        .expect("the block hash parses"),
+                ),
+                block_number: Some(
+                    entry["block_number"]
+                        .as_u64()
+                        .expect("the log states its block number"),
+                ),
+                block_timestamp: None,
+                transaction_hash: Some(
+                    entry["transaction_hash"]
+                        .as_str()
+                        .expect("the log states its transaction hash")
+                        .parse()
+                        .expect("the transaction hash parses"),
+                ),
+                transaction_index: Some(
+                    entry["transaction_index"]
+                        .as_u64()
+                        .expect("the log states its transaction index"),
+                ),
+                log_index: Some(
+                    entry["log_index"]
+                        .as_u64()
+                        .expect("the log states its index"),
+                ),
+                removed: false,
+            },
+        }
+    }
+
+    /// The market context a case is read against: its Pool, the contract roles
+    /// its logs name, and the revision the capture reports.
+    fn context_of(case: &CapturedCase) -> ProtocolContext {
+        let tokens: BTreeMap<Address, TokenType> = case
+            .logs
+            .iter()
+            .filter_map(|entry| entry.role.map(|role| (entry.log.address(), role)))
+            .collect();
+        let mut revisions = ReportedRevisions::default();
+        match case.revision_governs {
+            RevisionGoverns::Pool => revisions.pool = Some(case.reported_revision),
+            RevisionGoverns::GhoVtoken => revisions.gho_vtoken = Some(case.reported_revision),
+            RevisionGoverns::DiscountToken => {
+                revisions.discount_token = Some(case.reported_revision);
+            }
+        }
+        ProtocolContext::new(case.pool, tokens, revisions)
+    }
+
+    /// The catalog's entry for a captured log.
+    fn entry_of(
+        case: &CapturedCase,
+        log: &CapturedLog,
+    ) -> crate::updater::protocol_events::ReportCatalogEntry {
+        let report = decode_aave_report_log(&log.log).unwrap_or_else(|| {
+            panic!(
+                "{}: log {:?} is a neutral report, not a skipped log",
+                case.id, log.log.log_index
+            )
+        });
+        let role = context_of(case)
+            .emitter_role(log.log.address())
+            .expect("the fixture states a tracked emitter");
+        *catalog_entry(ProtocolReport::of(&report), role).unwrap_or_else(|| {
+            panic!(
+                "{}: {} is placed for the {} role",
+                case.id,
+                log.report,
+                role.label()
+            )
+        })
+    }
+
+    /// The capture corpus is fixed, not growing: the four recorded cases and
+    /// their log distribution are named here, so a fixture edit that drops a
+    /// case, duplicates one, or loses a log fails loudly instead of the per-log
+    /// tests quietly covering less.
+    #[test]
+    fn the_capture_fixtures_carry_exactly_the_four_recorded_cases() {
+        let cases = captured_cases();
+
+        let ids: Vec<&str> = cases.iter().map(|case| case.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "rev1_gho_token_link_reports",
+                "rev5_discount_token_index_and_delegation_reports",
+                "rev9_pool_position_manager_approval",
+                "rev11_pool_position_manager_revocation",
+            ],
+            "the fixture states exactly the four recorded captures"
+        );
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "the case ids are unique: {ids:?}");
+
+        let logs: Vec<(&str, usize)> = cases
+            .iter()
+            .map(|case| (case.id.as_str(), case.logs.len()))
+            .collect();
+        assert_eq!(
+            logs,
+            [
+                ("rev1_gho_token_link_reports", 4),
+                ("rev5_discount_token_index_and_delegation_reports", 11),
+                ("rev9_pool_position_manager_approval", 1),
+                ("rev11_pool_position_manager_revocation", 1),
+            ],
+            "one log per captured report, distributed 4/11/1/1"
+        );
+        assert_eq!(
+            cases.iter().map(|case| case.logs.len()).sum::<usize>(),
+            17,
+            "the capture corpus is 17 report logs"
+        );
+    }
+
+    /// Every captured log classifies to the role the fixture records: the exact
+    /// rev1/rev5/rev9/rev11 payloads keep their classifications through the
+    /// catalog.
+    #[test]
+    fn every_captured_report_classifies_to_its_recorded_role() {
+        for case in captured_cases() {
+            let context = context_of(&case);
+            let logs: Vec<&Log> = case.logs.iter().map(|entry| &entry.log).collect();
+            let ownership = ReceiptOwnership::classify(
+                &undecoded(&logs),
+                &[],
+                &EventOwnership::default(),
+                &context,
+            )
+            .unwrap_or_else(|e| panic!("{}: the captured receipt is owned: {e}", case.id));
+            for entry in &case.logs {
+                let log_index = entry
+                    .log
+                    .log_index
+                    .expect("every capture log states its index");
+                assert_eq!(
+                    ownership.owner(log_index),
+                    Some(LogOwner::Role(entry.expected)),
+                    "{}: log {log_index} from {}",
+                    case.id,
+                    entry.log.address()
+                );
+            }
+            assert_eq!(
+                ownership.census().total(),
+                case.logs.len(),
+                "{}: every captured log is owned exactly once",
+                case.id
+            );
+        }
+    }
+
+    /// The catalog and the neutral decoder agree on every captured payload: the
+    /// fixture's recorded report is what the decoder reads, and the catalog
+    /// places that report for the emitter role the fixture records.
+    #[test]
+    fn every_captured_report_decodes_to_the_recorded_report() {
+        for case in captured_cases() {
+            for entry in &case.logs {
+                let catalog = entry_of(&case, entry);
+                assert_eq!(
+                    ProtocolReport::of(
+                        &decode_aave_report_log(&entry.log).expect("the log is a report")
+                    )
+                    .label(),
+                    entry.report,
+                    "{}: log {:?}",
+                    case.id,
+                    entry.log.log_index
+                );
+                assert_eq!(
+                    catalog.role,
+                    entry.expected,
+                    "{}: {} from {}",
+                    case.id,
+                    entry.report,
+                    entry.log.address()
+                );
+            }
+        }
+    }
+
+    /// Every captured report sits inside the open-ended range of revisions that
+    /// introduced it: the boundary is the capture's own reported revision, never
+    /// a fabricated historical receipt.
+    #[test]
+    fn every_captured_report_is_inside_its_introduction_range() {
+        for case in captured_cases() {
+            for entry in &case.logs {
+                let catalog = entry_of(&case, entry);
+                assert!(
+                    catalog.introduced.contains(case.reported_revision),
+                    "{}: {} is introduced at revision {} and captured at {}",
+                    case.id,
+                    entry.report,
+                    catalog.introduced.start(),
+                    case.reported_revision
+                );
+            }
+        }
+    }
+
+    /// Introduction is a boundary, not a set of revisions: a report introduced at
+    /// a revision is recognized at that revision and on every later one, so a
+    /// later compatible revision needs no second entry. The rev9 approval capture
+    /// is the introduction boundary; the market's own reported revision 12 (the
+    /// committed block-26458346 capture's) is a later one, and neither receipt is
+    /// fabricated.
+    #[test]
+    fn a_report_is_recognized_at_its_introduction_and_on_every_later_revision() {
+        let approval = catalog_entry(ProtocolReport::PositionManagerApproved, EmitterRole::Pool)
+            .expect("the Pool states its approval");
+        assert_eq!(approval.introduced, RevisionRange::from(9));
+        assert!(!approval.introduced.contains(8), "before the introduction");
+        assert!(approval.introduced.contains(9), "at the introduction");
+        assert!(approval.introduced.contains(12), "at a later revision");
+        assert!(approval.introduced.contains(u32::MAX), "open-ended");
+        assert_eq!(
+            NonOperationRole::AuthorizationReport,
+            approval.role,
+            "the Pool's position-manager report is an authorization report"
+        );
+        assert_eq!(
+            catalog_entry(ProtocolReport::PositionManagerRevoked, EmitterRole::Pool)
+                .expect("the Pool states its revocation")
+                .introduced,
+            RevisionRange::from(11)
+        );
+
+        let cases = captured_cases();
+        let pool_governed: Vec<&CapturedCase> = cases
+            .iter()
+            .filter(|case| case.revision_governs == RevisionGoverns::Pool)
+            .collect();
+        assert_eq!(pool_governed.len(), 2, "the two Pool revision captures");
+        for case in pool_governed {
+            let mut tokens: BTreeMap<Address, TokenType> = BTreeMap::new();
+            for entry in &case.logs {
+                if let Some(role) = entry.role {
+                    tokens.insert(entry.log.address(), role);
+                }
+            }
+            let later = ProtocolContext::new(
+                case.pool,
+                tokens,
+                ReportedRevisions {
+                    pool: Some(12),
+                    ..ReportedRevisions::default()
+                },
+            );
+            for entry in &case.logs {
+                assert_eq!(
+                    later.classify_report(&entry.log),
+                    ReportAnswer::Role(entry.expected),
+                    "{}: the same statement at the market's later reported revision",
+                    case.id
+                );
+            }
+        }
+    }
+
+    /// A Pool report re-emitted by a tracked token is not the Pool's statement:
+    /// the catalog refuses the emitter role instead of handing the token the
+    /// Pool's role, and the ledger refuses the receipt.
+    #[test]
+    fn a_pool_report_from_a_tracked_token_is_refused() {
+        let case = captured_cases()
+            .into_iter()
+            .find(|case| case.id == "rev9_pool_position_manager_approval")
+            .expect("the approval capture");
+        let entry = case.logs.first().expect("the capture carries its log");
+        let a_token = Address::repeat_byte(0xA1);
+        let context = ProtocolContext::new(
+            case.pool,
+            BTreeMap::from([(a_token, TokenType::Atoken)]),
+            context_of(&case).revisions(),
+        );
+        let moved = Log {
+            inner: AlloyLog::new_unchecked(
+                a_token,
+                entry.log.topics().to_vec(),
+                entry.log.data().data.clone(),
+            ),
+            ..entry.log.clone()
+        };
+
+        assert_eq!(context.classify_report(&moved), ReportAnswer::Unrecognized);
+        assert_eq!(
+            ReceiptOwnership::classify(
+                &undecoded(&[&moved]),
+                &[],
+                &EventOwnership::default(),
+                &context
+            )
+            .unwrap_err(),
+            OwnershipRefusal::UnrecognizedLog {
+                log_index: entry.log.log_index.expect("the capture states its index"),
+                emitter: a_token,
+                topic: alloy::hex::encode(entry.log.topics()[0].as_slice()),
+            },
+            "a market contract's unplaceable log is an ingress error, not out of scope"
+        );
+    }
+
+    /// A GHO discount-token report from a tracked vToken is the wrong token
+    /// role: the discount series states it, and the catalog refuses it
+    /// elsewhere.
+    #[test]
+    fn a_discount_token_report_from_a_tracked_vtoken_is_refused() {
+        let case = captured_cases()
+            .into_iter()
+            .find(|case| case.id == "rev1_gho_token_link_reports")
+            .expect("the GHO link capture");
+        let entry = case
+            .logs
+            .iter()
+            .find(|entry| entry.report == "GhoDebtTokenChanged")
+            .expect("the capture carries the discount-token report");
+        let v_token = Address::repeat_byte(0xB2);
+        let context = ProtocolContext::new(
+            case.pool,
+            BTreeMap::from([(v_token, TokenType::Vtoken)]),
+            ReportedRevisions::default(),
+        );
+        let moved = Log {
+            inner: AlloyLog::new_unchecked(
+                v_token,
+                entry.log.topics().to_vec(),
+                entry.log.data().data.clone(),
+            ),
+            ..entry.log.clone()
+        };
+
+        assert_eq!(context.classify_report(&moved), ReportAnswer::Unrecognized);
+        assert_eq!(
+            ReceiptOwnership::classify(
+                &undecoded(&[&moved]),
+                &[],
+                &EventOwnership::default(),
+                &context
+            )
+            .unwrap_err(),
+            OwnershipRefusal::UnrecognizedLog {
+                log_index: entry.log.log_index.expect("the capture states its index"),
+                emitter: v_token,
+                topic: alloy::hex::encode(entry.log.topics()[0].as_slice()),
+            }
+        );
+    }
+
+    /// An unknown topic from a tracked token is an ingress error, exactly as it
+    /// is from the Pool: the market's model expects coverage, never a leftover
+    /// pile.
+    #[test]
+    fn an_unknown_topic_from_a_tracked_token_refuses_the_transaction() {
+        let a_token = Address::repeat_byte(0xA1);
+        let context = ProtocolContext::new(
+            Address::repeat_byte(0x99),
+            BTreeMap::from([(a_token, TokenType::Atoken)]),
+            ReportedRevisions::default(),
+        );
+        let log = Log {
+            inner: AlloyLog::new_unchecked(a_token, vec![B256::repeat_byte(0x5A)], Bytes::new()),
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(3),
+            removed: false,
+        };
+
+        assert_eq!(context.classify_report(&log), ReportAnswer::Unrecognized);
+        assert_eq!(
+            ReceiptOwnership::classify(
+                &undecoded(&[&log]),
+                &[],
+                &EventOwnership::default(),
+                &context
+            )
+            .unwrap_err(),
+            OwnershipRefusal::UnrecognizedLog {
+                log_index: 3,
+                emitter: a_token,
+                topic: alloy::hex::encode([0x5A_u8; 32]),
+            }
+        );
+    }
+
+    /// The catalog states each report once, every entry carries a role no
+    /// operation may consume, and its introduction range is open-ended.
+    #[test]
+    fn the_catalog_states_every_report_once() {
+        for (index, entry) in REPORT_CATALOG.iter().enumerate() {
+            assert!(
+                !REPORT_CATALOG[..index]
+                    .iter()
+                    .any(|earlier| earlier.report == entry.report),
+                "{} is stated once",
+                entry.report.label()
+            );
+            assert!(
+                !entry.role.claimable_by_operation(),
+                "{} carries a terminal role",
+                entry.report.label()
+            );
+            assert!(entry.introduced.start() >= 1);
+        }
+        assert_eq!(
+            REPORT_CATALOG.len(),
+            25,
+            "the neutral decoder's 25 reports, none dropped and none invented"
+        );
     }
 }

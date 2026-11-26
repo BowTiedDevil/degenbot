@@ -360,10 +360,10 @@ pub fn classify_discount_prepass(inputs: DiscountPrepassInputs) -> DiscountPath 
     if let Some(settled) = inputs.settled {
         return DiscountPath::Settled(settled);
     }
-    if revision < crate::updater::config_dispatch::GHO_DISCOUNT_DEPRECATION_REVISION {
-        DiscountPath::ChainRead
-    } else {
+    if crate::updater::revision::gho_discount_retired(revision) {
         DiscountPath::Deprecated
+    } else {
+        DiscountPath::ChainRead
     }
 }
 
