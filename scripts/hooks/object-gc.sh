@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 #
-# pre-push brake: keep the loose object database below the size where git fires
-# a repack that grinds the machine to a halt.
+# Loose-object housekeeping for this repository's `.git`, run by hand through
+# `just gc-objects` when `git count-objects -v` reports a pile worth clearing.
+# It is not a hook and not a verdict about the tree: it rewrites the object
+# database, so nothing runs it automatically.
 #
-# The failure this exists to stop (2026-09-15): a run staged rust/target build
-# output and never committed it. 139,329 loose objects / 44.5 GiB accumulated in
-# .git/objects, all unreachable, and .git grew to 45 GB. The next `git push`
+# The incident behind it (2026-09-15): a run staged rust/target build output and
+# never committed it. 139,329 loose objects / 44.5 GiB accumulated in
+# .git/objects, all unreachable, and .git grew to 45 GB. A later `git push`
 # crossed gc.auto's 6,700-object threshold, so git's detached maintenance ran
 # `git repack -d -l --geometric=2` -> `pack-objects` over the pile. Delta
 # compression against 100 MB ELF binaries with pack.windowMemory unbounded by
-# default reached 663% CPU / 21.4 GB RSS with no ETA.
+# default reached 663% CPU / 21.4 GB RSS with no ETA. This housekeeping clears
+# that pile cheaply before a repack meets it.
 #
 # Two deliberate choices:
 #
 #   1. `git prune --expire=now`, never `git gc`/`git repack`. Prune only
 #      unlinks loose objects that no ref, index, or reflog can reach — it does
 #      not inflate or delta-compress them, so that 44.5 GiB took 40 s. A repack
-#      would reproduce the blow-up this gate exists to prevent.
+#      here would reproduce the blow-up the housekeeping exists to avoid.
 #   2. Reflogs are NOT expired. Objects still named by a reflog entry stay
 #      reachable, so commits from an interrupted amend/rebase remain recoverable
 #      — the guarantee `--expire=now` on the reflogs would have discarded.
@@ -24,11 +27,11 @@
 # Thresholds (overridable for tests or a deliberate large import):
 #   DEGENBOT_OBJECT_GC_MAX_COUNT       soft: loose object count that triggers a prune
 #   DEGENBOT_OBJECT_GC_MAX_KIB         soft: loose KiB that triggers a prune
-#   DEGENBOT_OBJECT_GC_HARD_MAX_COUNT  hard: still above after pruning => block
-#   DEGENBOT_OBJECT_GC_HARD_MAX_KIB    hard: still above after pruning => block
+#   DEGENBOT_OBJECT_GC_HARD_MAX_COUNT  hard: still above after pruning => exit 1
+#   DEGENBOT_OBJECT_GC_HARD_MAX_KIB    hard: still above after pruning => exit 1
 #
-# Exit 1 only in the hard case: pruning cannot help, so the object DB needs a
-# deliberate, memory-capped repack by a human rather than a silent push.
+# Exit 1 only in the hard case: pruning cannot help, so the object database needs
+# a deliberate, memory-capped repack by a human.
 
 set -euo pipefail
 
@@ -65,7 +68,7 @@ echo "object-gc:   before: $stat_count loose objects, $stat_kib KiB (threshold $
 before_count="$stat_count"
 before_kib="$stat_kib"
 if ! git prune --expire=now >&2; then
-  echo "object-gc: 'git prune --expire=now' failed; blocking the push to avoid an unbounded repack." >&2
+  echo "object-gc: 'git prune --expire=now' failed; the object database is untouched." >&2
   echo "object-gc:   inspect with: git count-objects -vH" >&2
   exit 1
 fi
@@ -75,12 +78,12 @@ echo "object-gc:   after:  $stat_count loose objects, $stat_kib KiB (reclaimed $
 if [ "$stat_count" -gt "$hard_max_count" ] || [ "$stat_kib" -gt "$hard_max_kib" ]; then
   {
     echo ""
-    echo "⛔ object-gc: push blocked — the object database is oversized and pruning could not fix it."
+    echo "object-gc: still oversized after pruning — the remaining step is a deliberate repack."
     echo "   remaining: $stat_count loose objects, $stat_kib KiB (hard limit $hard_max_count / $hard_max_kib KiB)"
     echo ""
     echo "   Everything left is reachable or reflog-protected, so 'git prune' must not"
     echo "   remove it. Do NOT reach for a plain 'git gc' here: that is the unbounded"
-    echo "   repack this gate exists to prevent (see the header of scripts/hooks/object-gc.sh)."
+    echo "   repack this housekeeping avoids (see the header of scripts/hooks/object-gc.sh)."
     echo "   Repack deliberately, with a memory ceiling and a coarse delta window:"
     echo ""
     echo "     git -c pack.windowMemory=256m -c pack.deltaCacheSize=64m \\"

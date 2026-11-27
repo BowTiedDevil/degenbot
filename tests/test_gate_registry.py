@@ -15,6 +15,16 @@ its gate when the registry reorders the hooks.
     catches a hook added by hand and never declared.
   * ``test_a_new_declaration_renders_without_prose`` -- the other direction: a
     registry edit lands before its rationale does.
+  * ``test_regen_retires_the_line_and_prose_of_a_gate_the_registry_dropped``
+    and ``test_check_refuses_where_regen_retires`` -- a retirement is a registry
+    deletion, so the drift gate refuses the orphaned line while `gates-regen`
+    removes it and the prose it owned; the two commands, run end to end.
+  * ``test_the_stage_anchor_and_intro_survive_retiring_its_first_hook`` -- the
+    stage separator and its intro belong to the stage, not to whichever hook
+    happens to follow them.
+  * ``test_prose_left_behind_by_a_deleted_hook_line_fails_closed`` and
+    ``test_a_stage_anchor_without_a_gate_fails_closed`` -- prose no hook owns is
+    a rendering ambiguity, never something a regeneration deletes silently.
 """
 
 from __future__ import annotations
@@ -54,6 +64,58 @@ def _gate(
 
 def _registry(*blocks: str) -> str:
     return "version = 1\n\n" + "\n\n".join(blocks) + "\n"
+
+
+def _hook(gate_id: str, stage: str = "pre-commit") -> str:
+    """One hook line in the shape the renderer emits."""
+    return (
+        f'  {{ id = "{gate_id}", name = "{gate_id.title()}", language = "system", '
+        f'entry = "just {gate_id}", stages = ["{stage}"] }},'
+    )
+
+
+_PRE_COMMIT = "pre-commit"
+_PRE_PUSH = "pre-push"
+_STAGES = {"alpha": _PRE_COMMIT, "beta": _PRE_COMMIT, "gamma": _PRE_PUSH, "delta": _PRE_PUSH}
+
+
+def _declare(root: pathlib.Path, *gate_ids: str) -> None:
+    """Write a registry declaring exactly `gate_ids`, in stage order."""
+    ordered = [gate_id for gate_id in _STAGES if gate_id in gate_ids]
+    (root / "scripts" / "gates.toml").write_text(
+        _registry(*(_gate(gate_id, stage=_STAGES[gate_id]) for gate_id in ordered)),
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def staged_workspace(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A throwaway tree whose hooks sit under stage anchors, two per stage."""
+    (tmp_path / "justfile").write_text(
+        "alpha:\n    true\nbeta:\n    true\ngamma:\n    true\ndelta:\n    true\n",
+        encoding="utf-8",
+    )
+    hooks = "\n".join([
+        "  # --- pre-commit ---",
+        "  # pre-commit stage intro",
+        "",
+        "  # alpha rationale",
+        _hook("alpha"),
+        "",
+        "  # beta rationale",
+        _hook("beta"),
+        "",
+        "  # --- pre-push ---",
+        "  # pre-push stage intro",
+        _hook("gamma", _PRE_PUSH),
+        "",
+        "  # delta rationale",
+        _hook("delta", _PRE_PUSH),
+    ])
+    (tmp_path / "prek.toml").write_text(f"hooks = [\n{hooks}\n]\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    _declare(tmp_path, "alpha", "beta", "gamma", "delta")
+    return tmp_path
 
 
 @pytest.fixture
@@ -240,6 +302,97 @@ def test_prose_follows_its_gate_when_the_registry_reorders(workspace: pathlib.Pa
     rendered = gate_registry.render_prek(gate_registry.load(workspace), workspace)
     assert rendered.index("beta rationale") < rendered.index('id = "beta"')
     assert rendered.index("beta rationale") < rendered.index("# alpha rationale")
+
+
+def test_regen_retires_the_line_and_prose_of_a_gate_the_registry_dropped(
+    staged_workspace: pathlib.Path,
+) -> None:
+    """Retiring a gate deletes its declaration, and the two commands disagree on purpose."""
+    _declare(staged_workspace, "alpha", "gamma", "delta")
+    gates = gate_registry.load(staged_workspace)
+
+    with pytest.raises(gate_registry.RegistryError, match=r"hook\(s\) absent"):
+        gate_registry.render_prek(gates, staged_workspace)
+
+    rendered = gate_registry.render_prek(
+        gates, staged_workspace, undeclared=gate_registry.UndeclaredHook.REGEN
+    )
+    assert 'id = "beta"' not in rendered
+    assert "beta rationale" not in rendered
+    assert 'id = "alpha"' in rendered
+    assert "pre-commit stage intro" in rendered
+
+
+def test_check_refuses_where_regen_retires(staged_workspace: pathlib.Path) -> None:
+    """The two commands the hook and the fix hint run, end to end."""
+    _declare(staged_workspace, "alpha", "gamma", "delta")
+
+    assert gate_registry.main(["check"], staged_workspace) == 1
+    assert gate_registry.main(["regen"], staged_workspace) == 0
+    rewritten = (staged_workspace / "prek.toml").read_text(encoding="utf-8")
+    assert 'id = "beta"' not in rewritten
+    assert "beta rationale" not in rewritten
+    assert "pre-commit stage intro" in rewritten
+    assert gate_registry.main(["check"], staged_workspace) == 0
+
+    settled = (staged_workspace / "prek.toml").read_text(encoding="utf-8")
+    assert gate_registry.main(["regen"], staged_workspace) == 0
+    assert (staged_workspace / "prek.toml").read_text(encoding="utf-8") == settled
+
+
+@pytest.mark.parametrize(
+    ("retired", "anchor", "intro", "survivor"),
+    [
+        ("alpha", "# --- pre-commit ---", "pre-commit stage intro", "beta"),
+        ("gamma", "# --- pre-push ---", "pre-push stage intro", "delta"),
+    ],
+)
+def test_the_stage_anchor_and_intro_survive_retiring_its_first_hook(
+    staged_workspace: pathlib.Path,
+    retired: str,
+    anchor: str,
+    intro: str,
+    survivor: str,
+) -> None:
+    declared = [gate_id for gate_id in _STAGES if gate_id != retired]
+    _declare(staged_workspace, *declared)
+    rendered = gate_registry.render_prek(
+        gate_registry.load(staged_workspace),
+        staged_workspace,
+        undeclared=gate_registry.UndeclaredHook.REGEN,
+    )
+
+    assert anchor in rendered
+    assert intro in rendered
+    assert f"{retired} rationale" not in rendered
+    assert rendered.index(intro) < rendered.index(f'id = "{survivor}"')
+
+
+def test_prose_left_behind_by_a_deleted_hook_line_fails_closed(
+    staged_workspace: pathlib.Path,
+) -> None:
+    (staged_workspace / "prek.toml").write_text(
+        (staged_workspace / "prek.toml")
+        .read_text(encoding="utf-8")
+        .replace(_hook("delta", _PRE_PUSH), ""),
+        encoding="utf-8",
+    )
+    gates = gate_registry.load(staged_workspace)
+
+    with pytest.raises(gate_registry.RegistryError, match="explains no gate"):
+        gate_registry.render_prek(
+            gates, staged_workspace, undeclared=gate_registry.UndeclaredHook.REGEN
+        )
+
+
+def test_a_stage_anchor_without_a_gate_fails_closed(staged_workspace: pathlib.Path) -> None:
+    _declare(staged_workspace, "alpha", "beta")
+    gates = gate_registry.load(staged_workspace)
+
+    with pytest.raises(gate_registry.RegistryError, match="stage anchor"):
+        gate_registry.render_prek(
+            gates, staged_workspace, undeclared=gate_registry.UndeclaredHook.REGEN
+        )
 
 
 def test_a_registry_without_a_version_is_rejected(workspace: pathlib.Path) -> None:

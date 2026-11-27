@@ -139,14 +139,15 @@ test-standalone:
 # the Rust core, so the default gate runs BOTH the native Rust suite and the
 # full pytest suite (which itself drives the core through the PyO3 seam, golden
 # on-chain-oracle replay, and the relocated seam suites) under one entrypoint.
-# CI and the pre-push hook still address the language tracks directly
-# (`test-rust` / `test-python`) so the python-version matrix and job
-# partitioning keep working. Deliberately excluded from `test` (run on demand):
+# CI still addresses the language tracks directly (`test-rust` / `test-python`)
+# so the python-version matrix and job partitioning keep working; the pre-push
+# stage runs neither — it carries the whole-tree lint/format contract plus
+# `just test-rust-affected`, the Rust tests of the packages a push touches.
+# Deliberately excluded from `test` (run on demand):
 # toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`),
 # net-gated suites (`test-fork`, `record-golden`, `verify-deployments`), and the
-# release-profile leg (`test-rust-release`), which keeps its place at the
-# push/CI boundary (`test-rust`: every push and CI run) and comes out of the dev
-# loop. Its bug class, a mutation inside a conditionally-evaluated
+# release-profile leg (`test-rust-release`), which stays out of the dev loop and
+# runs in CI. Its bug class, a mutation inside a conditionally-evaluated
 # `debug_assert!` expression, is denied as a lint at dev speed where the lint
 # can see it (`debug_assert_with_mut_call`); the leg stays the whole-class
 # backstop at the boundary.
@@ -1542,9 +1543,10 @@ dev:
 check-uv-lock:
     uv lock --check
 
-# Run only the Python track (full pytest). CI's python-test matrix job and the
-# pre-push hook call this subunit directly; humans use `just test`. Under the
-# default offline marker filter (`-m "not slow and not base and not online_rpc and not stub_drift"`)
+# Run only the Python track (full pytest). CI's python-test matrix job calls
+# this subunit directly and humans reach it through `just test`; no pre-push
+# hook runs it. Under the default offline marker filter
+# (`-m "not slow and not base and not online_rpc and not stub_drift"`)
 # this covers the PyO3 seam, golden on-chain-oracle replay, AND the relocated
 # seam suites. A focused parity-only run is `just py pytest -m onchain_oracle`.
 #
@@ -1906,10 +1908,10 @@ test-executor-evidence-snapshot-check: test-executor-artifacts
 #   bash scripts/pytest_noise_gate.sh scan /tmp/spray.log   # exits 3, prints it
 #
 # CI: armed as the python job's "Run Tests" step in .github/workflows/ci.yml
-# (it replaced the bare `just test-python` call; that recipe is untouched). The
-# pre-push hook in prek.toml also arms it (`python-test` -> this recipe), so a
-# local push runs the same tripwire; the bare `just test-python` recipe stays
-# for callers that only want the suite's exit code.
+# (it replaced the bare `just test-python` call; that recipe is untouched). No
+# pre-push hook runs pytest, so locally this is an on-demand lane; the bare
+# `just test-python` recipe stays for callers that only want the suite's exit
+# code.
 test-python-noise-gate kw="" *args: dev
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1934,9 +1936,9 @@ test-python-noise-gate kw="" *args: dev
 # must skip cleanly -- an unguarded spawn fails at `AnvilFork(...)`, exactly
 # the regression class this caught once (2026-10-14). The simulation + its
 # fail-closed reachability check live in scripts/no_anvil_run.sh. This full
-# suite is the manual mirror of those CI legs; the pre-push gate runs the
-# spawn-surface slice below instead (~1s vs ~9min: without the binary the
-# anvil-dependent tests skip instantly).
+# suite is the manual mirror of those CI legs; the spawn-surface slice below is
+# its ~1s on-demand narrowing (without the binary the anvil-dependent tests
+# skip instantly), and no pre-push hook runs either.
 test-python-no-anvil kw="" *args: dev
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1946,7 +1948,7 @@ test-python-no-anvil kw="" *args: dev
     exec bash scripts/no_anvil_run.sh {{ args }}
 
 
-# The no-anvil dimension's pre-push slice: the same simulation scoped to the
+# The no-anvil dimension's ~1s slice: the same simulation scoped to the
 # SPAWN SURFACE -- every test file mentioning AnvilFork / standalone_anvil /
 # anvil_factory, discovered from the tree at invocation time. Self-maintaining:
 # a new spawn site joins automatically, because spawning means mentioning one
@@ -2508,12 +2510,13 @@ setup-git-hooks:
     command -v prek >/dev/null 2>&1 || uv tool install prek
     prek install
     echo "✓ prek hooks installed:"
-    echo "    pre-commit : Markdown lint + instant checks (Rust/Python fmt,"
-    echo "                 Rust no-pyo3)"
+    echo "    pre-commit : Markdown lint + comment hygiene + censuses (publish-"
+    echo "                 blocked, tool catalog, parity ledger) + worker census +"
+    echo "                 staged Rust/Python fmt + stub drift + gate-registry"
     echo "    commit-msg : commitlint against .commitlintrc.yml (relaxed rules)"
-    echo "    pre-push   : object-DB GC + commitlint push-range + Rust/Python lint"
-    echo "                 (clippy/ty) + build & test suite (rust build/test,"
-    echo "                 python build/test)"
+    echo "    pre-push   : toolchain tier + CI parity + commitlint push-range +"
+    echo "                 whole-tree Rust/Python fmt + lint (clippy/ty) + stubtest +"
+    echo "                 ratchets + Rust tests of the affected packages"
     echo "    Bypass: git push --no-verify (CI still runs)."
     echo "✓ commit template configured."
 

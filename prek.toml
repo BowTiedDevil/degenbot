@@ -16,9 +16,11 @@
 #     UNTRACKED files in place — so any pre-commit check that sweeps the tree
 #     instead of the staged list both blocks clean commits on another lane's
 #     dirt and can go vacuous green over a tree it only partly examined.
-#   - pre-push green means "the whole tree is clean". Whole-tree sweeps live
-#     here, where a complete tree is a fair assumption, alongside the slow
-#     build + test battery and the code linters moved off the per-commit path.
+#   - pre-push green means "the whole tree's lint and format gates pass and the
+#     packages this push touches pass their tests". The tree-wide sweeps live
+#     here, where a complete tree is a fair assumption, alongside the code
+#     linters moved off the per-commit path and the affected-package Rust test
+#     leg; the full test matrix is CI's, where its legs run as parallel jobs.
 #   - Hooks that cannot operate on a file list at all live at pre-push with a
 #     note saying why; hooks that take a list fail closed on an empty list
 #     rather than certify a list they never saw.
@@ -167,6 +169,11 @@ hooks = [
   # hand-edited hook line (or a registry edit with no `just gates-regen`) fails
   # here instead of surfacing as a gate that quietly stopped running.
   #
+  # Retiring a gate is deleting its `[[gate]]` block and running `just
+  # gates-regen`: the line goes with the prose it owned. The stage separators and
+  # their intros above stay, because they anchor the stage rather than the first
+  # hook under it.
+  #
   # live-invariant gate (ADR-087 D2): watches the live registry against the hook lines prek loads; not tripwire precedent.
   { id = "gate-registry", name = "Gate registry drift", language = "system", entry = "just gates-check", files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$', stages = ["pre-commit"], pass_filenames = false },
 
@@ -186,22 +193,16 @@ hooks = [
   # Whole-tree tier: everything here assumes a COMPLETE tree. Gate the push on
   # the whole-tree format sweeps (moved off pre-commit, where tree sweeps saw
   # other lanes' untracked mid-flight files), the code linters moved off the
-  # per-commit path, the build + test suite (including architecture tests), and
-  # a commit-message range re-lint (safety net for `git commit --no-verify`).
+  # per-commit path, the Rust tests of the packages the diff touches (the
+  # architecture gates run in that suite), and a commit-message range re-lint
+  # (safety net for `git commit --no-verify`).
   #
-  # 1. object-gc — keep the loose object database below the size where the
-  #    push's own detached `git maintenance` fires an unbounded repack
-  #    (2026-09-15: 139k loose objects / 44.5 GiB -> pack-objects at 663% CPU /
-  #    21.4 GB RSS). Removes unreachable objects only (`git prune`), never
-  #    repacks, and runs first so the build/test gates below see a sane object
-  #    database.
-  #
-  # 2. commitlint-push — re-lint every commit message in the outgoing push
+  # 1. commitlint-push — re-lint every commit message in the outgoing push
   #    range (safety net). prek's pre-push stage consumes git's push-line stdin
   #    and does not forward it to hooks, so the range is computed from the
   #    upstream tracking ref instead (mirrors `just lint-commits`).
   #
-  # 3. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
+  # 2. Whole-tree format sweeps — `just fmt-check` (cargo fmt --all) and
   #    `just fmt-check-python` (the tracked python tree, executor/ excluded —
   #    the population the staged python-fmt-staged hook slices). Moved here from
   #    pre-commit: a tree sweep at commit time examined untracked files other
@@ -210,20 +211,23 @@ hooks = [
   #    own files are covered at pre-commit by the staged-slice gates above;
   #    these catch everything else before it reaches CI.
   #
-  # 4. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
+  # 3. Code linters (whole crate): rust-clippy + python-lint (incl. ty). These
   #    run unconditionally over the whole tree, so a config/Cargo change can't
   #    slip a regression.
   #
-  # 5. Compiled architecture gates — cargo tests on the umbrella crate run in
-  #    the workspace suite below, not as duplicate per-filter push hooks.
-  #    Focused `check-*` aliases remain available while diagnosing a failure.
+  # 4. Compiled architecture gates — cargo tests on the umbrella crate run in
+  #    the affected-package test leg below (and in CI's workspace run), not as
+  #    duplicate per-filter push hooks. Focused `check-*` aliases remain
+  #    available while diagnosing a failure.
   #
-  # 6. Build + test suite — mirrors ci.yml's rust-build/rust-test and Python
-  #    build/test jobs (always_run = true, pass_filenames = false). python-build
-  #    (maturin develop) produces the .so that python-test imports, so it must
-  #    precede python-test.
+  # 5. Rust tests of the affected packages — `just test-rust-affected` runs the
+  #    nextest suite for the packages the outgoing diff touches plus the
+  #    packages that depend on them, and passes trivially when the diff touches
+  #    no package. It is the only test leg a push carries: the whole matrix
+  #    (workspace tests, golden replay, the extension build and the Python
+  #    suite) is CI's, where its legs run as parallel jobs.
   #
-  # 7. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
+  # 6. Fail-fast: every hook carries `fail_fast = true`, so a failing gate
   #    aborts the push and the remaining gates are skipped. Without it, prek
   #    runs the whole stage to completion and reports every failure.
   #
@@ -238,8 +242,9 @@ hooks = [
   # on ONE line -- a multi-line TOML table would be invisible to that check.
   #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
-  # manually with `prek run --stage pre-push --skip rust-test` etc.
+  # manually with `prek run --stage pre-push --skip rust-test-affected` etc.
   # (add `--fail-fast` there to mirror the installed push behavior).
+
   # Toolchain tier first: every gate below certifies the push contract only on
   # a toolchain that meets the workspace floor (scripts/toolchain_tier.sh).
   { id = "toolchain-tier", name = "Rust toolchain tier", language = "system", entry = "just check-toolchain", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
@@ -252,7 +257,7 @@ hooks = [
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
-  # Whole-tree format sweeps, moved here from pre-commit (see note 3 above).
+  # Whole-tree format sweeps, moved here from pre-commit (see note 2 above).
   { id = "rust-fmt-check", name = "Rust fmt check", language = "system", entry = "just fmt-check", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "python-fmt-check", name = "Python fmt check", language = "system", entry = "just fmt-check-python", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 

@@ -38,12 +38,19 @@ are generated.
   `just` recipe the justfile does not define, a script path that does not exist,
   or gates out of stage order fails with the reason named.
 - **Retire a hook.** Delete the block and run `just gates-regen`; the line and
-  its prose go with it ([ADR-087](adr/ADR-087-deletion-is-the-retirement.md)
-  — no waiver, no tombstone).
+  the prose it owned go with it ([ADR-087](adr/ADR-087-deletion-is-the-retirement.md)
+  — no waiver, no tombstone). A stage's `# --- <stage> ---` separator and the
+  comment block under it belong to the stage, not to the first hook that follows
+  them, so retiring that hook leaves the stage header and intro in place.
 - **Never hand-edit a hook line.** `just gates-check` regenerates and diffs, and
   the `gate-registry` pre-commit hook runs it, so a hand-edited line cannot
-  outlive its commit. `ci-parity` extracts entries with a line-anchored `sed`,
-  so every hook line stays on one line; the renderer guarantees that shape.
+  outlive its commit. The commands differ in exactly one case, deliberately: a
+  hook line the registry does not declare is drift `gates-check` refuses and
+  `gates-regen` retires. Prose that neither a hook nor a stage owns — after the
+  last hook line, or as a stage intro whose stage declares no gate — fails both
+  commands, because the renderer never guesses which gate an orphan explains.
+  `ci-parity` extracts entries with a line-anchored `sed`, so every hook line
+  stays on one line; the renderer guarantees that shape.
 
 The decision, its rejected alternatives and the remaining migration phases are
 [ADR-102](adr/ADR-102-gate-registry-with-generated-wiring.md).

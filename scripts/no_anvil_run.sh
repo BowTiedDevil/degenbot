@@ -6,7 +6,7 @@
 
 # `just test-python-no-anvil` (full suite) and
 
-# `just test-python-no-anvil-spawn-surface` (the pre-push slice).
+# `just test-python-no-anvil-spawn-surface` (the ~1s on-demand narrowing).
 
 #
 

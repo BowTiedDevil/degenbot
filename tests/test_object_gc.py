@@ -1,16 +1,18 @@
-"""Pre-push object-database GC gate (`scripts/hooks/object-gc.sh`).
+"""Loose-object housekeeping (`scripts/hooks/object-gc.sh`, `just gc-objects`).
 
 Background: a run staged `rust/target` build output and never committed it,
 leaving 139,329 loose objects / 44.5 GiB in `.git/objects`, all unreachable.
-`git gc --auto` (fired by that `git push`) then ran `git repack` ->
+`git gc --auto` (fired by a later `git push`) then ran `git repack` ->
 `pack-objects` over the pile: 663% CPU, 21.4 GB RSS, delta-compressing 100 MB
 ELF binaries, and it never terminated.
 
-The gate is the brake: it notices the pathological object DB *before* the push
-and removes the unreachable pile with `git prune --expire=now` (the cheap,
-reflog-respecting operation — 40 s for that 44.5 GiB, vs. an unbounded repack).
-It must never invoke the repack/pack-objects path that blew up, and it must
-never touch reachable or reflog-protected objects.
+The script clears that pile by hand: it removes the unreachable objects with
+`git prune --expire=now` (the cheap, reflog-respecting operation — 40 s for
+that 44.5 GiB, vs. an unbounded repack), and reports the hard ceiling as a
+repack a human must run deliberately. It is housekeeping, not a hook: nothing
+runs it automatically, it decides nothing about the tree, and it must never
+invoke the repack/pack-objects path that blew up or touch reachable or
+reflog-protected objects.
 """
 
 from __future__ import annotations
@@ -23,8 +25,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "hooks" / "object-gc.sh"
 
-# Thresholds are env-tunable precisely so the tests can force the gate's
-# decision branches on tiny repos. Defaults are exercised by test 5.
+# Thresholds are env-tunable precisely so the tests can force each decision
+# branch on a tiny repo. test_healthy_repo_is_left_untouched runs the defaults.
 DEFAULTS = {
     "DEGENBOT_OBJECT_GC_MAX_COUNT": "2000",
     "DEGENBOT_OBJECT_GC_MAX_KIB": "204800",
@@ -53,8 +55,8 @@ def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "gc-gate@example.invalid")
-    _git(repo, "config", "user.name", "gc gate")
+    _git(repo, "config", "user.email", "gc-housekeeping@example.invalid")
+    _git(repo, "config", "user.name", "gc housekeeping")
     (repo / "tracked.txt").write_text("hello\n")
     _git(repo, "add", "tracked.txt")
     _git(repo, "commit", "-q", "-m", "test: seed")
@@ -88,7 +90,7 @@ def _add_unreachable_blobs(repo: Path, tmp_path: Path, count: int) -> None:
         _git(repo, "hash-object", "-w", str(blob))
 
 
-def _run_gate(
+def _run_script(
     repo: Path,
     *,
     use_defaults: bool = True,
@@ -115,8 +117,8 @@ def test_healthy_repo_is_left_untouched(tmp_path: Path) -> None:
     before = _loose_object_files(repo)
 
     # No overrides: this is the script's own built-in threshold set, which is
-    # what an actual push runs (a healthy repo must never be touched by it).
-    result = _run_gate(repo, use_defaults=False)
+    # what a manual run uses (a healthy repo must never be touched by it).
+    result = _run_script(repo, use_defaults=False)
 
     assert result.returncode == 0, result.stderr
     assert _loose_object_files(repo) == before
@@ -128,7 +130,7 @@ def test_prunes_unreachable_objects_above_soft_threshold(tmp_path: Path) -> None
     _add_unreachable_blobs(repo, tmp_path, 25)
     assert _count_objects(repo)["count"] > 20
 
-    result = _run_gate(repo, DEGENBOT_OBJECT_GC_MAX_COUNT="5")
+    result = _run_script(repo, DEGENBOT_OBJECT_GC_MAX_COUNT="5")
 
     assert result.returncode == 0, result.stderr
     assert _count_objects(repo)["count"] <= 5
@@ -147,8 +149,8 @@ def test_reachable_objects_survive_a_forced_prune(tmp_path: Path) -> None:
     head = _git(repo, "rev-parse", "HEAD").strip()
 
     # Thresholds of 0 force the prune branch; every remaining object is
-    # reachable, so the gate must leave all of them alone.
-    result = _run_gate(repo, DEGENBOT_OBJECT_GC_MAX_COUNT="0", DEGENBOT_OBJECT_GC_MAX_KIB="0")
+    # reachable, so the housekeeping must leave all of them alone.
+    result = _run_script(repo, DEGENBOT_OBJECT_GC_MAX_COUNT="0", DEGENBOT_OBJECT_GC_MAX_KIB="0")
 
     assert result.returncode == 0, result.stderr
     assert _git(repo, "rev-parse", "HEAD").strip() == head
@@ -157,10 +159,10 @@ def test_reachable_objects_survive_a_forced_prune(tmp_path: Path) -> None:
     assert tracked.read_text() == "updated\n"
 
 
-def test_hard_threshold_blocks_the_push_when_prune_cannot_help(tmp_path: Path) -> None:
+def test_the_hard_ceiling_names_the_repack_a_human_must_run(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
 
-    result = _run_gate(
+    result = _run_script(
         repo,
         DEGENBOT_OBJECT_GC_MAX_COUNT="0",
         DEGENBOT_OBJECT_GC_HARD_MAX_COUNT="0",
@@ -168,5 +170,7 @@ def test_hard_threshold_blocks_the_push_when_prune_cannot_help(tmp_path: Path) -
 
     assert result.returncode == 1
     output = (result.stdout + result.stderr).lower()
-    assert "blocked" in output
-    assert "prune" in output or "repack" in output
+    assert "repack" in output
+    assert "prune" in output or "reachable" in output
+    # Housekeeping reports what a person must do; it holds no push authority.
+    assert "push" not in output

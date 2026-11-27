@@ -13,6 +13,18 @@ An entry naming `just <recipe>` is validated by asking `just` itself
 (scripts/just_recipe_index.py), never by reading justfile text: a missing `just`
 or a justfile that will not parse refuses validation with exit 2.
 
+Prose belongs to the hook line that follows it: a block of comments explains the
+gate below, including when the registry reorders or retires it. A stage's
+`# --- <stage> ---` separator and the contiguous comment block under it are the
+stage's own anchor, owned by no hook, so retiring the first hook of a stage never
+deletes the stage header or its intro.
+
+`check` and `regen` differ on exactly one case, and on purpose: a hook line the
+registry does not declare is drift `check` refuses and `regen` retires (line and
+prose together), which is what makes deleting a `[[gate]]` block the complete
+retirement (ADR-087). Prose that no hook and no stage anchor owns is ambiguous in
+either direction, so both commands fail on it rather than guess.
+
 Adding a gate is one `[[gate]]` block plus `regen`; retiring one is deleting the
 block plus `regen`. The `gate-registry` hook fails a commit whose `prek.toml`
 does not match the registry, so the two cannot disagree in silence.
@@ -20,6 +32,7 @@ does not match the registry, so the two cannot disagree in silence.
 
 from __future__ import annotations
 
+import enum
 import re
 import sys
 import tomllib
@@ -45,9 +58,24 @@ FLAGS = ("always_run", "fail_fast", "skip_children")
 
 HOOK_LINE = re.compile(r'^  \{ id = "(?P<id>[^"]+)"')
 
+# A stage's separator plus the comment block under it: hand-written rationale for
+# the stage itself, owned by no hook line.
+STAGE_ANCHOR = re.compile(r"^\s*# --- (?P<stage>" + "|".join(STAGE_ORDER) + r") ---")
+
 
 class RegistryError(Exception):
     """A declaration that cannot be rendered or that contradicts the tree."""
+
+
+class UndeclaredHook(enum.Enum):
+    """How a hook line the registry does not declare is treated.
+
+    The policy is the command: `check` refuses the line as drift, `regen` retires
+    it with the prose it owned (the declared way to delete a gate).
+    """
+
+    CHECK = "check"
+    REGEN = "regen"
 
 
 @dataclass
@@ -190,13 +218,79 @@ def _validate(gates: list[Gate], root: Path) -> None:
             )
 
 
-def render_prek(gates: list[Gate], root: Path = ROOT) -> str:
+@dataclass
+class HookSection:
+    """`prek.toml`'s hooks array, split into what the registry can own."""
+
+    anchors: dict[str, list[str]]
+    prose: dict[str, list[str]]
+    order: list[str]
+    tail: list[str]
+
+
+def _take_anchors(lines: list[str], anchors: dict[str, list[str]]) -> list[str]:
+    """Split `lines` into stage anchors and the prose a hook line owns."""
+    owned: list[str] = []
+    index = 0
+    while index < len(lines):
+        match = STAGE_ANCHOR.match(lines[index])
+        if match is None:
+            owned.append(lines[index])
+            index += 1
+            continue
+        block: list[str] = []
+        while owned and not owned[-1].strip():
+            block.insert(0, owned.pop())
+        block.append(lines[index])
+        index += 1
+        while (
+            index < len(lines)
+            and _is_comment(lines[index])
+            and not STAGE_ANCHOR.match(lines[index])
+        ):
+            block.append(lines[index])
+            index += 1
+        stage = match.group("stage")
+        if stage in anchors:
+            raise RegistryError(f"{PREK_PATH}: more than one `# --- {stage} ---` stage anchor")
+        anchors[stage] = block
+    return owned
+
+
+def _is_comment(line: str) -> bool:
+    return line.strip().startswith("#")
+
+
+def _split_hook_section(lines: list[str], start: int, end: int) -> HookSection:
+    anchors: dict[str, list[str]] = {}
+    prose: dict[str, list[str]] = {}
+    order: list[str] = []
+    pending: list[str] = []
+    for line in lines[start + 1 : end]:
+        match = HOOK_LINE.match(line)
+        if match is None:
+            pending.append(line)
+            continue
+        prose[match.group("id")] = _take_anchors(pending, anchors)
+        order.append(match.group("id"))
+        pending = []
+    tail = _take_anchors(pending, anchors)
+    return HookSection(anchors=anchors, prose=prose, order=order, tail=tail)
+
+
+def render_prek(
+    gates: list[Gate],
+    root: Path = ROOT,
+    *,
+    undeclared: UndeclaredHook = UndeclaredHook.CHECK,
+) -> str:
     """Return `prek.toml` with the hook lines replaced by the registry's.
 
     Everything that is not a hook line survives verbatim: the file header, the
-    prose block above each hook, the stage separators and the closing bracket.
-    A gate keeps the comment block that precedes its line, so prose and line move
-    together when the registry reorders them.
+    stage anchors, the prose block above each hook and the closing bracket. A
+    gate keeps the comment block that precedes its line, so prose and line move
+    together when the registry reorders them; a stage keeps the header and intro
+    above its first hook, so retiring that hook leaves them in place.
     """
     lines = (root / PREK_PATH).read_text(encoding="utf-8").split("\n")
     try:
@@ -207,44 +301,49 @@ def render_prek(gates: list[Gate], root: Path = ROOT) -> str:
     if end < start:
         raise RegistryError(f"{PREK_PATH}: the hooks array is not closed after it opens")
 
-    segments: dict[str, list[str]] = {}
-    order: list[str] = []
-    pending: list[str] = []
-    tail: list[str] = []
-    for line in lines[start + 1 : end]:
-        match = HOOK_LINE.match(line)
-        if match:
-            segments[match.group("id")] = pending
-            order.append(match.group("id"))
-            pending = []
-        else:
-            pending.append(line)
-    tail = pending
-
+    section = _split_hook_section(lines, start, end)
     declared = {gate.id for gate in gates}
-    stale = [hook_id for hook_id in order if hook_id not in declared]
-    if stale:
+    stale = [hook_id for hook_id in section.order if hook_id not in declared]
+    if stale and undeclared is UndeclaredHook.CHECK:
         raise RegistryError(
             f"{PREK_PATH}: hook(s) absent from {REGISTRY_PATH}: {stale} -- "
-            "add the declaration or run `just gates-regen` to retire them"
+            "declare them, or run `just gates-regen` to retire the lines and their prose"
+        )
+
+    gate_stages = {gate.stage for gate in gates}
+    orphan_anchors = [stage for stage in section.anchors if stage not in gate_stages]
+    if orphan_anchors:
+        raise RegistryError(
+            f"{PREK_PATH}: the `# --- {orphan_anchors[0]} ---` stage anchor introduces no "
+            "declared gate -- declare one for the stage, or delete its intro by hand"
+        )
+    orphan_tail = [line for line in section.tail if _is_comment(line)]
+    if orphan_tail:
+        raise RegistryError(
+            f"{PREK_PATH}: prose after the last hook line explains no gate: "
+            f"{orphan_tail[0].strip()!r}"
         )
 
     body: list[str] = []
+    stage = ""
     for gate in gates:
-        body.extend(segments.get(gate.id, ["\n"]))
+        if gate.stage != stage:
+            stage = gate.stage
+            body.extend(section.anchors.get(stage, []))
+        body.extend(section.prose.get(gate.id, ["\n"]))
         body.append(gate.render())
-    body.extend(tail)
+    body.extend(section.tail)
 
     return "\n".join([*lines[: start + 1], *body, *lines[end:]])
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     command = (argv if argv is not None else sys.argv[1:]) or ["check"]
     if len(command) != 1 or command[0] not in {"check", "regen"}:
         print("usage: gate_registry.py [check|regen]", file=sys.stderr)
         return 2
     try:
-        gates = load()
+        gates = load(root)
     except RegistryError as exc:
         print(f"gate-registry: {exc}", file=sys.stderr)
         print("fix: correct the declaration in scripts/gates.toml", file=sys.stderr)
@@ -253,13 +352,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gate-registry: {exc}", file=sys.stderr)
         print("fix: install `just` and make the justfile parse, then re-run", file=sys.stderr)
         return 2
-    rendered = render_prek(gates)
-    current = (ROOT / PREK_PATH).read_text(encoding="utf-8")
+    try:
+        rendered = render_prek(gates, root, undeclared=UndeclaredHook(command[0]))
+    except RegistryError as exc:
+        print(f"gate-registry: {exc}", file=sys.stderr)
+        return 1
+    current = (root / PREK_PATH).read_text(encoding="utf-8")
     if command[0] == "regen":
         if rendered == current:
             print(f"gate-registry: {PREK_PATH} already matches {REGISTRY_PATH}")
             return 0
-        (ROOT / PREK_PATH).write_text(rendered, encoding="utf-8")
+        (root / PREK_PATH).write_text(rendered, encoding="utf-8")
         print(f"gate-registry: rewrote the hook lines of {PREK_PATH}")
         return 0
     if rendered == current:

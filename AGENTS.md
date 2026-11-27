@@ -114,7 +114,7 @@ A failure that passes locally and fails in CI gets `just test-rust-ci` first. If
 
 ## Python test scope
 
-The canonical Python gate is `just test-python` (CI and the pre-push hook run it directly) — never a hand-typed `uv run pytest`. Prefer the whole suite: it is fast, and it is the run that surfaces seam and cross-module regressions. pytest-timeout fails a hung test with a timeout report instead of parking its xdist worker (budget in `pyproject.toml`). The ordering-sensitive suites have a repeat-run gate: `just test-flake-probe` runs them three consecutive times and fails on any failing run.
+The canonical Python gate is `just test-python` (run locally and by CI's python job) — never a hand-typed `uv run pytest`. The pre-push stage runs no pytest: it carries the whole-tree lint and format gates plus `just test-rust-affected`, the Rust tests of the packages the outgoing diff touches. Prefer the whole suite: it is fast, and it is the run that surfaces seam and cross-module regressions. pytest-timeout fails a hung test with a timeout report instead of parking its xdist worker (budget in `pyproject.toml`). The ordering-sensitive suites have a repeat-run gate: `just test-flake-probe` runs them three consecutive times and fails on any failing run.
 
 ## Fork/RPC-gated suites (`just test-fork`)
 
