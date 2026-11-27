@@ -27,16 +27,55 @@ The nine ratchets:
 ### The gate registry
 
 `scripts/gates.toml` declares every git hook exactly once: its id, stage, entry
-command, file trigger and flags. `prek.toml` stays the file git loads, but its
-hook lines are rendered from the registry by `just gates-regen`. The prose above
-a hook line stays in `prek.toml`, beside the gate it explains — only the facts
-are generated.
+command, file trigger and flags, and the facts its identity needs beyond the
+wiring line. `prek.toml` stays the file git loads, but its hook lines are
+rendered from the registry by `just gates-regen`. The prose above a hook line
+stays in `prek.toml`, beside the gate it explains — only the facts are
+generated.
+
+Every hook is mandatory: there is no local-only waiver, so each entry also
+states
+
+| Field | Meaning |
+| --- | --- |
+| `scope` | The population judged. `index` is the staged file list prek passes (and `pass_filenames` is then true), `staged` is the commit's own content the gate derives for itself, `tree` is any wider population — the working tree, the workspace, or the outgoing push range |
+| `data` | The repo-relative files the gate reconciles — a census, a catalog, a config. Each must exist; an empty list is stated, never implied |
+| `docs` | The heading on this page that documents the gate's failure class (the registry section for a wiring or format gate) |
+| `probe` | The pytest node ids that keep the gate honest. Each must name a test function the committed tree defines, checked by import-free `ast` — `gates-check` never collects or runs pytest |
+| `ci_job` + one form | Exactly one CI coverage declaration (below) |
+
+The four CI coverage forms are the whole contract, and presence in `ci.yml` is
+never sufficient — the registry checks that the workflow and the justfile
+actually support the claim:
+
+- `ci_entry` + `ci_relation = "direct"` — the job invokes the hook's entry
+  verbatim, whether that entry is a script or a recipe.
+- `ci_entry` + `ci_relation = "contains"` — the job runs `ci_entry`, and the
+  `just` invocation graph over `just --dump` (declared dependencies plus
+  `just <recipe>` calls in the recipe body) reaches the hook's entry recipe,
+  carrying its arguments. A recipe named only in prose is not a call.
+- `ci_entry` + `ci_relation = "equivalent"` + `ci_equivalent_probe` — the job
+  runs a parallel whole-tree or range implementation, and the named test pins
+  the two as one verdict at two populations.
+- `ci_probe` — a committed-tree pytest node is the CI execution. The registry
+  proves the node exists; `tests/test_gate_registry.py` proves the default
+  pytest selection really runs it (under `testpaths`, without a deselected
+  marker).
+
+`scripts/hooks/ci-parity.sh` keeps the other half: every `ci.yml` job has a
+manifest line (`scripts/hooks/ci-parity-manifest.txt`, `job|kind|notes`), so
+the hook-less jobs and the jobs whose local reproduction spans several recipes
+stay accounted for, and the tools those recipes need are provisioned. A hook's
+own coverage is not restated there — the registry owns it.
 
 - **Add a hook.** Append a `[[gate]]` block, grouped by stage, then run
   `just gates-regen` and write its rationale comment in `prek.toml`. The
   registry validates before it renders: a duplicate id, an unknown stage, a
   `just` recipe the justfile does not define, a script path that does not exist,
-  or gates out of stage order fails with the reason named.
+  gates out of stage order, a scope that disagrees with `pass_filenames`, a
+  missing `data` path, `docs` heading or `probe` test, and a CI coverage claim
+  the workflow or invocation graph does not support all fail with the reason
+  named.
 - **Retire a hook.** Delete the block and run `just gates-regen`; the line and
   the prose it owned go with it ([ADR-087](adr/ADR-087-deletion-is-the-retirement.md)
   — no waiver, no tombstone). A stage's `# --- <stage> ---` separator and the
@@ -49,8 +88,8 @@ are generated.
   `gates-regen` retires. Prose that neither a hook nor a stage owns — after the
   last hook line, or as a stage intro whose stage declares no gate — fails both
   commands, because the renderer never guesses which gate an orphan explains.
-  `ci-parity` extracts entries with a line-anchored `sed`, so every hook line
-  stays on one line; the renderer guarantees that shape.
+  Every hook line is emitted on one line; the renderer guarantees that shape and
+  a test pins it.
 
 The decision, its rejected alternatives and the remaining migration phases are
 [ADR-102](adr/ADR-102-gate-registry-with-generated-wiring.md).
@@ -887,7 +926,10 @@ pre-commit tier, and (c) state its scope and blind spots in its header. Wire it
 as a `just` recipe and, if it is instant, a hook declared in
 `scripts/gates.toml` (file-scoped where possible; `pass_filenames = false` only
 when it must sweep the tree) — then `just gates-regen`, never a hand-typed
-`prek.toml` line.
+`prek.toml` line. The block also states the gate's `scope`, `data`, `docs`,
+`probe` and its one CI coverage form, and `just gates-check` refuses the
+declaration until the tree, the docs heading, the probe tests and the workflow
+all support it (see [The gate registry](#the-gate-registry)).
 
 **Cargo architecture-gate test + census file** (config-derived statics). Add a
 `#[test]` to `architecture_gates.rs` that scans the workspace (derive crates

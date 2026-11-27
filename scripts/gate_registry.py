@@ -13,6 +13,15 @@ An entry naming `just <recipe>` is validated by asking `just` itself
 (scripts/just_recipe_index.py), never by reading justfile text: a missing `just`
 or a justfile that will not parse refuses validation with exit 2.
 
+A declaration is more than its wiring line. `check`/regen both validate the
+gate's `scope` (against `pass_filenames`), every `data` path, its `docs`
+heading and its `probe` node ids (by import-free `ast`), and exactly one CI
+coverage form: `direct` must name the entry verbatim in the declared job,
+`contains` must be reachable through the `just --dump` invocation graph,
+`equivalent` must name the probe that pins the parallel implementation, and a
+`ci_probe` must name a committed-tree test function. Presence in `ci.yml` alone
+is never sufficient, and pytest is never collected or run here.
+
 Prose belongs to the hook line that follows it: a block of comments explains the
 gate below, including when the registry reorders or retires it. A stage's
 `# --- <stage> ---` separator and the contiguous comment block under it are the
@@ -32,6 +41,7 @@ does not match the registry, so the two cannot disagree in silence.
 
 from __future__ import annotations
 
+import ast
 import enum
 import re
 import sys
@@ -46,6 +56,20 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = "scripts/gates.toml"
 PREK_PATH = "prek.toml"
 JUSTFILE_PATH = "justfile"
+CI_PATH = ".github/workflows/ci.yml"
+DOCS_PATH = "docs/gates.md"
+
+# What population a gate judges. `index` is the staged file list prek passes
+# (so `pass_filenames` cannot be false); `staged` is the commit's own content
+# the gate derives for itself; `tree` is any wider population -- the working
+# tree, the workspace, or the outgoing push range.
+GATE_SCOPES = ("index", "staged", "tree")
+
+# How a hook's CI execution relates to it. `direct` runs the entry verbatim,
+# `contains` reaches the hook's recipe through the `just` invocation graph,
+# `equivalent` runs a parallel implementation pinned by a named probe, and a
+# `ci_probe` names a committed-tree pytest node that executes in CI.
+GATE_RELATIONS = ("direct", "contains", "equivalent")
 
 # The stages in the order `prek.toml` presents them. Each stage's hooks are
 # contiguous, so the file reads as three sections and a hook's insertion point
@@ -65,6 +89,17 @@ STAGE_ANCHOR = re.compile(r"^\s*# --- (?P<stage>" + "|".join(STAGE_ORDER) + r") 
 
 class RegistryError(Exception):
     """A declaration that cannot be rendered or that contradicts the tree."""
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """The one CI execution form a hook declares (ADR-102)."""
+
+    job: str
+    entry: str | None = None
+    relation: str | None = None
+    equivalent_probe: str | None = None
+    probe: str | None = None
 
 
 class UndeclaredHook(enum.Enum):
@@ -89,6 +124,11 @@ class Gate:
     fail_fast: bool = False
     skip_children: bool = False
     pass_filenames: bool = True
+    scope: str = "tree"
+    data: tuple[str, ...] = ()
+    docs: str = ""
+    probe: tuple[str, ...] = ()
+    coverage: Coverage | None = None
 
     def render(self) -> str:
         """The single-line inline table prek loads."""
@@ -154,6 +194,15 @@ def load(root: Path = ROOT) -> list[Gate]:
             "fail_fast",
             "skip_children",
             "pass_filenames",
+            "scope",
+            "data",
+            "docs",
+            "probe",
+            "ci_job",
+            "ci_entry",
+            "ci_relation",
+            "ci_equivalent_probe",
+            "ci_probe",
         }
         extra = set(raw) - allowed
         if extra:
@@ -179,10 +228,40 @@ def load(root: Path = ROOT) -> list[Gate]:
                 fail_fast=bool(raw.get("fail_fast", False)),
                 skip_children=bool(raw.get("skip_children", False)),
                 pass_filenames=bool(raw.get("pass_filenames", True)),
+                scope=raw.get("scope", ""),
+                data=tuple(raw.get("data", ())),
+                docs=raw.get("docs", ""),
+                probe=tuple(raw.get("probe", ())),
+                coverage=_coverage(raw),
             )
         )
     _validate(gates, root)
     return gates
+
+
+def _coverage(raw: dict[str, Any]) -> Coverage:
+    """The gate's one CI coverage form, rejecting a missing or doubled one."""
+    job = raw.get("ci_job")
+    probe = raw.get("ci_probe")
+    entry = raw.get("ci_entry")
+    relation = raw.get("ci_relation")
+    equivalent_probe = raw.get("ci_equivalent_probe")
+    probe_form = probe is not None
+    entry_form = any(value is not None for value in (entry, relation, equivalent_probe))
+    if probe_form == entry_form:
+        raise RegistryError(
+            f"{REGISTRY_PATH}: {raw.get('id')}: declare exactly one CI coverage form -- "
+            "ci_job + ci_entry + ci_relation [+ ci_equivalent_probe], or ci_job + ci_probe"
+        )
+    if not job:
+        raise RegistryError(f"{REGISTRY_PATH}: {raw.get('id')}: CI coverage needs ci_job")
+    if probe_form:
+        return Coverage(job=job, probe=probe)
+    if not entry or not relation:
+        raise RegistryError(
+            f"{REGISTRY_PATH}: {raw.get('id')}: CI coverage needs ci_entry and ci_relation"
+        )
+    return Coverage(job=job, entry=entry, relation=relation, equivalent_probe=equivalent_probe)
 
 
 def _validate(gates: list[Gate], root: Path) -> None:
@@ -216,6 +295,186 @@ def _validate(gates: list[Gate], root: Path) -> None:
                 f"{REGISTRY_PATH}: {gate.id}: entry {gate.entry!r} is not a recipe "
                 f"and its script does not exist"
             )
+    _validate_identity(gates, root)
+    _validate_coverage(gates, root, index)
+
+
+def _validate_identity(gates: list[Gate], root: Path) -> None:
+    """Reject a gate whose scope, data, docs or probes the tree cannot satisfy."""
+    headings = _headings(root / DOCS_PATH)
+    for gate in gates:
+        if gate.scope not in GATE_SCOPES:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: scope {gate.scope!r} is not one of {GATE_SCOPES}"
+            )
+        if (gate.scope == "index") != gate.pass_filenames:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: scope {gate.scope!r} disagrees with "
+                f"pass_filenames = {str(gate.pass_filenames).lower()} -- an index gate is "
+                "handed the staged file list, a staged or tree gate sweeps for itself"
+            )
+        for path in gate.data:
+            if not (root / path).exists():
+                raise RegistryError(
+                    f"{REGISTRY_PATH}: {gate.id}: data path {path!r} does not exist"
+                )
+        if gate.docs not in headings:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: docs {gate.docs!r} is no heading in {DOCS_PATH}"
+            )
+        if not gate.probe:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: declares no probe -- a gate lands with the "
+                "test that keeps it honest (ADR-102 D4)"
+            )
+        for probe in gate.probe:
+            _assert_test_named(root, probe, f"{gate.id}: probe")
+
+
+def _validate_coverage(gates: list[Gate], root: Path, index: just_recipe_index.RecipeIndex) -> None:
+    """Reject a CI claim the workflow and the invocation graph do not support."""
+    jobs = _ci_jobs(root)
+    for gate in gates:
+        coverage = gate.coverage
+        if coverage is None:
+            raise RegistryError(f"{REGISTRY_PATH}: {gate.id}: declares no CI coverage")
+        if coverage.job not in jobs:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: ci_job {coverage.job!r} is no job in {CI_PATH}"
+            )
+        if coverage.probe is not None:
+            _assert_test_named(root, coverage.probe, f"{gate.id}: ci_probe")
+            continue
+        if not _job_runs(jobs[coverage.job], coverage.entry):
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: ci_job {coverage.job!r} never runs "
+                f"ci_entry {coverage.entry!r}"
+            )
+        if coverage.relation not in GATE_RELATIONS:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: ci_relation {coverage.relation!r} is not one "
+                f"of {GATE_RELATIONS}"
+            )
+        if coverage.relation == "direct":
+            if coverage.entry != gate.entry:
+                raise RegistryError(
+                    f"{REGISTRY_PATH}: {gate.id}: direct coverage must name the hook entry "
+                    f"{gate.entry!r} verbatim, not {coverage.entry!r}"
+                )
+            continue
+        if coverage.equivalent_probe is not None and coverage.relation != "equivalent":
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: ci_equivalent_probe belongs to equivalent "
+                f"coverage, not {coverage.relation!r}"
+            )
+        if coverage.relation == "equivalent":
+            if coverage.equivalent_probe is None:
+                raise RegistryError(
+                    f"{REGISTRY_PATH}: {gate.id}: equivalent coverage needs "
+                    "ci_equivalent_probe naming the test that pins the two implementations"
+                )
+            _assert_test_named(root, coverage.equivalent_probe, f"{gate.id}: ci_equivalent_probe")
+            continue
+        start_recipe, _start_arguments = _recipe_entry(coverage.entry)
+        target_recipe, target_arguments = _recipe_entry(gate.entry)
+        if start_recipe is None or target_recipe is None:
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: contains coverage needs both entries to be "
+                "`just <recipe>` invocations"
+            )
+        if not index.reaches(start_recipe, target_recipe, arguments=target_arguments):
+            raise RegistryError(
+                f"{REGISTRY_PATH}: {gate.id}: ci_entry {coverage.entry!r} does not reach "
+                f"{gate.entry!r} through {JUSTFILE_PATH} dependencies and body calls"
+            )
+
+
+def _recipe_entry(entry: str | None) -> tuple[str | None, str]:
+    """Split `just <recipe> [arguments]` into its recipe and its arguments."""
+    words = (entry or "").split()
+    if len(words) < 2 or words[0] != "just":
+        return None, ""
+    return words[1], " ".join(words[2:])
+
+
+def _headings(path: Path) -> set[str]:
+    """The text of every Markdown heading in `path`."""
+    if not path.is_file():
+        raise RegistryError(f"{DOCS_PATH}: does not exist")
+    headings = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            headings.add(line.lstrip("#").strip())
+    return headings
+
+
+_CI_JOB = re.compile(r"^  (?P<id>[A-Za-z0-9_-]+):$")
+_NODE_ID = re.compile(r"^(?P<path>[^:]+\.py)::(?P<test>[A-Za-z_][A-Za-z0-9_]*)$")
+
+
+def _ci_jobs(root: Path) -> dict[str, str]:
+    """Each `jobs:` entry of the workflow, keyed by job id, as its block text."""
+    path = root / CI_PATH
+    if not path.is_file():
+        raise RegistryError(f"{CI_PATH}: does not exist")
+    jobs: dict[str, list[str]] = {}
+    body: list[str] | None = None
+    in_jobs = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line and not line.startswith(" "):
+            in_jobs = False
+            body = None
+            continue
+        match = _CI_JOB.match(line)
+        if match is not None:
+            body = jobs.setdefault(match.group("id"), [])
+            continue
+        if body is not None:
+            body.append(line)
+    return {job: "\n".join(lines) for job, lines in jobs.items()}
+
+
+def _job_runs(block: str, entry: str | None) -> bool:
+    """Does the job block run `entry` as a command, not merely mention it?"""
+    if not entry:
+        return False
+    pattern = re.compile(r"(?<![\w./-])" + re.escape(entry) + r"(?![\w/-])")
+    return any(
+        pattern.search(line) for line in block.splitlines() if not line.strip().startswith("#")
+    )
+
+
+def _assert_test_named(root: Path, node_id: str, label: str) -> None:
+    """`node_id` must name a test function the committed tree defines."""
+    match = _NODE_ID.match(node_id)
+    if match is None:
+        raise RegistryError(
+            f"{REGISTRY_PATH}: {label} {node_id!r} is not a pytest node id (path.py::test_name)"
+        )
+    path = root / match.group("path")
+    if not path.is_file():
+        raise RegistryError(f"{REGISTRY_PATH}: {label} names {path}, which does not exist")
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as error:
+        raise RegistryError(
+            f"{REGISTRY_PATH}: {label} names a file that will not parse: {error}"
+        ) from error
+    defined = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    if match.group("test") not in defined:
+        raise RegistryError(
+            f"{REGISTRY_PATH}: {label} {node_id!r} names no test function "
+            f"{match.group('test')!r} in {path}"
+        )
 
 
 @dataclass

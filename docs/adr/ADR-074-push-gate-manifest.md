@@ -52,7 +52,19 @@ a heredoc inside `scripts/hooks/ci-parity.sh` to the first-class data file
 format), and the gate gains the negative-probe suite it never had
 (`tests/test_ci_parity.py`).
 
-_live-invariant gate (ADR-087 D2): watches the live `push_gates` entry strings in `scripts/hooks/ci-parity-manifest.txt` and the prek.toml `stages = ["pre-push"]` entries they must name; not tripwire precedent._
+**D5 amended (ADR-102 phase 3).** The `push_gates` column was a second,
+string-level copy of a wiring fact the gate registry now declares and validates
+per hook: each `[[gate]]` block names its one CI coverage form (`direct`,
+`contains` over the `just --dump` invocation graph, `equivalent` with a named
+probe, or a committed-tree `ci_probe`), and `just gates-check` reads `ci.yml`
+and the justfile to prove it. The column is retired, so the manifest is
+`job|kind|notes` with exactly three fields — a legacy four-field line fails
+closed rather than folding a stale claim into the notes — and ci-parity keeps
+what the registry does not own: every `ci.yml` job accounted for (hook-less jobs
+included), every note's `just` recipe alive, and every recipe's toolchain
+provisioned. CI coverage of a hook is never restated in the manifest.
+
+_live-invariant gate (ADR-087 D2): watches the live ci-parity manifest against the live ci.yml job set; not tripwire precedent._
 
 **D6 — Hard cutover.** No flag, no transition period, one commit. The recipe is
 a leaf nothing else calls, and CI invokes individual recipes rather than
@@ -69,12 +81,12 @@ a leaf nothing else calls, and CI invokes individual recipes rather than
   tool, installed by `just setup-git-hooks` and on demand by the recipe), and
   prek refuses to run while its config file has unstaged changes — the same
   refusal the installed hook produces, which is the point of the delegation.
-- The pre-push `entry` strings must stay on one line: ci-parity extracts them
-  with a sed anchored on the single-line `{ id = ... }` table opener, so a
-  multi-line TOML hook table would be invisible to that check.
-- The stage is now the only declaration of the gate list, so any gate that must
-  be observed elsewhere (a CI job's local entrypoint, a coverage claim) names
-  its `just` entry string from this list.
+- Every pre-push `entry` string is emitted on one line by the registry's
+  renderer, and a test pins that shape; the retired sed extraction that once
+  depended on it is gone (D5 amendment).
+- The stage is now the only declaration of the gate list. A gate's CI coverage
+  is declared beside it in `scripts/gates.toml` (ADR-102), never as a second
+  string list here.
 
 ## Related
 

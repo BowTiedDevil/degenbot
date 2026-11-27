@@ -1,11 +1,12 @@
 # scripts/gates.toml -- the gate registry (ADR-102).
 #
 # Every git hook is declared here exactly once: its id, the stage it runs at,
-# the command it runs, the diff that triggers it and its flags. `prek.toml`
-# stays the file git loads, but its hook lines are rendered from this registry
-# by `just gates-regen`, and `just gates-check` (a pre-commit hook) fails a
-# commit whose file has drifted. The prose above each rendered line lives in
-# `prek.toml` itself, next to the gate it explains.
+# the command it runs, the diff that triggers it, its flags, and the facts its
+# identity needs beyond the wiring line. `prek.toml` stays the file git loads,
+# but its hook lines are rendered from this registry by `just gates-regen`, and
+# `just gates-check` (a pre-commit hook) fails a commit whose file has drifted.
+# The prose above each rendered line lives in `prek.toml` itself, next to the
+# gate it explains.
 #
 # Adding a gate: append one [[gate]] block below, run `just gates-regen`, and
 # add its rationale comment in `prek.toml` (a new block lands without prose and
@@ -16,6 +17,41 @@
 #             order so prek.toml reads as three sections.
 # entry       the command prek runs: `just <recipe>`, a script path, or a
 #             pinned npx invocation. The recipe or script must exist.
+# scope       the population the gate judges, and the one field that fixes
+#             pass_filenames: `index` is the staged file list prek passes (so
+#             pass_filenames cannot be false); `staged` is the commit's own
+#             content the gate enumerates for itself -- git's index, as
+#             `git ls-files --cached` lists it, so another lane's untracked
+#             work is outside the run; and `tree` is any wider population --
+#             the working tree including untracked files, the workspace, or the
+#             outgoing push range (so pass_filenames cannot be true).
+# data        repo-relative files the gate reconciles (a census, a catalog, a
+#             config). Each must exist; an empty list is stated, never implied.
+# docs        the docs/gates.md heading that documents this gate's failure
+#             class (or the registry section for a wiring/format gate).
+# probe       the pytest node ids that keep the gate honest: its negative or
+#             drift probes. At least one, and each must name a test function
+#             the committed tree defines (checked by import-free AST).
+#
+# CI coverage: every gate declares exactly ONE form, and the registry checks the
+# workflow and the invocation graph support it -- presence in ci.yml is never
+# sufficient. There is no local-only waiver.
+#
+#   ci_job + ci_entry + ci_relation = "direct"
+#       the job invokes the hook entry verbatim ("just <recipe> [args]", or the
+#       script path).
+#   ci_job + ci_entry + ci_relation = "contains"
+#       the job runs ci_entry, and the `just` invocation graph over
+#       `just --dump` (declared dependencies plus `just <recipe>` calls in the
+#       body) reaches the hook's entry recipe, carrying its arguments.
+#   ci_job + ci_entry + ci_relation = "equivalent" + ci_equivalent_probe
+#       the job runs a parallel whole-tree/range implementation, and the named
+#       pytest node pins the two as one verdict at two populations.
+#   ci_job + ci_probe
+#       a committed-tree pytest node is the CI execution; `gates-check` proves
+#       the node exists, and tests/test_gate_registry.py proves the default
+#       pytest selection really runs it.
+#
 # types/types_or/files/exclude
 #             the trigger, in prek's own vocabulary. `files` is a regex; a
 #             whole-tree gate names the files whose change re-runs it.
@@ -32,79 +68,178 @@ id = "markdownlint"
 name = "Markdown lint"
 stage = "pre-commit"
 entry = "npx --yes markdownlint-cli2@0.24.1"
+scope = "index"
+docs = "The gate registry"
+data = [".markdownlint.yaml"]
+probe = ["tests/test_gate_registry.py::test_the_markdown_hook_lints_with_the_justfile_pin"]
 types = ["markdown"]
 exclude = "^executor/|^logs/|^rust/vendor/"
+ci_job = "markdownlint"
+ci_entry = "just lint-markdown-check"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_gate_registry.py::test_the_markdown_hook_lints_with_the_justfile_pin"
 
 [[gate]]
 id = "comment-hygiene"
 name = "Comment hygiene gate"
 stage = "pre-commit"
 entry = "just lint-comment-hygiene"
+scope = "staged"
+docs = "1. Comment hygiene"
+data = [
+  "scripts/hooks/comment-hygiene-census.txt",
+  "scripts/hooks/comment-hygiene-waivers.txt",
+  "scripts/hooks/comment-hygiene-citation-census.txt",
+]
+probe = [
+  "tests/test_comment_hygiene_gate.py::test_the_committed_census_matches_the_tree",
+  "tests/test_comment_hygiene_gate.py::test_a_missing_census_fails_closed",
+]
 types_or = ["python", "rust", "shell"]
 pass_filenames = false
+ci_job = "policy-gates"
+ci_entry = "just lint-comment-hygiene"
+ci_relation = "direct"
 
 [[gate]]
 id = "publish-blocked"
 name = "publish-blocked census"
 stage = "pre-commit"
 entry = "just check-publish-blocked"
+scope = "tree"
+docs = "6. Publish-blocked census"
+data = ["scripts/publish-blocked-census.txt"]
+probe = [
+  "tests/test_publish_blocked_gate.py::test_the_committed_census_matches_the_tree",
+  "tests/test_publish_blocked_gate.py::test_a_stale_row_fails_the_gate",
+]
 files = ".*Cargo\\.toml$|^scripts/publish-blocked-census\\.txt$|^scripts/publish_blocked\\.py$|^scripts/publication_plan\\.py$"
 pass_filenames = false
+ci_job = "rust-lint"
+ci_entry = "just lint-rust-check"
+ci_relation = "contains"
 
 [[gate]]
 id = "tool-catalog"
 name = "Tool catalog reconciliation"
 stage = "pre-commit"
 entry = "just check-tool-catalog"
+scope = "staged"
+docs = "7. Tool-catalog reconciliation"
+data = ["rust/tools/README.md"]
+probe = [
+  "tests/test_tool_catalog_check.py::test_the_committed_catalog_reconciles_with_the_live_workspace",
+  "tests/test_tool_catalog_check.py::test_an_added_target_without_a_row_fails",
+]
 files = "^rust/tools/README\\.md$|^justfile$|^rust/.*Cargo\\.toml$|^rust/tools/|^rust/examples/|^rust/.*/examples/.*\\.rs$|^rust/crates/foundation/degenbot-ingestion/tests/headless_boot\\.rs$|^rust/crates/engine/degenbot-bot/tests/config_smoke_boot\\.rs$|^scripts/tool_catalog_check\\.py$|^tests/test_tool_catalog_check\\.py$"
 pass_filenames = false
+ci_job = "rust-lint"
+ci_entry = "just lint-rust-check"
+ci_relation = "contains"
 
 [[gate]]
 id = "parity-ledger-single-source"
 name = "Parity ledger single source"
 stage = "pre-commit"
 entry = "just check-parity-ledger-single-source"
+scope = "tree"
+docs = "The gate registry"
+data = [
+  "docs/architecture/rust-settlement-bot-parity.md",
+  "tests/standalone_parity/fixtures/settlement_bot_boot.json",
+]
+probe = [
+  "tests/test_parity_ledger_single_source.py::test_the_committed_prose_agrees_with_the_committed_oracle",
+  "tests/test_parity_ledger_single_source.py::test_a_doc_status_edit_fails_and_names_the_row",
+]
 files = "^docs/architecture/rust-settlement-bot-parity\\.md$|^tests/standalone_parity/fixtures/settlement_bot_boot\\.json$|^scripts/hooks/parity_ledger_single_source\\.py$"
 pass_filenames = false
+ci_job = "python"
+ci_probe = "tests/test_parity_ledger_single_source.py::test_the_committed_prose_agrees_with_the_committed_oracle"
 
 [[gate]]
 id = "worker-census-spawn"
 name = "Worker-census spawn sites"
 stage = "pre-commit"
 entry = "just check-worker-census-spawn"
+scope = "tree"
+docs = "3. Worker census"
+data = ["scripts/hooks/worker-census-spawn-inventory.txt"]
+probe = [
+  "tests/test_worker_census_spawn_gate.py::test_the_committed_inventory_matches_the_tree",
+  "tests/test_worker_census_spawn_gate.py::test_a_stale_row_fails",
+]
 files = '\.rs$|^scripts/hooks/worker_census_spawn_gate\.py$|^scripts/hooks/worker-census-spawn-inventory\.txt$'
 pass_filenames = false
+ci_job = "python"
+ci_probe = "tests/test_worker_census_spawn_gate.py::test_the_committed_inventory_matches_the_tree"
 
 [[gate]]
 id = "python-fmt-staged"
 name = "Python fmt (staged)"
 stage = "pre-commit"
 entry = "scripts/hooks/python-fmt-staged.sh"
+scope = "index"
+docs = "The gate registry"
+data = ["pyproject.toml"]
+probe = [
+  "tests/test_python_fmt_staged_gate.py::test_the_gate_checks_the_commit_with_the_project_ruff",
+  "tests/test_python_fmt_staged_gate.py::test_an_empty_file_list_fails_closed",
+  "tests/test_hook_ci_equivalence.py::test_python_fmt_staged_slices_the_whole_tree_sweep",
+]
 types = ["python"]
 exclude = "^executor/"
+ci_job = "python"
+ci_entry = "just fmt-check-python"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_hook_ci_equivalence.py::test_python_fmt_staged_slices_the_whole_tree_sweep"
 
 [[gate]]
 id = "rust-fmt-staged"
 name = "Rust fmt (staged)"
 stage = "pre-commit"
 entry = "scripts/hooks/rust-fmt-staged.sh"
+scope = "index"
+docs = "The gate registry"
+data = []
+probe = ["tests/test_hook_ci_equivalence.py::test_rust_fmt_staged_slices_the_whole_tree_fmt_check"]
 types = ["rust"]
+ci_job = "rust-lint"
+ci_entry = "just fmt-check"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_hook_ci_equivalence.py::test_rust_fmt_staged_slices_the_whole_tree_fmt_check"
 
 [[gate]]
 id = "stub-drift-staged"
 name = "Stub drift (staged FFI)"
 stage = "pre-commit"
 entry = "just gen-stubs --check"
+scope = "staged"
+docs = "4. Stub drift"
+data = ["src/degenbot/_ffi"]
+probe = ["tests/ffi/test_ffi_stub_drift.py::test_committed_stubs_match_generator_output"]
 files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)"
 pass_filenames = false
+ci_job = "stub-drift"
+ci_entry = "just lint-stub-drift"
+ci_relation = "contains"
 
 [[gate]]
 id = "gate-registry"
 name = "Gate registry drift"
 stage = "pre-commit"
 entry = "just gates-check"
-files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$'
+scope = "staged"
+docs = "The gate registry"
+data = ["prek.toml"]
+probe = [
+  "tests/test_gate_registry.py::test_the_committed_registry_renders_the_committed_hook_lines",
+  "tests/test_gate_registry.py::test_a_hook_missing_from_the_registry_fails",
+]
+files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$|^scripts/just_recipe_index\.py$|^\.github/workflows/ci\.yml$|^docs/gates\.md$|^tests/'
 pass_filenames = false
+ci_job = "python"
+ci_probe = "tests/test_gate_registry.py::test_the_committed_registry_renders_the_committed_hook_lines"
 
 # --- commit-msg --------------------------------------------------------------
 
@@ -113,6 +248,14 @@ id = "commitlint"
 name = "commitlint"
 stage = "commit-msg"
 entry = "npx --yes @commitlint/cli@21.2.4 --edit"
+scope = "index"
+docs = "The gate registry"
+data = [".commitlintrc.yml"]
+probe = ["tests/test_commitlint_push_gate.py::test_the_gate_lints_with_the_shared_pin"]
+ci_job = "commitlint"
+ci_entry = "just lint-commits"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_commitlint_push_gate.py::test_the_gate_lints_with_the_shared_pin"
 
 # --- pre-push ----------------------------------------------------------------
 
@@ -121,96 +264,188 @@ id = "toolchain-tier"
 name = "Rust toolchain tier"
 stage = "pre-push"
 entry = "just check-toolchain"
+scope = "tree"
+docs = "The gate registry"
+data = ["rust-toolchain.toml"]
+probe = ["tests/test_hook_ci_equivalence.py::test_the_whole_tree_gates_certify_the_toolchain_tier_first"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "rust-lint"
+ci_entry = "just lint-rust-check"
+ci_relation = "contains"
 
 [[gate]]
 id = "ci-parity"
 name = "CI job parity"
 stage = "pre-push"
 entry = "scripts/hooks/ci-parity.sh"
+scope = "tree"
+docs = "The gate registry"
+data = ["scripts/hooks/ci-parity-manifest.txt", "scripts/hooks/ci-recipe-tools.txt"]
+probe = [
+  "tests/test_ci_parity.py::test_parity_holds_on_the_committed_tree",
+  "tests/test_ci_parity.py::test_a_ci_job_without_a_manifest_line_fails",
+]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "policy-gates"
+ci_entry = "scripts/hooks/ci-parity.sh"
+ci_relation = "direct"
 
 [[gate]]
 id = "commitlint-push"
 name = "commitlint (push range)"
 stage = "pre-push"
 entry = "scripts/hooks/commitlint-push.sh"
+scope = "tree"
+docs = "The gate registry"
+data = [".commitlintrc.yml"]
+probe = [
+  "tests/test_commitlint_push_gate.py::test_a_lint_failure_blocks_the_push",
+  "tests/test_commitlint_push_gate.py::test_the_gate_lints_with_the_shared_pin",
+]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "commitlint"
+ci_entry = "just lint-commits"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_commitlint_push_gate.py::test_the_gate_lints_with_the_shared_pin"
 
 [[gate]]
 id = "rust-fmt-check"
 name = "Rust fmt check"
 stage = "pre-push"
 entry = "just fmt-check"
+scope = "tree"
+docs = "The gate registry"
+data = []
+probe = ["tests/test_hook_ci_equivalence.py::test_rust_fmt_staged_slices_the_whole_tree_fmt_check"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "rust-lint"
+ci_entry = "just fmt-check"
+ci_relation = "direct"
 
 [[gate]]
 id = "python-fmt-check"
 name = "Python fmt check"
 stage = "pre-push"
 entry = "just fmt-check-python"
+scope = "staged"
+docs = "The gate registry"
+data = ["pyproject.toml"]
+probe = ["tests/test_hook_ci_equivalence.py::test_python_fmt_staged_slices_the_whole_tree_sweep"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "python"
+ci_entry = "just fmt-check-python"
+ci_relation = "direct"
 
 [[gate]]
 id = "rust-clippy"
 name = "Rust clippy"
 stage = "pre-push"
 entry = "just lint-rust-check"
+scope = "tree"
+docs = "The gate registry"
+data = []
+probe = ["tests/test_hook_ci_equivalence.py::test_the_clippy_recipe_denies_warnings_on_the_strict_tier"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "rust-lint"
+ci_entry = "just lint-rust-check"
+ci_relation = "direct"
 
 [[gate]]
 id = "python-lint"
 name = "Python lint"
 stage = "pre-push"
 entry = "just lint-python-check"
+scope = "tree"
+docs = "The gate registry"
+data = ["pyproject.toml"]
+probe = ["tests/test_ci_parity.py::test_the_python_lint_step_is_check_only"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "python"
+ci_entry = "just lint-python-check"
+ci_relation = "direct"
 
 [[gate]]
 id = "stubtest"
 name = "Stubtest drift gate"
 stage = "pre-push"
 entry = "just lint-stubtest"
+scope = "tree"
+docs = "4. Stub drift"
+data = ["tests/ffi/stubtest_allowlist.txt"]
+probe = ["tests/ffi/test_ffi_registration_surface.py::test_every_runtime_submodule_has_a_stub"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "python"
+ci_entry = "just lint-stubtest"
+ci_relation = "direct"
 
 [[gate]]
 id = "tripwire-ratchet"
 name = "Retirement-tripwire ratchet"
 stage = "pre-push"
 entry = "just lint-tripwire-ratchet"
+scope = "tree"
+docs = "The gate registry"
+data = []
+probe = ["tests/test_tripwire_ratchet.py::test_a_synthetic_tripwire_fails_the_gate"]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "policy-gates"
+ci_entry = "just lint-tripwire-ratchet"
+ci_relation = "direct"
 
 [[gate]]
 id = "executor-release-ratchet"
 name = "Executor release ratchet"
 stage = "pre-push"
 entry = "just check-executor-release-ratchet"
+scope = "tree"
+docs = "The gate registry"
+data = ["rust/crates/foundation/degenbot-executor/releases/index.json"]
+probe = [
+  "tests/test_executor_release_ratchet.py::test_committed_release_index_is_clean",
+  "tests/test_hook_ci_equivalence.py::test_the_executor_release_ci_entry_is_the_hook_minus_its_pytest_probes",
+]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "policy-gates"
+ci_entry = "just check-executor-release-ratchet-index"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_hook_ci_equivalence.py::test_the_executor_release_ci_entry_is_the_hook_minus_its_pytest_probes"
 
 [[gate]]
 id = "rust-test-affected"
 name = "Rust tests (affected packages)"
 stage = "pre-push"
 entry = "just test-rust-affected"
+scope = "tree"
+docs = "The gate registry"
+data = []
+probe = [
+  "tests/test_script_tooling.py::test_a_directly_touched_package_selects_its_dependents",
+  "tests/test_hook_ci_equivalence.py::test_the_whole_workspace_lane_is_the_ci_counterpart_of_the_affected_selection",
+]
 always_run = true
 pass_filenames = false
 fail_fast = true
+ci_job = "rust-test"
+ci_entry = "just test-rust-dev"
+ci_relation = "equivalent"
+ci_equivalent_probe = "tests/test_hook_ci_equivalence.py::test_the_whole_workspace_lane_is_the_ci_counterpart_of_the_affected_selection"

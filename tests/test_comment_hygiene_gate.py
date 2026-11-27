@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.repo_script import load_script
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _HOOK = _REPO_ROOT / "scripts" / "hooks" / "comment-hygiene.sh"
 _BASH = shutil.which("bash")
@@ -242,3 +244,19 @@ def test_the_scan_scope_is_the_index_not_the_working_tree(tmp_path: Path) -> Non
     staged = _run_in_repo(repo)
     assert staged.returncode != 0
     assert "comment-hygiene" in staged.stderr
+
+    # The registry's declaration has to be the population this test just
+    # demonstrated: the scan enumerates git's index, so it is `staged` -- a
+    # `tree` declaration would promise untracked files are examined.
+    gate = _registry_gate("comment-hygiene")
+    assert gate.scope == "staged", (
+        f"the gate scans git's index; its registered population is not {gate.scope!r}"
+    )
+    assert gate.pass_filenames is False
+    assert "git ls-files -z --cached" in _HOOK.read_text(encoding="utf-8")
+
+
+def _registry_gate(gate_id: str):
+    """The committed registry's (validated) declaration for `gate_id`."""
+    gate_registry = load_script("gate_registry", _REPO_ROOT / "scripts" / "gate_registry.py")
+    return {gate.id: gate for gate in gate_registry.load(_REPO_ROOT)}[gate_id]

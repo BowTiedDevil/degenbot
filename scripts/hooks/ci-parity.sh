@@ -5,9 +5,11 @@
 # The CI job matrix is compared here against a MANIFEST of local entrypoints
 # (scripts/hooks/ci-parity-manifest.txt): a job without one is drift, and a
 # manifest entry naming a `just` recipe that no longer exists is drift too.
-# The manifest's push_gates column is additionally checked against prek.toml's
-# `stages = ["pre-push"]` entries -- the push-gate manifest `just pre-push`
-# delegates to (ADR-074), so the declaration cannot outlive the wiring.
+# The manifest keeps JOB completeness -- the hook-less jobs and the jobs whose
+# local reproduction spans several recipes. A hook's own CI coverage is not here:
+# scripts/gates.toml owns it (ci_job/ci_entry/ci_relation, or ci_probe), and
+# `just gates-check` validates it against the workflow and the just invocation
+# graph (ADR-102), so the two cannot disagree in silence.
 #
 # Exit codes:
 #   0   parity
@@ -27,14 +29,11 @@
 #   - `just` (and a plain python3) must be on PATH: recipe existence is asked
 #     of `just` itself through scripts/just_recipe_index.py, never read from
 #     justfile text.
-#   - The manifest's push_gates column names entry strings that must appear as
-#     `stages = ["pre-push"]` entries in prek.toml, i.e. must be part of the
-#     push-gate manifest; notes carry no wiring claim.
 #
 # Override the sources for the negative probes (tests/test_ci_parity.py):
-#   MANIFEST=... CI=... JF=... PREK=... TOOLS=...
+#   MANIFEST=... CI=... JF=... TOOLS=...
 #
-# live-invariant gate (ADR-087 D2): watches the live ci-parity manifest and the prek.toml `stages = ["pre-push"]` entries it is cross-checked against; not tripwire precedent.
+# live-invariant gate (ADR-087 D2): watches the live ci-parity manifest against the live ci.yml job set; not tripwire precedent.
 set -euo pipefail
 
 # The `just` executable is a declared dependency of this gate: recipe
@@ -50,14 +49,13 @@ cd "$repo_root"
 
 ci="${CI:-.github/workflows/ci.yml}"
 jf="${JF:-justfile}"
-prek_toml="${PREK:-prek.toml}"
 manifest_file="${MANIFEST:-scripts/hooks/ci-parity-manifest.txt}"
 
-# The manifest: job id | kind | push_gates | local entrypoint notes.
+# The manifest: job id | kind | local entrypoint notes -- exactly three fields.
 #   local    -- a named local entrypoint exists (named in the notes)
 #   ci-only  -- nothing to run locally; the notes must say WHY
-# push_gates is a comma-separated list of prek.toml `entry` strings that must
-# be `stages = ["pre-push"]` entries; empty when the job is not push-wired.
+# A legacy four-field line fails closed rather than folding its old push_gates
+# column into the notes, where the recipe-existence scan would read it as prose.
 if [ ! -s "$manifest_file" ]; then
     echo "ci-parity: manifest ${manifest_file} is missing or empty -- refusing to pass" >&2
     exit 2
@@ -72,20 +70,6 @@ mapfile -t jobs < <(awk '
 
 if [ "${#jobs[@]}" -eq 0 ]; then
     echo "ci-parity: extracted 0 jobs from ${ci} -- refusing to pass" >&2
-    exit 2
-fi
-
-# The push-gate manifest (ADR-074): prek.toml's `stages = ["pre-push"]` hook
-# entries, one single-line `{ id = ... }` table each. The sed anchors on the
-# table opener so the prose in the surrounding comment blocks cannot match --
-# which also means a pre-push hook written as a multi-line TOML table would be
-# invisible here. Keep the pre-push entries single-line.
-mapfile -t pre_push_entries < <(
-    sed -n 's/^[[:space:]]*{ id = .*entry = "\([^"]*\)".*stages = \["pre-push"\].*/\1/p' "$prek_toml"
-)
-
-if [ "${#pre_push_entries[@]}" -eq 0 ]; then
-    echo "ci-parity: extracted 0 pre-push entries from ${prek_toml} -- refusing to pass" >&2
     exit 2
 fi
 
@@ -107,25 +91,15 @@ recipe_exists() {
     esac
 }
 
-trim() {
-    local value="$1"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    printf '%s' "${value}"
-}
-
-in_push_manifest() {
-    local entry
-    for entry in "${pre_push_entries[@]}"; do
-        [ "$entry" = "$1" ] && return 0
-    done
-    return 1
-}
-
 declare -A in_manifest=()
 
-while IFS='|' read -r job kind push_gates notes; do
+while IFS='|' read -r job kind notes extra; do
     [ -n "${job}" ] || continue
+    if [ -n "${extra}" ]; then
+        echo "ci-parity: manifest line for '${job}' has more than three fields (job|kind|notes)" >&2
+        fail=1
+        continue
+    fi
     if [ -z "${kind}" ] || [ -z "${notes}" ]; then
         echo "ci-parity: manifest line for '${job}' needs kind AND notes" >&2
         fail=1
@@ -147,17 +121,6 @@ while IFS='|' read -r job kind push_gates notes; do
     for name in $(printf '%s' "${notes}" | grep -oE 'just [a-z0-9_-]+' | awk '{print $2}' | sort -u || true); do
         if ! recipe_exists "${name}"; then
             echo "ci-parity: job '${job}' names just recipe '${name}' which does not exist in ${jf}" >&2
-            fail=1
-        fi
-    done
-    # ... and every entry string in the push_gates column must be wired into the
-    # push-gate manifest (prek.toml's `stages = ["pre-push"]` entries).
-    IFS=',' read -ra gates <<< "${push_gates}"
-    for gate in "${gates[@]}"; do
-        gate="$(trim "${gate}")"
-        [ -n "${gate}" ] || continue
-        if ! in_push_manifest "${gate}"; then
-            echo "ci-parity: job '${job}' declares push gate '${gate}' which is not a stages = [\"pre-push\"] entry in ${prek_toml}" >&2
             fail=1
         fi
     done
@@ -383,6 +346,7 @@ done
 if [ "${fail}" -ne 0 ]; then
     echo
     echo "ci-parity FAILED: give each ci.yml job a local entrypoint (or record why it is CI-only), keep the named just recipes alive, and provision the tools those recipes need."
+    echo "A hook's own CI coverage lives in scripts/gates.toml; run `just gates-check` for that half."
     exit 1
 fi
 

@@ -105,7 +105,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [071](ADR-071-family-modules-and-concentrated-liquidity-kernel.md) | Family modules and the Concentrated Liquidity Kernel — one module, one row, one enum arm supersedes the eight-site family change | accepted |
 | [072](ADR-072-the-ci-only-failure-has-a-reproducer.md) | The CI-only failure has a reproducer — build-config divergence is accepted, `just test-rust-ci` is the contract | accepted |
 | [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | accepted / implemented through A7 |
-| [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries | accepted |
+| [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries; the manifest keeps job completeness, the registry owns hook CI coverage | accepted |
 | [076](ADR-076-epoch-phases.md) | The epoch phases — `SolveCycle::run_epoch` decomposes into named phases behind one interface | accepted |
 | [077](ADR-077-refusal-vocabulary.md) | The refusal vocabulary — one `RefusalKind` owned by the registration outcome ledger, and the eligibility gate moves core-side | accepted |
 | [078](ADR-078-family-write-door.md) | The family write door — one `PoolRegistration` request, one verdict, family as data; pool identity is one table's | accepted |
@@ -132,7 +132,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [099](ADR-099-executor-capability-set-commitments.md) | Executor capability-set commitments — one constant-size hash, the manifest keeps the full list | accepted (implemented) |
 | [100](ADR-100-progressive-custom-adapter-validation.md) | Progressive custom-adapter validation — a declared interface, explicit cases, execution-backed certification | accepted (implemented) |
 | [101](ADR-101-immutable-typed-executor-release-packages.md) | Immutable typed executor release packages | accepted (implemented) |
-| [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier, with generated wiring | accepted (implemented for hook wiring; doc table and parity manifest pending) |
+| [102](ADR-102-gate-registry-with-generated-wiring.md) | One registry for the gate tier — generated wiring, identity facts, and one validated CI coverage form per hook | accepted (implemented) |
 | [103](ADR-103-fork-spawn-failure-vocabulary.md) | The fork spawn-failure vocabulary — cause-named at the seam, typed across the FFI, retried only by typed cause | accepted (implemented) |
 | [104](ADR-104-typed-eventhub-intake-and-engine-session-stream.md) | Typed event-hub intake — a permanent head claim, an engine-owned session stream, and no named-channel seam | accepted (implemented) |
 | [105](ADR-105-block-anchored-event-sourced-chain-state.md) | Block-anchored event-sourced chain state — exact lineage, position-aware projections, total receipt ownership, neutral decoder module homes | accepted (implemented; exact simulation transport, execution-aware BLOCKHASH, seed/resolution, diagnostics, replay authority, deliberate number/tag lanes, and deferred choices are recorded in the ADR) |

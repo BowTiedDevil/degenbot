@@ -177,7 +177,7 @@ hooks = [
   # hook under it.
   #
   # live-invariant gate (ADR-087 D2): watches the live registry against the hook lines prek loads; not tripwire precedent.
-  { id = "gate-registry", name = "Gate registry drift", language = "system", entry = "just gates-check", files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$', stages = ["pre-commit"], pass_filenames = false },
+  { id = "gate-registry", name = "Gate registry drift", language = "system", entry = "just gates-check", files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$|^scripts/just_recipe_index\.py$|^\.github/workflows/ci\.yml$|^docs/gates\.md$|^tests/', stages = ["pre-commit"], pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
   # The @commitlint/cli version is pinned to `just lint-commits`'s rule set, the
@@ -239,10 +239,10 @@ hooks = [
   # stage is the manifest a gate joins. The declaration itself lives in
   # scripts/gates.toml (ADR-102): the lines below are rendered from it, so a
   # gate is added, retired or re-pointed there and `just gates-regen` writes the
-  # result here.
-  # scripts/hooks/ci-parity.sh extracts them with a sed anchored on the
-  # single-line `{ id = ... }` table opener, so every pre-push entry must stay
-  # on ONE line -- a multi-line TOML table would be invisible to that check.
+  # result here. Each declared gate also names its one CI coverage form there
+  # (direct, contains, equivalent with a probe, or a committed-tree ci_probe),
+  # which `just gates-check` validates against the workflow and the just
+  # invocation graph.
   #
   # Bypass with `git push --no-verify` (CI still runs), or re-run a subset
   # manually with `prek run --stage pre-push --skip rust-test-affected` etc.
@@ -254,8 +254,11 @@ hooks = [
 
 
   # ci-parity checks the ci.yml job matrix against the local entrypoints
-  # (scripts/hooks/ci-parity-manifest.txt) and requires every string in a
-  # line's push_gates column to name one of this stage's `entry` strings.
+  # (scripts/hooks/ci-parity-manifest.txt), which carries the hook-less jobs and
+  # the jobs whose local reproduction spans several recipes. This hook's own CI
+  # coverage is a field of its registry entry (ci_job + ci_entry + ci_relation),
+  # validated against ci.yml by `just gates-check` (ADR-102), so the two
+  # cannot disagree in silence.
   { id = "ci-parity", name = "CI job parity", language = "system", entry = "scripts/hooks/ci-parity.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
   { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
