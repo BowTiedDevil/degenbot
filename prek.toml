@@ -57,11 +57,13 @@ hooks = [
   # skip, not a pass; the scripts below additionally fail closed if invoked
   # with an empty list.
 
-  # File-scoped (runs on the staged markdown list). Fix with
-  # `npx markdownlint-cli2 --fix <file>` if it fails. The vendored
+  # File-scoped (runs on the staged markdown list). The CLI pin is the
+  # justfile's `markdownlint_cli` literal — the one the `just lint-markdown*`
+  # recipes and CI's markdown job run (tests/test_gate_registry.py fails if they
+  # disagree). Fix with `just lint-markdown` if it fails. The vendored
   # executor/ tree keeps its own docs conventions — same
   # scoping principle as the src/-only Python lint gates.
-  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], exclude = "^executor/|^logs/|^rust/vendor/", stages = ["pre-commit"] },
+  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2@0.24.1", types = ["markdown"], exclude = "^executor/|^logs/|^rust/vendor/", stages = ["pre-commit"] },
 
   # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
   # and RED/GREEN gate narration are banned in code comments. The waiver
@@ -178,8 +180,9 @@ hooks = [
   { id = "gate-registry", name = "Gate registry drift", language = "system", entry = "just gates-check", files = '^prek\.toml$|^scripts/gates\.toml$|^scripts/gate_registry\.py$', stages = ["pre-commit"], pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------
-  # The @commitlint/cli version is pinned to ci.yml's commitlint job's rule set
-  # (tests/test_commitlint_push_gate.py fails if the pins disagree).
+  # The @commitlint/cli version is pinned to `just lint-commits`'s rule set, the
+  # recipe CI's commitlint job runs (tests/test_commitlint_push_gate.py fails if
+  # the pins disagree).
   #
   # Validate the commit message against the relaxed .commitlintrc.yml. Runs at
   # commit time so a bad message is caught the moment it is written — NOT at

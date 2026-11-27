@@ -156,6 +156,26 @@ def test_every_hook_line_stays_on_one_line() -> None:
         assert re.match(r'^  \{ id = "[^"]+".*\},$', line), line
 
 
+def test_the_markdown_hook_lints_with_the_justfile_pin() -> None:
+    """A gate that runs a floating CLI is a rule set nobody reviewed.
+
+    The hook, the two `just lint-markdown*` recipes, and CI's markdown job all
+    lint one CLI: the justfile's `markdownlint_cli` literal. A hook naming the
+    package without that version could lint a different rule set than the job
+    that blocks the merge.
+    """
+    pin = re.search(
+        r'^markdownlint_cli := "([^"]+)"$',
+        (_ROOT / "justfile").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert pin is not None, "the justfile must declare the markdownlint CLI pin"
+
+    gates = {gate.id: gate for gate in gate_registry.load(_ROOT)}
+
+    assert gates["markdownlint"].entry == f"npx --yes {pin.group(1)}"
+
+
 def test_a_hook_missing_from_the_registry_fails(workspace: pathlib.Path) -> None:
     (workspace / "scripts" / "gates.toml").write_text(_registry(_gate("alpha")), encoding="utf-8")
     gates = gate_registry.load(workspace)

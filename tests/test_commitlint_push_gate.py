@@ -7,11 +7,13 @@ Two contracts, both negative-probed here:
    "skipping" note when ``npx`` is absent punches exactly the hole it exists
    to close. Missing tooling must fail loud.
 
-2. It lints with the rule set CI lints with. CI's commitlint job pins
-   ``@commitlint/cli``; a floating local resolution can flip the shared gate's
-   verdict with no diff to review. The four invocation surfaces -- this gate,
-   ``just lint-commits``, prek.toml's commit-msg entry, and ci.yml's job --
-   must name one version.
+2. It lints with the rule set CI lints with. ``@commitlint/cli`` is pinned
+   in ``just lint-commits``; a floating resolution can flip the shared gate's
+   verdict with no diff to review. The version is named in this gate, the
+   recipe, and prek.toml's commit-msg entry, and nowhere else: CI's commitlint
+   job runs the recipe, so a second copy in ci.yml would be the drift this test
+   exists to catch (the mirror of ``test_ci_parity.py``'s proof that the job
+   reaches the recipe with the event's own range).
 
 The gate is driven as a subprocess inside a throwaway two-commit repository,
 with ``git`` on PATH and ``npx`` replaced by a recording stub, so the argv the
@@ -125,7 +127,7 @@ def test_the_gate_fails_loud_when_npx_is_absent(tmp_path: Path) -> None:
     assert "npx" in result.stderr
 
 
-def test_the_gate_lints_with_the_rule_set_ci_pins(tmp_path: Path) -> None:
+def test_the_gate_lints_with_the_shared_pin(tmp_path: Path) -> None:
     result, argv_file = _run_gate(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -133,7 +135,7 @@ def test_the_gate_lints_with_the_rule_set_ci_pins(tmp_path: Path) -> None:
     assert match is not None, "the gate must name a pinned @commitlint/cli"
     version = match.group(1)
 
-    for surface in (CI_YML, JUSTFILE, PREK_TOML):
+    for surface in (JUSTFILE, PREK_TOML):
         pinned = set(
             re.findall(
                 r"@commitlint/cli@([0-9][0-9A-Za-z.\-]*)", surface.read_text(encoding="utf-8")
@@ -142,3 +144,14 @@ def test_the_gate_lints_with_the_rule_set_ci_pins(tmp_path: Path) -> None:
         assert pinned == {version}, (
             f"{surface.name} pins {sorted(pinned)} while the gate lints with {version}"
         )
+
+
+def test_ci_restates_no_commitlint_pin() -> None:
+    """CI lints through the recipe, so it names no version of its own."""
+    pinned = re.findall(r"@commitlint/cli@\S+", CI_YML.read_text(encoding="utf-8"))
+
+    assert not pinned, (
+        f"ci.yml pins {pinned}: it must reach the version through `just "
+        "lint-commits`, or the job lints a second rule set that can drift from "
+        "the recipe it claims to run"
+    )

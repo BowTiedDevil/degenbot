@@ -1,6 +1,6 @@
 changes|ci-only||dorny/paths-filter decides which downstream jobs run; nothing to execute
 ci-green|ci-only||branch-protection aggregate: checks needs statuses only, nothing to execute
-commitlint|local|scripts/hooks/commitlint-push.sh|push range
+commitlint|local|scripts/hooks/commitlint-push.sh|just lint-commits <event range> (the push gate mirrors it over the upstream range)
 markdownlint|local||just lint-markdown-check
 msrv|local||just check-msrv
 rust-lint|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-dev-features, just check-rust-extension-release
@@ -11,7 +11,8 @@ rust-policy-lanes|local||just test-rust-policy-lane (both policy configurations 
 cli-no-python|local||just ci-no-python-cli-gate (CI-scheduled: not in the pre-push tier)
 tier3-oracle|local||just verify-tier3-artifacts, just verify-tier3-executor-artifact
 python-wheel|local||just build-rust-extension-wheel (one abi3 wheel the whole matrix installs)
-python|local||just check-uv-lock, just fmt-check-python, just lint-python, just install-extension-wheel, just test-executor-offline, just test-python-noise-gate
+python|local||just check-uv-lock, just fmt-check-python, just lint-python-check, just install-extension-wheel, just lint-stubtest, just check-consumer-probes, just test-executor-offline, just test-python-noise-gate
 python|local||just test-python-no-anvil-spawn-surface (CI-scheduled: not in the pre-push tier)
 python|local||full-suite no-anvil mirror of the CI non-floor legs (manual): just test-python-no-anvil
+policy-gates|local||just lint-comment-hygiene, just lint-tripwire-ratchet, scripts/hooks/ci-parity.sh, just check-executor-release-ratchet-index (CI hands it DEGENBOT_RELEASE_RATCHET_BASE from the event's base; the pytest probes ride the python suite)
 stub-drift|local||just lint-stub-drift (input-scoped in CI; staged FFI edits run stub-drift-staged locally)

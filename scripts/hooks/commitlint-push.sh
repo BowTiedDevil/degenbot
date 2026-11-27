@@ -38,9 +38,9 @@ if [ -z "$(git rev-list "$from..HEAD" 2>/dev/null || true)" ]; then
   exit 0
 fi
 
-# The rule set is pinned to CI's commitlint job (ci.yml): a floating
-# @commitlint/cli can flip the shared gate's verdict with no diff to review.
-# tests/test_commitlint_push_gate.py fails when the pins disagree.
+# The rule set is pinned to `just lint-commits`, the recipe CI's commitlint
+# job runs: a floating @commitlint/cli can flip the shared gate's verdict with no
+# diff to review. tests/test_commitlint_push_gate.py fails when the pins disagree.
 if ! npx --yes @commitlint/cli@21.2.4 --from "$from" --to HEAD >&2; then
   echo "" >&2
   echo "💡 Push blocked: one or more commit messages fail commitlint." >&2

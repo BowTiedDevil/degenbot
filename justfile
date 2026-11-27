@@ -31,8 +31,10 @@ pytest_run := "uv run --no-sync pytest"
 #
 # The npm tools the markdown and commit-message gates run have no python lock to
 # live in: markdownlint-cli2 carries the one literal below, used by both markdown
-# recipes, and @commitlint/cli's literal must agree across prek.toml, the commit
-# range recipe, and ci.yml (tests/test_commitlint_push_gate.py).
+# recipes AND the commit-time hook (scripts/gates.toml), and @commitlint/cli's
+# literal must agree across prek.toml and the commit-range recipe. CI lints
+# through that recipe, so ci.yml names no version of its own
+# (tests/test_commitlint_push_gate.py).
 markdownlint_cli := "markdownlint-cli2@0.24.1"
 
 # Default recipe - show available commands
@@ -1562,9 +1564,15 @@ test-python: dev check-executor-release-ratchet
 # current file hashes; the base index prevents regeneration from laundering a
 # frozen-release edit. The pytest probes prove both red paths and the next-tag path.
 # live-invariant gate (ADR-087 D2): watches accepted cmd_executor release packages and their sequential release index; not tripwire precedent.
-check-executor-release-ratchet:
-    {{ py_run }} scripts/executor_release_ratchet.py check
+check-executor-release-ratchet: check-executor-release-ratchet-index
     {{ pytest_run }} tests/test_executor_release_ratchet.py -q --no-header
+
+# The live-tree half alone: the committed index must match regeneration AND
+# every package in a base index independent of HEAD must survive byte-for-byte
+# (`DEGENBOT_RELEASE_RATCHET_BASE` names the base in CI). CI runs this half only:
+# the probes above already ride the suite its python job executes.
+check-executor-release-ratchet-index:
+    {{ py_run }} scripts/executor_release_ratchet.py check
 
 
 # Build the pure-Rust production-encoder consumer used by the three-hop
@@ -2311,9 +2319,8 @@ lint-python:
     # degenbot stubs from the venv), which is where its dev dependency installs it.
     {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
-# Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
-# minus `--fix`, so a pre-commit run cannot dirty staged files. Stricter than
-# CI's `lint-python`: fails on any issue `--fix` would have auto-applied.
+# The AGENTS.md "Comment Hygiene" gate (docs/comments.md): tracker citations and
+# RED/GREEN gate narration never live in code comments.
 lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
 
@@ -2337,6 +2344,9 @@ lint-comment-hygiene:
 lint-tripwire-ratchet:
     {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
+# Lint Python (check-only; non-mutating). The Python lint gate: CI and the
+# pre-push hook both run this form, so neither can green over a tree it silently
+# repaired. `lint-python` is the same detectors with the repairs applied.
 lint-python-check:
     {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py
     {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
@@ -2385,9 +2395,9 @@ lint-commits range="@{push}..HEAD":
       from="$range"
       to=HEAD
     fi
-    # Pinned to ci.yml's commitlint job's rule set (see
-    # tests/test_commitlint_push_gate.py): a floating @commitlint/cli can flip
-    # the shared gate's verdict with no diff to review.
+    # Pinned once for the commit-msg hook, this recipe, and CI (which runs this
+    # recipe -- see tests/test_commitlint_push_gate.py): a floating
+    # @commitlint/cli can flip the shared gate's verdict with no diff to review.
     npx --yes @commitlint/cli@21.2.4 --from "$from" --to "$to"
 
 # Run all linters (Rust + Python + Markdown)

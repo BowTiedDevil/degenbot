@@ -29,9 +29,17 @@
 #
 # Read a recipe's body before adding a name here: `publish-dry-run`, for
 # instance, is plain `python3` on purpose and needs neither uv nor the venv.
+#
+# The table models the tools that were historically provisioned inconsistently
+# (uv, nextest, the dev venv, LLVM 23, Foundry, the tier-3 libs). A plain apt or
+# npx need -- `fmt-check`'s cargo, `lint-markdown-check`'s npx,
+# `lint-comment-hygiene`'s ripgrep -- declares no `requires` name, so an empty
+# column is not a claim that the recipe has no dependency: read its body.
 
 build-rust-extension|llvm23,uv,dev-venv|
 build-rust-extension-wheel|llvm23,uv,dev-venv|
+check-consumer-probes|uv,dev-venv,llvm23|
+check-executor-release-ratchet-index|uv,dev-venv|
 check-msrv|llvm23|
 check-rust-consumer|llvm23|
 check-rust-default|llvm23|
@@ -41,10 +49,14 @@ check-uv-lock|uv|
 fmt-check||
 fmt-check-python||
 install-extension-wheel|uv|dev-venv
+lint-comment-hygiene||
+lint-commits||
 lint-markdown-check||
-lint-python|uv|
+lint-python-check|uv|
 lint-rust-check|llvm23|
 lint-stub-drift|llvm23|
+lint-stubtest|uv,dev-venv|
+lint-tripwire-ratchet|uv,dev-venv|
 publish-dry-run||
 test-executor-offline|uv,dev-venv,foundry,tier3-libs|
 test-golden-replay|cargo-nextest,uv|

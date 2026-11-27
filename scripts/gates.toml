@@ -31,7 +31,7 @@ version = 1
 id = "markdownlint"
 name = "Markdown lint"
 stage = "pre-commit"
-entry = "npx --yes markdownlint-cli2"
+entry = "npx --yes markdownlint-cli2@0.24.1"
 types = ["markdown"]
 exclude = "^executor/|^logs/|^rust/vendor/"
 

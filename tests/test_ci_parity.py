@@ -412,6 +412,310 @@ def test_a_row_no_job_runs_fails(tmp_path: Path) -> None:
     assert "no ci.yml job runs" in result.stderr
 
 
+# --- CI execution coverage ---------------------------------------------------
+# The pre-push tier is not a substitute for CI: `git push --no-verify` skips it
+# entirely, and a gate that only ever runs on a developer machine certifies
+# nothing about the merged tree. These are the gates whose bodies the tree
+# already carries and whose CI execution was missing, so a red result here means
+# a gate the repository claims but no merge ever runs.
+MANDATORY_CI_EXECUTIONS = (
+    ("retirement-tripwire ratchet", "just lint-tripwire-ratchet"),
+    ("executor release ratchet", "just check-executor-release-ratchet-index"),
+    ("stubtest drift", "just lint-stubtest"),
+    ("comment hygiene", "just lint-comment-hygiene"),
+    ("CI job parity", "scripts/hooks/ci-parity.sh"),
+    ("consumer probes", "just check-consumer-probes"),
+)
+
+RATCHET_SCRIPT = REPO_ROOT / "scripts" / "executor_release_ratchet.py"
+RELEASE_BASE_STEP = "Resolve the executor release base"
+ZERO_SHA = "0" * 40
+GIT_IDENTITY = (
+    "-c",
+    "user.name=release-base",
+    "-c",
+    "user.email=base@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+)
+
+
+def _ci_jobs(source: Path) -> list[str]:
+    """Every job id under `jobs:`, read the way ci-parity.sh's awk reads them."""
+    jobs: list[str] = []
+    in_jobs = False
+    for line in source.read_text(encoding="utf-8").splitlines():
+        if line == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line and not line.startswith(" "):
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+        if match:
+            jobs.append(match.group(1))
+    return jobs
+
+
+def _ci_job(source: Path, name: str) -> str:
+    """The named job's block: its key through the line before the next job key."""
+    block: list[str] = []
+    key = f"  {name}:"
+    for line in source.read_text(encoding="utf-8").splitlines():
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", line):
+            if block:
+                break
+            if line != key:
+                continue
+        if block or line == key:
+            block.append(line)
+    assert block, f"{source} declares no job {name!r}"
+    return "\n".join(block)
+
+
+def _step_run_body(source: Path, name: str) -> str:
+    """The run: body of the step named `name`, as shell text."""
+    lines = source.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (index for index, line in enumerate(lines) if line.strip() == f"- name: {name}"), None
+    )
+    assert start is not None, f"{source} declares no step named {name!r}"
+
+    body: list[str] = []
+    run_indent: int | None = None
+    for line in lines[start:]:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if run_indent is None:
+            if stripped.startswith(("run: |", "run: >-", "run: >")):
+                run_indent = indent
+            continue
+        if stripped and indent <= run_indent:
+            break
+        body.append(line[run_indent + 2 :] if len(line) > run_indent else "")
+    assert body, f"the {name!r} step runs no script"
+    return "\n".join(body)
+
+
+def _release_base_env_name() -> str:
+    """The base variable the ratchet reads, so the wiring cannot name another."""
+    match = re.search(
+        r'^BASE_ENV = "([A-Z0-9_]+)"$', RATCHET_SCRIPT.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert match is not None, "the ratchet must declare the base variable it reads"
+    return match.group(1)
+
+
+def _git(repo: Path, *args: str) -> str:
+    """Run git in `repo` and return its stdout, failing the test on a nonzero exit."""
+    exe = shutil.which("git")
+    assert exe is not None, "git is not installed on PATH"
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [exe, "-C", str(repo), *GIT_IDENTITY, *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr}"
+    return result.stdout.strip()
+
+
+def _forked_repository(tmp_path: Path) -> tuple[Path, str, str]:
+    """A main branch that advanced after a feature branch forked off it.
+
+    Returns the repository, the fork point, and the advanced base tip.
+    """
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main", ".")
+    (repo / "release.txt").write_text("release v2", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "release v2")
+    fork = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "work.txt").write_text("feature work", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feature work")
+    _git(repo, "checkout", "-q", "main")
+    (repo / "later.txt").write_text("a release landed after the fork", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main advanced")
+    tip = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", tip)
+    _git(repo, "checkout", "-q", "feature")
+    return repo, fork, tip
+
+
+def _run_release_base(
+    repo: Path, *, pr_base: str, push_before: str, default_branch: str
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    """Run the workflow's base-resolution step in `repo`, as the runner would."""
+    env_file = repo / "github_env"
+    env_file.write_text("", encoding="utf-8")
+    env = dict(os.environ)
+    env.update({
+        "PR_BASE": pr_base,
+        "PUSH_BEFORE": push_before,
+        "DEFAULT_BRANCH": default_branch,
+        "GITHUB_ENV": str(env_file),
+    })
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [_sh(), "-e", "-c", _step_run_body(CI_YML, RELEASE_BASE_STEP)],
+        cwd=repo,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    exported = {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in env_file.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    }
+    return result, exported
+
+
+def test_every_ci_job_is_in_the_aggregate_needs() -> None:
+    """A job the aggregate does not need can fail without failing the branch."""
+    jobs = _ci_jobs(CI_YML)
+    assert len(jobs) > 1, "the workflow declares no jobs to aggregate"
+
+    aggregate = _ci_job(CI_YML, "ci-green")
+    match = re.search(r"^\s*needs: \[(.*)\]$", aggregate, re.MULTILINE)
+    assert match is not None, "ci-green must declare a one-line needs list"
+    declared = {name.strip() for name in match.group(1).split(",")}
+
+    assert declared == set(jobs) - {"ci-green"}, (
+        "ci-green's needs must name every other job: an omitted job runs "
+        "unaccounted, so its failure cannot fail the aggregate"
+    )
+
+
+def test_every_mandatory_gate_has_an_explicit_ci_execution() -> None:
+    """Each gate below owns a property of the merged tree, not of one push."""
+    text = CI_YML.read_text(encoding="utf-8")
+
+    missing = [gate for gate, invocation in MANDATORY_CI_EXECUTIONS if invocation not in text]
+
+    assert not missing, f"ci.yml never executes: {missing}"
+
+
+def test_the_python_lint_step_is_check_only() -> None:
+    """CI must not run the `--fix` recipe: the runner discards its repairs."""
+    text = CI_YML.read_text(encoding="utf-8")
+
+    assert "run: just lint-python-check" in text
+    assert re.search(r"run: just lint-python(?=[\s]|$)", text) is None, (
+        "the fixing recipe would go green over a tree it silently repaired"
+    )
+
+
+def test_the_commitlint_job_lints_through_the_recipe() -> None:
+    """CI lints the event's own range through `just lint-commits`.
+
+    A runner checkout carries no upstream tracking ref, so the recipe's default
+    `@{push}..HEAD` cannot resolve there: the range has to be the event's.
+    """
+    job = _ci_job(CI_YML, "commitlint")
+
+    assert "just lint-commits" in job
+    assert "uses: extractions/setup-just@" in job, "the recipe cannot run without just"
+    assert "github.event.before" in job, "a push lints the commits being pushed"
+    assert "github.event.pull_request.base.sha" in job, (
+        "a PR lints against its own target branch, not a hard-coded one"
+    )
+
+
+def test_the_stubtest_gate_runs_after_an_extension_build() -> None:
+    """stubtest introspects the INSTALLED extension; it must exist first."""
+    job = _ci_job(CI_YML, "python")
+    install = job.find("run: just install-extension-wheel")
+    stubtest = job.find("run: just lint-stubtest")
+
+    assert install != -1, "the python job must install the wheel it tests"
+    assert stubtest != -1, "the python job must run the stubtest gate"
+    assert install < stubtest, (
+        "stubtest compares the stubs against the extension's real surface, so a "
+        "run before the install certifies an extension the tree never built"
+    )
+
+
+def test_the_executor_release_ratchet_gets_an_independent_fetched_base() -> None:
+    """The ratchet fails closed without a base INDEPENDENT of the commit under test.
+
+    Supplying one is the job's contract: the gate itself refuses to compare HEAD
+    with itself, so CI has to name the event's base and have that commit's
+    history in the checkout.
+    """
+    job = _ci_job(CI_YML, "policy-gates")
+    base_env = _release_base_env_name()
+    exported = f"{base_env}="
+    gate = job.find("run: just check-executor-release-ratchet-index")
+    body = _step_run_body(CI_YML, RELEASE_BASE_STEP)
+
+    assert gate != -1, "the policy-gates job must run the ratchet's live-tree half"
+    assert "fetch-depth: 0" in job, (
+        "a shallow checkout cannot resolve the base commit, so the preservation "
+        "half of the ratchet could only fail closed"
+    )
+    assert exported in job, f"the job must hand the gate {base_env}"
+    assert job.find(exported) < gate, "the base must be exported before the gate runs"
+    assert "github.event.pull_request.base.sha" in job, "the PR base is the event's own"
+    assert "github.event.before" in job, "the push base is the commits' own"
+    assert "origin/" in job, "a force push orphans `before`; the default branch is the fallback"
+    assert "git merge-base" in body, (
+        "the exported base must be the fork point, not the candidate tip: a base "
+        "branch that advanced after the branch forked carries release packages "
+        "this commit never had"
+    )
+    assert body.index("git merge-base") < body.index(exported), (
+        "the merge-base result is what gets exported"
+    )
+    assert "^{commit}" in body, "the resolved base must be verified as a commit"
+
+
+def test_the_release_base_is_the_fork_point_not_the_base_tip(tmp_path: Path) -> None:
+    """A base tip past the fork point would report the base's own releases missing."""
+    repo, fork, tip = _forked_repository(tmp_path)
+    base_env = _release_base_env_name()
+    cases = {
+        "pull request base": {"pr_base": tip, "push_before": ZERO_SHA, "default_branch": "main"},
+        "default-branch fallback": {
+            "pr_base": "",
+            "push_before": ZERO_SHA,
+            "default_branch": "main",
+        },
+        "push before": {"pr_base": "", "push_before": fork, "default_branch": "main"},
+    }
+
+    for label, resolved in cases.items():
+        result, exported = _run_release_base(repo, **resolved)
+
+        assert result.returncode == 0, f"{label}: {result.stdout}{result.stderr}"
+        assert exported == {base_env: fork}, (
+            f"{label}: the base must be the fork point {fork}, not the advanced tip"
+            f" {tip} (exported {exported})"
+        )
+
+
+def test_a_release_base_without_shared_history_fails_the_step(tmp_path: Path) -> None:
+    """No common ancestor means no preservation base: the step must not guess one."""
+    repo, _fork, _tip = _forked_repository(tmp_path)
+    _git(repo, "checkout", "-q", "--orphan", "unrelated")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "unrelated root")
+    unrelated = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "feature")
+
+    result, exported = _run_release_base(
+        repo, pr_base="", push_before=unrelated, default_branch="main"
+    )
+
+    assert result.returncode != 0, "a base with no shared history must fail the step"
+    assert exported == {}, "a rejected base must hand the gate nothing"
+    assert "no history" in result.stderr
+
+
 def test_a_job_without_the_llvm_toolchain_fails(tmp_path: Path) -> None:
     """A job that compiles default features needs the LLVM 23 composite action."""
     mutated = _mutate(

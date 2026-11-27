@@ -114,10 +114,20 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - name: Lint commit messages
-        # On push: lint only the commits being pushed (before..after).
-        # On PRs: lint all commits in the PR (merge-base..HEAD).
-        # Fallback: lint the last 20 commits on the branch.
+        # The invocation is `just lint-commits <range>`, the same recipe the
+        # pre-push commitlint-push gate mirrors, so the @commitlint/cli pin and
+        # the rule set live in the justfile instead of being restated here.
+        #
+        # The range is always the event's own: a runner checkout has no upstream
+        # tracking ref, so the recipe's default `@{push}..HEAD` cannot resolve.
+        # On push: the commits being pushed (before..HEAD).
+        # On PRs: the commits the PR introduces, merged with the base the event
+        # names -- never a hard-coded origin/main, since a PR can target dev.
+        # Fallback: the last 20 commits on the branch.
         run: |
           if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             FROM="${{ github.event.before }}"
@@ -133,7 +143,9 @@ jobs:
               if [ "$n" -ge 1 ]; then FROM="HEAD~$((n - 1))"; else FROM="HEAD"; fi
             fi
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            FROM=$(git merge-base origin/main HEAD)
+            # merge-base, not the base tip: the range is the commits the PR adds,
+            # not the base branch's commits that landed after it branched.
+            FROM=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
           else
             FROM=HEAD~20
           fi
@@ -143,9 +155,7 @@ jobs:
             exit 0
           fi
           echo "Linting commits from $FROM to HEAD"
-          # Pinned: a floating @commitlint/cli would make the lint rule set
-          # depend on when the job runs.
-          npx --yes @commitlint/cli@21.2.4 --from="$FROM" --to=HEAD
+          just lint-commits "${FROM}..HEAD"
 
   markdownlint:
     name: Markdown Lint
@@ -167,8 +177,98 @@ jobs:
       - name: Lint Markdown
         # No --fix: an auto-fixable violation would be corrected on the runner
         # and discarded, going green while the repository stays dirty. Fail on
-        # the violation instead. Pinned for the same reason as commitlint.
+        # the violation instead. The CLI pin is the justfile's `markdownlint_cli`
+        # literal -- the one the commit-time hook runs too.
         run: just lint-markdown-check
+
+  policy-gates:
+    # Whole-tree policy gates with no compile behind them: the retirement-tripwire
+    # ratchet, the comment-hygiene gate, the ci.yml manifest parity brake, and the
+    # cmd_executor release ratchet. None can be path-gated: a docs-only push still
+    # writes prose, a release package is a rust/ file, and a gate's own wiring is
+    # machinery -- the path that can carry the violation is exactly the path a
+    # filter would skip. Each is seconds, so this job runs unconditionally beside
+    # commitlint and markdownlint.
+    #
+    # Full history: the release ratchet compares the accepted index against a base
+    # commit INDEPENDENT of the one under test (scripts/executor_release_ratchet.py
+    # fails closed rather than compare HEAD with itself), so that base has to be in
+    # the checkout.
+    name: Tree policy gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c4894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Sync the uv environment (no extension build)
+        run: uv sync --locked --dev --no-install-project
+
+      # The comment-hygiene gate shells out to ripgrep with the repository's
+      # ignore rules, which ubuntu-latest no longer preinstalls; the gate refuses
+      # rather than certify a tree it could not scan.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
+
+      - name: Comment hygiene gate
+        run: just lint-comment-hygiene
+
+      - name: Retirement-tripwire ratchet
+        run: just lint-tripwire-ratchet
+
+      # The manifest brake reads ci.yml against the local entrypoints, so it needs
+      # `just` (recipe existence is asked of just itself) and a plain python3.
+      - name: CI job parity
+        run: scripts/hooks/ci-parity.sh
+
+      # The ratchet refuses to compare HEAD with itself, so a candidate base is
+      # named from the event and its history is in the checkout above: a PR's
+      # `base.sha`, a push's `before`, and -- only when neither resolves, which a
+      # force push causes -- the default branch's tip.
+      #
+      # The candidate is then reduced to where it and HEAD diverged. A base branch
+      # that advanced after the branch forked carries release packages this commit
+      # never had, and the ratchet reads those as accepted packages going missing.
+      # HEAD is never substituted: the gate's own HEAD-to-parent advancement
+      # handles that case and refuses when there is no parent.
+      - name: Resolve the executor release base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          candidate="${PR_BASE:-$PUSH_BEFORE}"
+          if [ -z "$candidate" ] || [ "$candidate" = "0000000000000000000000000000000000000000" ] ||
+             ! git rev-parse --verify --quiet "${candidate}^{commit}" > /dev/null; then
+            candidate="origin/${DEFAULT_BRANCH:-main}"
+            echo "::warning::no usable event base; falling back to ${candidate}"
+          fi
+          if ! base="$(git merge-base "${candidate}" HEAD)"; then
+            echo "::error::the release base candidate ${candidate} shares no history with HEAD; the ratchet cannot name an independent base" >&2
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "${base}^{commit}" > /dev/null; then
+            echo "::error::the resolved release base '${base}' is not a commit" >&2
+            exit 1
+          fi
+          echo "DEGENBOT_RELEASE_RATCHET_BASE=${base}" >> "$GITHUB_ENV"
+          echo "executor release base: ${base} (from candidate ${candidate})"
+
+      # The live-tree half of the ratchet. Its pytest probes (the red paths and
+      # the next-tag path) already run in the suite the python job executes, so
+      # this job runs the gate body only, never a duplicate of them.
+      - name: Executor release ratchet (frozen release packages)
+        run: just check-executor-release-ratchet-index
 
   msrv:
     name: MSRV (Rust 1.97)
@@ -796,9 +896,11 @@ jobs:
         if: matrix.python-version == '3.12'
         run: just check-uv-lock && just fmt-check-python
 
+      # Check-only: CI never runs the `--fix` recipe, whose repairs the runner
+      # would discard (green over a tree it silently repaired).
       - name: Run Python linters
         if: matrix.python-version == '3.12'
-        run: just lint-python
+        run: just lint-python-check
 
       # The executor lane compiles the canonical Uniswap V2/V3/V4 sources from
       # the gitignored `tier3-oracle/lib` checkout (the same reference contracts
@@ -810,6 +912,21 @@ jobs:
       - name: Run executor contract tests (offline Forge lane)
         if: matrix.python-version == '3.12'
         run: just test-executor-offline
+
+      # ADR-053: stubtest compares the generated stubs against the extension's
+      # real surface, so it introspects what the wheel installed above put in
+      # place: it runs here, after that install, and only on the leg that has it.
+      - name: Stubtest drift gate (installed extension)
+        if: matrix.python-version == '3.12'
+        run: just lint-stubtest
+
+      # ADR-084 D1/C5: each named catalog consumer completes a real task through
+      # its own surface -- the pools-only probe solves through the solve door,
+      # the solve-surface probe drives the installed extension, and the console
+      # probe runs the offline `config show --resolved` task.
+      - name: Consumer probes (each catalog consumer completes a real task)
+        if: matrix.python-version == '3.12'
+        run: just check-consumer-probes
 
       - name: Run Tests
         # Spray tripwire: `just test-python-noise-gate` runs the same suite but
@@ -882,7 +999,7 @@ jobs:
     # needed job failed - otherwise it would skip and report green.
     name: CI (aggregate)
     if: always()
-    needs: [changes, commitlint, markdownlint, msrv, rust-lint, rust-test, rust-release-tests, rust-artifacts, rust-policy-lanes, cli-no-python, tier3-oracle, python-wheel, python, stub-drift]
+    needs: [changes, commitlint, markdownlint, policy-gates, msrv, rust-lint, rust-test, rust-release-tests, rust-artifacts, rust-policy-lanes, cli-no-python, tier3-oracle, python-wheel, python, stub-drift]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
