@@ -78,7 +78,7 @@ if [ -z "$version" ]; then
 fi
 
 # Publishable members are the static publication plan's eligible set
-# (scripts/publication_plan.py, the census gate's own authority): the
+# (scripts/publication_plan.py, the plan check's own authority): the
 # metadata `publish` value is not [], so a crate declaring publish = false
 # is skipped without a hand-maintained list drifting out of date, while an
 # allowlisted member (publish = ["crates-io"] or another registry) stays in

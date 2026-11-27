@@ -174,10 +174,11 @@ for verification at any point in a release.
   lockstep set — the umbrella `degenbot` row and the renamed `evm2*` rows
   included — because a stale literal packs a release whose published
   manifests require sibling versions the registry does not hold. Equality is
-  enforced as a finding of the publish-blocked census gate
-  (`just check-publish-blocked`), derived from the static publication plan;
-  the release workflow runs that gate instead of carrying its own `sed`/`grep`
-  comparison, and tag-to-version normalization stays its own concern. A bump
+  enforced as a finding of the static publication plan's own check
+  (`just check-publication-plan`, `python3 scripts/publication_plan.py
+  --check`); the release workflow's tag/version step runs that check instead
+  of carrying its own `sed`/`grep` comparison, and tag-to-version
+  normalization stays its own concern. A bump
   moves the whole set through `just bump-version <semver>`: cargo-edit
   rewrites the shared literal, every member's inherited version, every internal
   requirement, and `Cargo.lock` together.

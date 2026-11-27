@@ -1084,7 +1084,7 @@ record-aave-cassette *args:
 
 # crates.io publish oracle (crates-io-publishing-prep handoff §2, gate G1):
 # verification-builds every workspace member that can publish, with the
-# publish-blocked census reconciled FIRST (docs/gates.md section 6). At a
+# publication plan's check run FIRST (docs/gates.md section 6). At a
 # fresh lockstep version the siblings a member requires are not on crates.io
 # yet, and the rewritten manifests must resolve before any verify build --
 # `--no-verify` does NOT skip resolution -- so the run drives ONE Cargo-owned
@@ -1096,9 +1096,9 @@ record-aave-cassette *args:
 # against the populated registry. Uploads are confined to the loopback under
 # a run-owned CARGO_HOME and a fixed dummy token; no real token is read and
 # nothing reaches crates.io. A member whose published manifest would require
-# a dependency crates.io cannot resolve is withheld by name -- never dropped
-# by silence -- and keeps its file-inclusion coverage through `cargo package
-# --list`. It re-enters the run in the same change its census row goes.
+# a dependency crates.io cannot resolve ends the run at its withhold boundary
+# -- named with its reason, never dropped by silence -- so the population that
+# once needed a ledger stays empty.
 # ~20-40 min cold with verification; CI's PR gate runs the clean-tree
 # `--no-verify` form.
 publish-dry-run *args:
@@ -1119,20 +1119,22 @@ check-vendor-tracked:
     scripts/vendor_tracked.sh
 
 
-# The publish-blocked census on its own (docs/gates.md section 6): every member
-# `cargo publish` cannot upload is reconciled against
-# scripts/publish-blocked-census.txt in both directions, so the population the
-# publish oracle withholds is named in the tree and cannot move silently.
-# `--rows` prints the rows the manifests imply (the regeneration form);
-# `--blocked` prints the member names to withhold.
+# The publication plan's own check (docs/gates.md section 6): every internal
+# versioned requirement in the root manifest's [workspace.dependencies] table
+# carries [workspace.package].version, and the publishable members' retained
+# normal and dev dependencies form no cycle. Both facts are derived by the
+# static plan (scripts/publication_plan.py) and reported by its `--check` mode
+# with one exit-code contract: 0 clean, 1 a finding naming the stale row (with
+# the `just bump-version` repair) or the cycle, 2 a workspace the plan cannot
+# certify.
 #
 # Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python`: this
-# gate rides the uv-free Rust lint leg, and the script imports nothing outside
+# check rides the uv-free Rust lint leg, and the script imports nothing outside
 # the standard library.
 #
-# live-invariant gate (ADR-087 D2): watches the live workspace manifests and the dependency shapes their published forms retain against scripts/publish-blocked-census.txt; not tripwire precedent.
-check-publish-blocked *args:
-    python3 scripts/publish_blocked.py "$@"
+# live-invariant gate (ADR-087 D2): watches the live workspace manifests' internal requirement literals and the dependency edges their published forms retain; not tripwire precedent.
+check-publication-plan *args:
+    python3 scripts/publication_plan.py --check "$@"
 
 # Reconcile rust/tools/README.md's catalog against the live Cargo metadata and this
 # justfile: every public example and lab [[bin]] covered exactly once in both
@@ -1142,7 +1144,7 @@ check-publish-blocked *args:
 # because no Markdown changed.
 #
 # Interpreter: a plain `python3`, deliberately NOT `{{ py_run }} python` (same
-# reason as check-publish-blocked): this gate rides the uv-free Rust lint leg,
+# reason as check-publication-plan): this gate rides the uv-free Rust lint leg,
 # and the script imports nothing outside the standard library.
 #
 # live-invariant gate (ADR-087 D2): watches the live tool/example targets and just recipes against rust/tools/README.md; not tripwire precedent.
@@ -1186,7 +1188,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-publish-blocked check-vendor-tracked check-tool-catalog
+lint-rust-check: check-toolchain check-publication-plan check-vendor-tracked check-tool-catalog
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -2356,10 +2358,10 @@ lint-markdown-check:
 # `ty` covers the gate surface; the one-off recorders and math oracles join when
 # their pre-existing diagnostics are triaged.
 lint-python:
-    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
     # ty runs in the project environment (it resolves third-party imports and the
     # degenbot stubs from the venv), which is where its dev dependency installs it.
-    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
 # The AGENTS.md "Comment Hygiene" gate (docs/comments.md): tracker citations and
 # RED/GREEN gate narration never live in code comments.
@@ -2393,8 +2395,8 @@ lint-tripwire-ratchet:
 # pre-push hook both run this form, so neither can green over a tree it silently
 # repaired. `lint-python` is the same detectors with the repairs applied.
 lint-python-check:
-    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
-    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
+    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -2565,8 +2567,8 @@ setup-git-hooks:
     command -v prek >/dev/null 2>&1 || uv tool install prek
     prek install
     echo "✓ prek hooks installed:"
-    echo "    pre-commit : Markdown lint + comment hygiene + censuses (publish-"
-    echo "                 blocked, tool catalog, parity ledger) + worker census +"
+    echo "    pre-commit : Markdown lint + comment hygiene + censuses (tool"
+    echo "                 catalog, parity ledger) + worker census +"
     echo "                 staged Rust/Python fmt + stub drift + gate-registry"
     echo "    commit-msg : commitlint against .commitlintrc.yml (relaxed rules)"
     echo "    pre-push   : toolchain tier + CI parity + commitlint push-range +"

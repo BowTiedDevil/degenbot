@@ -6,7 +6,7 @@ script's logic, and the default suite never queries the real crates.io index.
 
 The membership rule is the one the publish chain shares: a member is
 publish-eligible exactly when its ``cargo metadata`` ``publish`` value is not
-``[]`` (``scripts/publish_blocked.py`` applies the same rule). Concretely:
+``[]`` (``scripts/publication_plan.py`` applies the same rule). Concretely:
 
   * an unrestricted member (no ``publish`` key, or ``publish = true``, which
     cargo normalizes to ``null``) is audited;
@@ -71,12 +71,6 @@ edition = "2021"
             encoding="utf-8",
         )
     return tree
-
-
-def _census(tree: Path, rows: list[str]) -> None:
-    path = tree / "scripts" / "publish-blocked-census.txt"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{row}\n" for row in rows), encoding="utf-8")
 
 
 def _index_path(name: str) -> str:
@@ -243,7 +237,6 @@ def test_an_allowlisted_member_cannot_bypass_the_verify_oracle(tmp_path: Path) -
             "pubfix-foreign": 'publish = ["private-reg"]\n',
         },
     )
-    _census(tree, [])
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
         [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
         check=False,

@@ -19,11 +19,17 @@ satisfied by a re-typed copy of the script's logic.
     ``--no-verify`` PR form passes and names every member covered.
   * ``test_the_oracle_verifies_a_fresh_lockstep_workspace`` -- the verified
     release form passes and builds the packaged form.
-  * ``test_a_census_withheld_member_is_withheld_by_name`` -- the
-    publish-blocked census stays the owner of genuinely unresolvable shapes:
-    a versioned git dep is excluded by name while the rest stay covered.
-  * ``test_an_unrecorded_block_fails_the_oracle_loud`` -- a withheld member
-    with no census row fails the run before any cargo invocation.
+  * ``test_a_withheld_member_is_refused_by_name_not_withheld`` -- the
+    withheld population's destination is empty and the census that named its
+    members is retired, so the run refuses a member the manifests withhold
+    instead of excluding it by name: a member can never leave the oracle's
+    coverage by silence.
+  * ``test_a_withheld_member_is_refused_before_the_allowlist_refusal`` -- the
+    withhold boundary outranks every other member set the run acts on, so an
+    allowlisted withheld member fails there, before any cargo invocation.
+  * ``test_a_workspace_the_plan_cannot_certify_is_refused`` -- the plan's
+    refusal keeps its exit code through the oracle: a tree with no publishable
+    member exits 2 with the refusal named, before any packaging.
   * ``test_a_fresh_run_verifies_every_pending_member``,
     ``test_a_resumed_run_verifies_only_pending_members_against_live_siblings``,
     and ``test_a_fully_live_run_skips_every_verification_round`` -- the three
@@ -144,10 +150,8 @@ from tests.repo_script import load_script
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ORACLE = _REPO_ROOT / "scripts" / "publish_verify.py"
-_CENSUS_PARTS = ("scripts", "publish-blocked-census.txt")
-
-# The withheld shape the census owns and that still resolves as a workspace:
-# a publishable member requiring a `publish = false` member by versioned path.
+# The withheld shape that still resolves as a workspace: a publishable member
+# requiring a `publish = false` member by versioned path.
 _PRIV_DEP = '[dependencies]\npriv = { path = "../priv", version = "0.1.0" }\n'
 
 
@@ -199,12 +203,6 @@ edition = "2021"
         )
         (crate / "Cargo.toml").write_text(manifest, encoding="utf-8")
     return root
-
-
-def _census(tree: Path, rows: list[str]) -> None:
-    path = tree.joinpath(*_CENSUS_PARTS)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{row}\n" for row in rows), encoding="utf-8")
 
 
 def _oracle(tree: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -359,7 +357,6 @@ def test_the_oracle_covers_a_fresh_lockstep_workspace_dry_run(tmp_path: Path) ->
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify")
     assert result.returncode == 0, result.stdout + result.stderr
     for name in ("pubfix-leaf", "pubfix-mid", "pubfix-top"):
@@ -378,7 +375,6 @@ def test_the_oracle_verifies_a_fresh_lockstep_workspace(tmp_path: Path) -> None:
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree)
     assert result.returncode == 0, result.stdout + result.stderr
     # Cargo's status lines (Verifying/Compiling/Uploading) stream on stderr.
@@ -400,7 +396,6 @@ def test_a_fresh_run_verifies_every_pending_member(tmp_path: Path) -> None:
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree)
     assert result.returncode == 0, result.stdout + result.stderr
     verified = sorted(
@@ -434,7 +429,6 @@ def test_a_resumed_run_verifies_only_pending_members_against_live_siblings(
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--exclude", "pubfix-leaf")
     assert result.returncode == 0, result.stdout + result.stderr
     # resolution set: the live sibling is still packed and indexed
@@ -465,7 +459,6 @@ def test_a_fully_live_run_skips_every_verification_round(tmp_path: Path) -> None
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(
         tree,
         "--exclude",
@@ -497,7 +490,6 @@ def test_an_unknown_exclusion_fails_loud_before_packing(tmp_path: Path) -> None:
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify", "--exclude", "pubfix-ghost")
     assert result.returncode != 0
     output = result.stdout + result.stderr
@@ -516,7 +508,6 @@ def test_an_exclusion_accepts_the_equals_form(tmp_path: Path) -> None:
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify", "--exclude=pubfix-leaf")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "publish-verify resolution-only pubfix-leaf v0.1.0" in result.stdout
@@ -554,7 +545,6 @@ def test_a_stale_lock_fails_the_pack_without_rewriting_it(tmp_path: Path) -> Non
     )
     assert stale != lock.read_text(encoding="utf-8")
     lock.write_text(stale, encoding="utf-8")
-    _census(tree, [])
 
     result = _oracle(tree, "--no-verify")
 
@@ -572,9 +562,10 @@ def test_a_retained_dev_cycle_fails_the_oracle_before_packaging(
     Every retained requirement -- normal or dev -- is an upload-ordering
     constraint, so `db -> pools -> uniswap -> db` (the real workspace's
     shape, with the dev edge retained by its explicit version) leaves
-    `cargo publish --workspace` no upload order. The census gate rejects the
-    cycle outright with the cycle named before this oracle packs anything,
-    so no member is covered and no census exclusion may hide the defect.
+    `cargo publish --workspace` no upload order. The publication plan's own
+    check rejects the cycle outright, with the cycle named, before this
+    oracle packs anything: no member is covered and no exclusion may hide
+    the defect.
     """
     tree = _lockstep_tree(
         tmp_path,
@@ -588,7 +579,6 @@ def test_a_retained_dev_cycle_fails_the_oracle_before_packaging(
             "pubfix-uniswap": "[dependencies]\npubfix-db.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify")
     assert result.returncode == 1
     assert "publishable dependency cycle" in result.stdout
@@ -621,7 +611,6 @@ def test_a_renamed_optional_dep_keeps_its_manifest_feature_reference(
             ),
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify", "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     overlay = _only_overlay_run(tree)
@@ -632,72 +621,68 @@ def test_a_renamed_optional_dep_keeps_its_manifest_feature_reference(
     assert entry["features2"]["realfeat"] == ["dep:alias"]
 
 
-def test_a_census_withheld_member_is_withheld_by_name(tmp_path: Path) -> None:
-    tree = _lockstep_tree(
-        tmp_path,
-        {
-            "pubfix-leaf": "",
-            "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
-            "pubfix-blocked": _PRIV_DEP,
-            "priv": "",
-        },
-        publishable=("pubfix-leaf", "pubfix-mid", "pubfix-blocked"),
-    )
-    _census(tree, ["pubfix-blocked\tdepends on non-publishable priv"])
-    result = _oracle(tree, "--no-verify")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "publish-blocked pubfix-blocked:" in result.stdout
-    assert "publish-verify covered pubfix-blocked" not in result.stdout
-    for name in ("pubfix-leaf", "pubfix-mid"):
-        assert f"publish-verify covered {name}" in result.stdout
+def test_a_withheld_member_is_refused_by_name_not_withheld(tmp_path: Path) -> None:
+    """A withheld member fails the run loud; it is never excluded by name.
 
-
-def test_an_allowlisted_member_the_census_withholds_keeps_its_withheld_coverage(
-    tmp_path: Path,
-) -> None:
-    """Census withholding outranks the allowlist refusal.
-
-    A member that is both allowlisted and census-withheld has no upload path
-    by the census's own verdict already, so it never reaches the allowlist
-    refusal: the run keeps its withheld package-list coverage and certifies
-    the rest of the resolution set.
+    The census that once named withheld members is retired, its population
+    having reached its empty destination. A member whose retained requirement
+    reaches a `publish = false` member therefore has no name any consumer may
+    exclude: the run states the member and its reason and stops before any
+    cargo work, so nothing leaves the oracle's coverage by silence.
     """
     tree = _lockstep_tree(
         tmp_path,
         {
             "pubfix-leaf": "",
-            "pubfix-blocked": _PRIV_DEP,
-            "priv": "",
-        },
-        publishable=("pubfix-leaf", "pubfix-blocked"),
-        publish_tables={"pubfix-blocked": 'publish = ["crates-io"]'},
-    )
-    _census(tree, ["pubfix-blocked\tdepends on non-publishable priv"])
-
-    result = _oracle(tree, "--no-verify")
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    output = result.stdout + result.stderr
-    assert "publish-blocked pubfix-blocked:" in output
-    assert "publishes only to" not in output
-    assert "publish-verify covered pubfix-blocked" not in output
-
-
-def test_an_unrecorded_block_fails_the_oracle_loud(tmp_path: Path) -> None:
-    tree = _lockstep_tree(
-        tmp_path,
-        {
-            "pubfix-leaf": "",
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
             "pubfix-blocked": _PRIV_DEP,
             "priv": "",
         },
         publishable=("pubfix-leaf", "pubfix-mid", "pubfix-blocked"),
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify")
     assert result.returncode == 1
-    assert "no census row" in result.stdout
+    output = result.stdout + result.stderr
+    assert "pubfix-blocked" in output
+    assert "depends on non-publishable priv" in output
+    assert "publish-verify covered" not in result.stdout
+
+
+def test_a_withheld_member_is_refused_before_the_allowlist_refusal(tmp_path: Path) -> None:
+    """The withhold boundary outranks every member set the run acts on.
+
+    A member that is both allowlisted and withheld by the manifests fails the
+    withhold boundary first: no exclusion may stand in for a member's upload
+    path, so the run never reaches the allowlist verdict it also owes.
+    """
+    tree = _lockstep_tree(
+        tmp_path,
+        {"pubfix-blocked": _PRIV_DEP, "priv": ""},
+        publishable=("pubfix-blocked",),
+        publish_tables={"pubfix-blocked": 'publish = ["crates-io"]'},
+    )
+    result = _oracle(tree, "--no-verify")
+    assert result.returncode == 1
+    output = result.stdout + result.stderr
+    assert "pubfix-blocked" in output
+    assert "withhold" in output
+    assert "publishes only to" not in output
+    assert "publish-verify covered" not in result.stdout
+
+
+def test_a_workspace_the_plan_cannot_certify_is_refused(tmp_path: Path) -> None:
+    """The plan's refusal translations keep their exit code.
+
+    A tree with no publishable member cannot be certified, so the run refuses
+    with the plan's own message and exit 2 before any cargo packaging -- the
+    code the release step and the dry-run recipe distinguish from a finding.
+    """
+    tree = _lockstep_tree(tmp_path, {"pubfix-leaf": ""}, publishable=())
+    result = _oracle(tree, "--no-verify")
+    assert result.returncode == 2
+    assert "no publishable member" in result.stderr
+    assert "refusing to certify" in result.stderr
+    assert "publish-verify covered" not in result.stdout
 
 
 def test_a_non_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
@@ -713,7 +698,6 @@ def test_a_non_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
         {"pubfix-leaf": ""},
         publish_tables={"pubfix-leaf": 'publish = ["private-registry"]'},
     )
-    _census(tree, [])
 
     result = _oracle(tree, "--no-verify")
 
@@ -738,7 +722,6 @@ def test_a_crates_io_publish_allowlist_fails_loud(tmp_path: Path) -> None:
         {"pubfix-leaf": ""},
         publish_tables={"pubfix-leaf": 'publish = ["crates-io"]'},
     )
-    _census(tree, [])
 
     result = _oracle(tree, "--no-verify")
 
@@ -758,7 +741,6 @@ def test_the_oracle_rejects_caller_registry_targeting(tmp_path: Path) -> None:
     and the `=` form. Everything else keeps forwarding to the publish rounds.
     """
     tree = _lockstep_tree(tmp_path, {"pubfix-leaf": ""})
-    _census(tree, [])
     for forwarded in (
         ("--registry", "evil"),
         ("--registry=evil",),
@@ -775,7 +757,7 @@ def test_the_oracle_rejects_caller_registry_targeting(tmp_path: Path) -> None:
         output = result.stdout + result.stderr
         assert forwarded[0].split("=")[0] in output, forwarded
         # Refused before any cargo work, not after a partial run.
-        assert "publish-blocked census reconciled" not in result.stdout, forwarded
+        assert "publish-verify covered" not in result.stdout, forwarded
 
 
 def _only_overlay_run(tree: Path) -> Path:
@@ -1615,7 +1597,6 @@ def test_a_run_survives_a_squatter_on_the_retired_fixed_port(tmp_path: Path) -> 
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     with socket.socket() as squatter:
         try:
             squatter.bind(("127.0.0.1", 41946))
@@ -1636,8 +1617,6 @@ def test_concurrent_runs_on_distinct_trees_stay_independent(tmp_path: Path) -> N
         "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
     }
     trees = [_lockstep_tree(tmp_path / f"tree-{i}", members) for i in range(2)]
-    for tree in trees:
-        _census(tree, [])
     processes = [
         subprocess.Popen(
             [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
@@ -1672,7 +1651,6 @@ def test_two_concurrent_same_tree_runs_serialize_and_both_cover(
         "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
     }
     tree = _lockstep_tree(tmp_path / "tree", members)
-    _census(tree, [])
     processes = [
         subprocess.Popen(
             [sys.executable, str(_ORACLE), "--root", str(tree), "--no-verify"],
@@ -1706,7 +1684,6 @@ def test_a_held_same_tree_lock_fails_bounded_and_names_the_owner(
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     lock = tree / "rust" / "target" / "publish-verify.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     holder_pid = os.getpid()
@@ -1767,7 +1744,6 @@ def test_a_failed_run_cleans_up_without_deleting_another_runs_overlay(
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     good = _oracle(tree, "--no-verify", "--keep-overlay")
     assert good.returncode == 0, good.stdout + good.stderr
     overlay_root = tree / "rust" / "target" / "publish-verify-overlay"
@@ -1803,7 +1779,6 @@ def test_a_sentinel_real_cargo_home_stays_untouched(tmp_path: Path) -> None:
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     sentinel = tmp_path / "sentinel-cargo-home"
     # Pre-existing nested content: the pinned postcondition is byte-for-byte
     # equality of what the caller's real Cargo home already held, not just
@@ -1941,7 +1916,6 @@ def test_a_non_member_path_dependency_fails_the_run_loud(tmp_path: Path) -> None
         '[package]\nname = "pubfix-outsider"\nversion = "0.1.0"\nedition = "2021"\n',
         encoding="utf-8",
     )
-    _census(tree, [])
 
     result = _oracle(tree, "--no-verify")
 
@@ -1985,7 +1959,6 @@ def test_a_renamed_library_dependency_verifies_end_to_end(tmp_path: Path) -> Non
         "pub fn use_top() {\n    pubfix_user::use_both();\n}\n",
         encoding="utf-8",
     )
-    _census(tree, [])
     result = _oracle(tree, "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "aborting upload due to dry run" in result.stderr
@@ -2018,7 +1991,6 @@ def test_the_loopback_entry_is_cargo_generated_and_matches_the_uploaded_bytes(
             "pubfix-top": "[dependencies]\npubfix-mid.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify", "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     overlay = _only_overlay_run(tree)
@@ -2070,7 +2042,6 @@ def test_uploads_land_only_on_the_loopback_under_the_dummy_token(tmp_path: Path)
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     result = _oracle(tree, "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     overlay = _only_overlay_run(tree)
@@ -2107,7 +2078,6 @@ def test_uploads_land_on_the_loopback_under_hostile_token_env(tmp_path: Path) ->
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("CARGO_TOKEN", "real-default-registry-token")
         monkeypatch.setenv("CARGO_REGISTRIES_CRATES_IO_TOKEN", "real-crates-io-token")
@@ -2175,7 +2145,6 @@ def test_a_member_that_fails_to_compile_fails_the_verified_run(tmp_path: Path) -
         "this is not rust\n",
         encoding="utf-8",
     )
-    _census(tree, [])
     result = _oracle(tree)
     assert result.returncode != 0
     output = result.stdout + result.stderr
@@ -2219,7 +2188,6 @@ rust-version = "1.97"
             f"edition.workspace = true\nrust-version.workspace = true\n{links}",
             encoding="utf-8",
         )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify", "--keep-overlay")
     assert result.returncode == 0, result.stdout + result.stderr
     overlay = _only_overlay_run(tree)
@@ -2277,7 +2245,6 @@ def test_a_dirty_staging_directory_does_not_poison_a_rerun(tmp_path: Path) -> No
             "pubfix-mid": "[dependencies]\npubfix-leaf.workspace = true\n",
         },
     )
-    _census(tree, [])
     first = _oracle(tree, "--no-verify")
     assert first.returncode == 0, first.stdout + first.stderr
     staging = tree / "rust" / "target" / "package"
@@ -2323,7 +2290,6 @@ def test_a_publish_false_member_is_out_of_the_eligible_covered_set(tmp_path: Pat
         {"pubfix-leaf": "", "priv": ""},
         publishable=("pubfix-leaf",),
     )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "publish-verify covered pubfix-leaf" in result.stdout
@@ -2383,7 +2349,6 @@ edition = "2021"
             'edition.workspace = true\nlinks = "pubfix-native"\n',
             encoding="utf-8",
         )
-    _census(tree, [])
     result = _oracle(tree, "--no-verify")
     assert result.returncode != 0
     assert "publish-verify covered" not in result.stdout

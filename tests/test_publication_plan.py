@@ -1,12 +1,12 @@
 """The static publication plan (``scripts/publication_plan.py``).
 
 One planner answers every static membership question the publication chain
-asks -- Cargo eligibility, census withholding, retained-edge/cycle validation,
+asks -- Cargo eligibility, withheld membership, retained-edge/cycle validation,
 and resolution membership -- so no consumer re-derives the rule. The tests
 here pin the plan's own facts, both through the module interface (driven over
 synthetic metadata and over throwaway workspaces) and through the CLI the
-live audit shells out to. They are the plan-side half of the seams the census
-gate (``tests/test_publish_blocked_gate.py``), the live audit
+live audit shells out to. They are the plan-side half of the seams the
+live audit
 (``tests/test_crates_io_pending.py``), and the verify oracle
 (``tests/test_publish_verify_oracle.py``) pin at their CLIs.
 
@@ -15,7 +15,7 @@ gate (``tests/test_publish_blocked_gate.py``), the live audit
     AND allowlisted, and a ``publish = false`` member is absent from every
     publish-relevant set while still counting as a member (and as a
     requirement target).
-  * withholding -- the census rules 1-4: a version-keyed git dependency is a
+  * withholding -- the rules 1-4 the census once recorded: a version-keyed git dependency is a
     site, a version-less git dependency is rejected outright, dependents
     close over the population, and a requirement on a ``publish = false``
     member withholds its carrier as ``depends on non-publishable``.
@@ -36,6 +36,16 @@ gate (``tests/test_publish_blocked_gate.py``), the live audit
     stale literal is a finding on the plan, never a refusal; a workspace
     without a shared version has no invariant to validate, so the
     independent-version fixtures stay valid.
+  * the check -- ``check_plan`` (the CLI's ``--check`` mode) is the one
+    report and exit-code surface for the plan's two derived defects: a
+    retained-edge cycle (exit 1, nothing else reported) and a lockstep drift
+    (exit 1, the ``just bump-version`` repair named); a workspace the plan
+    cannot certify is the exit-2 refusal. ``just check-publication-plan``,
+    the Rust lint leg and the release workflow's tag step run exactly it.
+  * the withheld population -- zero in this workspace, asserted as such with
+    a negative fixture that proves the assertion can fail. The verify oracle
+    refuses a withheld member at its own boundary instead of withholding it
+    by name, so no census row stands between a member and its coverage.
   * refusals -- a metadata read failure, a memberless workspace, and a
     workspace with no eligible member are ``PublicationRefusal``, never a
     vacuously green plan; the CLI translates to exit 2.
@@ -166,8 +176,8 @@ def test_eligible_allowlisted_and_absent_facts(tmp_path: Path) -> None:
     assert plan.cycle is None
 
 
-def test_withheld_reasons_follow_the_census_rules(tmp_path: Path) -> None:
-    """Rules 2-4, with the reason spellings the census rows mirror."""
+def test_withheld_reasons_follow_the_manifest_rules(tmp_path: Path) -> None:
+    """Rules 2-4, with the reason spellings the manifests imply."""
     publication_plan = _plan_module()
     tree = _tree(
         tmp_path,
@@ -193,7 +203,7 @@ def test_withheld_reasons_follow_the_census_rules(tmp_path: Path) -> None:
     }
     # resolution = eligible minus withheld; the absent member is in neither.
     assert set(plan.resolution) == set(plan.members) - set(plan.withheld) - {"plan-priv"}
-    # the census row spelling the gate mirrors, straight off the plan object.
+    # the reason spelling the manifests imply, straight off the plan object.
     assert [f"{name}\t{plan.withheld[name]}" for name in sorted(plan.withheld)] == [
         "plan-carrier\tdepends on non-publishable plan-priv",
         "plan-dependent\tdepends on blocked plan-site",
@@ -746,3 +756,138 @@ def test_the_release_plan_cli_emits_the_projection(tmp_path: Path) -> None:
     assert bad_state.returncode == 3
     assert not bad_state.stdout
     assert "invalid" in bad_state.stderr
+
+
+# --- The plan's own check (`--check`) --------------------------------------
+#
+# The two derived facts a release cannot proceed through -- a retained-edge
+# cycle (no upload order exists) and a lockstep drift (a published manifest
+# would require a sibling version the registry does not hold) -- report
+# through one check: the `--check` CLI mode and the `check_plan` API behind
+# it. `just check-publication-plan`, the Rust lint leg and the release
+# workflow's tag step consume exactly this report and these exit codes, so no
+# consumer carries its own rendering or comparison. The withheld population
+# is a plan fact, not a check finding: the consumer that would withhold a
+# member (`scripts/publish_verify.py`) refuses at its own boundary, so no
+# census row can hide one.
+
+
+def _check_cli(tree: Path) -> subprocess.CompletedProcess[str]:
+    """Run the real CLI's `--check` mode over `tree`."""
+    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [
+            sys.executable,
+            str(_PLAN),
+            "--manifest-path",
+            str(_manifest(tree)),
+            "--check",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_the_check_reports_a_retained_cycle_before_any_other_finding(tmp_path: Path) -> None:
+    """A cycle is the report's whole content: no upload order exists, so the
+    lockstep row beside it is not what the run must repair first."""
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-a": _deps('plan-b = { path = "../plan-b", version = "0.1.0" }'),
+            "plan-b": _dev_deps('plan-a = { path = "../plan-a", version = "0.1.0" }'),
+        },
+        workspace_extra=_shared("0.2.0", 'plan-a = { version = "0.1.0", path = "crates/plan-a" }'),
+    )
+    result = _check_cli(tree)
+    assert result.returncode == 1
+    assert "publishable dependency cycle" in result.stdout
+    assert "plan-a -> plan-b -> plan-a" in result.stdout
+    assert "lockstep version drift" not in result.stdout
+    assert not result.stderr
+
+
+def test_the_check_reports_lockstep_drift_with_the_repair(tmp_path: Path) -> None:
+    """A stale internal requirement is the check's finding (exit 1), rendered
+    by the plan with the `just bump-version` repair named."""
+    tree = _tree(
+        tmp_path,
+        {"plan-umbrella": ""},
+        workspace_extra=_shared(
+            "0.2.0", 'plan-umbrella = { version = "0.1.0", path = "crates/plan-umbrella" }'
+        ),
+    )
+    result = _check_cli(tree)
+    assert result.returncode == 1
+    assert "lockstep version drift for [workspace.dependencies] 'plan-umbrella'" in result.stdout
+    assert "fix: just bump-version" in result.stdout
+    assert not result.stderr
+
+
+def test_the_check_is_clean_over_a_lockstep_workspace(tmp_path: Path) -> None:
+    """A workspace whose internal requirements equal the shared version has
+    nothing to report: exit 0, one clean line, nothing on stderr."""
+    tree = _tree(
+        tmp_path,
+        {"plan-free": ""},
+        workspace_extra=_shared(
+            "0.1.0", 'plan-free = { version = "0.1.0", path = "crates/plan-free" }'
+        ),
+    )
+    result = _check_cli(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.startswith("publication plan clean: ")
+    assert not result.stderr
+
+
+def test_the_check_refuses_a_workspace_it_cannot_certify(tmp_path: Path) -> None:
+    """The exit-code distinction the consumers rely on: a finding is exit 1,
+    a workspace the plan cannot certify is the exit-2 refusal."""
+    tree = _tree(tmp_path, {"plan-priv": "publish = false\n"})
+    result = _check_cli(tree)
+    assert result.returncode == 2
+    assert not result.stdout
+    assert "no publishable member" in result.stderr
+
+
+def test_the_check_api_returns_the_cli_verdict(tmp_path: Path) -> None:
+    """`check_plan` is the one verdict behind the CLI mode: the report it
+    returns is what the command prints, and its exit code is the command's."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {"plan-umbrella": ""},
+        workspace_extra=_shared(
+            "0.2.0", 'plan-umbrella = { version = "0.1.0", path = "crates/plan-umbrella" }'
+        ),
+    )
+    verdict = publication_plan.check_plan(publication_plan.load_plan(_manifest(tree)))
+    result = _check_cli(tree)
+    assert verdict.exit_code == result.returncode == 1
+    assert verdict.report == result.stdout.rstrip("\n")
+
+
+def test_the_real_workspace_withholds_no_member() -> None:
+    """Zero withheld: the real tree's manifests leave no publishable member
+    unable to upload, and its plan passes the check. With the census retired
+    this assertion is the committed statement of that fact."""
+    publication_plan = _plan_module()
+    plan = publication_plan.load_plan(_REPO_ROOT / "rust" / "Cargo.toml")
+    assert plan.withheld == {}
+    assert publication_plan.check_plan(plan).exit_code == 0
+
+
+def test_a_withheld_member_would_fail_the_zero_withheld_assertion(tmp_path: Path) -> None:
+    """The negative fixture for the assertion above: a publishable member whose
+    retained requirement names a `publish = false` member is withheld, so the
+    real tree's empty population is a measured fact, not an unfalsifiable one."""
+    publication_plan = _plan_module()
+    tree = _tree(
+        tmp_path,
+        {
+            "plan-carrier": _deps('plan-priv = { path = "../plan-priv", version = "0.1.0" }'),
+            "plan-priv": "publish = false\n",
+        },
+    )
+    withheld = publication_plan.load_plan(_manifest(tree)).withheld
+    assert set(withheld) == {"plan-carrier"}

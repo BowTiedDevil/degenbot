@@ -95,7 +95,8 @@ trait bounds, nowhere else in production. Two constraints shape the approach:
   against a registry holding only the name reservation — and a version-less
   dependency outside the dev slots is rejected outright. The declaration
   shape that follows from this is clause 2; the population it leaves
-  unpackageable is the publish-blocked census (docs/gates.md section 6).
+  unpackageable is the publication plan's withheld set
+  (`scripts/publication_plan.py`, docs/gates.md section 6).
 - **Truth-source risk.** The Tier-3 oracles assume the EVM is ground truth.
   Swapping the truth source without a differential gate would devalue every
   oracle that runs on it.
@@ -124,9 +125,9 @@ the flag.**
    packaging and keeps a `version` as a crates.io requirement that must
    resolve, while a version-less dependency outside the dev slots cannot
    package at all — either way the engine closure is unpackageable while
-   the registry holds only upstream's name reservation, so the publish
-   oracle withholds those members by name (the publish-blocked census,
-   docs/gates.md section 6).
+   the registry holds only upstream's name reservation, so the publication
+   plan withholds those members and the publish oracle refuses the run by
+   name instead of excluding them (docs/gates.md section 6).
 3. Only pure-Rust precompile backends are enabled (no GMP/MCL/aws-lc native
    builds), matching the revm dependency's backend shape and keeping the
    devcontainer build contract intact.

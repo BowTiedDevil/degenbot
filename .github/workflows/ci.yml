@@ -527,9 +527,9 @@ jobs:
 
       # The publish oracle over every member that can package: catches
       # manifest/file-inclusion regressions on every rust change, long before
-      # a tag. The members the publish chain cannot upload are withheld by name
-      # against the publish-blocked census (docs/gates.md section 7) and keep
-      # their file-inclusion coverage through `cargo package --list`.
+      # a tag. The publication plan's check runs first (docs/gates.md section
+      # 6), and a member the manifests withhold fails the oracle's withhold
+      # boundary by name instead of being dropped from coverage.
       # --no-verify keeps the PR gate fast (no isolated build); the verified
       # publish itself is the release workflow's pre-publish step plus the real
       # `cargo publish` (always verified - release policy forbids --no-verify

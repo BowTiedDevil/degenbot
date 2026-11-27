@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The publish-verify loopback registry: a non-uploading `cargo publish --dry-run` that resolves.
 
-# live-invariant gate (ADR-087 D2): drives the publish-blocked census and the
+# live-invariant gate (ADR-087 D2): drives the publication plan's check and the
 # live workspace manifests; not tripwire precedent.
 
 The problem
@@ -78,15 +78,18 @@ fails the run loudly instead of certifying a partial oracle. A pin locked to
 a path, a git repository, or an alternate registry fails the run loudly too:
 resolving it by name would serve a same-named stranger.
 
-Members the census withholds (genuinely unresolvable external/git shapes) are
-excluded from both rounds by name and keep their file-inclusion coverage
-through `cargo package --list`, exactly as before. `publish = false` members
-are cargo-skipped and therefore not eligible for the covered set at all. Every
-member set the run acts on -- eligibility, census withholding, the resolution
-set, the allowlisted refusals -- is the shared static publication plan's
-(`scripts/publication_plan.py`), derived over the metadata the run itself
-loads, so the run's facts cannot drift from the census gate's. The
-coverage check fails closed: covered lines print only after the population
+A member the manifests withhold -- a genuinely unresolvable external or git
+shape -- ends the run at its withhold boundary, which names the member and
+its reason and stops before any cargo work: no exclusion may stand in for a
+member's upload path, and nothing leaves the coverage this run certifies by
+silence. `publish = false` members are cargo-skipped and
+therefore not eligible for the covered set at all, and nothing else is. Every
+member set the run acts on -- eligibility, the withheld population, the
+resolution set, the allowlisted refusals -- is the shared static publication
+plan's (`scripts/publication_plan.py`), derived over the metadata the run
+itself loads, so the run's facts cannot drift from the plan check's. The plan
+check (a retained-edge cycle, a lockstep drift) runs before any packaging, and
+the coverage check fails closed: covered lines print only after the population
 round has succeeded, and the upload receipts must name exactly the eligible
 covered set -- a missing receipt (certifying a member the registry never
 accepted) and an unexpected receipt (an upload the run never accounted for)
@@ -112,8 +115,8 @@ exits before any packaging when the audit reports nothing pending. The flags
 cannot be forwarded to the rounds themselves: a `--workspace` round consumes
 them on the caller's behalf, and the script validates every excluded name
 against the workspace before any cargo work -- an `--exclude` naming a
-non-member fails loud, mirroring cargo's own package-selection error; census
-withholding is independent of and unchanged by exclusions.
+non-member fails loud, mirroring cargo's own package-selection error; the
+withheld boundary is independent of and unchanged by exclusions.
 
 Every cargo invocation of a run executes with `CARGO_HOME` pointed at the
 run's own directory inside its per-run directory: the named-registry token and
@@ -150,8 +153,8 @@ same bounded fetch policy. CLI-visible behavior is unchanged except network
 timing and cache work: eager pre-materialization of every external artifact
 became on-demand fetches served through the loopback download handler.
 
-Exit codes: 0 covered, 1 census findings / upload-round / resolution failure,
-2 census refused to certify.
+Exit codes: 0 covered, 1 plan-check findings / a withheld member refusal /
+upload-round / resolution failure, 2 the plan refused to certify.
 """
 
 from __future__ import annotations
@@ -189,7 +192,6 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_REL = "rust/Cargo.toml"
 LOCK_REL = "rust/Cargo.lock"
-CENSUS_GATE = Path(__file__).resolve().parent / "publish_blocked.py"
 OVERLAY_REL = "rust/target/publish-verify-overlay"
 MIRROR_REL = "rust/target/publish-verify-mirror"
 # Same-workspace mutual exclusion: runs in one tree share rust/target/package
@@ -325,6 +327,37 @@ def fail(message: str) -> NoReturn:
     """
     print(f"publish-verify: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def refuse(message: str) -> NoReturn:
+    """Exit 2: the run examined only a tree it cannot certify.
+
+    Raises:
+        SystemExit: Always, with the refusal exit code.
+
+    """
+    print(f"publish-verify: {message} -- refusing to certify", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def refuse_withheld(plan: publication_plan.PublicationPlan) -> None:
+    """Refuse a run that would have to withhold a member by name.
+
+    A member the manifests withhold has no name any consumer may exclude, so
+    this boundary states each withheld member and its reason and stops before
+    any cargo work rather than dropping it from the coverage the run
+    certifies. Withholding is the consumer's decision to make, which is why it
+    is this refusing boundary and not a finding of the plan check.
+
+    """
+    if not plan.withheld:
+        return
+    named = "; ".join(f"{name} ({reason})" for name, reason in sorted(plan.withheld.items()))
+    fail(
+        f"refusing to withhold a member by name -- no exclusion may stand in for a member's "
+        f"upload path: {named}. Repair the manifests so every publishable member's retained "
+        "requirements resolve on crates.io."
+    )
 
 
 def clear_cargo_staging(rust: Path) -> None:
@@ -546,22 +579,6 @@ def run_lock(root: Path, wait_seconds: float) -> Generator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
-
-
-def census(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run the publish-blocked census gate against the same tree root.
-
-    The gate is the census-file reconciliation authority: it fails the run (or
-    refuses to certify) with its own exit-code contract before any cargo work.
-    The member facts the run itself acts on come from the shared publication
-    plan (`publication_plan`), read over this run's own metadata below -- the
-    gate and the run cannot drift.
-
-    Returns:
-        The completed census process; the caller reads its streams.
-
-    """
-    return run([sys.executable, str(CENSUS_GATE), "--root", str(root), *args], capture=True)
 
 
 def index_rel(name: str) -> str:
@@ -1329,7 +1346,7 @@ def _covered_line(name: str, version: str, files: int) -> str:
 
 
 def main(argv: list[str]) -> int:
-    """Parse arguments, gate on the census, and run the verification.
+    """Parse arguments, check the plan, and run the verification.
 
     Returns:
         The process exit code: 0 on success, otherwise the first failing
@@ -1349,11 +1366,6 @@ def main(argv: list[str]) -> int:
     root = args.root.resolve()
     rust = root / "rust"
 
-    checked = census(root, "--check")
-    sys.stdout.write(checked.stdout)
-    sys.stderr.write(checked.stderr)
-    if checked.returncode != 0:
-        return checked.returncode
     overlay = overlay_run_dir(root)
     mirror = root / MIRROR_REL
     try:
@@ -1382,18 +1394,27 @@ def main(argv: list[str]) -> int:
             if meta.returncode != 0:
                 sys.stderr.write(meta.stderr)
                 return meta.returncode
-            # The member facts -- eligibility, withholding, the resolution
-            # set, the allowlisted refusals -- are the shared publication
-            # plan's, derived over the metadata this run just loaded. The
-            # census gate above already refused any workspace the plan cannot
-            # certify, so a refusal here is a loud translation, never a second
-            # authority.
+            # The member facts -- eligibility, the withheld population, the
+            # resolution set, the allowlisted refusals -- are the shared
+            # publication plan's, derived over the metadata this run just
+            # loaded. The plan's check and its withheld boundary below each
+            # refuse before any packaging, so no second authority decides the
+            # member sets.
             try:
                 plan = publication_plan.plan_from_metadata(
                     json.loads(meta.stdout), origin=str(rust / "Cargo.toml")
                 )
             except publication_plan.PublicationRefusal as exc:
-                fail(str(exc))
+                refuse(str(exc))
+            # The plan's own check before the run acts on anything: a
+            # retained-edge cycle has no upload order and a lockstep drift
+            # cannot resolve, so both stop the run before any packaging with
+            # the report the check renders and its own exit code.
+            verdict = publication_plan.check_plan(plan)
+            print(verdict.report)
+            if verdict.exit_code != 0:
+                return verdict.exit_code
+            refuse_withheld(plan)
             # Validate the exclusions before any cargo work: an unknown name
             # must fail loud, not surface as cargo's own selection error after
             # a partial run.
@@ -1494,40 +1515,28 @@ def _verify(
                 for message in errors:
                     fail(message)
 
-        for name in sorted(plan.withheld):
-            listing = run(
-                ["cargo", "package", "--list", "--allow-dirty", "-p", name],
-                cwd=rust,
-                capture=True,
-                env=cargo_env,
-            )
-            files = len(listing.stdout.splitlines()) if listing.returncode == 0 else 0
-            print(f"publish-blocked {name}: {files} files would package")
-
         # A member whose publish allowlist NAMES registries fails loud: cargo
         # refuses to carry such a member to any other registry name (and the
         # one registry this run drives is the loopback), so a real upload
         # round could never run beside it anyway. The refusal is explicit and
         # precedes every upload -- an allowlisted member surfaces, never
-        # silently vanishes. Census withholding takes precedence: a member the
-        # census withholds is already out of every upload by that verdict, so
-        # only a resolution member can reach the allowlist refusal.
+        # silently vanishes. Every member reaching here is a resolution
+        # member: the withheld population was refused at the boundary before
+        # this phase, so no exclusion can hide an allowlisted member from the
+        # verdict.
         for name in sorted(plan.allowlisted):
-            if name in plan.withheld:
-                continue
             allowlist = plan.allowlisted[name]["publish"]
             fail(
                 f"{name} publishes only to {', '.join(allowlist)} -- cargo refuses to "
                 "carry it to the loopback registry, so the run cannot certify it"
             )
-        # The resolution set the plan derives (eligible minus census-withheld):
-        # the eligible members the loopback can carry. Every allowlisted
-        # resolution member failed above, and an allowlisted withheld member
-        # has no resolution entry. `publish = false` members are out of the
-        # census's scope and cargo skips them; they are not eligible for the
-        # covered set -- the set the run certifies is exactly what cargo will
-        # upload, so a skipped member must never carry a covered line or a
-        # receipt expectation.
+        # The resolution set the plan derives (eligible minus withheld): the
+        # eligible members the loopback can carry. Every allowlisted resolution
+        # member failed above. `publish = false` members are out of the plan's
+        # scope and cargo skips them; they are not eligible for the covered
+        # set -- the set the run certifies is exactly what cargo will upload, so
+        # a skipped member must never carry a covered line or a receipt
+        # expectation.
         covered = sorted(plan.resolution)
 
         def excludes_for(names: list[str]) -> list[str]:
@@ -1551,7 +1560,6 @@ def _verify(
                     "--locked",
                     "--allow-dirty",
                     "--no-verify",
-                    *excludes_for(sorted(plan.withheld)),
                     *forwarded,
                 ],
                 cwd=rust,
@@ -1610,7 +1618,6 @@ def _verify(
                     "--allow-dirty",
                     "--dry-run",
                     *excludes_for(sorted(set(covered) - set(pending))),
-                    *excludes_for(sorted(plan.withheld)),
                     *forwarded,
                 ],
                 cwd=rust,

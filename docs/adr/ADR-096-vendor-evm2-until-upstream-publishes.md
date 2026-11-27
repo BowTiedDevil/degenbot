@@ -55,8 +55,10 @@ nothing is built to keep the fork gone after that.
 - Upstream's in-crate test modules compile against the dev-deps they import but
   never run (`test = false`): our parity suites, Tier-3 byte-exactness gates and
   the live-node harnesses remain the behavioral authority.
-- The publish-blocked census (docs/gates.md section 6) now records an empty
-  population. It stays: it is the gate that keeps a git-only dependency from
-  silently re-entering a publishable member's manifest.
+- The publication plan withholds no member: the census that once recorded
+  this population reached its empty destination and is retired. The plan's own
+  check reports a withheld member and `scripts/publish_verify.py` refuses the
+  run by name, so a git-only dependency cannot silently re-enter a publishable
+  member's manifest (docs/gates.md section 6).
 - ADR-089's clause 2 (dependency tracking) is superseded in practice by this
   tree: the family is pinned and vendored rather than tracked at git HEAD.

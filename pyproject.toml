@@ -233,12 +233,6 @@ allow-star-arg-any = true
     "start-process-with-partial-path",   # cargo resolves on PATH exactly as the oracle and every just recipe invoke it
 ]
 
-"scripts/publish_blocked.py" = [
-    # The publish-blocked census, folded into the lint gate with only these
-    # deliberate relaxations (each verified live by `just lint-python-check`):
-    "print",   # a CLI gate reports findings and refusals on the console streams
-]
-
 "scripts/publication_plan.py" = [
     # The static publication plan, folded into the lint gate with only these
     # deliberate relaxations (each verified live by `just lint-python-check`):

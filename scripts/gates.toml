@@ -101,24 +101,6 @@ ci_entry = "just lint-comment-hygiene"
 ci_relation = "direct"
 
 [[gate]]
-id = "publish-blocked"
-name = "publish-blocked census"
-stage = "pre-commit"
-entry = "just check-publish-blocked"
-scope = "tree"
-docs = "6. Publish-blocked census"
-data = ["scripts/publish-blocked-census.txt"]
-probe = [
-  "tests/test_publish_blocked_gate.py::test_the_committed_census_matches_the_tree",
-  "tests/test_publish_blocked_gate.py::test_a_stale_row_fails_the_gate",
-]
-files = ".*Cargo\\.toml$|^scripts/publish-blocked-census\\.txt$|^scripts/publish_blocked\\.py$|^scripts/publication_plan\\.py$"
-pass_filenames = false
-ci_job = "rust-lint"
-ci_entry = "just lint-rust-check"
-ci_relation = "contains"
-
-[[gate]]
 id = "tool-catalog"
 name = "Tool catalog reconciliation"
 stage = "pre-commit"

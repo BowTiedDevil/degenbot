@@ -910,7 +910,7 @@ def test_the_committed_registry_declares_every_hook_with_one_ci_form() -> None:
     ]
 
     assert sorted(gate.id for gate in gates) == sorted(hook_ids)
-    assert len(gates) == 22
+    assert len(gates) == 21
     for gate in gates:
         assert gate.coverage is not None, gate.id
         assert gate.probe, f"{gate.id} declares no probe"

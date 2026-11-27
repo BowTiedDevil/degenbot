@@ -10,9 +10,10 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-Eight ratchets, plus one gate listed first that is deliberately not a ratchet:
-comment hygiene carried a census and now fails outright, so it has no data file
-to read or extend — a finding is an edit to the code, never a row.
+Seven ratchets, plus two gates that are deliberately not ratchets: comment
+hygiene carried a census and now fails outright, and the publication plan's
+check has no census to extend. A finding in either is an edit to the code or
+the manifests, never a row.
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -23,7 +24,7 @@ to read or extend — a finding is an edit to the code, never a row.
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
-| Publish-blocked census | `scripts/publish_blocked.py` | `scripts/publish-blocked-census.txt` | `just check-publish-blocked` |
+| Publication plan check | `scripts/publication_plan.py --check` | none — the withheld population is empty, so a withheld member is a manifest repair and not a row | `just check-publication-plan` |
 | Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
 
 ### The gate registry
@@ -121,7 +122,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 | pytest noise gate | Fix the call site that sprays (the signatures live in `scripts/pytest_noise_gate.sh`) |
 | Capability catalog | Add the crate to `docs/capabilities.md` |
 | Dependency charter | Update `rust/crates/facade/degenbot/tests/dependency_charter.txt` |
-| Publish-blocked census | Run `just check-publish-blocked --rows`, then paste the rows beneath the census header (never redirect over the file: that deletes the header) |
+| Publication plan check | `just bump-version <version>` for a lockstep drift; repair the named cycle, or the withheld member's dependency shape, in the manifests |
 | Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
 | Parity ledger | Reconcile `docs/architecture/rust-settlement-bot-parity.md` with the boot oracle |
 | Executor release ratchet | `python3 scripts/executor_release_ratchet.py generate`, only while adding a release |
@@ -141,7 +142,6 @@ it survives by keeping its document true, or it is deleted (ADR-087).
 | Worker census | Two concurrent multi-thread tokio runtimes invisible to the census, the boot dump and the comm cross-check |
 | Stub drift | A worker claimed a regeneration it had not run |
 | pytest noise gate | Exception spray printed after the session ended while the exit code stayed 0 |
-| Publish-blocked census | Members whose retained requirements cannot resolve on crates.io, discovered only at upload |
 | Capability catalog | **None recorded** — keeps `docs/capabilities.md` complete; 24 of the last 200 commits touch it |
 | Dependency charter | **None recorded** — keeps the charter list current; 2 of the last 200 commits touch it |
 | Tool catalog | **None recorded** — keeps `rust/tools/README.md` complete; 53 of the last 200 commits touch it |
@@ -461,111 +461,57 @@ bash scripts/pytest_noise_gate.sh scan /tmp/spray.log   # exits 3, prints the li
 
 ---
 
-## 6. Publish-blocked census
-
+## 6. Publication plan check
 
 **Failure class.** `cargo publish` rewrites every path and git dependency at
-packaging: the source key is stripped and what remains is a version requirement
-that must resolve on crates.io. A member whose retained requirements cannot
-resolve there does not upload at all, and nothing watched which members those
-were. The publish oracle (`just publish-dry-run`) then died on the first one,
-taking the manifest and file-inclusion coverage of every later member down
-with it — a failure that names one dependency and hides the population. The
-instance behind this gate: the engine family (`evm2`, `evm2-jit`, and
-siblings) is vendored under names we own (`rust/vendor/`, ADR-096) because
-crates.io holds only upstream's name reservation. The git-declaration shape
-this gate watches is exactly what held the engine closure
-(`degenbot-simulation`, `degenbot-arbitrage`, and every member whose retained
-requirements reach them) out of the publish chain; with the family vendored
-the population is empty, and this gate is what keeps a git-only dependency
-from silently re-entering a publishable member's manifest.
+packaging: the source key is stripped and what remains is a version
+requirement that must resolve on crates.io, so a member whose retained
+requirements cannot resolve there does not upload at all. Two shapes stop a
+release before any upload: a member the manifests withhold (a version-keyed git
+or off-workspace path dependency, and every member whose retained requirements
+reach one), and a cycle formed by registry-retained normal and dev dependencies
+among publishable members, which leaves `cargo publish --workspace` no upload
+order at all. Beside them sits ADR-009's lockstep rule: every internal versioned
+requirement in the root manifest's `[workspace.dependencies]` table must carry
+`[workspace.package].version`, or cargo packs crates whose manifests require
+sibling versions the registry does not hold. The instance behind the gate: the
+engine family (`evm2`, `evm2-jit`, and siblings) is vendored under names we own
+(`rust/vendor/`, ADR-096) because crates.io holds only upstream's name
+reservation — the git-declaration shape that once withheld the engine closure is
+exactly what a withheld member reports today.
 
+**Gate body.** `scripts/publication_plan.py`'s `--check` mode (`check_plan`),
+over the manifests `cargo metadata --no-deps --offline` reports. The plan is the
+one derivation of the chain's static facts — eligibility (`publish != []`), the
+withheld population and its reasons, the retained edges and their cycles, the
+resolution set (eligible minus withheld) the publish oracle uploads, and the
+lockstep rows — and the crates.io live audit (`scripts/crates_io_pending.sh`,
+whose membership read is the plan's `--eligible` CLI), the verify oracle
+(`scripts/publish_verify.py`), and the release workflow all consume it; no
+consumer restates a rule or re-renders a finding. The check exits `1` with the
+cycle alone (no upload order exists, so nothing else can be acted on first) or
+with every stale lockstep row and the `just bump-version` repair that rewrites
+the shared literal and every internal requirement together, and exits `2` when
+the plan cannot certify the workspace (a `cargo metadata` failure, no
+publishable member, an unreadable root manifest).
 
-**Gate body.** `scripts/publish_blocked.py`, reconciling the census against
-the static publication plan (`scripts/publication_plan.py`) over the manifests
-`cargo metadata --no-deps --offline` reports. The plan is the one derivation of the
-chain's static facts — eligibility (`publish != []`), the withheld population
-and its reasons, the retained edges and their cycles, and the resolution set
-(eligible minus withheld) the publish oracle uploads — and the census gate, the
-crates.io live audit (`scripts/crates_io_pending.sh`, whose membership read is
-the plan's `--eligible` CLI), and the verify oracle
-(`scripts/publish_verify.py`) all consume it; no consumer restates the rule.
-The gate itself owns only the census-file reconciliation below. A *site* is a dependency the published manifest
-retains in rewritten form: a version-less dev-dependency is the one shape
-cargo strips (so it blocks nothing); a version-less path or git dependency in
-any other slot is rejected outright; a version-keyed path or git dependency
-survives as that version requirement, which for a non-workspace package names
-a crates.io release of code developed elsewhere — the member is withheld until
-the dependency is declared as a registry dependency, which is also the only
-shape in which what was tested is what was published. A member whose retained
-requirement reaches a withheld member is withheld in turn, so the population
-is closed over dependents.
+**Zero withheld.** The withheld population's destination is empty and it has
+arrived: this workspace withholds no member, and there is no census to extend.
+A withheld member is therefore refused rather than excused — the verify oracle's
+withhold boundary names it with its reason and stops before any cargo work, so
+no exclusion stands in for a member's upload path — while
+`tests/test_publication_plan.py` carries the committed assertion that the real
+tree withholds nothing, with a negative fixture proving the assertion can fail.
 
-Every retained requirement is also an upload-ordering constraint:
-`cargo publish --workspace` uploads members in dependency order, and a
-member's retained dev-dependencies participate — cargo resolves a member's
-versioned dev-dependencies while preparing its package, including under
-`--no-verify`, so the fresh sibling version must already be resolvable at
-packaging time, and a retained dev edge orders its member after its target
-exactly like a normal edge. The gate
-therefore also fails outright on any cycle formed by registry-retained normal
-and dev dependencies among publishable members, naming the cycle, because no
-upload order — and so no crates.io version of the workspace — can satisfy it.
-The dependency shape cargo strips at packaging (the version-less path/git
-dev-dependency) is not a requirement and can never close a cycle. A cycle is
-never recorded as a census row: it is a release-graph defect to repair in the
-manifests, and no census exclusion may hide it.
-
-The reconciliation is **bidirectional and fails closed**:
-
-- a withheld member with no census row fails — the population cannot grow in
-  silence, and the run cannot quietly lose coverage;
-- a row with no withheld member fails — a member that packages again deletes
-  its row in the same change;
-- a row's reason must equal the reason the manifests imply, both ways;
-- a missing census, an unparseable row, a workspace with no publishable
-  member, or a `cargo metadata` failure fails instead of certifying a tree it
-  did not examine.
-
-Exit codes: `0` reconciled, `1` findings, `2` refused to certify.
-
-
-**Census.** `scripts/publish-blocked-census.txt`, one row per withheld member:
-`<member>` then a TAB then that reason **verbatim** from `--rows` (the git and
-path dependencies the published form retains, then the withheld members those
-requirements reach). The census mirrors the manifests and never improves on
-them — that mirroring is what keeps the two from drifting. There is no
-reasonless-high-water line here: a row's reason is computed,
-so no row can state less than the site it mirrors.
-
-
-**Adding an entry.** The population's destination is empty: when the withheld
-members' external dependencies become registry dependencies (the engine on
-crates.io, or the engine vendored as workspace members), the rows go with them
-and the publish oracle covers every member again. A member that can package
-deletes its row in the same change; a member entering the population lands
-only as a reviewed row carrying the reason the manifests imply.
-
-
-**Regenerating.** `just check-publish-blocked --rows` prints the rows the
-manifests imply (sorted, reasons included). Paste them beneath the
-hand-maintained header; never redirect over the file, which would delete it.
-
-
-**Run it.** `just check-publish-blocked` — also a dependency of
-`lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run
-it over a complete tree, and the `publish-blocked` pre-commit hook runs it
-when a commit touches a manifest, the census, the gate's own script, or the
-publication plan. The gate and the plan import nothing outside the standard
-library and drive only `cargo metadata --no-deps --offline` (the child cargo
-cannot reach a registry), so a plain `python3` runs
-them — the same uv-free constraint.
-`tests/test_publish_blocked_gate.py` is the committed
-negative probe: it drives the real gate with `--root` pointed at a throwaway
-workspace and requires the red path for a fresh member, both reason-drift
-directions, the stale row, the fail-closed exits, a retained normal+dev cycle
-(named by the gate), and the green paths for the stripped dev-dependency shape
-and an acyclic retained dev edge.
+**Run it.** `just check-publication-plan` — also a dependency of
+`lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI's
+`rust-lint` job run it over a complete tree, and the release workflow's
+tag/version step runs it before any packaging. The plan imports nothing outside
+the standard library and drives only `cargo metadata --no-deps --offline` (the
+child cargo cannot reach a registry), so a plain `python3` runs it.
+`tests/test_publication_plan.py` is the committed probe: the check's cycle and
+lockstep reports, its refusal exit, the zero-withheld assertion with its
+negative fixture, and the plan facts behind all of them.
 
 **The live release projection.** The static plan composes with the live
 audit's conclusive output into one workflow-facing projection,
@@ -585,7 +531,7 @@ re-derives live/pending/withheld set arithmetic in shell:
 Every list is sorted. `live` and `pending` carry the resolution members'
 index states at the workspace version; withheld members land only in
 `withheld`, whatever the index says — they have no resolution membership, so
-they are never verify-built and (new with the projection) never uploaded:
+they are never verify-built and (with the projection) never uploaded:
 `publish_excludes`, the `cargo publish --workspace --exclude` flag set of
 the release rounds, is withheld plus live resolution. `verification_excludes`,
 the `--exclude` set the pre-publish verification forwards to
@@ -659,11 +605,11 @@ into the same registry — so the loopback can never satisfy a requirement the
 real registry cannot, and a pin locked to a path, a git repository, or an
 alternate registry fails the run loud instead of resolving a same-named
 stranger (a retained normal+dev dependency cycle among publishable members
-has no upload order; the census gate rejects it outright with the cycle named
-before this run uploads anything). The census
-is reconciled first and its members are withheld
-from the run by name, keeping their file-inclusion coverage through `cargo
-package --list`. `publish = false` members are cargo-skipped and therefore
+has no upload order; the plan's own check rejects it outright with the cycle
+named before this run uploads anything). The plan check runs first, and a
+member the manifests withhold ends the run at the withhold boundary — named
+with its reason, before any cargo work — so nothing leaves the coverage this
+run certifies. `publish = false` members are cargo-skipped and therefore
 not eligible for the covered set at all, and coverage fails closed: covered
 lines print only after the population round has succeeded, and the upload
 receipts must name exactly the eligible covered set — a missing receipt
@@ -746,16 +692,17 @@ re-uploaded and re-verifying it is precisely what makes a resumed re-run
 expensive. A fresh tag forwards nothing, so every pending member verifies,
 and the release step exits before any packaging when the audit reports
 nothing pending. An `--exclude` naming a non-member fails loud before any
-cargo work; census withholding is independent of and unchanged by exclusions.
+cargo work; the withhold boundary is independent of and unchanged by
+exclusions.
 **Run it.** `just publish-dry-run` (verified) or `just publish-dry-run
 --no-verify` (the CI PR form). `tests/test_publish_verify_oracle.py` is the
 committed probe: it drives the real script with `--root` pointed at a
 throwaway fresh-lockstep workspace, requires the plain publish to fail there
 (the red shape, resolved against a loopback sparse index the probe serves
 itself, so the default suite never queries crates.io nor depends on whether
-the fixture names are registered), both dry-run modes to pass, a
-census-withheld member to stay excluded by name, an unrecorded block to fail
-loud, the resolution/verification set split (a fresh run verifying every
+the fixture names are registered), both dry-run modes to pass, a withheld
+member to fail the withhold boundary instead of being excluded by name, the
+resolution/verification set split (a fresh run verifying every
 pending member, a resumed run verifying only pending members while a
 pending member still resolves against a live `--exclude`d sibling, a fully
 live call skipping every verification round, an unknown exclusion failing

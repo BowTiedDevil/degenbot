@@ -28,14 +28,16 @@ verify oracle's registry is the only resolver):
   any other registry name, and the one registry the oracle drives is the
   loopback.
 
-- WITHHELD. The census rules (`scripts/publish-blocked-census.txt`'s gate
-  body): the sites a published manifest retains that cannot resolve on
-  crates.io -- a version-keyed path or git dependency retained as a version
-  requirement naming code not on crates.io -- plus every eligible member
-  whose retained requirements reach a withheld or absent member. The one
-  dependency shape cargo strips at packaging (a version-less path/git
-  dev-dependency) is not a requirement: it is excluded from the retained
-  edges, blocks nothing, and can never close a cycle.
+- WITHHELD. The members whose published manifest cannot resolve on
+  crates.io: the sites a published manifest retains -- a version-keyed path
+  or git dependency retained as a version requirement naming code not on
+  crates.io -- plus every eligible member whose retained requirements reach
+  a withheld or absent member. The one dependency shape cargo strips at
+  packaging (a version-less path/git dev-dependency) is not a requirement:
+  it is excluded from the retained edges, blocks nothing, and can never
+  close a cycle. No consumer withholds a member against this set: the
+  verify oracle refuses a non-empty population at its own boundary, and
+  this workspace's zero-withheld population is a committed assertion.
 
 - RESOLUTION. Eligible minus withheld: the static set of members whose
   rewritten manifests must resolve for a release to proceed. The verify
@@ -44,11 +46,10 @@ verify oracle's registry is the only resolver):
 
 - CYCLE. A cycle formed by registry-retained normal AND dev dependencies
   among eligible members is a release-graph defect, not a withheld member:
-  no upload order exists, so no census row may stand in for one. The plan
-  carries the cycle as a fact; the publication consumers (the census gate,
-  the verify oracle) fail on it before any packaging. The live audit's
-  membership classification does not package, so it proceeds -- exactly as
-  before the plan existed.
+  no upload order exists, so no row may stand in for one. The plan carries
+  the cycle as a fact; the check reports it and the verify oracle refuses it
+  before any packaging. The live audit's membership classification does not
+  package, so it proceeds -- exactly as before the plan existed.
 
 - LOCKSTEP. Every internal versioned requirement in the workspace root's
   `[workspace.dependencies]` table -- a row whose resolved package identity
@@ -61,7 +62,7 @@ verify oracle's registry is the only resolver):
   authority, and the root text is the only place the raw shared version and
   the raw requirement literals survive (metadata normalizes them into
   requirements). A readable tree with a stale literal is a `LockstepDrift`
-  finding on the plan for the census gate to report; a workspace with no
+  finding on the plan for the check to report; a workspace with no
   `[workspace.package].version` has no invariant, and an unreadable or
   malformed root manifest is a refusal.
 
@@ -70,6 +71,19 @@ metadata a caller already holds) returns a `PublicationPlan` carrying every
 fact above plus the package metadata behind it. A workspace the plan cannot
 certify -- a `cargo metadata` failure, no members, no eligible member -- is a
 `PublicationRefusal`, never a vacuously green answer.
+
+The check
+---------
+
+`check_plan` (the CLI's ``--check`` mode) is the one report and exit-code
+surface for the two facts a release cannot proceed through: a retained-edge
+cycle (reported alone -- no upload order exists to repair anything else
+against) and a lockstep drift (every stale row, then the ``just bump-version``
+repair that rewrites the shared literal and every internal requirement
+together). `just check-publication-plan` runs it; the Rust lint leg and the
+release workflow's tag/version step call it rather than carrying their own
+rendering or comparison. The withheld set is deliberately not a finding: the
+consumer that would withhold a member refuses at its own boundary.
 
 The live release projection
 ---------------------------
@@ -111,22 +125,22 @@ and its stream is the only live input here.
 Consumers and migration
 -----------------------
 
-- `scripts/publish_blocked.py` (the census gate) owns census-file
-  reconciliation and reports the plan's withheld facts against it; cycle and
-  eligibility wording it previously owned itself now come from here, byte
-  for byte. It also reports the plan's lockstep findings, so a
-  shared-version mismatch fails the gate (exit 1) with a `fix:` naming
-  `just bump-version`.
+- `just check-publication-plan` (the CLI's ``--check`` mode) is the plan's
+  own report surface: cycle and lockstep findings with the plan's exit
+  codes, run by the Rust lint leg and the release workflow's tag/version
+  step. No consumer carries its own rendering or comparison.
 
 - `scripts/crates_io_pending.sh` (the live audit) is a shell adapter over
   this module's CLI (`--eligible`): the audit never re-states the publish
   rule. Consumer-visible behavior is unchanged.
 
 - `scripts/publish_verify.py` (the verify oracle) consumes the same plan
-  object over metadata it already loaded, so the eligibility, withholding,
-  and resolution sets it act on cannot drift from the gate's. It still runs
-  the census gate for census-file reconciliation (the gate's own exit-code
-  contract).
+  object over metadata it already loaded, so the eligibility, resolution,
+  and withheld sets it acts on cannot drift from the check's. It runs the
+  plan check before any packaging, and it refuses a non-empty withheld
+  population: with no census naming those members, there is no name any
+  consumer could exclude, so the run fails loud instead of dropping a
+  member from coverage.
 
 - `.github/workflows/release.yml` provisions this module beside the audit
   script, so a resumed older tag cannot be left with an audit whose planner
@@ -134,12 +148,12 @@ Consumers and migration
   each re-run the audit at their own point of use and pipe that exact
   classification through ``--release-plan`` once, consuming only the JSON
   projection above -- no shell in the workflow re-derives live, pending,
-  withheld, or exclusion membership. The tag/version step runs the census
-  gate before packaging, so the shared-version invariant has one enforcement
-  point there too and no shell in the workflow owns a lockstep comparison.
+  withheld, or exclusion membership. The tag/version step runs the plan
+  check before packaging, so the cycle and shared-version invariants have
+  one enforcement point there too and no shell in the workflow owns either
+  comparison.
 
-Consumer-visible transitions of the static census/audit/oracle migration:
-none. Every set, message, and exit code each of those consumers produced
+Consumer-visible transitions of the static audit/oracle migration: none. Every set, message, and exit code each of those consumers produced
 before is produced by the same consumer now; the only new fact there is
 shared ownership. The live ``--release-plan`` projection is the one new
 consumer-visible surface, and its behavior is by design, not inherited:
@@ -148,11 +162,11 @@ rounds -- they are excluded from upload, not merely from oracle coverage --
 and ``fully_live`` concerns resolution members only: a withheld member
 neither makes it false nor counts toward its scope.
 
-The CLI (`--eligible`) prints the eligible set for shell callers -- the live
-audit's seam. The withheld, resolution, and allowlisted facts live on the
-`PublicationPlan` object for Python consumers. The CLI reports facts and
-refuses uncertifiable workspaces; cycle enforcement belongs to the publication
-consumers, which fail before any packaging.
+The CLI's `--eligible` mode prints the eligible set for shell callers -- the
+live audit's seam -- and `--check` prints the check's report. The withheld,
+resolution, and allowlisted facts live on the `PublicationPlan` object for
+Python consumers; the withheld set is a fact no consumer withholds against.
+The CLI reports facts and refuses uncertifiable workspaces.
 """
 
 from __future__ import annotations
@@ -179,7 +193,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 # The dep payloads are cargo metadata entries read whole and mirrored into the
-# census reasons; no field is validated, so they stay Any-typed through the
+# withheld reasons; no field is validated, so they stay Any-typed through the
 # helpers below (the same spelling `scripts/publish_verify.py` uses for its
 # metadata payloads).
 Json = dict[str, Any]
@@ -217,7 +231,7 @@ class LockstepDrift:
     shared: str
 
     def render(self) -> str:
-        """The finding the census gate prints for this row."""
+        """The finding the check prints for this row."""
         return (
             f"lockstep version drift for [workspace.dependencies] {self.row!r} "
             f"(package {self.package}): requires {self.required}, "
@@ -232,7 +246,7 @@ class PublicationPlan:
     `members` is every workspace member's cargo metadata package object keyed
     by name; `eligible`, `allowlisted`, and `resolution` (`eligible` minus
     `withheld`) are its publish-relevant sub-populations; `withheld` carries
-    the census reason beside each withheld name; `cycle` is the closed name
+    the reason the manifests imply beside each withheld name; `cycle` is the closed name
     list of a retained-edge cycle, or None when the release graph can be
     ordered; `lockstep` carries every internal requirement whose literal
     disagrees with the shared version (empty when the workspace declares no
@@ -378,9 +392,9 @@ def live_plan_from_classification(
 def cycle_message(cycle: list[str]) -> str:
     """Render the retained-edge cycle the publication consumers fail on.
 
-    The census gate prints this verbatim (exit 1, before any census work) and
-    the verify oracle refuses with it before any packaging; one rendering
-    keeps the two from drifting.
+    The plan's check prints this verbatim (exit 1, and nothing else beside
+    it) and the verify oracle refuses with it before any packaging; one
+    rendering keeps the two from drifting.
 
     Args:
         cycle: The closed name list `PublicationPlan.cycle` carries.
@@ -395,13 +409,54 @@ def cycle_message(cycle: list[str]) -> str:
     )
 
 
+LOCKSTEP_REPAIR = (
+    "fix: just bump-version <the intended release version> -- it rewrites "
+    "[workspace.package].version and every internal requirement together"
+)
+
+
+@dataclass(frozen=True)
+class PlanCheck:
+    """The check's verdict: the report to print and the process exit code."""
+
+    report: str
+    exit_code: int
+
+
+def check_plan(plan: PublicationPlan) -> PlanCheck:
+    """Report the plan's derived defects; see the module docstring's check.
+
+    Args:
+        plan: The plan to check.
+
+    Returns:
+        The report and its exit code: 0 clean, 1 findings. A cycle is
+        reported alone -- no upload order exists, so nothing else can be
+        acted on first -- while a lockstep report carries every stale row
+        and the one repair that rewrites them together.
+
+    """
+    if plan.cycle is not None:
+        return PlanCheck(report=cycle_message(plan.cycle), exit_code=1)
+    findings = [drift.render() for drift in plan.lockstep]
+    if findings:
+        return PlanCheck(report="\n".join([*findings, LOCKSTEP_REPAIR]), exit_code=1)
+    return PlanCheck(
+        report=(
+            f"publication plan clean: {len(plan.resolution)} publishable member(s), "
+            "no retained-edge cycle, no lockstep drift"
+        ),
+        exit_code=0,
+    )
+
+
 def _metadata(manifest: Path, *, locked: bool) -> Json:
     """Read the workspace's member metadata; refuse anything but a conclusive read.
 
     Args:
         manifest: The workspace manifest path handed to cargo.
         locked: Pins the read to the tree's own lockfile (the live audit's
-            resolution-act guarantee); the census gate reads without it.
+            resolution-act guarantee); the check reads without it.
 
     Returns:
         The `cargo metadata --format-version 1 --no-deps --offline` document.
@@ -788,15 +843,17 @@ def main(argv: list[str]) -> int:
         argv: The command-line arguments, without the program name.
 
     Returns:
-        The process exit code: 0 with the facts on stdout, 2 when the
-        workspace cannot be certified or its release graph is cyclic (the
-        refusal message is on stderr), 3 in `--release-plan` mode when the
-        classification stream does not match the static plan.
+        The process exit code: 0 with the facts on stdout, 1 when `--check`
+        finds a retained-edge cycle or a lockstep drift (the report is on
+        stdout), 2 when the workspace cannot be certified or its release
+        graph is cyclic (the refusal message is on stderr), 3 in
+        `--release-plan` mode when the classification stream does not match
+        the static plan.
 
     """
     parser = argparse.ArgumentParser(
-        description="The static publication plan: Cargo eligibility, census "
-        "withholding, and resolution membership in one authority."
+        description="The static publication plan: Cargo eligibility, withheld "
+        "membership, and resolution membership in one authority."
     )
     parser.add_argument(
         "--manifest-path",
@@ -812,6 +869,11 @@ def main(argv: list[str]) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--eligible", action="store_true", help="members cargo could upload")
     group.add_argument(
+        "--check",
+        action="store_true",
+        help="report a retained-edge cycle or lockstep drift (exit 1 on a finding)",
+    )
+    group.add_argument(
         "--release-plan",
         action="store_true",
         help="read '<live|pending> <member>' classification lines on stdin, "
@@ -824,6 +886,11 @@ def main(argv: list[str]) -> int:
     except PublicationRefusal as exc:
         print(f"publication-plan: {exc}", file=sys.stderr)
         return 2
+
+    if args.check:
+        checked = check_plan(plan)
+        print(checked.report)
+        return checked.exit_code
 
     if args.release_plan:
         try:

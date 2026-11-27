@@ -405,16 +405,18 @@ jobs:
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)b([0-9]+)$/\1.\2.\3-beta.\4/' \
             -e 's/^([0-9]+)\.([0-9]+)\.([0-9]+)rc([0-9]+)$/\1.\2.\3-rc.\4/')
           ws_ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
-          # ADR-009 lockstep: every internal versioned requirement in
-          # [workspace.dependencies] must equal the workspace version, or cargo
-          # packs crates whose manifests require stale sibling versions and
-          # crates.io rejects the upload. The invariant is the publication plan's
-          # (scripts/publication_plan.py), reconciled by the publish-blocked
-          # census gate -- the same gate the pre-commit hook and the dry-run run --
-          # so this step runs that gate rather than re-deriving the comparison.
-          # It fails here, before the dry-run/publish steps: a stale literal is a
-          # census finding (exit 1), while an unreadable manifest refuses (exit 2).
-          python3 scripts/publish_blocked.py
+          # ADR-009 lockstep and the release graph: every internal versioned
+          # requirement in [workspace.dependencies] must equal the workspace
+          # version, and the publishable members' retained normal and dev
+          # dependencies must form no cycle -- otherwise cargo packs crates whose
+          # manifests require sibling versions crates.io does not hold, or no
+          # upload order exists at all. Both facts are the publication plan's
+          # (scripts/publication_plan.py), reported by its own check -- the same
+          # command the Rust lint leg and the dry-run run -- so this step runs
+          # that check rather than re-deriving either comparison. It fails here,
+          # before the dry-run/publish steps: a finding is exit 1, while a
+          # workspace the plan cannot certify refuses (exit 2).
+          python3 scripts/publication_plan.py --check --manifest-path rust/Cargo.toml
           if [ "$cargo_ver" != "$ws_ver" ]; then
             echo "Tag $RELEASE_TAG does not match [workspace.package] version '$ws_ver'" >&2
             exit 1
@@ -511,17 +513,18 @@ jobs:
         # one Cargo-owned loopback registry holding the lock's external crates
         # (mirrored verbatim) plus every publishable member's cargo-uploaded
         # form. Uploads are confined to the loopback under a run-owned
-        # CARGO_HOME and a fixed dummy token; no real token is read. Members
-        # the publish-blocked census withholds keep
-        # their explicit exclusion and `cargo package --list` coverage.
+        # CARGO_HOME and a fixed dummy token; no real token is read. A member
+        # the manifests withhold fails the oracle's withhold boundary -- named,
+        # with its reason, before any packaging -- so nothing leaves the
+        # coverage this step certifies.
         # Members with `publish = false` are skipped by cargo's own publish
         # selection, while any allowlisted member (`publish = [...]`) stays
         # in the verification set and fails verification loudly before any
         # upload.
         #
         # Two member sets, one run. The RESOLUTION set is every publishable
-        # member the census does not withhold — already-live siblings
-        # included, because a still-pending member's rewritten manifest
+        # member — already-live siblings included, because a still-pending
+        # member's rewritten manifest
         # requires them at the lockstep version and crates.io holds their
         # live form. The VERIFICATION set is the pending resolution members
         # only: an already-live member cannot be re-uploaded, and re-verifying
