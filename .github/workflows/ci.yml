@@ -184,11 +184,11 @@ jobs:
   policy-gates:
     # Whole-tree policy gates with no compile behind them: the retirement-tripwire
     # ratchet, the comment-hygiene gate, the ci.yml manifest parity brake, and the
-    # cmd_executor release ratchet. None can be path-gated: a docs-only push still
-    # writes prose, a release package is a rust/ file, and a gate's own wiring is
-    # machinery -- the path that can carry the violation is exactly the path a
-    # filter would skip. Each is seconds, so this job runs unconditionally beside
-    # commitlint and markdownlint.
+    # cmd_executor release ratchet. None can be path-gated: a code-only push still
+    # writes the comments, gate wiring and test surfaces these gates read, a release
+    # package is a rust/ file, and a gate's own wiring is machinery -- the path that
+    # can carry the violation is exactly the path a filter would skip. Each is
+    # seconds, so this job runs unconditionally beside commitlint and markdownlint.
     #
     # Full history: the release ratchet compares the accepted index against a base
     # commit INDEPENDENT of the one under test (scripts/executor_release_ratchet.py

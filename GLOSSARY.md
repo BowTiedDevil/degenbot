@@ -886,10 +886,14 @@ A test, gate, or prose prohibition whose purpose is keeping a deliberately delet
 gone — absent-API assertions, retired-name text greps, "must not reappear" gates,
 "do not revive" prose. Deletion is the complete retirement
 ([ADR-087](docs/adr/ADR-087-deletion-is-the-retirement.md)): the ban is absolute, and
-the tripwire-ratchet commit gate enforces it.
+enforced by tier. The tripwire-ratchet commit gate (D4) enforces the code/test
+tombstone signatures only — absence assertions, retired-name source greps,
+revival-named collections asserted empty. A prose revival ban is review-owned and
+never scanned: the ban and a design note arguing the same words share one form, so
+the gate cannot separate them (D4 amendment).
 
 _Avoid_: adding one for any surface; citing live-invariant gates (drift gates,
-negative probes) as precedent for one
+negative probes) as precedent for one; expecting the ratchet to flag prose
 
 **Live-invariant gate**:
 The other species: a test, gate, or source scan that guards a rule **present, living

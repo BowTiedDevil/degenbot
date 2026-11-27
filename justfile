@@ -2367,12 +2367,15 @@ lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
 
 
-# ADR-087 D4 — the retirement-tripwire ratchet. Scans the test/gate surface (rust
-# test files, tests/, justfile, prek.toml, scripts/, docs/) for the signatures of a
-# tripwire: an assertion that a deleted name is still absent, a grep for a retired
-# identifier, a collection named for the revival asserted empty, or a prose "do not
-# revive / re-land / rebuild" ban. Deleting code is the complete retirement (D1), so
-# one hit fails the gate.
+# ADR-087 D4 — the retirement-tripwire ratchet. Scans the code/test surface (rust
+# test files, tests/, scripts/, justfile, prek.toml) for the signatures of a tripwire:
+# an assertion that a deleted name is still absent, a grep for a retired identifier,
+# or a collection named for the revival asserted empty. Deleting code is the complete
+# retirement (D1), so one hit fails the gate.
+#
+# Prose is not scanned (the D4 amendment): a Markdown revival ban is review-owned,
+# because a ban and a design note arguing the same words share one paragraph shape.
+# docs/ leaving the surface is pinned by the probe — a docs-only tree fails closed.
 #
 # It flags and does not classify: delete the flagged artifact, or label it with the
 # D2 marker naming the PRESENT code it watches. The marker is the only exemption —

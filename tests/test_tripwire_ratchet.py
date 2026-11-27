@@ -1,8 +1,8 @@
 """The retirement-tripwire ratchet (`scripts/hooks/tripwire_ratchet.py`).
 
-# live-invariant gate (ADR-087 D2): watches the present test/gate surface (rust test
-# files, tests/, justfile, prek.toml, scripts/, docs/) for the retirement-tripwire
-# signatures ADR-087 D1 bans; not tripwire precedent.
+# live-invariant gate (ADR-087 D2): watches the present code/test surface (rust test
+# files, tests/, scripts/, justfile, prek.toml) for the retirement-tripwire signatures
+# ADR-087 D1 bans; not tripwire precedent.
 
 ADR-087 D4's ratchet is a source scan, so its own failure branch is the thing that
 needs evidence: a scanner that has gone blind reports the same green as a clean tree.
@@ -20,9 +20,14 @@ applied to the gate itself --
     scanner's table with a minimal red source, so a rule that stops matching cannot
     hide behind the others.
 
+The Markdown/prose half is gone (ADR-087 D4 amendment): a revival ban in prose is
+review-owned, so the three shapes the retired prose rule carried are pinned as out of
+scope, and `docs/` leaving the surface is pinned as a fail-closed tree rather than a
+silent green.
+
 The committed tree is asserted separately (`test_the_committed_tree_is_clean`); a
 finding there is either a leftover tripwire to delete or a false positive to tighten,
-and the failure message says so.
+and the gate's own message names both repairs.
 """
 
 from __future__ import annotations
@@ -179,50 +184,54 @@ def test_the_rust_source_scan_signature_fires(tmp_path: Path) -> None:
     assert "retired-name grep" in result.stderr
 
 
-# --- the prose signature ----------------------------------------------------
+# --- the prose shapes: review-owned, not scanned ----------------------------
+# ADR-087's D4 amendment dropped Markdown revival-ban detection. One fixture per shape
+# the retired prose rule carried -- a bare ban beside a retirement, a design note about
+# a live approach, a quoted prohibition -- so re-adding prose scanning turns these red
+# instead of silently restoring a judgment call to the gate.
+_PROSE_SHAPES = [
+    ("retirement-ban", "The old registry was retired. Do not revive it.\n"),
+    (
+        "design-note",
+        "The additive proof must not rebuild the matrix; that explosion is the problem.\n",
+    ),
+    ("quoted-ban", 'The retired guard said "do not revive this term"; ADR-087 deleted it.\n'),
+]
 
 
-def test_a_prose_revival_ban_in_docs_fails(tmp_path: Path) -> None:
-    body = "The old registry was retired. Do not revive it.\n"
+@pytest.mark.parametrize(("shape", "body"), _PROSE_SHAPES, ids=[s for s, _ in _PROSE_SHAPES])
+def test_a_docs_prose_revival_ban_is_review_owned_not_scanned(
+    tmp_path: Path, shape: str, body: str
+) -> None:
+    """Prose judgment belongs to review; the gate reads code/test tombstones only."""
     repo = tmp_path / "tree"
     (repo / "docs").mkdir(parents=True)
+    (repo / "tests").mkdir()
     _git(repo, "init", "--quiet")
     (repo / "docs" / "note.md").write_text(body, encoding="utf-8")
-
-    result = _run(repo)
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "revival prohibition" in result.stderr
-
-
-def test_a_prose_ban_without_a_retirement_nearby_is_a_design_note(tmp_path: Path) -> None:
-    """A prohibition about a live design is not a guard on a deleted thing.
-
-    This is the false-positive class the paragraph scope exists for: the words match,
-    but nothing in scope was retired, so the sentence argues about present code.
-    """
-    body = "The additive proof must not rebuild the matrix; that explosion is the problem.\n"
-    repo = tmp_path / "tree"
-    (repo / "docs").mkdir(parents=True)
-    _git(repo, "init", "--quiet")
-    (repo / "docs" / "note.md").write_text(body, encoding="utf-8")
-
-    result = _run(repo)
-
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_a_quoted_prohibition_is_naming_the_rule_not_stating_it(tmp_path: Path) -> None:
-    """Quoting is how a document names a prohibition it defines or repeals."""
-    body = 'The retired guard said "do not revive this term"; ADR-087 deleted it.\n'
-    repo = tmp_path / "tree"
-    (repo / "docs").mkdir(parents=True)
-    _git(repo, "init", "--quiet")
-    (repo / "docs" / "note.md").write_text(body, encoding="utf-8")
+    (repo / "tests" / "test_live.py").write_text(
+        "def test_live() -> None:\n    assert 1\n", encoding="utf-8"
+    )
 
     result = _run(repo)
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 files in the D4 surface" in result.stdout
+
+
+def test_a_tree_of_docs_alone_has_no_d4_surface(tmp_path: Path) -> None:
+    """`docs/` left the surface with the prose signature: the run fails closed."""
+    repo = tmp_path / "docs_only"
+    (repo / "docs").mkdir(parents=True)
+    _git(repo, "init", "--quiet")
+    (repo / "docs" / "note.md").write_text(
+        "The old registry was retired. Do not revive it.\n", encoding="utf-8"
+    )
+
+    result = _run(repo)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "examined nothing" in result.stderr
 
 
 # --- scope ------------------------------------------------------------------
@@ -289,9 +298,18 @@ def test_a_rust_test_file_carrying_a_test_module_is_in_scope(tmp_path: Path) -> 
     assert result.returncode == 1, result.stdout + result.stderr
 
 
-# --- the landing tree is NOT asserted here ----------------------------------
-# The tree's own verdict is the gate's, not this module's: `just lint-tripwire-ratchet`
-# and the pre-push hook run the scan over the real surface, and a duplicate assertion
-# here would report the same findings twice while reddening the suite for a reason the
-# gate already states better. What this module owns is the scanner's LOGIC -- that its
-# rules fire (above), that the marker excuses, and that a blind scan fails closed.
+# --- the committed tree -----------------------------------------------------
+
+
+def test_the_committed_tree_is_clean() -> None:
+    """The real gate over this checkout exits 0: the header's claim, made true.
+
+    A red here is a leftover tombstone to delete or a false positive in a retained
+    rule, and the gate's own stderr names both repairs. This is the same scan
+    `just lint-tripwire-ratchet` runs, so the module owns the scanner's logic and one
+    landing-tree verdict rather than a second copy of the pre-push gate.
+    """
+    result = _run(ratchet.REPO_ROOT)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout

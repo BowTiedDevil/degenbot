@@ -64,6 +64,16 @@ actually support the claim:
   pytest selection really runs it (under `testpaths`, without a deselected
   marker).
 
+**The retirement-tripwire ratchet's surface is code and tests.** `docs/` is out of
+scope (ADR-087's D4 amendment): a Markdown revival ban — "must not reappear", "do not
+revive" — is a review-owned verdict, because the ban and a design note arguing about
+the same words share one paragraph shape, and no detector separates them without
+reading intent. The retained signatures are the unambiguous code/test tombstones
+(absence assertions, retired-name source greps, revival-named collections asserted
+empty), each with a red fixture in `tests/test_tripwire_ratchet.py`. `docs/` leaving
+the surface is pinned there too: a docs-only tree has no surface and the scan fails
+closed on it rather than reporting a green it never examined.
+
 `scripts/hooks/ci-parity.sh` keeps the other half: every `ci.yml` job has a
 manifest line (`scripts/hooks/ci-parity-manifest.txt`, `job|kind|notes`), so
 the hook-less jobs and the jobs whose local reproduction spans several recipes
@@ -115,7 +125,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 | Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
 | Parity ledger | Reconcile `docs/architecture/rust-settlement-bot-parity.md` with the boot oracle |
 | Executor release ratchet | `python3 scripts/executor_release_ratchet.py generate`, only while adding a release |
-| Retirement-tripwire ratchet | Delete the artifact, or label it with the D2 marker naming the present code it watches |
+| Retirement-tripwire ratchet | Delete the artifact, or label it with the D2 marker naming the present code it watches (a Markdown revival ban is outside the scan — review owns it) |
 | rustfmt / clippy / python lint | `just format`, `just lint-rust`, `just lint-python` |
 
 ### What each ratchet caught

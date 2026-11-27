@@ -2,14 +2,21 @@
 """The retirement-tripwire ratchet: a source scan for tripwire signatures.
 
 # live-invariant gate (ADR-087 D2): watches the present test/gate surface (rust
-# test files, tests/, justfile, prek.toml, scripts/, docs/) for the tripwire
-# signatures ADR-087 D1 bans; not tripwire precedent.
+# test files, tests/, scripts/, justfile, prek.toml) for the tripwire signatures
+# ADR-087 D1 bans; not tripwire precedent.
 
-Deleting a module is the complete retirement (ADR-087 D1). A test, gate, or prose
-prohibition whose purpose is keeping a deliberately deleted thing gone is a
-retirement tripwire and does not exist here. This scanner is the ban's mechanism
-(D4): it reads the tree as it stands and fails on any artifact whose shape is a
-resurrection guard rather than a test of present code.
+Deleting a module is the complete retirement (ADR-087 D1). A test or gate whose
+purpose is keeping a deliberately deleted thing gone is a retirement tripwire and
+does not exist here. This scanner is the ban's mechanism (D4): it reads the tree as
+it stands and fails on any artifact whose shape is a resurrection guard rather than
+a test of present code.
+
+PROSE IS NOT SCANNED (D4 amendment). A revival prohibition in Markdown ("must not
+reappear", "do not revive") is review-owned: it and a design note arguing about the
+same vocabulary are the same words in the same paragraph shape, so separating them
+needs intent, which a gate cannot read. The ban itself still stands (D1); the verdict
+moved out of this scan to review. Re-extending the surface over `docs/` takes a new
+ADR, not an edit here: the heuristics it would need are the rejected class.
 
 It flags; it does not classify. A hit means the author must do one of exactly two
 things, and both make the decision visible in the diff:
@@ -31,7 +38,7 @@ allowlist, baseline, or waiver file, and there must never be one: a suppression 
 would be a second, unreviewable gate list (ADR-074's argument) and would become prior
 art for the next guard.
 
-Scope is ADR-087 D4's test/gate surface. A signature outside it belongs to some other
+Scope is ADR-087 D4's code/test surface. A signature outside it belongs to some other
 rule (the comment-hygiene gate owns tracker citations, ruff and clippy own style), so
 this scan stays narrow enough to keep its verdicts mechanical.
 
@@ -57,12 +64,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: of the present code the gate guards.
 MARKER = "live-invariant gate (ADR-087 D2): watches"
 
-# A quoted span is quoted because the sentence is *about* the phrase, not an instance
-# of it: the ADR that defines a prohibition spells the prohibition once, in quotes.
-# Backticks and double quotes are unambiguous delimiters. A single-quoted span is not
-# -- `don't` and `it's` are apostrophes -- so it must sit against non-word characters
-# at both ends. Spans may run across a line wrap, so `.` is used with DOTALL rather
-# than a negated newline.
+# A quoted span is text about code, not code: an assertion's needle, a docstring's
+# example, the string a test hands a parser. Blanking it keeps a fixture that quotes a
+# tombstone shape from being read as a tombstone. Backticks and double quotes are
+# unambiguous delimiters. A single-quoted span is not -- `don't` and `it's` are
+# apostrophes -- so it must sit against non-word characters at both ends. Spans may run
+# across a line wrap, so `.` is used with DOTALL rather than a negated newline.
 _BACKTICK = re.compile(r"`[^`]{0,400}?`", re.DOTALL)
 _DQUOTE = re.compile(r'"[^"]{0,400}?"', re.DOTALL)
 _SQUOTE = re.compile(r"(?<![A-Za-z0-9])'[^']{0,400}?'(?![A-Za-z0-9])", re.DOTALL)
@@ -174,54 +181,6 @@ _SIG: list[tuple[str, re.Pattern[str], frozenset[str]]] = [
     ),
 ]
 
-# --- the prose signature ---------------------------------------------------
-# A revival PROHIBITION ("must not reappear", "do not revive / re-land / rebuild",
-# "do not re-introduce"). The vocabulary alone is not enough: ADR-087's own
-# considered-options section, the ADRs that record a retirement, and design notes that
-# reject an approach all use the same words to describe or argue rather than to ban.
-# Two further conditions make the test mechanical:
-#
-#   1. the prohibition and a RETIREMENT word (retired / deleted / removed / dissolved
-#      / superseded / reverted / gone / obsolete / deprecated) must share a PARAGRAPH.
-#      A prohibition about a design ("the proof must not rebuild the matrix") has no
-#      retirement in scope and is a design note, not a guard on a deleted name.
-#   2. the prohibition must not be quoted. Quoting is how a document names the
-#      prohibition it is defining or repealing; ADR-087 and the GLOSSARY both do it,
-#      and both are the sanctioned homes.
-_FAILS_TEXT = re.compile(
-    r"\b(?:do(?:n't)?|does(?:n't)?|did(?:n't)?|must(?:n't)?|should(?:n't)?|may|can)\s+not"
-    r"\s+(?:ever\s+)?"
-    r"(?:revive|resurrect|reappear|come\s+back|regrow|re-?land|rebuild|re-?introduce|re-?add)\b"
-    r"|\b(?:must|should|will)\s+never\s+"
-    r"(?:reappear|come\s+back|revive|resurrect|re-?land|rebuild|regrow|re-?introduce)\b"
-    r"|\bnever\s+(?:reappear|come\s+back)\b",
-    re.IGNORECASE,
-)
-_RETIREMENT = re.compile(
-    r"\b(?:retir\w*|delet\w*|remov\w*|dissolv\w*|supersed\w*|revert\w*|gone|obsolete"
-    r"|deprecat\w*)\b",
-    re.IGNORECASE,
-)
-# ADR-087 D4 scopes the prose signature to docs. A code comment or doc-comment that
-# says "do not re-add X" is a design note about the live shape it sits beside (the
-# `seat_host/pump.rs` cordon-gate note is the standing example: it forbids a second
-# hand-written gate in favour of the live class-derived consult), not the surviving
-# prose half of a deleted guard. Those belong to review, per D1's compiler-blind rule.
-_PROSE_SUFFIXES = frozenset({".md"})
-_PARAGRAPH = re.compile(r"(?:[^\n]*\n?)+")
-
-
-def _revival_prohibitions(masked: str) -> list[int]:
-    """Offsets of revival prohibitions sitting in a paragraph with a retirement."""
-    offsets = []
-    position = 0
-    for block in re.split(r"(\n[ \t]*\n)", masked):
-        if _FAILS_TEXT.search(block) and _RETIREMENT.search(block):
-            for match in _FAILS_TEXT.finditer(block):
-                offsets.append(position + match.start())
-        position += len(block)
-    return offsets
-
 
 def _suffix(path: str) -> str:
     return "" if path == "justfile" else Path(path).suffix
@@ -244,12 +203,12 @@ def is_rust_test_file(rel: str, text: str) -> bool:
 
 
 def in_surface(rel: str, text: str) -> bool:
-    """ADR-087 D4's surface: rust test files, `tests/`, `justfile`, `prek.toml`,
-    `scripts/`, `docs/`.
+    """ADR-087 D4's surface: rust test files, `tests/`, `scripts/`, `justfile`,
+    `prek.toml`. `docs/` left it with the prose signature (D4 amendment).
     """
     if rel in {"justfile", "prek.toml"}:
         return True
-    if rel.startswith(("tests/", "scripts/", "docs/")):
+    if rel.startswith(("tests/", "scripts/")):
         return True
     return is_rust_test_file(rel, text)
 
@@ -317,11 +276,6 @@ def scan(root: Path, paths: list[str]) -> tuple[list[str], int, int]:
                 lineno = _line_at(haystack, match.start())
                 source = lines[lineno - 1].strip() if lineno - 1 < len(lines) else ""
                 findings.append(f"{rel}:{lineno}: {label}: {source}")
-        if suffix in _PROSE_SUFFIXES:
-            for offset in _revival_prohibitions(masked):
-                lineno = _line_at(masked, offset)
-                source = lines[lineno - 1].strip() if lineno - 1 < len(lines) else ""
-                findings.append(f"{rel}:{lineno}: revival prohibition: {source}")
     return findings, in_surface_count, scanned
 
 
@@ -359,12 +313,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(
         "tripwire-ratchet: retirement tripwire(s) found (ADR-087 D1).\n"
-        "  Deleting code is the complete retirement: a test, gate, or prose ban whose\n"
-        "  purpose is keeping a deleted thing gone does not exist here.\n"
+        "  Deleting code is the complete retirement: a test or gate whose purpose is\n"
+        "  keeping a deleted thing gone does not exist here.\n"
         "\n"
         "  Delete the artifact -- or, if it guards PRESENT code, label it:\n"
         f"      {MARKER} <the live declaration/manifest/call site it guards>;\n"
-        "      not tripwire precedent.\n",
+        "      not tripwire precedent.\n"
+        "\n"
+        "  A revival ban in prose is review's verdict, never this gate's (ADR-087 D4\n"
+        "  amendment); this scan reads code and tests only.\n",
         file=sys.stderr,
     )
     for finding in findings:

@@ -273,13 +273,16 @@ hooks = [
   # for the degenbot._ffi seam; the slimmed bespoke gate (R0 + driver-module
   # tombstones) runs in the pytest suites below.
   { id = "stubtest", name = "Stubtest drift gate", language = "system", entry = "just lint-stubtest", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
-  # ADR-087 D4 — the tripwire ratchet. A source scan of the test/gate surface
-  # (rust test files, tests/, justfile, prek.toml, scripts/, docs/) for the
-  # signatures of a RETIREMENT TRIPWIRE: an assertion that a deleted name is still
-  # absent (`assert not hasattr`, a grep for a retired identifier), a collection
-  # named for the revival asserted empty, or a prose "do not revive / re-land /
-  # rebuild" ban. Deleting code is the complete retirement (D1), so such an artifact
-  # does not exist here; the scan flags one and the pre-push gate fails.
+  # ADR-087 D4 — the tripwire ratchet. A source scan of the code/test surface
+  # (rust test files, tests/, scripts/, justfile, prek.toml) for the signatures of a
+  # RETIREMENT TRIPWIRE: an assertion that a deleted name is still absent (`assert
+  # not hasattr`, a grep for a retired identifier) or a collection named for the
+  # revival asserted empty. Deleting code is the complete retirement (D1), so such an
+  # artifact does not exist here; the scan flags one and the pre-push gate fails.
+  #
+  # Prose is not scanned (the D4 amendment): a Markdown "do not revive" ban is
+  # review-owned, because the ban and a design note arguing the same words share one
+  # paragraph shape and no detector separates them mechanically.
   #
   # It flags and does not classify (D4): the author deletes the artifact or labels
   # it with the D2 marker, which forces the statement of what PRESENT code the gate

@@ -1,6 +1,8 @@
 # ADR-087: Deletion is the retirement — retirement tripwires are rejected
 
-**Status: accepted** (2026-10-28; reaffirms and enforces ADR-047 D4).
+**Status: accepted** (2026-10-28; reaffirms and enforces ADR-047 D4. D4 amended
+2026-11-27: the ratchet scans code and test tombstones only — prose revival bans are
+review-owned).
 
 ## Context
 
@@ -111,12 +113,11 @@ reaffirmation; its D1–D3 (the subscriber-bus retirement) are untouched.
 ### D4 — Enforcement is a commit gate: the tripwire ratchet
 
 The ban is enforced mechanically. The tripwire ratchet is a source-scan gate wired into
-the prek pre-push manifest and `just test`, scanning the test/gate surface (rust test
-files, `tests/`, justfile, prek.toml, `scripts/`, `docs/`) for tripwire signatures —
-the detection patterns the 2026-10-28 census used: absent-API assertions with
-retirement vocabulary, retired-name greps, "must not reappear", and
-"do not revive / re-land / rebuild" prose. Any hit fails the gate unless the artifact
-carries the D2 live-invariant label. The ratchet:
+the prek pre-push manifest and `just test`, scanning the code/test surface (rust test
+files, `tests/`, `scripts/`, justfile, prek.toml) for tripwire signatures — the code
+and test detection patterns the 2026-10-28 census used: absent-API assertions,
+retired-name greps, and revival-named collections asserted empty. Any hit fails the
+gate unless the artifact carries the D2 live-invariant label. The ratchet:
 
 - **Lands last**, after the cleanup epic's deletion batches, seeded on a tree with zero
   tripwires; from then on a new tripwire fails at commit/push time.
@@ -127,6 +128,29 @@ carries the D2 live-invariant label. The ratchet:
   tripwire, and it does not try: the author either deletes the artifact or, if it is
   genuinely a live-invariant gate, labels it — which forces the D2 statement of what
   present code it watches. The decision is made visible, not automated.
+
+**D4 amendment — code and test tombstones only; prose is review-owned.** The first
+form of D4 also scanned `docs/` for revival prohibitions ("must not reappear", "do not
+revive / re-land / rebuild"), excusing a hit only when the ban shared a paragraph with
+a retirement word and was unquoted. That half is repealed and `docs/` leaves the
+surface, at a measured cost: the prose rule survives as D1's rule, and review is its
+enforcement. The reasoning is D4's own no-judgment clause turned on itself:
+
+- A revival ban and a design note that rejects the same approach are the same words in
+  the same shape. Separating them needed paragraph scope and quoting heuristics, and
+  neither makes the verdict mechanical — the detector ends up judging the author's
+  phrasing, which is the judgment call D4 forbids it to make.
+- What moved is the venue, not the rule. A Markdown "do not revive" is still a
+  retirement tripwire under D1; review reads the sentence, and the gate reads the
+  artifact's shape.
+- The retained signatures are the unambiguous code/test tombstones: absence assertions
+  (`assert not hasattr` and its `dir` / `vars` / `__all__` / `any` forms),
+  retired-name source greps (the Python spelling and the Rust `include_str!` spelling),
+  and collections *named* for the revival asserted empty. Each keeps its red fixture,
+  and the gate keeps its own synthetic negative probe.
+- Re-extending the scan over prose needs a new ADR, not an edit to the detector: the
+  heuristics that takes are the rejected class below, so a silent re-add would restore
+  a verdict the gate cannot defend.
 
 ### D5 — The accumulated census is triaged and cleaned
 
@@ -166,6 +190,13 @@ The 189 artifacts are triaged per-artifact, executed as an ergo epic:
   example problem the census exposed is the harm, and preservation does not fix it.
 - **Date-based expiry for guards.** Rejected: dates fire whether or not the surface is
   stable — and under the absolute rule there are no guards left to expire.
+- **Keeping the `docs/` prose half of the ratchet** (rejected in the 2026-11-27 D4
+  amendment, after it had landed). A "do not revive" ban and a design note that
+  rejects the same approach are the same words in the same paragraph, so the detector
+  separated them only through paragraph-scope and quoting heuristics — a verdict on
+  phrasing rather than on shape, and therefore the judgment call D4 says the gate does
+  not make. The prose rule stays a D1 rule held by review; the gate keeps the
+  signatures whose meaning is mechanical.
 
 ## Consequences
 
@@ -174,9 +205,13 @@ The 189 artifacts are triaged per-artifact, executed as an ergo epic:
   `_Avoid_`-flagged term.
 - The cleanup epic deletes every retirement tripwire in gate-verified batches; what
   survives is live-invariant gates (labeled) and ordinary tests of present behavior.
-- The tripwire ratchet makes the ban self-sustaining: a new tripwire fails at
-  commit/push time, and the exemption path (the D2 label) forces the author to state
-  what present code the gate watches.
+- The tripwire ratchet makes the ban self-sustaining for code and tests: a new
+  tombstone assertion or retired-name grep fails at commit/push time, and the exemption
+  path (the D2 label) forces the author to state what present code the gate watches.
+- Prose revival bans are review-owned (the D4 amendment): the gate's surface is code
+  and tests, AGENTS.md and `docs/gates.md` say so, and a Markdown ban that survives
+  review is a review failure — the gate is not to be widened back over prose to catch
+  it.
 - "There is prior art" stops being an argument: surviving prior art is a labeled
   live-invariant gate or an ordinary behavior test, and both say so where they live.
 - Future architecture reviews must not suggest retirement tripwires for any surface —

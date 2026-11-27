@@ -43,7 +43,7 @@ Design standalone features without a backwards compatibility layer. Add a featur
 
 ## Retirement hygiene
 
-Deleting code is the complete retirement (ADR-087). No retirement tripwires — no tests, gates, or prose whose purpose is keeping a deleted thing gone (`assert not hasattr` on retired names, retired-name greps, "do not revive"), for any surface. The compiler, the owning ADR, review, and git history are the guards. When an external consumer may still send a retired key or subcommand, fail loud at the boundary in present, testable error-path code. Enforced by the tripwire-ratchet commit gate (ADR-087 D4); live-invariant gates (no-pyo3-in-cores, FFI seam privacy, stub drift, push-gate manifest) watch present code and are not tripwires.
+Deleting code is the complete retirement (ADR-087). No retirement tripwires — no tests, gates, or prose whose purpose is keeping a deleted thing gone (`assert not hasattr` on retired names, retired-name greps, "do not revive"), for any surface. The compiler, the owning ADR, review, and git history are the guards. When an external consumer may still send a retired key or subcommand, fail loud at the boundary in present, testable error-path code. Enforced for code and tests by the tripwire-ratchet commit gate (ADR-087 D4): it scans `tests/`, `scripts/`, the justfile, prek.toml and Rust test files for unambiguous tombstone shapes, and never scans prose. A Markdown revival ban is review's verdict, because the ban and a design note arguing the same words share one form (D4 amendment). Live-invariant gates (no-pyo3-in-cores, FFI seam privacy, stub drift, push-gate manifest) watch present code and are not tripwires.
 
 ## Planning
 
