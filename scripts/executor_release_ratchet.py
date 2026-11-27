@@ -7,6 +7,15 @@ independent checks: the committed index must exactly match regeneration, and
 every package in the base index must survive byte-for-byte unchanged. Editing a
 frozen file and regenerating therefore cannot launder a semantic change.
 
+Regeneration drift is checked unconditionally. Preservation needs a base
+independent of ``HEAD``: ``--base-index`` names one explicitly, otherwise
+``DEGENBOT_RELEASE_RATCHET_BASE``, otherwise ``git merge-base HEAD @{upstream}``,
+otherwise ``git merge-base HEAD origin/main``. A base that resolves to ``HEAD``
+advances to ``HEAD^`` so a mutation committed in the current commit is compared
+against its parent. An unresolvable base, a base without a parent, and a base
+whose index is missing or unreadable fail closed: comparing ``HEAD`` with itself
+would make preservation vacuous.
+
 live-invariant gate (ADR-087 D2): watches accepted cmd_executor release packages and their sequential release index; not tripwire precedent.
 """
 
@@ -26,11 +35,20 @@ RELEASES_DIR = Path("rust/crates/foundation/degenbot-executor/releases")
 INDEX_PATH = RELEASES_DIR / "index.json"
 SCHEMA_VERSION = 1
 FIRST_TRACKED_RELEASE = 2
+BASE_ENV = "DEGENBOT_RELEASE_RATCHET_BASE"
+UPSTREAM_SELECTOR = "@{upstream}"
+FALLBACK_SELECTOR = "origin/main"
+HEAD = "HEAD"
+HEAD_PARENT = "HEAD^"
 _HEX_256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class GateError(Exception):
     """The gate cannot make a trustworthy determination."""
+
+    def __init__(self, message: str, complaints: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.complaints = list(complaints or ())
 
 
 def canonical(payload: dict[str, Any]) -> str:
@@ -149,29 +167,64 @@ def read_index(path: Path) -> tuple[str, list[dict[str, Any]]]:
     return text, validate_index(payload, str(path))
 
 
-def base_index_from_git(root: Path) -> list[dict[str, Any]] | None:
-    explicit = os.environ.get("DEGENBOT_RELEASE_RATCHET_BASE")
-    if explicit:
-        base = explicit
-    else:
-        upstream = subprocess.run(
-            ["git", "merge-base", "HEAD", "@{upstream}"],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
-            cwd=root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        base = upstream.stdout.strip() if upstream.returncode == 0 else "HEAD"
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] -- fixed argv, no shell
-        ["git", "show", f"{base}:{INDEX_PATH.as_posix()}"],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
+def git(root: Path, *args: str) -> str:
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] -- one explicit argv, never a shell
+        ["git", *args],  # ruff: ignore[start-process-with-partial-path] -- git PATH lookup is intended
         cwd=root,
         text=True,
         capture_output=True,
         check=False,
     )
     if result.returncode != 0:
-        return None
-    return validate_index(json.loads(result.stdout), f"{base}:{INDEX_PATH}")
+        detail = result.stderr.strip() or "no diagnostic"
+        raise GateError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
+def base_selector(root: Path) -> tuple[str, str]:
+    explicit = os.environ.get(BASE_ENV)
+    if explicit:
+        return BASE_ENV, explicit
+    failures: list[str] = []
+    for selector in (UPSTREAM_SELECTOR, FALLBACK_SELECTOR):
+        try:
+            return selector, git(root, "merge-base", HEAD, selector).strip()
+        except GateError as error:
+            failures.append(str(error))
+    raise GateError(
+        f"no independent release base: set {BASE_ENV} to the accepted base commit, configure an "
+        f"upstream, or publish {FALLBACK_SELECTOR}; {'; '.join(failures)}"
+    )
+
+
+def commit_for(root: Path, revision: str) -> str:
+    commit = git(root, "rev-parse", "--verify", f"{revision}^{{commit}}").strip()
+    if not commit:
+        raise GateError(f"release base {revision} does not resolve to a commit")
+    return commit
+
+
+def independent_base(root: Path, selector: str, revision: str) -> str:
+    candidate = commit_for(root, revision)
+    if candidate != commit_for(root, HEAD):
+        return candidate
+    try:
+        return commit_for(root, HEAD_PARENT)
+    except GateError as error:
+        raise GateError(
+            f"release base {selector} ({revision}) resolves to HEAD and HEAD has no parent; "
+            f"name an independent base or set {BASE_ENV} to one"
+        ) from error
+
+
+def base_index_from_git(root: Path) -> list[dict[str, Any]]:
+    selector, revision = base_selector(root)
+    origin = f"{independent_base(root, selector, revision)}:{INDEX_PATH.as_posix()}"
+    try:
+        payload = json.loads(git(root, "show", origin))
+    except json.JSONDecodeError as error:
+        raise GateError(f"release base index {origin} is not valid JSON: {error}") from error
+    return validate_index(payload, origin)
 
 
 def check(root: Path, base_index: Path | None) -> list[str]:
@@ -184,20 +237,22 @@ def check(root: Path, base_index: Path | None) -> list[str]:
             f"{INDEX_PATH}: generated index drift; regenerate only while adding a new release"
         )
 
-    base = read_index(base_index)[1] if base_index is not None else base_index_from_git(root)
-    if base is not None:
-        current_by_id = {package["release_id"]: package for package in current}
-        for previous in base:
-            release_id = previous["release_id"]
-            present = current_by_id.get(release_id)
-            if present is None:
-                complaints.append(f"{release_id}: accepted release package is missing")
-            elif present != previous:
-                before = previous["files"]
-                after = present["files"]
-                for value in sorted(set(before) | set(after)):
-                    if before.get(value) != after.get(value):
-                        complaints.append(f"{release_id}: frozen file changed: {value}")
+    try:
+        base = read_index(base_index)[1] if base_index is not None else base_index_from_git(root)
+    except GateError as error:
+        raise GateError(str(error), complaints) from error
+    current_by_id = {package["release_id"]: package for package in current}
+    for previous in base:
+        release_id = previous["release_id"]
+        present = current_by_id.get(release_id)
+        if present is None:
+            complaints.append(f"{release_id}: accepted release package is missing")
+        elif present != previous:
+            before = previous["files"]
+            after = present["files"]
+            for value in sorted(set(before) | set(after)):
+                if before.get(value) != after.get(value):
+                    complaints.append(f"{release_id}: frozen file changed: {value}")
     return complaints
 
 
@@ -215,6 +270,8 @@ def main() -> int:
             return 0
         complaints = check(root, args.base_index)
     except GateError as error:
+        for complaint in error.complaints:
+            print(f"executor release ratchet: {complaint}", file=sys.stderr)
         print(f"executor release ratchet error: {error}", file=sys.stderr)
         return 2
     if complaints:
