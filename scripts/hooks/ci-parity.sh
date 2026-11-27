@@ -273,6 +273,7 @@ provisions_tool() {
         llvm23) grep -qE 'uses:[[:space:]]*\./\.github/actions/llvm23' <<< "${block}" ;;
         foundry) grep -qE 'uses:[[:space:]]*foundry-rs/foundry-toolchain@' <<< "${block}" ;;
         tier3-libs) grep -qE 'tier3-oracle/bootstrap-libs\.sh' <<< "${block}" ;;
+        python3) grep -qE 'python3 --version|command -v python3' <<< "${block}" ;;
         *)
             echo "ci-parity: unknown tool '${tool}' in ${tools_file}" >&2
             return 2

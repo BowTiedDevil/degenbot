@@ -8,10 +8,10 @@ drifting apart again. Predecessors: **ADR-062** (one operator file, four
 layers) decides what the cascade is and which file it reads; **ADR-063** (the
 file is portable, the secret is not) decides how a portable file carries a
 non-portable credential. This ADR records the enforcement of those decisions,
-not new policy. Companion: the
-[env-read gate scanner evaluation](../architecture/env-read-gate-scanner-evaluation.md),
-which records the gate that polices the single env-reading owner ADR-062 D7
-names.
+not new policy. Companion: [ADR-110](ADR-110-env-surface-scan-shared-python-ast.md),
+which records the scanner that polices the single env-reading owner ADR-062 D7
+names — the measured comparison that replaced the companion half's hand-rolled
+lexer, and the shared implementation the Rust and Python tiers now call.
 
 > **The verdict is the single configuration authority. It resolves once at
 > module init, carries provenance for every declared key, and is frozen.**

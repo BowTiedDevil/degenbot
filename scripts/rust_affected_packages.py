@@ -41,6 +41,14 @@ GLOBAL_INPUTS = frozenset({
     "pyproject.toml",
 })
 
+#: Non-Rust files a member's TEST surface executes. A gate that shells out to a
+#: script is only as current as that script, so touching one invalidates the
+#: member that runs it -- and only that member: no build reads these, so nothing
+#: that merely depends on the member is one script edit older.
+SHARED_TEST_INPUTS: dict[str, frozenset[str]] = {
+    "scripts/env_surface.py": frozenset({"degenbot-config"}),
+}
+
 
 class SelectionRefused(Exception):
     """The outgoing diff cannot be mapped to workspace packages."""
@@ -168,9 +176,14 @@ def affected_packages(metadata: dict[str, Any], paths: list[str], root: pathlib.
     owned = _specificity(directories)
     dependents = _dependents(metadata, members)
     selected: set[str] = set()
+    test_surface: set[str] = set()
     for path in paths:
         if path in GLOBAL_INPUTS:
             selected |= members
+            continue
+        shared = SHARED_TEST_INPUTS.get(path)
+        if shared is not None:
+            test_surface |= shared & members
             continue
         if not path.startswith("rust/"):
             continue
@@ -184,7 +197,7 @@ def affected_packages(metadata: dict[str, Any], paths: list[str], root: pathlib.
             raise SelectionRefused(
                 f"no workspace package owns {path}; refusing an incomplete test selection"
             )
-    return sorted(_closure(selected, dependents))
+    return sorted(_closure(selected, dependents) | test_surface)
 
 
 def _diff_base() -> str:

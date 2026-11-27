@@ -12,7 +12,10 @@ reachability check: every field declared on ``ArbitrageConfig`` must be
 attribute-loaded somewhere. The census counts an attribute load wherever one
 appears and silently skips any file that does not parse, so what it can
 honestly report is "read somewhere in the scanned roots", never "read by an
-operator": it is a heuristic, and only as sound as those two limits.
+operator": it is a heuristic, and only as sound as those two limits. The walk itself is
+the shared one (`scripts/env_surface.py`), so this census, the companion's
+env-read scan, and the Rust-tier adapters agree on which files a Python source
+tree holds.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
 
 from degenbot.runner import config as config_module
 from degenbot.runner.config import ArbitrageConfig
+from tests.repo_script import load_script
 
 _CONFIG_PATH = Path(config_module.__file__)
 
@@ -36,6 +40,10 @@ _CONFIG_PATH = Path(config_module.__file__)
 #: on ``cfg.<field>`` manufactures the very reader it is checked for. The
 #: check is therefore a heuristic, not a proof.
 _READER_ROOTS = ("src", "tests", "examples", "scripts")
+
+env_surface = load_script(
+    "env_surface", Path(__file__).resolve().parents[2] / "scripts" / "env_surface.py"
+)
 
 
 def _repo_root() -> Path:
@@ -49,7 +57,7 @@ def _python_sources() -> list[Path]:
     for name in _READER_ROOTS:
         base = root / name
         if base.is_dir():
-            sources.extend(sorted(base.rglob("*.py")))
+            sources.extend(env_surface.python_sources(base))
     return sources
 
 

@@ -239,6 +239,36 @@ def test_a_job_missing_a_tool_its_recipe_needs_fails(tmp_path: Path) -> None:
     assert "uv" in result.stderr
 
 
+ENV_SURFACE_STEP = "Assert python3 for the env-surface adapters"
+
+
+def test_a_job_that_never_asserts_python3_fails(tmp_path: Path) -> None:
+    """The env-surface adapters invoke `python3`; the job declares it on PATH.
+
+    A runner image that stopped shipping the interpreter would leave the
+    workspace lane green only if the gate could skip — and it refuses instead,
+    so the job must assert the interpreter it depends on.
+    """
+    lines = CI_YML.read_text(encoding="utf-8").splitlines()
+    start = next(
+        index for index, line in enumerate(lines) if line.strip() == f"- name: {ENV_SURFACE_STEP}"
+    )
+    anchor = "\n".join(lines[start : start + 2])
+
+    mutated = _mutate(
+        tmp_path,
+        CI_YML,
+        anchor,
+        "      - name: Provision nothing\n        run: echo skipped",
+    )
+
+    result = _run_ci_parity(CI=str(mutated))
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "test-rust-dev" in result.stderr
+    assert "python3" in result.stderr
+
+
 def test_a_wrong_install_action_tool_fails(tmp_path: Path) -> None:
     """`taiki-e/install-action` counts only when it installs nextest itself."""
     nextest = _ci_line(CI_YML, "tool: nextest@")

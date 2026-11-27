@@ -185,7 +185,10 @@ pre-push:
 test-rust: check-toolchain test-rust-dev test-rust-release
 
 # The dev-profile half of `test-rust`: the standalone smoke plus every workspace
-# suite. Pure cargo, and it tolerates a missing `uv` (best-effort LIBDIR probe).
+# suite. Pure cargo plus a `python3` on PATH (the `degenbot-config`
+# env-surface adapters run the shared scanner in `scripts/env_surface.py`; a
+# declared test-tool dependency, and its absence is a named refusal), and it
+# tolerates a missing `uv` (best-effort LIBDIR probe).
 test-rust-dev: check-toolchain test-standalone
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2358,10 +2361,10 @@ lint-markdown-check:
 # `ty` covers the gate surface; the one-off recorders and math oracles join when
 # their pre-existing diagnostics are triaged.
 lint-python:
-    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py tests/test_env_surface.py
     # ty runs in the project environment (it resolves third-party imports and the
     # degenbot stubs from the venv), which is where its dev dependency installs it.
-    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/env_surface.py scripts/hooks/*.py
 
 # The AGENTS.md "Comment Hygiene" gate (docs/comments.md): tracker citations and
 # RED/GREEN gate narration never live in code comments.
@@ -2395,8 +2398,8 @@ lint-tripwire-ratchet:
 # pre-push hook both run this form, so neither can green over a tree it silently
 # repaired. `lint-python` is the same detectors with the repairs applied.
 lint-python-check:
-    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py
-    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_hook_ci_equivalence.py tests/test_feature_lane_inventory.py tests/test_env_surface.py
+    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/env_surface.py scripts/hooks/*.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see
@@ -2501,19 +2504,6 @@ update-deps:
     cargo update --manifest-path rust/Cargo.toml
 
 # ========== Repository Setup ==========
-
-# Refresh the committed DEGENBOT_* key-inventory snapshot the
-# degenbot-config schema-completeness test compares against. The exclusion glob keeps the snapshot self-contamination
-# (regeneration rewriting its own source) out of the sweep.
-env-inventory:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    target="rust/crates/foundation/degenbot-config/tests/degenbot_env_inventory.txt"
-    rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename \
-        -g '!**/degenbot_env_inventory.txt' \
-        -g '!**/degenbot-config/tests/**' | sort -u > "$target"
-    echo "✓ inventory snapshot refreshed: $target ($(wc -l < "$target") keys)"
-    echo '  then: just gen-config-docs'
 
 # Regenerate the committed operator key reference (`docs/rust-config-keys.md`)
 # from the ONE schema authority (`SCHEMA` in

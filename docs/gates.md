@@ -10,10 +10,11 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-Seven ratchets, plus two gates that are deliberately not ratchets: comment
-hygiene carried a census and now fails outright, and the publication plan's
-check has no census to extend. A finding in either is an edit to the code or
-the manifests, never a row.
+Seven ratchets, plus three gates that are deliberately not ratchets: comment
+hygiene carried a census and now fails outright, the publication plan's check has
+no census to extend, and the environment-surface scan (section 8) enumerates its
+sanctions beside the scanner that applies them. A finding in any of them is an
+edit to the code or the manifests, never a row.
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -26,6 +27,7 @@ the manifests, never a row.
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
 | Publication plan check | `scripts/publication_plan.py --check` | none — the withheld population is empty, so a withheld member is a manifest repair and not a row | `just check-publication-plan` |
 | Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
+| Environment surface | `scripts/env_surface.py` (adapters: `degenbot-config`'s `no_stray_env_reads` and `schema_completeness`; pytest: `tests/test_env_surface.py`) | none — the allowlist lives beside the scanner, and the key inventory is swept from the tree | `python3 scripts/env_surface.py reads`; the adapters run under `just test-rust-affected` / `just test-rust` |
 
 ### The gate registry
 
@@ -124,6 +126,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 | Dependency charter | Update `rust/crates/facade/degenbot/tests/dependency_charter.txt` |
 | Publication plan check | `just bump-version <version>` for a lockstep drift; repair the named cycle, or the withheld member's dependency shape, in the manifests |
 | Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
+| Environment surface | Route the read through `degenbot-config` (the schema key, or a resolver), or add an enumerated, justified entry to `PYTHON_ALLOWLIST` in `scripts/env_surface.py`; for a `DEGENBOT_*` inventory finding, declare the key in `SCHEMA` or classify it in `schema_completeness.rs`'s documented sets |
 | Parity ledger | Reconcile `docs/architecture/rust-settlement-bot-parity.md` with the boot oracle |
 | Executor release ratchet | `python3 scripts/executor_release_ratchet.py generate`, only while adding a release |
 | Retirement-tripwire ratchet | Delete the artifact, or label it with the D2 marker naming the present code it watches (a Markdown revival ban is outside the scan — review owns it) |
@@ -819,6 +822,46 @@ source links, a declared-count disagreement, a current-source integration row
 deleted while its live target remains, an integration row outside the
 current-source rule, and the fail-closed exits, plus the green paths for the
 secondary-build-shape lane form and the committed workspace itself.
+
+---
+
+## 8. The environment surface
+
+ADR-062 D7 makes `degenbot-config` the tree's one env-reading owner, and
+[ADR-110](adr/ADR-110-env-surface-scan-shared-python-ast.md) records the scanner
+that enforces it on both sides of the language seam.
+
+**One implementation.** `scripts/env_surface.py` (stdlib only) answers both
+questions: `reads` reports the companion's environment reads (`os.environ`,
+`os.environb`, `os.getenv`, any import alias of them), and `inventory` prints
+the sorted `DEGENBOT_*` names in `rust/crates`. The read scan parses with
+`ast`, so string content, comments, and f-string holes are decided by the
+grammar, and an alias resolves to the name it binds — the two shapes the retired
+hand-rolled lexer could not see (ADR-110's measured table).
+
+**Silence is never an answer.** A source that does not parse, a missing or empty
+scan surface, a non-UTF-8 source, and an inventory sweep that finds no name are
+refusals: exit 2, reason named. Findings exit 1 as `path:line: NAME`; a clean
+scan exits 0. There is no skip and no remembered population.
+`python3` is a declared test-tool dependency
+(`scripts/hooks/ci-recipe-tools.txt`), and the Rust adapters PANIC with a named
+refusal when it is absent.
+
+**Two Rust adapters, one pytest scan.** `degenbot-config`'s
+`no_stray_env_reads` test runs `reads` over `src/degenbot`, and its
+`schema_completeness` test runs `inventory`; both live in the crate's test
+targets, so `rust-test-affected` and CI's `rust-test` job run them, and an edit
+to the shared script selects that crate (ADR-110 D4). The default pytest suite
+runs the same `reads` scan in-process (`tests/test_env_surface.py`), so a
+Python-only diff — and the Python CI job — is judged by the same implementation,
+and the allowlist is held to the sources by an assertion: every sanctioned path
+exists, is a companion source, and reads exactly its enumerated names.
+
+**Data.** No census. The companion's sanctions are `PYTHON_ALLOWLIST` beside the
+scanner (a name the typed schema cannot own, a read the cascade cannot reach, or
+tooling plumbing the cascade does not express); the key inventory is swept from
+the tree, and `schema_completeness.rs`'s documented artifact, bootstrap,
+driver-domain, harness, and retired sets reconcile it with `SCHEMA`.
 
 ---
 

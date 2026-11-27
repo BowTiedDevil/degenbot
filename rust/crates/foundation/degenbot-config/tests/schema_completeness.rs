@@ -1,14 +1,19 @@
-//! The loader's schema covers the FULL `DEGENBOT_*` key inventory: the raw
-//! inventory sweep
-//! `rg -o "DEGENBOT_[A-Z_]+" rust/crates --no-filename | sort -u`
-//! is diffed against the schema's env names, with the documented
-//! artifact/expansion set below.
+//! The loader's schema covers the FULL `DEGENBOT_*` key inventory: the
+//! `DEGENBOT_[A-Z_]*` names swept from the Rust tree are diffed against the
+//! schema's env names, with the documented artifact/expansion set below.
+//!
+//! The sweep is the shared implementation in `scripts/env_surface.py`
+//! (`inventory`), the module the companion's env-read gate also scans with,
+//! invoked here so `rust-test-affected` keeps running it. `python3` is a
+//! declared test-tool dependency, so its absence is a named refusal — never a
+//! skip, and never a committed snapshot standing in for the tree.
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
 
 use degenbot_config::{SCHEMA, UNPREFIXED_ENV_NAMES};
+
+mod support;
 
 /// Raw regex matches that are NOT real static keys:
 /// - `DEGENBOT_JAEGER_E` — the sweep regex stops at the digit of `DEGENBOT_JAEGER_E2E`.
@@ -154,13 +159,6 @@ const SWEEP_EXPANSIONS: &[&str] = &[
     "DEGENBOT_EVM2_OPT_LEVEL",
 ];
 
-/// Committed snapshot of the sweep, used verbatim when `rg` is not installed
-/// (standalone-consumer checkouts). Refresh in-repo with the `inventory()`
-/// sweep's own args (both exclusion globs — the config crate's own tests carry
-/// negative-probe literals that are not real keys):
-/// `rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename -g '!**/degenbot_env_inventory.txt' -g '!**/degenbot-config/tests/**' | sort -u > <snapshot>`
-const SNAPSHOT: &str = include_str!("degenbot_env_inventory.txt");
-
 fn repo_root() -> &'static Path {
     let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4) else {
         unreachable!("repo root is four levels above the role-grouped crate manifest dir");
@@ -168,31 +166,20 @@ fn repo_root() -> &'static Path {
     root
 }
 
-/// Prefer the live sweep; fall back to the committed snapshot.
+/// The live sweep: every `DEGENBOT_*` name in the Rust tree, from the shared
+/// scanner. A refusal — an unreadable tree, an empty sweep, a missing
+/// interpreter — is a panic carrying the scanner's own reason, because this
+/// gate's population cannot be replaced by a remembered one.
 fn inventory() -> Vec<String> {
-    let live = Command::new("rg")
-        .args([
-            "-o",
-            "DEGENBOT_[A-Z_]+",
-            "rust/crates",
-            "--no-filename",
-            "-g",
-            "!**/degenbot_env_inventory.txt",
-            "-g",
-            "!**/degenbot-config/tests/**",
-        ])
-        .current_dir(repo_root())
-        .output();
-    match live {
-        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(str::to_string)
-                .collect()
-        }
-        // `rg` unavailable or produced nothing: use the committed snapshot.
-        _ => SNAPSHOT.lines().map(str::to_string).collect(),
-    }
+    let output = support::run("python3", repo_root(), &["inventory"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "the shared env-surface inventory refused, so this gate cannot judge the \
+         schema:\n{stdout}{stderr}"
+    );
+    stdout.lines().map(str::to_string).collect()
 }
 
 /// Every `DEGENBOT_*` name the schema declares: the one set an inventory
@@ -225,7 +212,8 @@ fn expected_schema_inventory(sweep: &BTreeSet<String>) -> BTreeSet<String> {
         .collect();
     for expansion in SWEEP_EXPANSIONS {
         // Only expand when the artifact that produced it was actually observed,
-        // so the snapshot fallback sees exactly what the live sweep does.
+        // so an expansion names a key the sweep implies rather than one no
+        // source mentions.
         if SWEEP_ARTIFACTS.iter().any(|a| sweep.contains(*a)) || sweep.contains(*expansion) {
             let _ = expected.insert((*expansion).to_string());
         }
@@ -247,16 +235,4 @@ fn schema_covers_the_full_key_inventory() {
         unknown.is_empty() && uncovered.is_empty(),
         "schema/inventory mismatch\n  schema keys not in inventory: {unknown:?}\n  inventory keys not in schema: {uncovered:?}"
     );
-}
-
-#[test]
-fn snapshot_fallback_agrees_with_schema() {
-    // The committed snapshot must itself satisfy the parity contract — this
-    // is the standalone-consumer path (no `rg` in the build environment).
-    let sweep: BTreeSet<String> = SNAPSHOT.lines().map(str::to_string).collect();
-    assert!(
-        !sweep.iter().any(|k| k.contains("REGEN_DOCS")),
-        "snapshot is self-contaminated; regenerate it with the exclusion glob"
-    );
-    assert_eq!(declared_prefixed_names(), expected_schema_inventory(&sweep));
 }

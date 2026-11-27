@@ -26,6 +26,10 @@
 #   tier3-libs    a `tier3-oracle/bootstrap-libs.sh` run, which fetches the
 #                 gitignored canonical Uniswap V2/V3/V4 sources the executor
 #                 lane's Solidity artifact builder compiles.
+#   python3       an explicit `python3 --version` (or `command -v python3`) step,
+#                 asserting on PATH the interpreter the `degenbot-config`
+#                 env-surface adapters invoke (`scripts/env_surface.py`). Its
+#                 absence is a named refusal in those tests, never a skip.
 #
 # Read a recipe's body before adding a name here: `publish-dry-run`, for
 # instance, is plain `python3` on purpose and needs neither uv nor the venv.
@@ -62,7 +66,7 @@ publish-dry-run||
 test-executor-offline|uv,dev-venv,foundry,tier3-libs|
 test-golden-replay|cargo-nextest,uv|
 test-python-noise-gate|uv,dev-venv|
-test-rust-dev|llvm23|
+test-rust-dev|llvm23,python3|
 test-rust-feature-lanes|cargo-nextest,uv,llvm23|
 test-rust-release||
 test-rust-policy-lane|cargo-nextest,uv|

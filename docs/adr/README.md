@@ -140,6 +140,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [107](ADR-107-compose-capable-path-admission.md) | Compose-capable path admission — execution-only registry, target-relative execution | accepted (implemented) |
 | [108](ADR-108-bound-certified-search-scope.md) | Bound-certified search is scoped to piecewise-Möbius classes | proposed (research complete; no production cutover) |
 | [109](ADR-109-mechanically-verified-feature-lanes.md) | Feature-gated test lanes are mechanically inventoried and filtered | accepted (implemented) |
+| [110](ADR-110-env-surface-scan-shared-python-ast.md) | The environment surface is scanned once, as a syntax tree | accepted (implemented) |
 
 ## Historical — provenance only
 

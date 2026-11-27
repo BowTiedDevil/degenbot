@@ -40,6 +40,7 @@ from degenbot.runner.config import (
 from tests.helpers import verdict_probe as probe
 from tests.helpers.erc20_factory import make_native_token
 from tests.helpers.seam import Bot as SeamBot
+from tests.repo_script import load_script
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,10 +48,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: whichever operator file the machine running it happens to carry.
 _OVERRIDE = RpcCascadeOverrides(chain_id=1, node="wss://override.example")
 
-#: The env-read gate's Python sanction for the retired-knob refusal. The gate
-#: is a cross-language scanner and cannot import the runner's list, so it names
-#: the home instead; the names themselves live only in ``config``.
-_ENV_READ_GATE = _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs"
+#: The env-read gate's one implementation, which holds the companion's
+#: sanction for the retired-knob refusal. The gate scans sources and cannot
+#: import the runner's list, so it names the home instead; the names themselves
+#: live only in ``config``.
+_ENV_SURFACE = load_script("env_surface", _REPO_ROOT / "scripts" / "env_surface.py")
 
 #: The declared identity keys and their pre-prefix spellings: a child must not
 #: inherit one, or "the verdict saw nothing" would be a claim about this
@@ -305,7 +307,7 @@ def test_the_env_gate_points_at_the_retired_knob_home() -> None:
     The env-read gate is a cross-language scanner, so it cannot import the
     list; it must point at the home rather than re-list the names.
     """
-    gate = _ENV_READ_GATE.read_text(encoding="utf-8")
+    gate = (_REPO_ROOT / "scripts" / "env_surface.py").read_text(encoding="utf-8")
     for knob in _RETIRED_SHELL_KNOBS:
         assert knob not in gate, (
             "the env-read gate must point at the runner's retired-knob home, "
@@ -314,3 +316,7 @@ def test_the_env_gate_points_at_the_retired_knob_home() -> None:
     assert "_RETIRED_SHELL_KNOBS" in gate, (
         "the gate's textual sanction must name the home it points at"
     )
+    assert _ENV_SURFACE.PYTHON_ALLOWLIST["src/degenbot/runner/config.py"] == (
+        "name",
+        "_RETIRED_INJECTION_KEY",
+    ), "the sanction is the loop variable and the retired bare name, nothing else"

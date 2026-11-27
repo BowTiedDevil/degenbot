@@ -193,6 +193,29 @@ def test_a_global_build_input_selects_every_member(path: str) -> None:
     ]
 
 
+def test_a_shared_test_surface_selects_the_member_that_runs_it() -> None:
+    """The config crate's tests execute `scripts/env_surface.py`.
+
+    A gate that shells out to a script is only as current as that script, so the
+    edit selects that member -- and only it: no build reads the script, so the
+    dependents are not one script edit older.
+    """
+    metadata = {
+        "packages": [
+            _member("degenbot-config", "rust/crates/foundation/degenbot-config"),
+            _member(
+                "degenbot-core",
+                "rust/crates/foundation/degenbot-core",
+                {"name": "degenbot-config", "kind": None},
+            ),
+        ]
+    }
+
+    selected = rap.affected_packages(metadata, ["scripts/env_surface.py"], pathlib.Path("/repo"))
+
+    assert selected == ["degenbot-config"]
+
+
 def test_a_cross_package_rename_selects_both_ownerships() -> None:
     selected = rap.affected_packages(
         _WORKSPACE,
