@@ -1,8 +1,0 @@
-# Comment-hygiene gate waivers — scripts/hooks/comment-hygiene.sh
-# Live-detector output over the pre-rule citation census. Shrink in the
-# strip waves;
-# regenerate via:
-#   WAF=/dev/null scripts/hooks/comment-hygiene.sh 2>&1 |
-#     grep -E '^[^ :]+:[0-9]+:' | cut -d: -f1 | sort -u
-# A waiver means "this file still carries pre-rule citations" — remove the
-# entry in the same commit that strips the file's citations.

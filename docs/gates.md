@@ -2,19 +2,21 @@
 
 An index of the repo's **ratchets** and the `architecture_gates.rs` family: a
 ratchet is a gate that fails on *new* occurrences of a defect class while
-grandfathering the existing ones in a census, so the count can only shrink.
-This page is the entry point for finding the right gate, reading its census,
-and adding an entry correctly (the capability-home gates are decided by
+grandfathering the existing ones in a census, so the count can only shrink. This
+page is the entry point for finding the right gate, reading its census, and
+adding an entry correctly (the capability-home gates are decided by
 [ADR-084](adr/ADR-084-capability-homes.md)). Each ratchet below lists the
 failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-The nine ratchets:
+Eight ratchets, plus one gate listed first that is deliberately not a ratchet:
+comment hygiene carried a census and now fails outright, so it has no data file
+to read or extend — a finding is an edit to the code, never a row.
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
-| Comment hygiene | `scripts/hooks/comment-hygiene.sh` | `scripts/hooks/comment-hygiene-census.txt` (+ `-waivers.txt`) and `scripts/hooks/comment-hygiene-citation-census.txt` (Detector 3) | `just lint-comment-hygiene` |
+| Comment hygiene | `scripts/hooks/comment-hygiene.sh` | none — zero tolerance, no census and no waiver | `just lint-comment-hygiene` |
 | Config-derived statics | `rust/crates/facade/degenbot/tests/architecture_gates.rs::config_derived_statics_are_classified` | `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` | `just check-config-derived-statics` |
 | Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (spawn sites: `scripts/hooks/worker_census_spawn_gate.py`; live counts: `pubsub_runtime.rs`) | `scripts/hooks/worker-census-spawn-inventory.txt` + `REGISTERED_RESOURCE_IDS` + the `register(...)` call sites themselves | `just check-worker-census-spawn` |
 | Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
@@ -102,8 +104,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 
 | Gate | Repair |
 | --- | --- |
-| Comment hygiene (citation) | Strip the citation (docs/comments.md); delete the census row it leaves in the same change |
-| Comment hygiene (bare token) | Add the identifier to `scripts/hooks/comment-hygiene-census.txt` (lexicon section), or strip the token |
+| Comment hygiene | Strip the citation, the migration-work-item label, or the incident narration (docs/comments.md); there is no census and no waiver to add an exception to |
 | Config-derived statics | Update `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` |
 | Worker census | Register the worker at the spawn site through `degenbot-core`'s `worker_census`, or add a reviewed row to `scripts/hooks/worker-census-spawn-inventory.txt` |
 | Stub drift | `just gen-stubs` |
@@ -153,103 +154,68 @@ comments. The 2026-09-15 tech-debt survey found 237 in-code tracker
 citations, zero resolvable. The rules live in
 [comment hygiene](comments.md) and `AGENTS.md` ("Comment Hygiene").
 
-**Gate body.** `scripts/hooks/comment-hygiene.sh`, three detectors:
+**Gate body.** `scripts/hooks/comment-hygiene.sh`, one anchored detector with
+zero tolerance: a finding is always an edit to the code, because there is no
+census, no waiver and no override to add an exception to (ADR-087). Two
+case-aware `rg` passes:
 
-- Detector 1 (anchored) — `ergo <ID>` / `epic|task|slice <ID>` citations,
-  migration-work-item labels (`ADR-005 slice 14j`, `slice 14l`, `Plan 102`,
-  `plan-101` and the `slice-3b` hyphen form; the pattern requires a digit after
-  the label word, so data-slice prose and the `plan(..)`/`plan[..]` call and
-  index forms survive), and RED/GREEN gate narration co-occurring with a
-  six-char ID token, scanned over
-  the *working tree* (`rg`, not `git grep`) for the code-ish file classes
-  (`*.py`, `*.rs`, `*.pyi`, `*.toml`, `*.yml`, `*.yaml`, `*.sh`, `*.sol`, and
-  the extensionless `justfile`; minus the
-  `tier3-oracle/src*` harness sources, whose bytes are sha256-pinned in
-  `tier3-oracle/artifacts/manifest.json` — a comment edit there fails the
-  committed-artifact match tests until a solc/vyper rebuild). Build recipes
-  carry the same prose a code comment does — the 2026-09-15 survey's
-  follow-up sweep found tracker citations in `justfile`, CI workflows,
-  `prek.toml`, the root `Cargo.toml`, crate manifests, Grafana rule
-  comments, and the tier3-oracle build scripts once those classes were
-  scanned, so they stay in scope. It scans
-  the working tree on purpose: an index-bound enumeration once went green on a
-  commit containing exactly the citations this gate exists to catch, so a
-  brand-new untracked source file must be examined.
-- Detector 2 (the bare-ID census ratchet) — any bare six-char `[A-Z0-9]{6}`
-  token with no anchor word that is not accounted for in the census. Scan
-  paths mirror Detector 1's file classes (`src tests examples` plus the build
-  surface: `justfile`, `*.toml`, `*.yml`/`*.yaml`, `*.pyi`, `*.sol`,
-  `.github/**`, `tier3-oracle/**`, `scripts/`, `run_bot.sh`); `*.rs` files are
-  scanned on comment lines only, every other file class on all lines. The
-  `rust/crates/**` slice is the whole crate tree: crate `tests/`, `benches/`
-  and `examples/` and inline `src/**/tests` modules are in scope, because a
-  test comment cites a work item exactly as a shipped comment does and a
-  shared test harness is where those citations accumulate. Only generated
-  artifacts, the sha256-pinned `tier3-oracle/src*` harness sources, and this
-  gate's own hook/census files are excluded.
-- Detector 3 (the citation census ratchet) — the shapes the first two cannot
-  see, case-insensitive and word-boundary anchored: `TODO-<hex>` in any case
-  and `TODO(<word>)` tracker IDs, `Epic <token>` / `slice <token>` work-item
-  labels, `Phase <letter><digit>` labels, and `pre-`/`post-epic` narration.
-  Bare `phase <N>` is deliberately OUT of scope: that prose is algorithm prose
-  (the eager-vs-boundary-tail phases in
+- The **citation** pass is case-sensitive, because a shape's uppercase classes
+  are part of it: tracker citations (`ergo <ID>`, `ergo epic|task|slice <ID>`, a
+  bare `epic|task|slice <ID>`), RED/GREEN gate narration within a short band of
+  a six-character ID, migration-work-item labels (`ADR-005 slice 14j`,
+  `slice 14l`, `Plan 102`, `plan-101` and the `slice-3b` hyphen form; the pattern
+  requires a digit after the label word, so data-slice prose and the
+  `plan(..)`/`plan[..]` call and index forms survive), and the concrete incident
+  labels a change leaves behind (a retired-artifact note, the twin-collapse
+  repair, a grep-compat marker, a crash ordinal, gate placeholders).
+- The **label** pass runs case-insensitive, for the same classes spelled in
+  lower case: `TODO-<hex>` / `TODO(<word>)` tracker IDs, `Epic <token>` /
+  `slice <token>` work-item labels whose token contains a digit, `Phase
+  <letter><digit>` labels, and the pre- and post-epic forms. The digit is what
+  separates a work item from the word in ordinary prose ("an epic feature"). Bare `phase <N>` is deliberately OUT of scope:
+  that prose is algorithm prose (the eager-vs-boundary-tail phases in
   `foundation/degenbot-pools/src/state/tick_bitmap.rs`, the pre-solve gap
   phases in the bot's `instruments.rs`, the GIL phases in `result_channel.rs`),
   so the phase shape wants a letter+digit token and the slice shape a token
-  containing a digit. Scope: Detector 1's working-tree file classes minus this
-  gate's own hook and census files (they spell the shapes by construction);
-  markdown stays out.
+  containing a digit.
 
-**Census / waivers.**
+**Scope.** The code-ish file classes — `*.py`, `*.rs`, `*.pyi`, `*.toml`,
+`*.yml`, `*.yaml`, `*.sh`, `*.sol` and the extensionless `justfile` — enumerated
+from git's **index**. The commit being certified contains the index, so this
+commit's brand-new source file is examined while another lane's untracked
+work-in-progress cannot fail it. The pre-commit trigger in `scripts/gates.toml`
+names the same class list, and `tests/test_comment_hygiene_gate.py` reconciles
+the two, so a class the trigger fires on is a class the scan reads. Build
+recipes carry the same prose a code comment does — the 2026-09-15 survey's
+follow-up sweep found citations in `justfile`, CI workflows, `prek.toml`, the
+root `Cargo.toml`, crate manifests, Grafana rule comments and the tier3-oracle
+build scripts once those classes were scanned, so they stay in scope. Excluded:
+`rust/vendor` (upstream sources) and `tier3-oracle/src*` (their bytes are
+sha256-pinned in `tier3-oracle/artifacts/manifest.json` — a comment edit there
+fails the committed-artifact match tests until a solc/vyper rebuild). Markdown
+stays out: docs are where tracker discussion legitimately lives.
 
-- `scripts/hooks/comment-hygiene-census.txt` — the bare-token lexicon. The whole
-  tree is currently swept, so this file is **lexicon-only** (one bare token per
-  line, sorted). Extend it ONLY for a real word, acronym, or domain identifier
-  the matcher trips on.
-- `scripts/hooks/comment-hygiene-waivers.txt` — one repo-relative path per line;
-  a waiver means "this file still carries pre-rule citations" and never licenses
-  new ones. Empty today.
-- `scripts/hooks/comment-hygiene-citation-census.txt` — the Detector 3 census,
-  one `path:<matched band>` row per grandfathered site (the band exactly as
-  `rg -o` prints it, whitespace collapsed, so a row survives a line reflow and
-  disappears only when the citation does). The tree is swept: the one row left
-  is a reviewed non-citation, with its reason written above it. The
-  reconciliation is **bidirectional and fails closed** — an unlisted citation
-  fails (a new citation landed), a listed row with no citation fails (a swept
-  row has to be deleted in the same change), and a missing census file fails
-  instead of passing over an empty census.
-
-**Adding an entry.** Strip the citation from the code instead — a tracker
-citation must NEVER be added to the census. The same holds for a migration
-label: restate the rule it introduced in prose (or delete the sentence where
-the surrounding text already carries it), and never waive one, because the
-label names an ephemeral work item, not a fact about the code. Only a genuine identifier the
-matcher false-positives on goes into the lexicon (the known shape is the
-line-start deref: a Rust line whose first non-space char is `*` is read as a
-block-comment continuation, so a six-char UPPERCASE static name on it trips the
-ratchet; the fix is the lexicon or restructuring the line). For a deliberate,
-explicitly reviewed exception, a census line containing `/` is read as a
-grandfathered `path:token` citation — that form is currently unused.
-
-Detector 3's census is never the answer for a citation either: strip the band,
-and delete its row in the same change — the stale-row check turns a forgotten
-row into a red gate. Regenerate the rows after a sweep with
-`CCF=/dev/null scripts/hooks/comment-hygiene.sh 2>&1 | sed -n 's/.* -> census
-row: //p' | sort -u`, then delete the rows for the sites this change swept. A
-row survives only for a reviewed non-citation; the standing example is
-`slice V3/V4` in `degenbot-decoders/src/uniswap_tick_range.rs`, the algorithm's
-slicing verb over a protocol-version pair.
+**Review-owned classes.** Two classes are prose rules, not gate rules; [comment
+hygiene](comments.md) names both. A **bare six-character token** with no anchor
+word is review-owned because a citation, an acronym, an EVM opcode and a
+scream-case static share one surface form — telling them apart needs a lexicon
+row per legitimate identifier, which no reviewer can keep true. **Broad
+past-voice narration** is review-owned for the same reason: a permanence
+assertion, the value a change replaced, slice-dated deletion and then-future
+prose, the containing change's play-by-play, the fix's history voice, past-voiced
+removal and the past-habitual `used to <verb>` forms all collide with live
+present-tense prose ("the mode STAYS WatchLive", "is removed when", a runtime
+refusal string's "used to be" clause). Review reads those lines; the gate reads
+the anchored ones.
 
 **Run it.** `just lint-comment-hygiene` (also the `comment-hygiene` pre-commit
-hook; it is the one documented exception to staged scoping — `pass_filenames =
-false`, it sweeps the working tree). For a red probe, run it with a census
-forced empty: `CHF=/dev/null scripts/hooks/comment-hygiene.sh` fails on every
-bare token, and `CCF=/dev/null scripts/hooks/comment-hygiene.sh` fails on every
-Detector 3 band. `tests/test_comment_hygiene_gate.py` is Detector 3's committed
-negative probe: it runs the real hook with `HCR` pointing the scan at a
-throwaway tree (the remaining override; `WAF`/`CHF`/`CCF` point at `/dev/null`)
-and requires the red path, every shape firing on its own source, both ratchet
-directions, and the fail-closed missing census.
+hook; `pass_filenames = false`, the gate derives the index population itself).
+`tests/test_comment_hygiene_gate.py` is the committed probe: it runs the real
+hook with `HCR` pointing the scan at a throwaway tree (the only override, and a
+fixture seam — a gate run always examines the commit's own content) and requires
+the red path, every retained shape firing on its own source, the review-owned
+classes and the legitimate prose passing, the index-vs-untracked population, and
+the trigger/class reconciliation.
 
 ---
 

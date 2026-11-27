@@ -86,16 +86,15 @@ stage = "pre-commit"
 entry = "just lint-comment-hygiene"
 scope = "staged"
 docs = "1. Comment hygiene"
-data = [
-  "scripts/hooks/comment-hygiene-census.txt",
-  "scripts/hooks/comment-hygiene-waivers.txt",
-  "scripts/hooks/comment-hygiene-citation-census.txt",
-]
+data = []
 probe = [
-  "tests/test_comment_hygiene_gate.py::test_the_committed_census_matches_the_tree",
-  "tests/test_comment_hygiene_gate.py::test_a_missing_census_fails_closed",
+  "tests/test_comment_hygiene_gate.py::test_a_synthetic_citation_fails_the_gate",
+  "tests/test_comment_hygiene_gate.py::test_every_retained_shape_fires_on_its_own_red_source",
+  "tests/test_comment_hygiene_gate.py::test_the_scan_scope_is_the_index_not_the_working_tree",
+  "tests/test_comment_hygiene_gate.py::test_the_trigger_covers_every_scanned_file_class",
+  "tests/test_comment_hygiene_gate.py::test_the_committed_tree_is_clean",
 ]
-types_or = ["python", "rust", "shell"]
+files = '\.py$|\.rs$|\.pyi$|\.toml$|\.yml$|\.yaml$|\.sh$|\.sol$|(^|/)justfile$'
 pass_filenames = false
 ci_job = "policy-gates"
 ci_entry = "just lint-comment-hygiene"

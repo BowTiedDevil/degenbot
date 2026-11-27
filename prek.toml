@@ -24,10 +24,11 @@
 #   - Hooks that cannot operate on a file list at all live at pre-push with a
 #     note saying why; hooks that take a list fail closed on an empty list
 #     rather than certify a list they never saw.
-#   The one documented exception to staged scoping is comment-hygiene below:
-#   it deliberately scans the working tree so it can never be blinded to
-#   untracked files (an index-bound enumeration once certified a commit
-#   containing exactly the citations that gate exists to catch).
+#   The documented exception is comment-hygiene below, and it stays inside the
+#   contract rather than breaking it: `pass_filenames = false` only because the
+#   gate enumerates the population itself, and that population is git's index.
+#   This commit's own new files are examined; another lane's untracked
+#   work-in-progress cannot fail a commit that does not contain it.
 #
 # WHY commit-message lint stays at commit time but code lint moves to push
 # (the code-vs-message asymmetry):
@@ -65,27 +66,26 @@ hooks = [
   # scoping principle as the src/-only Python lint gates.
   { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2@0.24.1", types = ["markdown"], exclude = "^executor/|^logs/|^rust/vendor/", stages = ["pre-commit"] },
 
-  # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
-  # and RED/GREEN gate narration are banned in code comments. The waiver
-  # list (scripts/hooks/comment-hygiene-waivers.txt) is empty and the census
-  # (scripts/hooks/comment-hygiene-census.txt) is lexicon-only, so the gate
-  # blocks every tracker citation outright. Its scan covers *.py and *.rs
-  # (executor excluded) plus *.sh under src/ tests/ rust/crates scripts/
-  # examples/ and run_bot.sh, so the trigger must match python, rust, OR
-  # shell: `types` ANDs its tags (no file is both python and rust), which
-  # had silently disabled this hook. One git grep plus one rg pass are
-  # ~instant, so it rides the per-commit tier.
+  # Comment hygiene (AGENTS.md / docs/comments.md): tracker citations,
+  # migration-work-item labels and concrete incident labels are banned in code
+  # comments. One anchored detector, zero tolerance: no census, no waiver, no
+  # override, so a finding is always an edit to the code. The scanned classes
+  # are the code-ish files (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh,
+  # *.sol) plus the extensionless justfile — build recipes carry the same prose
+  # a code comment does — so the trigger names that class list directly. `files`
+  # replaces `types_or`: a tag list can only name prek's own file types and
+  # silently skipped the manifests and workflows the scan reads. Two anchored rg
+  # passes are ~instant, so it rides the per-commit tier.
   #
-  # THE documented exception to staged scoping, on purpose: pass_filenames =
-  # false and the script scans the WORKING TREE (rg, not git grep) so a
-  # brand-new untracked source file is examined the moment it is written.
-  # An index-bound enumeration once went green on a commit containing
-  # exactly the citations this gate exists to catch — do not "fix" the
-  # cross-lane visibility by narrowing it back to the index. Latency budget
-  # stays near-instant (one rg pass + one awk pass).
+  # The scan enumerates git's INDEX (pass_filenames = false, the gate derives its
+  # own population): the commit being certified contains the index, so this
+  # commit's new files are examined while another lane's untracked
+  # work-in-progress cannot fail it. Bare six-character tokens and broad
+  # past-voice change narration are review-owned, not scanned — a lexical
+  # matcher on those classes misfires on live present-tense prose.
   #
   # live-invariant gate (ADR-087 D2): watches the live comment surface under AGENTS.md "Comment Hygiene"; not tripwire precedent.
-  { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types_or = ["python", "rust", "shell"], stages = ["pre-commit"], pass_filenames = false },
+  { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", files = '\.py$|\.rs$|\.pyi$|\.toml$|\.yml$|\.yaml$|\.sh$|\.sol$|(^|/)justfile$', stages = ["pre-commit"], pass_filenames = false },
 
   # The publish-blocked census (docs/gates.md section 6): every member `cargo
   # publish` cannot upload is reconciled against

@@ -214,9 +214,9 @@ jobs:
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project
 
-      # The comment-hygiene gate shells out to ripgrep with the repository's
-      # ignore rules, which ubuntu-latest no longer preinstalls; the gate refuses
-      # rather than certify a tree it could not scan.
+      # The comment-hygiene gate shells out to ripgrep, which ubuntu-latest no
+      # longer preinstalls; the gate refuses rather than certify a tree it could
+      # not scan.
       - name: Install ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 
@@ -891,13 +891,14 @@ jobs:
       - name: Install the extension wheel
         run: just install-extension-wheel dist/*.whl
 
-      # The comment-hygiene gate (scripts/hooks/comment-hygiene.sh) runs one rg
-      # pass over the WORKING TREE, and tests/test_comment_hygiene_gate.py drives
-      # the real gate as its negative probe, so the pytest tier shells out to
-      # ripgrep. ubuntu-latest no longer preinstalls it - the rust job provisions
-      # it for the engine impl-block gate for the same reason - and a missing rg
-      # is the gate REFUSING to certify rather than a reason to skip: provision
-      # it here. Same dependency the .devcontainer/Dockerfile installs.
+      # The comment-hygiene gate (scripts/hooks/comment-hygiene.sh) runs two
+      # anchored rg passes over git's index, and
+      # tests/test_comment_hygiene_gate.py drives the real gate as its negative
+      # probe, so the pytest tier shells out to ripgrep. ubuntu-latest no longer
+      # preinstalls it - the rust job provisions it for the engine impl-block gate
+      # for the same reason - and a missing rg is the gate REFUSING to certify
+      # rather than a reason to skip: provision it here. Same dependency the
+      # .devcontainer/Dockerfile installs.
       - name: Install ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 

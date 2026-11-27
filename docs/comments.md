@@ -65,35 +65,40 @@ existing conventions.
 
 ## Mechanical check
 
-The enforced gate is `just lint-comment-hygiene` — Detector 1 (anchored
-citations, gate narration, retirement/incident narration: a retired-artifact
-name, a label kept "for grep", an incident ordinal, and counterfactual change
-narration: a permanence assertion like `must STAY`, the replaced value `the
-prior constant`, slice-dated deletion and then-future prose, the containing
-change's play-by-play, the fix's history voice (`pre-fix` / `post-fix` /
-`before the fix`), past-voiced removal (`was removed`), and the
-unambiguous past-habitual `used to` verbs), Detector 2 (the bare-token
-census ratchet), and Detector 3 (the citation census ratchet over the
-`TODO-<hex>` / `TODO(<word>)` / `Epic <token>` / `slice <token>` /
-`Phase <letter><digit>` / `pre-`/`post-epic` shapes the first two cannot see).
-See [gate ratchets](gates.md) for the censuses, the waiver file, and the entry
-recipe.
+The enforced gate is `just lint-comment-hygiene`: one anchored detector with
+zero tolerance, over the code-ish file classes in git's index. It catches
+tracker citations (`ergo <ID>`, `ergo epic|task|slice <ID>`, a bare
+`epic|task|slice <ID>`, RED/GREEN gate narration next to an ID),
+migration-work-item labels (`slice 14j`, `slice-3b`, `Plan 102`, `plan-101`),
+`TODO-<hex>` / `TODO(<word>)` tracker IDs, `Epic <token>` / `slice <token>` /
+`Phase <letter><digit>` labels (the epic and slice shapes require a digit in
+the token, so "an epic feature" and "the two-slice intake" are prose), the pre-
+and post-epic forms, and the concrete incident labels a change leaves behind (a retired-artifact note, the
+repair's name, a grep-compat marker, a crash ordinal, gate placeholders).
+There is no census and no waiver: a red gate is repaired by editing the code.
+See [gate ratchets](gates.md) for the shapes, the scope, and the entry recipe.
 
-The **counterfactual-prose gate**: Detector 1's `narr` alternation matches
-change narration written in the voice of the change that produced it — a
-permanence assertion (`must STAY`, `the guard STAYS`), the value a change
-replaced (`the prior constant`), slice-dated deletion and then-future prose
-(`deleted in slice …`, `a later slice's …`), the containing change's
-play-by-play (`this chunk's change`, `… surfaces fixed`), the fix's
-history voice (`pre-fix`, `post-fix`, `before the fix`), past-voiced
-removal (`was removed`), and the unambiguous past-habitual `used to` verbs
-(`used to live/exist/die/own`) — since the 2026-11 comment sweep and its
-detector widening. A swept site states its claim in the present ("the failure
-this pins: …", "without the cache, …"). Three collision classes stay out by
-design, documented beside the regex: present-tense emphasis (`is UNCHANGED`,
-`the mode STAYS`), present passive mechanism (`is removed when`, `lands
-its own spans later`), and the present-purpose `used to <verb>` ellipses
-plus one runtime refusal string that still carries a `used to be` clause.
+Two classes are **review-owned**, not gate-owned, because their surface forms
+are indistinguishable from live prose:
+
+- a **bare six-character token** with no anchor word. A citation, an acronym,
+an EVM opcode and a scream-case static share one shape, and the lexicon that
+told them apart needed a row per legitimate identifier — a file review had to
+keep true forever.
+- **broad past-voice narration**: a permanence assertion (`must STAY`, `the
+guard STAYS`), the value a change replaced (`the prior constant`), slice-dated
+deletion and then-future prose (`deleted in slice …`, `a later slice's …`),
+the containing change's play-by-play (`this chunk's change`, `… surfaces
+fixed`), the fix's history voice (`pre-fix`, `post-fix`, `before the fix`),
+past-voiced removal (`was removed`), and the unambiguous past-habitual `used
+to` verbs (`used to live/exist/die/own`). Present-tense emphasis (`is
+UNCHANGED`, `the mode STAYS`), present passive mechanism (`is removed when`,
+`lands its own spans later`) and the present-purpose `used to <verb>`
+ellipses plus one runtime refusal string's `used to be` clause are live prose,
+and they are why a lexical matcher cannot be trusted on this class.
+
+Reviewers read for both. A swept site states its claim in the present ("the
+failure this pins: …", "without the cache, …").
 
 The optional grep below is a quick manual check for the worst offender
 (tracker IDs):

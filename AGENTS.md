@@ -77,10 +77,10 @@ holding work it inverts: `git add -A` sweeps the other lane's files into your
 commit. Stage only your own paths (`git add <paths>`). This is safe because
 prek's pre-commit tier is staged-scoped — `rust-fmt-staged` runs
 `skip_children=true` precisely so an unstaged sibling module cannot fail a
-commit that does not contain it. Caveat: `comment-hygiene` is deliberately
-working-tree bound (`pass_filenames = false`, so a brand-new untracked file is
-examined the moment it is written), so one lane's uncommitted violation *can*
-still block another lane's commit. Coordinate a clean window.
+commit that does not contain it. `comment-hygiene` also derives its own
+population, and it derives it from git's index rather than the working tree: one
+lane's uncommitted violation cannot block another lane's commit, and this
+commit's own staged content cannot escape the scan.
 
 ## Rust toolchain policy
 

@@ -1,374 +1,161 @@
 #!/usr/bin/env bash
-# Comment-hygiene instant gate — enforces the AGENTS.md "Comment Hygiene"
-# rule (docs/comments.md): code comments never restate work-tracker state.
+# Comment-hygiene gate — docs/comments.md, docs/gates.md section 1, AGENTS.md.
 #
-# Detector 1 — anchored citations (the regex in "pat" below):
-#   - retirement/incident narration: a retired-artifact name, a label kept
-#     "for grep", an incident ordinal, a gate-placeholder note (the "narr"
-#     alternation; no census — these shapes are swept and stay out)
-#   - "ergo <6-char ID>" / "ergo epic|task|slice <ID>" citations
-#   - "epic|task|slice <ID>" citations
-#   - RED/GREEN gate narration co-occurring with a 6-char ID token
-#   - migration-work-item labels: "slice <NN>[x]" / "slice-<NN>" and
-#     "Plan <NNN>" / "plan-<NNN>" (this header spells them with angle
-#     brackets so documenting the pattern does not cite one). A migration
-#     slice is an ephemeral work item exactly like a tracker ID: the rule it
-#     introduced belongs in the comment, the history in the ADR. A digit
-#     must follow the label word across whitespace or one hyphen, so
-#     ordinary prose about a data slice ("the two-slice intake") and the
-#     call/index forms ("plan(1.5)", "plan[0]") are untouched.
-#   Scope: the working tree, not the index. The search runs rg (same tool
-#   and ignore rules as Detector 2) over the whole repo for the code-ish
-#   file classes (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh, *.sol,
-#   and the extensionless `justfile`), excluding the
-#   tier3-oracle/src* harness sources (their bytes are sha256-pinned in
-#   artifacts/manifest.json — a comment edit there fails the
-#   committed-artifact match tests until a solc/vyper rebuild, so they stay
-#   out of scope), and generated lockfiles, so a brand-new untracked source
-#   file is examined. Build recipes (justfile, CI workflows, prek.toml, the
-#   root Cargo.toml) and the tier3-oracle build scripts carry the same
-#   prose a code comment does, so they are in scope. An index-bound search can certify a tree
-#   it never looked at — a green that examined nothing — which is the
-#   failure this gate exists to prevent. One rg pass; no per-token
-#   subprocesses.
-#   Deliberately out of scope here: markdown. It is where tracker
-#   discussion legitimately lives (docs/, this gate's own census/waiver
-#   files).
-#   Waivers: one repo-relative path per line in
-#   scripts/hooks/comment-hygiene-waivers.txt. A waiver means "this file
-#   still carries pre-rule citations" — it NEVER licenses new ones; remove
-#   the entry in the same commit that strips the file's citations.
-#   Override the waiver file for testing: WAF=/dev/null <this script>.
+# One anchored detector, zero tolerance: a code comment never restates
+# work-tracker state. No census and no waiver stands behind it, so a finding is
+# always an edit to the code, never an entry to add here.
 #
-# live-invariant gate (ADR-087 D2): watches the live comment surface, ratcheted against the lexicon census; not tripwire precedent.
+# Retained shapes (each is anchored by a label word next to the band, which is
+# what separates a citation from prose):
+#   - tracker citations: "er[g]o <six-character ID>", "er[g]o epic|task|slice
+#     <ID>", a bare "epic|task|slice <ID>", and RED / GREEN gate narration within
+#     a short band of a six-character ID
+#   - migration-work-item labels: a digit immediately after the label word
+#     ("sli[ce] <NN>", "Plan <NNN>", and their hyphen forms). A slice is an
+#     ephemeral work item exactly like a tracker ID: the rule it introduced
+#     belongs in the comment, the history in the ADR.
+#   - tracker IDs: a hex-suffixed or parenthesised TODO band
+#   - work-item labels, case-insensitive: "Epic <token>" and "sli[ce] <token>"
+#     whose token contains a digit, "Phase <letter><digit>", and the pre- and
+#     post-[e]pic forms. The digit requirement is what separates a work item
+#     from the word in ordinary prose ("an epic feature", "the two-slice
+#     intake"). A bare phase number stays out: that prose carries live
+#     algorithm semantics (the eager-vs-boundary-tail tick-bitmap phases, the
+#     pre-solve gap phases, the GIL phases).
+#   - concrete incident labels: a retired gr[a]b, the twin-colla[p]se repair, a
+#     gr[e]p compat marker, a cr[a]sh ordinal, and R[E]D placeholders
 #
-# Detector 2 — the bare-ID census ratchet (the formerly accepted blind
-# spot): bare six-char [A-Z0-9]{6} tracker tokens with no anchor word.
-# Any such token NOT accounted for in
-# scripts/hooks/comment-hygiene-census.txt fails the gate, so new citations
-# cannot land while existing ones are grandfathered until swept (shrink
-# protocol in the census header). Exclusions reuse the sweep commits'
-# classification vocabulary:
-#   - census lexicon entries (legit identifiers: SIGINT, BEFORE, STATIC,
-#     OUTPUT, INPUT, STABLE, WETH, USDC, EVM opcodes, linter codes, ...)
-#   - pure-number tokens (tick values, block numbers)
-#   - hex-shaped tokens ([0-9A-F]{6} selector/byte data); a census citation
-#     entry is checked first, so a deliberate hex-spelled citation stays
-#     ratcheted
-#   - anything inside a longer word or identifier: the word-boundary rule
-#     excludes SCREAMING_SNAKE members and 0x-prefixed hex fragments
-#   Scope: src/ tests/ examples/ (all lines), scripts/ and run_bot.sh
-#   (all lines), rust/crates/** comment lines only, plus the build
-#   surface — justfile, *.toml, *.yml/*.yaml, *.pyi, *.sol, .github/**,
-#   tier3-oracle/** — as all-lines files (their comments are '#' or '///',
-#   not Rust comments). The rust/crates slice covers the whole crate tree,
-#   crate integration tests/benches/examples and inline src/**/tests modules
-#   included: a comment in a test cites a work item exactly as a shipped
-#   comment does, and a shared test harness is where those citations
-#   accumulated (docs/comments.md bans them in code without a test
-#   exemption). Excluding generated artifacts, the sha256-pinned
-#   tier3-oracle harness sources, and the gate's own census/hook/waiver
-#   files.
-#   Keep it fast (it runs in pre-commit): one rg pass + one awk pass, no
-#   per-token subprocesses.
-#   Override the census for testing: CHF=/dev/null <this script> (fails on
-#   every bare token).
+# Review-owned, deliberately NOT scanned (docs/comments.md names both classes):
+#   - bare six-character tokens with no anchor word. A tracker citation, an
+#     acronym, an EVM opcode and a scream-case static share one surface form, so
+#     matching them needs a per-token lexicon of legit identifiers that no
+#     reviewer can keep true; the reviewer reading the line can.
+#   - broad past-voice narration: a permanence assertion, the value a change
+#     replaced, slice-dated deletion and then-future prose, the containing
+#     change's play-by-play, the fix's history voice (pre-fix / post-fix / before
+#     the fix), past-voiced removal, and the past-habitual "used to <verb>"
+#     forms. Live present-tense prose shares every one of those surface forms
+#     ("the mode STAYS WatchLive", "is removed when", a runtime refusal
+#     string's "used to be" clause), so a lexical matcher would have to misfire
+#     on the present to catch the past.
 #
-# Detector 3 — the tracker-citation census ratchet: the citation shapes
-# Detector 1 (which needs an anchor word) and Detector 2 (which needs an
-# all-uppercase token) cannot see, and the residue a per-file waiver cannot
-# express. Case-insensitive, word-boundary anchored:
-#   - TODO-<hex> (any case) and TODO(<word>) tracker IDs
-#   - Epic <token> and slice <token> work-item labels
-#   - Phase <letter><digit> labels
-#   - pre-/post-epic narration
-# Bare "phase <N>" is deliberately out of scope: that prose carries live
-# algorithm semantics (the eager-vs-boundary-tail phases in tick_bitmap.rs,
-# the pre-solve gap phases in instruments.rs, the GIL phases in
-# result_channel.rs), so this shape wants a letter+digit token after the
-# label word. The slice shape likewise wants a token CONTAINING a digit, so
-# data-slicing prose ("the two-slice intake") survives.
-# Scope: the working tree, over Detector 1's file classes, minus this gate's
-# own files (the hook and its censuses carry the shapes by construction), so
-# brand-new untracked sources are examined and markdown — where tracker
-# discussion legitimately lives — stays out. The engine's algorithm-phase
-# prose is a blind spot the design accepts; the sweep that shrank this
-# census left it alone.
-# Census: scripts/hooks/comment-hygiene-citation-census.txt, one row per
-# grandfathered site, formatted "<repo-relative-path>:<matched text>" (the
-# band as rg -o prints it, whitespace collapsed, so the row survives a line
-# reflow). The check is bidirectional and fails closed: a citation with no
-# row fails (a NEW citation cannot land), a row with no citation fails (a
-# swept row must be deleted in the same commit), and a missing census file
-# fails instead of passing over an empty census. The only rows left are
-# reviewed non-citations, each with the reason written above it.
-# Override for testing: CCF=/dev/null <this script> (fails on every matched
-# band; the negative probe in tests/test_comment_hygiene_gate.py drives
-# this and the HCR root override below).
+# Scope: git's INDEX, not the working tree — the commit being certified contains
+# the index, so a brand-new staged source file is examined while another lane's
+# untracked work-in-progress cannot fail this commit (prek's stash hides tracked
+# dirt but leaves untracked files in place). The scanned classes are the code-ish
+# ones (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh, *.sol) plus the
+# extensionless justfile; the trigger in scripts/gates.toml names the same set and
+# tests/test_comment_hygiene_gate.py reconciles the two. Build recipes (justfile,
+# CI workflows, prek.toml, the root Cargo.toml) carry the same prose a code
+# comment does, so they are in scope. Excluded: rust/vendor (upstream sources) and
+# tier3-oracle/src* (their bytes are sha256-pinned in
+# tier3-oracle/artifacts/manifest.json, so a comment edit there fails the
+# committed-artifact match tests until a solc/vyper rebuild). Markdown is out:
+# docs/ is where tracker discussion legitimately lives.
+#
+# HCR roots the scan at another tree — the fixture override in
+# tests/test_comment_hygiene_gate.py. A fixture root is not a git checkout, so it
+# is walked by class instead of enumerated from the index. It is the only seam: a
+# gate run always examines the commit's own content.
+#
+# live-invariant gate (ADR-087 D2): watches the live comment surface; not tripwire precedent.
 
 set -euo pipefail
-# HCR points the scan at another tree (the negative probe's fixture); unset,
-# it roots at the git top level. The overrides (HCR, WAF, CHF, CCF) are test
-# seams only: a gate run has to examine the whole working tree.
+# HCR points the scan at a fixture tree; unset, it roots at the git top level.
 cd "${HCR:-$(git rev-parse --show-toplevel)}"
 
-# --- Scope ------------------------------------------------------------------
-# Scan the INDEX, not the working tree. The commit being certified contains the
-# index, so a brand-new staged source file is scanned while another lane's
-# untracked work-in-progress cannot fail this commit -- prek's stash hides
-# tracked dirt but leaves untracked files, which is how a peer's half-finished
-# file used to fail someone else's push. HCR points the scan at a fixture tree
-# (the negative probe), which is not a git checkout, so that seam keeps the
-# working-tree walk.
-tree_scope() {
-    [ -n "${HCR:-}" ] && return 0
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-    return 1
-}
-
-scope_all=()
-scope_cite=()
-scope_glob=()
-scope_cite_glob=()
-scope_code=()
-if tree_scope; then
-    # An empty list means rg defaults to the working tree, which keeps the
-    # fixture seam's reported paths identical to a historical run.
-    scope_glob=(-g '!rust/vendor/**' -g '!tier3-oracle/src*/**')
-    scope_cite_glob=("${scope_glob[@]}" -g '!scripts/hooks/comment-hygiene*')
-    scope_code=(src tests rust/crates run_bot.sh scripts examples justfile prek.toml rust/Cargo.toml .github tier3-oracle)
-else
-    # The exclusions ride the pathspec, not rg's -g: an explicitly listed file is
-    # searched whatever the glob list says.
-    mapfile -d '' -t scope_all < <(git ls-files -z --cached -- \
-        '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
-        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**')
-    # Detector 3 exempts its own hook and censuses: the docstring above lists the
-    # shapes it bans, so the file that spells them is not evidence against itself.
-    mapfile -d '' -t scope_cite < <(git ls-files -z --cached -- \
-        '*.py' '*.rs' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sh' '*.sol' 'justfile' \
-        ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**' \
-        ':(exclude)scripts/hooks/comment-hygiene*')
-    # The bare-token ratchet covers the whole tree — crate tests/benches/
-    # examples and inline src/**/tests modules included — so the index listing
-    # is filtered by root and by extension here: rg's glob list cannot narrow
-    # explicitly listed files, and a git pathspec ORs its patterns rather than
-    # intersecting them.
-    # Single-quoted: an unquoted pattern in an array literal is pathname-expanded
-    # against the working tree at assignment, which silently replaces the glob
-    # with today's matches.
-    code_roots=('src/' 'tests/' 'rust/crates/' 'scripts/' 'examples/' '.github/' 'tier3-oracle/')
-    code_exact=('run_bot.sh' 'justfile' 'prek.toml' 'rust/Cargo.toml')
-    code_excludes=('tier3-oracle/artifacts/*' 'tier3-oracle/src*/*' 'scripts/hooks/comment-hygiene*')
-    while IFS= read -r -d '' f; do
-        skip=0
-        for pat in "${code_excludes[@]}"; do
-            case "$f" in $pat) skip=1 ;; esac
-        done
-        [ "$skip" -eq 1 ] && continue
-        in_root=0
-        for root in "${code_roots[@]}"; do
-            case "$f" in "$root"*) in_root=1 ;; esac
-        done
-        for exact in "${code_exact[@]}"; do
-            [ "$f" = "$exact" ] && in_root=1
-        done
-        [ "$in_root" -eq 1 ] && scope_code+=("$f")
-    done < <(git ls-files -z --cached -- '*.py' '*.rs' '*.sh' '*.pyi' '*.toml' '*.yml' '*.yaml' '*.sol' 'justfile')
-fi
-
-waf="${WAF:-scripts/hooks/comment-hygiene-waivers.txt}"
-census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
-# Migration-work-item labels ("ADR-005 slice <NN>[x]", "Plan <NNN>")
-# join the anchored citation class: a digit must follow the label word, so
-# data-slice prose and the plan(..)/plan[..] call and index forms survive.
-label='(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)|(\b[Pp]lan([[:space:]]+|-)[0-9]+\b)'
-# Retirement / incident narration: a comment written in the voice of the change
-# that produced it (a file described as retired, a label kept "for grep", an
-# incident ordinal). The rule the change introduced IS the comment; the history
-# belongs in the ADR or the commit. Each alternative is spelled with a
-# character class or a whitespace expression so this header cannot cite itself
-# (Detector 1 scans this hook like any other file).
-#
-# Counterfactual change narration — the change's voice rather than present-tense
-# prose; each band's rationale:
-#   - "must [S]TAY" / "the [g]uard [S]TAYS": a permanence assertion is a rule
-#     the code or a named test owns, not a line to the change's reviewer.
-#   - "the [p]rior constant": the value a change replaced is git history.
-#   - "deleted in [s]lice" / "later [s]lice": a deletion or a then-future dated
-#     to a migration slice; the digit-anchored label patterns miss the
-#     letter-only slice names.
-#   - "surfaces [f]ixed" and chunk + "'s change": the containing change's own
-#     play-by-play.
-#   - "[p]re-fix" / "[p]ost-fix" / "before the [f]ix": the fix's history voice;
-#     the pinned failure is restated in the present ("the failure this pins").
-#   - "[w]as [r]emoved": a past-voiced removal; present claims say "this call
-#     removed" or "is missing".
-#   - "[u]sed to" + live/exist/die/own: the unambiguous past-habitual verbs.
-#   Deliberate exclusions, each an unresolvable collision class:
-#   - bare "[U]NCHANGED" / "[S]TAYS": present-tense emphasis survives in live
-#     prose ("the pinned seed is UNCHANGED", "the mode STAYS WatchLive").
-#   - "is [r]emoved" / "lands its [o]wn": present passive mechanism ("returns
-#     whether the call removed a registration", "the telemetry chunk lands its
-#     own spans later").
-#   - the remaining "used to <verb>" forms: present-purpose ellipses share the
-#     surface form ("a hook used to drive the probe"), and one runtime refusal
-#     string (src/degenbot/runner/config.py) carries a "used to be" clause —
-#     strings are code; that verb joins the band only when it is rewritten.
-narr='(retired[[:space:]]+grab)|(twin-colla[p]se)|(grep[[:space:]]+compat)|(crash[[:space:]]+#[0-9]+)|(RED[[:space:]]+placeholders)|(must[[:space:]]+[S]TAY\b)|([g]uard[[:space:]]+[S]TAYS)|(the[[:space:]]+[p]rior[[:space:]]+constant)|(deleted[[:space:]]+in[[:space:]]+[s]lice\b)|(later[[:space:]]+[s]lice\b)|(surfaces[[:space:]]+[f]ixed)|(chunk'\''s[[:space:]]+change)|([w]as[[:space:]]+[Rr]emoved\b)|([Bb]efore[[:space:]]+the[[:space:]]+[f]ix\b)|([Pp]ost-fix\b)|([Pp]re-fix\b)|([u]sed[[:space:]]+to[[:space:]]+(live|exist|die|own)\b)'
-pat="(${narr})|(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
-
-fail=0
 command -v rg >/dev/null 2>&1 || {
-  echo "comment-hygiene: rg not found; refusing to run both detectors blind" >&2
+  echo "comment-hygiene: rg not found; refusing to certify a tree it cannot scan" >&2
   exit 1
 }
-hits="$(rg -n --no-heading -e "$pat" \
-  "${scope_glob[@]}" "${scope_all[@]}" 2>/dev/null || true)"
-if [ -n "$hits" ]; then
-  while IFS= read -r line; do
-    path="${line%%:*}"
-    if ! grep -Fxq "$path" "$waf"; then
-      if [ "$fail" -eq 0 ]; then
-        echo "comment-hygiene: work-tracker IDs / migration labels / gate narration" >&2
-        echo "  are banned in code (AGENTS.md 'Comment Hygiene', docs/comments.md)." >&2
-        echo "  Strip the citation, restate the rule it introduced in prose, or anchor" >&2
-        echo "  the pinning test instead:" >&2
-      fi
-      echo "  $line" >&2
-      fail=1
-    fi
-  done <<< "$hits"
+
+# --- Scope ------------------------------------------------------------------
+# One class list builds both enumerations: the fixture walk's globs and the
+# index's pathspecs. tests/test_comment_hygiene_gate.py reads this line and
+# reconciles it with the registry trigger.
+exts=(py rs pyi toml yml yaml sh sol)
+globs=()
+pathspecs=()
+for ext in "${exts[@]}"; do
+  globs+=(-g "*.${ext}")
+  pathspecs+=("*.${ext}")
+done
+globs+=(-g 'justfile' -g '!rust/vendor/**' -g '!tier3-oracle/src*/**')
+pathspecs+=('justfile' ':(exclude)rust/vendor/**' ':(exclude)tier3-oracle/src*/**')
+
+paths=()
+if [ -z "${HCR:-}" ]; then
+  mapfile -d '' -t paths < <(git ls-files -z --cached -- "${pathspecs[@]}")
+  if [ "${#paths[@]}" -eq 0 ]; then
+    echo "comment-hygiene: git's index lists no scannable file; refusing to certify an empty scope" >&2
+    exit 1
+  fi
 fi
 
-# --- Detector 2: bare-ID census ratchet ---
-# -e, not -f: an empty census (the documented CHF=/dev/null probe) is a
-# character device, so -f would wrongly take the missing-file exit. An
-# empty/unlistable census must reach the ratchet and fail every bare token.
-if [ ! -e "$census" ]; then
-  echo "comment-hygiene: census file missing: $census" >&2
-  exit 1
-fi
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
-rg -n --no-heading -P \
-  '(?<![A-Za-z0-9_])[A-Z0-9]{6}(?![A-Za-z0-9_])' \
-  "${scope_code[@]}" >"$tmp" 2>/dev/null || true
+# --- Shapes -----------------------------------------------------------------
+# Anchored citation shapes, case-sensitive: the uppercase classes are part of the
+# shape (a lowercase six-letter word is prose, not an ID). Spelling a band with a
+# character class keeps this header from citing itself; the hook is scanned like
+# any other file.
+cite='([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)'
+cite+='|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)'
+cite+='|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)'
+cite+='|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))'
+cite+='|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))'
+cite+='|(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)'
+cite+='|(\b[Pp]lan([[:space:]]+|-)[0-9]+\b)'
+cite+='|(retired[[:space:]]+grab)'
+cite+='|(twin-colla[p]se)'
+cite+='|(grep[[:space:]]+compat)'
+cite+='|(crash[[:space:]]+#[0-9]+)'
+cite+='|(RED[[:space:]]+placeholders)'
 
-bare_fail="$(awk -v CENSUS="$census" '
-  BEGIN {
-    while ((getline line < CENSUS) > 0) {
-      if (line == "" || line ~ /^#/) continue
-      # a line with a "/" is a path:token citation; a bare token is lexicon
-      if (line ~ /\//) allowed[line] = 1
-      else legit[line] = 1
-    }
-  }
-  {
-    line = $0
-    c1 = index(line, ":")
-    if (c1 == 0) next
-    path = substr(line, 1, c1 - 1)
-    rest = substr(line, c1 + 1)
-    c2 = index(rest, ":")
-    lineno = substr(rest, 1, c2 - 1)
-    content = substr(rest, c2 + 1)
-    # Rust source: comment lines only (//, /*, block-comment continuation);
-    # non-.rs files under rust/ (e.g. rust/Cargo.toml) are '#'-commented and
-    # are scanned on all lines like every other build file.
-    if (path ~ /\.rs$/ && content !~ /^[ \t]*(\/\/|\/\*|\*)/) next
-    s = content
-    prev_alnum = 0  # was the char just before s[1] a letter/digit/underscore?
-    while (match(s, /[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]/)) {
-      tok = substr(s, RSTART, RLENGTH)
-      post = (RSTART + RLENGTH <= length(s)) ? substr(s, RSTART + RLENGTH, 1) : ""
-      pre_bad = (RSTART > 1) ? (substr(s, RSTART - 1, 1) ~ /[A-Za-z0-9_]/) : prev_alnum
-      s = substr(s, RSTART + RLENGTH)
-      prev_alnum = 1  # the char before the next scan position ends this token
-      # word-boundary rule: no letter/digit/underscore may touch the token;
-      # prev_alnum keeps the boundary honest across a rejected match (the
-      # tail of a longer uppercase run, e.g. STRUCT in SELFDESTRUCT)
-      if (!pre_bad && post !~ /[A-Za-z0-9_]/) {
-        key = path ":" tok
-        if (key in allowed) continue          # census: grandfathered citation
-        if (tok in legit) continue            # lexicon: legit identifier
-        if (tok ~ /^[0-9]+$/) continue        # pure-number token
-        if (tok ~ /^[0-9A-F]+$/) continue     # hex-shaped token
-        if (!(key in reported)) {
-          reported[key] = 1
-          print path ":" lineno ":" content
-        }
-      }
-    }
-  }
-' "$tmp")" || true
-if [ -n "$bare_fail" ]; then
-  echo "comment-hygiene: bare six-char tracker token is not in the census" >&2
-  echo "  (scripts/hooks/comment-hygiene-census.txt; docs/comments.md)." >&2
-  echo "  Line-start-deref false positive? A Rust line whose first non-space char is" >&2
-  echo "  '*' (a deref, e.g. '    *LOADED') is read as a block-comment continuation," >&2
-  echo "  so a six-char UPPERCASE static name on it trips this ratchet with no" >&2
-  echo "  comment involved; that name is a real identifier — add it to the census" >&2
-  echo "  lexicon (see the census header's line-start-deref note)." >&2
-  echo "  Otherwise strip the citation, or — only for a real word/identifier — add it" >&2
-  echo "  to the census lexicon section:" >&2
-  echo "  fix: add the identifier to $census (lexicon section), or strip the token." >&2
-  printf '%s\n' "$bare_fail" >&2
-  fail=1
+# Work-item labels, case-insensitive: a tracker ID can be spelled in lower case.
+# The epic and slice shapes want a token containing a digit, so ordinary prose
+# ("an epic feature", "the two-slice intake") survives; the phase shape wants
+# letter+digit, so a bare algorithm phase number survives.
+label='(\btodo[ \t]*[-_][ \t]*[0-9a-f]{4,}\b)'
+label+='|(\btodo\([a-z][a-z0-9_-]*\))'
+label+='|(\bepic\b[ \t]+[a-z0-9_-]*[0-9][a-z0-9_-]*)'
+label+='|(\bslice\b[ \t-]+[a-z0-9_-]*[0-9][a-z0-9_-]*)'
+label+='|(\bphase\b[ \t]+[a-z][0-9]\b)'
+label+='|(\b(?:pre|post)-epic\b)'
+
+# --- Run --------------------------------------------------------------------
+# One detector, two anchored passes: the case-sensitivity of a shape is part of
+# the shape, so the label pass runs with -i and the citation pass without. rg
+# exits 1 for "no match" and 2 for "could not scan", so a pass that fails to
+# examine the tree is a refusal, never a green over nothing.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+set +e
+rg -n -P --no-heading -e "$cite" "${globs[@]}" "${paths[@]}" >"$tmp/cite" 2>"$tmp/cite.err"
+cite_status=$?
+rg -n -P --no-heading -i -e "$label" "${globs[@]}" "${paths[@]}" >"$tmp/label" 2>"$tmp/label.err"
+label_status=$?
+set -e
+for status in "$cite_status" "$label_status"; do
+  if [ "$status" -gt 1 ]; then
+    echo "comment-hygiene: rg exited $status; refusing to certify a tree it could not scan" >&2
+    cat "$tmp"/*.err >&2
+    exit 1
+  fi
+done
+
+# awk dedupes a line both passes catch; there is no per-token subprocess.
+hits="$(awk '!seen[$0]++' "$tmp/cite" "$tmp/label")"
+
+if [ -z "$hits" ]; then
+  exit 0
 fi
 
-# --- Detector 3: tracker-citation census ratchet ---
-# -o emits the matched band alone, so a census row is keyed on the path and
-# the text instead of a line number: the row survives a reflow and disappears
-# only when the citation itself does. One rg pass; the awk pass classifies the
-# bands and reconciles them against the census in both directions.
-ccf="${CCF:-scripts/hooks/comment-hygiene-citation-census.txt}"
-if [ ! -e "$ccf" ]; then
-  echo "comment-hygiene: citation census missing: $ccf" >&2
-  exit 1
-fi
-d3_tmp="$(mktemp)"
-trap 'rm -f "$tmp" "$d3_tmp"' EXIT
-d3='(\btodo[ \t]*[-_][ \t]*[0-9a-f]{4,}\b)|(\btodo\([a-z][a-z0-9_-]*\))|(\bepic\b[ \t]+[a-z0-9][a-z0-9_-]*)|(\bslice\b[ \t-]+[a-z0-9_-]*[0-9][a-z0-9_-]*)|(\bphase\b[ \t]+[a-z][0-9]\b)|(\b(?:pre|post)-epic\b)'
-rg -n -o --no-heading -i -P -e "$d3" \
-  "${scope_cite_glob[@]}" "${scope_cite[@]}" >"$d3_tmp" 2>/dev/null || true
-d3_out="$(awk -v CENSUS="$ccf" '
-  BEGIN {
-    while ((getline row < CENSUS) > 0) {
-      sub(/[ \t]+$/, "", row)
-      if (row == "" || row ~ /^#/) continue
-      listed[row] = 1
-    }
-  }
-  {
-    c1 = index($0, ":")
-    if (c1 == 0) next
-    path = substr($0, 1, c1 - 1)
-    rest = substr($0, c1 + 1)
-    c2 = index(rest, ":")
-    if (c2 == 0) next
-    lineno = substr(rest, 1, c2 - 1)
-    hit = substr(rest, c2 + 1)
-    gsub(/[ \t]+/, " ", hit)
-    key = path ":" hit
-    seen[key] = 1
-    if (key in listed) next
-    if (key in reported) next
-    reported[key] = 1
-    printf "  fresh: %s:%s: %s -> census row: %s\n", path, lineno, hit, key
-  }
-  END {
-    for (row in listed) if (!(row in seen)) printf "  stale: %s -> delete this row\n", row
-  }
-' "$d3_tmp" | sort || true)"
-if [ -n "$d3_out" ]; then
-  echo "comment-hygiene: Detector 3 — tracker citations / work-item labels are out" >&2
-  echo "  of sync with scripts/hooks/comment-hygiene-citation-census.txt" >&2
-  echo "  (docs/gates.md section 1). 'fresh' is a citation the census does not" >&2
-  echo "  grandfather: strip it (docs/comments.md), never list a new one. 'stale'" >&2
-  echo "  is a swept citation whose row has to go in the same change." >&2
-  echo "  fix: strip the citation (docs/comments.md); a stale row is deleted in the same change." >&2
-  printf '%s\n' "$d3_out" >&2
-  fail=1
-fi
-exit "$fail"
+{
+  echo "comment-hygiene: a work-tracker citation, a migration-work-item label, or"
+  echo "  a change-narration label is banned in code (AGENTS.md 'Comment Hygiene',"
+  echo "  docs/comments.md). Code describes the present: state the rule the change"
+  echo "  introduced in prose, point at the test that pins it, or delete the sentence."
+  echo "  There is no census and no waiver; the repair is always an edit."
+  echo "  fix: strip the band from the line above (docs/comments.md)."
+  printf '%s\n' "$hits"
+} >&2
+exit 1
