@@ -119,7 +119,10 @@ Nine lanes, each its own `just check-dev-tools <lane>` cargo invocation (a bare 
 runs `default` and prints the menu; a leading `--` is ignored):
 `default`, `fixture-sql-ledger`, `solver-capture-fixtures`, `solver-cache-lab`,
 `solver-cache-telemetry`, `solver-hotpath`, `solver-envelope`, `engine-jit`,
-`engine-prometheus`. There is no combined lane and no `--all-features` form.
+`engine-prometheus`. There is no combined lane and no `--all-features` form. CI's
+`rust-lint` job runs `fixture-sql-ledger` as a compile-only check, so the four gated
+`[[bin]]` targets cannot rot; the ledger bench itself (`just bench-updaters`) stays an
+on-demand measurement.
 
 Four feature families must never be unified across tool packages:
 

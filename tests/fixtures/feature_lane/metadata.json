@@ -1,0 +1,14 @@
+{
+  "packages": [
+    {
+      "name": "demo",
+      "manifest_path": "__CRATE_DIR__/Cargo.toml",
+      "targets": [
+        {"name": "demo", "kind": ["lib"], "src_path": "__CRATE_DIR__/src/lib.rs", "required-features": []},
+        {"name": "live_probe", "kind": ["test"], "src_path": "__CRATE_DIR__/tests/live_probe.rs", "required-features": []},
+        {"name": "abort_repro", "kind": ["test"], "src_path": "__CRATE_DIR__/tests/abort_repro.rs", "required-features": []},
+        {"name": "offline_twin", "kind": ["test"], "src_path": "__CRATE_DIR__/tests/offline_twin.rs", "required-features": []}
+      ]
+    }
+  ]
+}

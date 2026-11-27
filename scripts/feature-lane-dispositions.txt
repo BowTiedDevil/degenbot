@@ -1,0 +1,33 @@
+# Feature-lane dispositions (scripts/feature_lane_inventory.py).
+#
+# The inventory is mechanical: cargo metadata names every feature-gated target,
+# the module walker derives every feature-gated inline test item. This table
+# classifies only the units the offline lane must NOT run; every unit not named
+# here is `offline` and runs. The gate reconciles both directions -- a row that
+# names a unit the tree no longer has fails, and a mechanically `#[ignore]`d
+# unit left `offline` fails.
+#
+#   binary|item|class|ADR|rationale
+#
+#   binary    the nextest binary id (`package` for the lib, `package::target`
+#             for an integration test target)
+#   item      the nextest test path, or `*` for the whole binary
+#   class     offline | live | ignored | measurement
+#   ADR       the owning decision for the exclusion (ADR-NNN)
+#
+# `live` needs an external service or node; `ignored` is mechanically
+# `#[ignore]`d (or an abort-by-design child that must not run in-process);
+# `measurement` is a timing/readout instrument with no pass/fail contract.
+
+# The live Jaeger E2E probe: its two span-reaches-real-Jaeger legs need an OTLP
+# collector and Jaeger's query API (DEGENBOT_JAEGER_E2E=1); the pure formatter
+# helper in the same binary stays offline, so it is named explicitly rather than
+# riding a binary wildcard.
+degenbot-bot::otel_jaeger_e2e|span_reaches_real_jaeger_from_a_current_thread_runtime|live|ADR-043|Live end-to-end probe: one real span through provider_from_endpoint into a real Jaeger, receipt read back through the query API. Excluded from the offline lane; an operator runs it with a collector.
+degenbot-bot::otel_jaeger_e2e|span_reaches_real_jaeger_from_a_multi_thread_runtime|live|ADR-043|Same live probe on a multi-thread runtime; needs the collector and Jaeger query API.
+degenbot-bot::otel_jaeger_e2e|rfc3339_utc_formats_known_instants|offline|ADR-043|Pure civil-date formatter helper for the probe's Jaeger query window; no network, no clock, so it stays in the offline lane.
+# The abort-by-design TLS destructor repro: the child process is EXPECTED to
+# abort (leftover OTel ContextGuard on GUARD_STACK at thread exit), and its
+# non-ignored child test leaks the guard in-process, so the whole binary is
+# excluded; the #[ignore] carries the owner's invocation contract.
+degenbot-bot::otel_tls_repro|*|ignored|ADR-043|Abort-by-design repro of the OTel guard-stack destructor hazard: the child is expected to abort and the non-ignored child leaks guards in-process. Excluded from every batch lane; invoke it directly when bisecting.

@@ -139,6 +139,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [106](ADR-106-pinned-snapshot-atomic-backup.md) | Pinned-snapshot atomic backup — one read-pinned image copy, verified, atomically published; zero knobs | implemented |
 | [107](ADR-107-compose-capable-path-admission.md) | Compose-capable path admission — execution-only registry, target-relative execution | accepted (implemented) |
 | [108](ADR-108-bound-certified-search-scope.md) | Bound-certified search is scoped to piecewise-Möbius classes | proposed (research complete; no production cutover) |
+| [109](ADR-109-mechanically-verified-feature-lanes.md) | Feature-gated test lanes are mechanically inventoried and filtered | accepted (implemented) |
 
 ## Historical — provenance only
 

@@ -39,6 +39,7 @@
 build-rust-extension|llvm23,uv,dev-venv|
 build-rust-extension-wheel|llvm23,uv,dev-venv|
 check-consumer-probes|uv,dev-venv,llvm23|
+check-dev-tools||
 check-executor-release-ratchet-index|uv,dev-venv|
 check-msrv|llvm23|
 check-rust-consumer|llvm23|
@@ -62,6 +63,7 @@ test-executor-offline|uv,dev-venv,foundry,tier3-libs|
 test-golden-replay|cargo-nextest,uv|
 test-python-noise-gate|uv,dev-venv|
 test-rust-dev|llvm23|
+test-rust-feature-lanes|cargo-nextest,uv,llvm23|
 test-rust-release||
 test-rust-policy-lane|cargo-nextest,uv|
 verify-tier3-artifacts||

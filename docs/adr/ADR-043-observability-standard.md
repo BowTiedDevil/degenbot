@@ -273,6 +273,22 @@ Secondary gates:
 - golden snapshots of boot, one block, and one revert that capture console
   text **plus metric series and exported span events**.
 
+#### Test-lane dispositions (ADR-109)
+
+The OTel integration tests are offline-testable and run in
+`just test-rust-feature-lanes`, except the two probes this ADR's layer cannot
+verify without a collector:
+
+| Unit | Class | Owning decision |
+|---|---|---|
+| `otel_jaeger_e2e::span_reaches_real_jaeger_from_a_current_thread_runtime`, `…multi_thread_runtime` | `live` | This ADR: the probe needs an OTLP collector at `DEGENBOT_JAEGER_ENDPOINT` and Jaeger's query API at `DEGENBOT_JAEGER_QUERY_ENDPOINT`, gated by `DEGENBOT_JAEGER_E2E=1`; an operator runs it, and without the collector it would otherwise report a green self-skip. |
+| `otel_tls_repro::*` | `ignored` | This ADR §6 and `src/otel.rs`'s guard-stack deactivation: the repro's child is EXPECTED to abort on a leftover `ContextGuard`, and its non-ignored child leaks the guard in-process, so no batch lane may run the binary. Invoke it directly when bisecting. |
+
+The pure formatter helper in the live-gated binary
+(`rfc3339_utc_formats_known_instants`) stays `offline` and is named
+explicitly in `scripts/feature-lane-dispositions.txt`; the lane gate requires
+every item of a live-gated binary to be named for exactly that reason.
+
 ### 9. Metric cardinality
 
 Metric label value sets are `&'static` closed constants, following the

@@ -3,8 +3,8 @@ ci-green|ci-only||branch-protection aggregate: checks needs statuses only, nothi
 commitlint|local|scripts/hooks/commitlint-push.sh|just lint-commits <event range> (the push gate mirrors it over the upstream range)
 markdownlint|local||just lint-markdown-check
 msrv|local||just check-msrv
-rust-lint|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-dev-features, just check-rust-extension-release
-rust-test|local||just test-rust-dev, just test-golden-replay, just test-rust-ci (reproduces the CI build env for a pass-here-fail-there suspicion)
+rust-lint|local||just fmt-check, just lint-rust-check, just check-rust-default, just check-rust-consumer, just check-rust-dev-features, just check-rust-extension-release, just check-dev-tools fixture-sql-ledger (compile-only: the ledger bench stays on-demand)
+rust-test|local||just test-rust-dev, just test-golden-replay, just test-rust-feature-lanes (offline gated features + the otel family, selection proven against nextest list in both directions), just test-rust-ci (reproduces the CI build env for a pass-here-fail-there suspicion)
 rust-release-tests|local||just test-rust-release
 rust-artifacts|local||just build-rust-extension, just publish-dry-run --no-verify
 rust-policy-lanes|local||just test-rust-policy-lane (both policy configurations of degenbot-arbitrage and degenbot-batch-executor; CI-scheduled because the workspace lanes unify order-index on and cannot select the default configuration)

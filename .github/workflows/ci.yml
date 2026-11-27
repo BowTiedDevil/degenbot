@@ -355,6 +355,14 @@ jobs:
       - name: Check release-equivalent extension features
         run: just check-rust-extension-release
 
+      # The fixture SQL-ledger tool lane compiles the four `[[bin]]` targets that
+      # replay through the statement ledger. It is compile-only on purpose: the
+      # ledger bench (`just bench-updaters`) stays an on-demand measurement, and
+      # `check-dev-tools` never runs a binary -- so a feature-gated target cannot
+      # rot unnoticed while no bench joins a routine gate.
+      - name: Check the fixture SQL-ledger tool lane (compile only)
+        run: just check-dev-tools fixture-sql-ledger
+
       - name: Assert Rust lint left the working tree clean
         run: |
           git diff --exit-code
@@ -424,6 +432,16 @@ jobs:
 
       - name: Run two-sided golden replay gate (offline, blocks merge)
         run: just test-golden-replay
+
+      # The feature-gated lane: the canonical fixed features plus the
+      # observability family (degenbot-bot/otel, degenbot_rs/otel,
+      # degenbot-arbitrage/otel-replay). Its selection is GENERATED from
+      # scripts/feature_lane_inventory.py, and the recipe then lists with and
+      # without that filter and reconciles both captures against the inventory
+      # (the unfiltered list is the negative probe), so the live Jaeger E2E legs
+      # and the abort-by-design TLS repro cannot pass as green.
+      - name: Run feature-gated lane (offline, blocks merge)
+        run: just test-rust-feature-lanes
 
   rust-release-tests:
     # The shipped profile: debug_assertions off, which only `--release` gives.

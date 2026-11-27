@@ -1,0 +1,7 @@
+# Synthetic dispositions for the feature-lane inventory tests.
+demo|gated::ignored_item|ignored|ADR-043|fixture ignored item
+demo::abort_repro|*|ignored|ADR-043|fixture abort-by-design binary
+demo::live_probe|span_reaches_real_service|live|ADR-043|fixture live probe
+demo::live_probe|pure_helper|offline|ADR-043|fixture pure helper stays offline
+demo|gated::timing_probe|measurement|ADR-068|fixture timing/readout instrument with no pass/fail contract
+demo::live_probe|shared_measurement_name|live|ADR-043|fixture live twin; the offline binary reuses the name on purpose

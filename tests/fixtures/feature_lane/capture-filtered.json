@@ -1,0 +1,38 @@
+{
+  "rust-suites": {
+    "demo": {
+      "package-name": "demo",
+      "binary-id": "demo",
+      "kind": "lib",
+      "status": "listed",
+      "testcases": {
+        "gated::gated_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "gated::ignored_item": {"kind": "test", "ignored": true, "filter-match": {"status": "mismatch", "reason": "default-filter"}},
+        "gated::plain_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "gated::timing_probe": {"kind": "test", "ignored": false, "filter-match": {"status": "mismatch", "reason": "expression"}},
+        "nested::nested_gated_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    },
+    "demo::live_probe": {
+      "package-name": "demo",
+      "binary-id": "demo::live_probe",
+      "kind": "test",
+      "status": "listed",
+      "testcases": {
+        "span_reaches_real_service": {"kind": "test", "ignored": false, "filter-match": {"status": "mismatch", "reason": "expression"}},
+        "shared_measurement_name": {"kind": "test", "ignored": false, "filter-match": {"status": "mismatch", "reason": "expression"}},
+        "pure_helper": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    },
+    "demo::offline_twin": {
+      "package-name": "demo",
+      "binary-id": "demo::offline_twin",
+      "kind": "test",
+      "status": "listed",
+      "testcases": {
+        "shared_measurement_name": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "offline_twin_only": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    }
+  }
+}

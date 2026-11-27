@@ -376,6 +376,48 @@ test-rust-nextest *args: check-toolchain
     fi
     cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $feature_flag "$@"
 
+# The feature-gated lane (offline): every test the canonical gated features
+# and the observability family compile, selected by ONE filter GENERATED from
+# scripts/feature_lane_inventory.py -- never a hand list. The script enumerates
+# every feature-gated test target and inline item mechanically (cargo metadata
+# for required-features targets, a module walk for inline cfged items), reads the
+# owning-ADR dispositions that keep live/ignored/measurement units out of this
+# lane, and prints the nextest -E expression those dispositions imply. The same
+# generated expression then runs the suite, and the two lists captured
+# afterwards prove the selection in both directions: the filtered list selects
+# every offline unit and no excluded one, and the UNFILTERED list fails the same
+# reconciliation (the negative probe) -- so a live probe or abort-by-design
+# repro cannot become a green run by disappearing. The lane's feature set is the
+# canonical fixed list plus degenbot-bot/otel, degenbot_rs/otel, and
+# degenbot-arbitrage/otel-replay; the otel-gated tests exist only here, and the
+# live Jaeger E2E legs and the TLS abort repro stay out by ADR-043's recorded
+# dispositions. Extra args forward to cargo nextest run.
+test-rust-feature-lanes *args: check-toolchain
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lane_features="degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness,degenbot-bot/otel,degenbot_rs/otel,degenbot-arbitrage/otel-replay"
+    python3 scripts/feature_lane_inventory.py --features "$lane_features" check
+    lane_filter="$(python3 scripts/feature_lane_inventory.py --features "$lane_features" filter)"
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo nextest run --locked --manifest-path rust/Cargo.toml --workspace --profile ci --no-fail-fast \
+        --features "$lane_features" -E "$lane_filter" "$@"
+    capture_dir="$(mktemp -d)"
+    trap 'rm -rf "$capture_dir"' EXIT
+    cargo nextest list --locked --manifest-path rust/Cargo.toml --workspace \
+        --features "$lane_features" -E "$lane_filter" --message-format json > "$capture_dir/filtered.json"
+    cargo nextest list --locked --manifest-path rust/Cargo.toml --workspace \
+        --features "$lane_features" --message-format json > "$capture_dir/unfiltered.json"
+    python3 scripts/feature_lane_inventory.py --features "$lane_features" verify \
+        --list "$capture_dir/filtered.json" --negative-probe "$capture_dir/unfiltered.json"
+
+# The feature-lane inventory's own probes: the synthetic workspace and captures
+# (both reconciliation directions, the negative probe, and the fail-closed
+# refusals) plus the committed tree's reconciliation. No extension build: the
+# gate is a stdlib script, so this narrows without the dev recipe.
+check-feature-lane-inventory *args:
+    {{ pytest_run }} tests/test_feature_lane_inventory.py -q --no-header {{ args }}
+
 # Policy-configuration lane: run one crate's suite under ONE of its two
 # supported public configurations. `degenbot-arbitrage` and
 # `degenbot-batch-executor` each ship one policy feature, `order-index`
@@ -2314,10 +2356,10 @@ lint-markdown-check:
 # `ty` covers the gate surface; the one-off recorders and math oracles join when
 # their pre-existing diagnostics are triaged.
 lint-python:
-    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py
+    {{ py_run }} ruff check --fix src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_feature_lane_inventory.py
     # ty runs in the project environment (it resolves third-party imports and the
     # degenbot stubs from the venv), which is where its dev dependency installs it.
-    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ty check --fix --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
 # The AGENTS.md "Comment Hygiene" gate (docs/comments.md): tracker citations and
 # RED/GREEN gate narration never live in code comments.
@@ -2348,8 +2390,8 @@ lint-tripwire-ratchet:
 # pre-push hook both run this form, so neither can green over a tree it silently
 # repaired. `lint-python` is the same detectors with the repairs applied.
 lint-python-check:
-    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py
-    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
+    {{ py_run }} ruff check src/ examples/ scripts/*.py scripts/hooks/*.py tests/test_publish_verify_oracle.py tests/test_publish_blocked_gate.py tests/test_publication_plan.py tests/test_crates_io_pending.py tests/test_tool_catalog_check.py tests/test_script_tooling.py tests/test_gate_registry.py tests/test_ci_parity.py tests/test_just_recipe_index.py tests/test_worker_census_spawn_gate.py tests/test_feature_lane_inventory.py
+    {{ py_run }} ty check --no-progress src/ scripts/publish_verify.py scripts/publish_blocked.py scripts/publication_plan.py scripts/tool_catalog_check.py scripts/feature_lane_inventory.py scripts/rust_affected_packages.py scripts/vendor_members.py scripts/gate_registry.py scripts/just_recipe_index.py scripts/hooks/*.py
 
 # Dead-code detector (off the gate — output is a triage list). Each hit
 # needs an `rg` call before deletion: vulture is static and can't see

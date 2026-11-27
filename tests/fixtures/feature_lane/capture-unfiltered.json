@@ -1,0 +1,48 @@
+{
+  "rust-suites": {
+    "demo": {
+      "package-name": "demo",
+      "binary-id": "demo",
+      "kind": "lib",
+      "status": "listed",
+      "testcases": {
+        "gated::gated_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "gated::ignored_item": {"kind": "test", "ignored": true, "filter-match": {"status": "mismatch", "reason": "default-filter"}},
+        "gated::plain_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "gated::timing_probe": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "nested::nested_gated_item": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    },
+    "demo::live_probe": {
+      "package-name": "demo",
+      "binary-id": "demo::live_probe",
+      "kind": "test",
+      "status": "listed",
+      "testcases": {
+        "span_reaches_real_service": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "shared_measurement_name": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "pure_helper": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    },
+    "demo::offline_twin": {
+      "package-name": "demo",
+      "binary-id": "demo::offline_twin",
+      "kind": "test",
+      "status": "listed",
+      "testcases": {
+        "shared_measurement_name": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}},
+        "offline_twin_only": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    },
+    "demo::abort_repro": {
+      "package-name": "demo",
+      "binary-id": "demo::abort_repro",
+      "kind": "test",
+      "status": "listed",
+      "testcases": {
+        "aborts_by_design": {"kind": "test", "ignored": true, "filter-match": {"status": "mismatch", "reason": "default-filter"}},
+        "child_leaks_guard": {"kind": "test", "ignored": false, "filter-match": {"status": "matches"}}
+      }
+    }
+  }
+}
