@@ -126,16 +126,21 @@ hooks = [
   { id = "parity-ledger-single-source", name = "Parity ledger single source", language = "system", entry = "just check-parity-ledger-single-source", files = '^docs/architecture/rust-settlement-bot-parity\.md$|^tests/standalone_parity/fixtures/settlement_bot_boot\.json$|^scripts/hooks/parity_ledger_single_source\.py$', stages = ["pre-commit"], pass_filenames = false },
 
   # The worker-census spawn sites (docs/gates.md section 3): every
-  # `thread::Builder::new`, `Builder::new_multi_thread` or
-  # `Builder::new_current_thread` site under rust/crates must sit in a function
-  # that registers a `WorkerCensusEntry`, or be admitted by a row under a
-  # written reason in scripts/hooks/worker-census-spawn-inventory.txt. Both
-  # directions are reconciled (a site with no row, a row with no live site, a
-  # row with no reason above it), so an unregistered thread cannot land and a
-  # swept row cannot outlive its site. The trigger covers crate sources, the
-  # inventory and the gate itself; the gate sweeps the tree, so the filename
-  # list is only the trigger. One stdlib parse pass (~0.3 s) over the crate
-  # tree, so it rides the per-commit tier.
+  # `thread::Builder::new`, `thread::spawn`, `Builder::new_multi_thread` or
+  # `Builder::new_current_thread` site in the PRODUCTION sources under rust/crates
+  # must sit in a function that registers a `WorkerCensusEntry`, or be admitted by
+  # a row under a written reason in scripts/hooks/worker-census-spawn-inventory.txt.
+  # Test code is out of scope on purpose: a `tests/`/`benches/` target, a
+  # `cfg(test)` region (including `cfg(all(test, ...))`) and the files such a
+  # region declares are skipped, because the readers the rule protects — the census
+  # gauge, the boot dump, the live /proc comm cross-check — are production-only and
+  # a `cfg(test)` registration would pollute the table those assertions read. A
+  # feature-gated module still counts. Both directions are reconciled (a site with
+  # no row, a row with no live site, a row with no reason above it), so an
+  # unregistered production thread cannot land and a swept row cannot outlive its
+  # site. The trigger covers crate sources, the inventory and the gate itself; the
+  # gate sweeps the tree, so the filename list is only the trigger. One stdlib
+  # parse pass over the crate tree, so it rides the per-commit tier.
   #
   # live-invariant gate (ADR-087 D2): watches the live spawn sites of the crate tree against their registrations and the reviewed inventory; not tripwire precedent.
   { id = "worker-census-spawn", name = "Worker-census spawn sites", language = "system", entry = "just check-worker-census-spawn", files = '\.rs$|^scripts/hooks/worker_census_spawn_gate\.py$|^scripts/hooks/worker-census-spawn-inventory\.txt$', stages = ["pre-commit"], pass_filenames = false },

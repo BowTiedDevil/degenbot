@@ -28,6 +28,21 @@ to the gate:
     must refuse rather than certify.
   * ``test_the_committed_inventory_matches_the_tree`` runs the real gate over the
     real tree, so a finding here is a site to register or a row to delete.
+  * ``test_the_scope_is_location_not_shape`` is the production-scope positive
+    control: one identical bare spawn is reported under ``src/`` and silent under
+    ``tests/`` and ``benches/``, so the exclusion is the location, not the shape.
+  * ``test_a_cfg_test_module_region_is_out_of_scope`` and
+    ``test_a_cfg_all_test_feature_region_is_out_of_scope`` pin the inline
+    regions, each with a production site in the same source that must still be
+    named -- a matcher that went blind would pass the exclusion silently.
+  * ``test_a_feature_only_module_stays_a_production_site`` is the reverse
+    control: ``cfg(feature = "auto-initialize")`` ships in a binary, so its
+    spawn is a site.
+  * ``test_a_cfg_test_external_module_file_is_out_of_scope`` resolves
+    ``#[cfg(test)] mod tests;`` to ``tests.rs`` and ``tests/mod.rs`` and on
+    through the modules those declare.
+  * ``test_a_tree_of_only_test_spawns_fails_closed`` proves the scope cannot
+    swallow the whole tree and still report green.
 """
 
 from __future__ import annotations
@@ -87,6 +102,53 @@ _CURRENT_SITE = """pub fn spawn_helper() {
 """
 _NO_SITE = """pub fn no_spawn_here() -> usize {
     3
+}
+"""
+_FIXTURE_MANIFEST = '[package]\nname = "fixture-crate"\n'
+_TEST_TARGET_FILE = "rust/crates/fixture-crate/tests/spawn_site.rs"
+_BENCH_TARGET_FILE = "rust/crates/fixture-crate/benches/spawn_site.rs"
+_CFG_TEST_MODULE_SITE = """pub fn production_helper() {
+    let _ = std::thread::spawn(|| {});
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn spawn_helper() {
+        let _ = std::thread::spawn(|| {});
+    }
+}
+"""
+_CFG_ALL_TEST_SITE = """#[cfg(all(test, feature = "auto-initialize"))]
+mod probes {
+    pub fn spawn_helper() {
+        let _ = std::thread::spawn(|| {});
+    }
+}
+
+pub fn production_helper() {
+    let _ = std::thread::spawn(|| {});
+}
+"""
+_FEATURE_ONLY_SITE = """#[cfg(feature = "auto-initialize")]
+pub mod probes {
+    pub fn spawn_helper() {
+        let _ = std::thread::spawn(|| {});
+    }
+}
+"""
+_CFG_TEST_NESTED_MODULES = """mod reorg;
+mod helpers;
+
+pub fn fixture_spawn() {
+    let _ = std::thread::spawn(|| {});
+}
+"""
+_CFG_TEST_EXTERNAL_DECL = """#[cfg(test)]
+mod tests;
+
+pub fn production_helper() {
+    let _ = std::thread::spawn(|| {});
 }
 """
 
@@ -223,6 +285,114 @@ def test_a_missing_inventory_fails_closed(tmp_path: Path) -> None:
 def test_a_tree_with_no_spawn_site_fails_closed(tmp_path: Path) -> None:
     """A scan that found no site at all refuses to certify a matcher it cannot trust."""
     tree = _tree(tmp_path, _NO_SITE)
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "gone blind" in result.stderr, result.stderr
+
+
+# --- production scope: test targets and test-only modules ---------------------
+def _files(tmp_path: Path, sources: dict[str, str]) -> Path:
+    """A throwaway tree holding every given repo-relative path."""
+    tree = tmp_path / "tree"
+    for relative, source in sources.items():
+        path = tree / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    return tree
+
+
+def test_the_scope_is_location_not_shape(tmp_path: Path) -> None:
+    """The same spawn shape is a site under src and out of scope under tests/ and benches/."""
+    tree = _files(
+        tmp_path,
+        {
+            "rust/crates/fixture-crate/Cargo.toml": _FIXTURE_MANIFEST,
+            _SITE_FILE: _BARE_STD_SITE,
+            _TEST_TARGET_FILE: _BARE_STD_SITE,
+            _BENCH_TARGET_FILE: _BARE_STD_SITE,
+        },
+    )
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stderr.count("  fresh: ") == 1, result.stderr
+    assert f"fresh: {_SITE_FILE}:2: spawn_helper (bare std thread)" in result.stderr, result.stderr
+    assert _TEST_TARGET_FILE not in result.stderr, result.stderr
+    assert _BENCH_TARGET_FILE not in result.stderr, result.stderr
+
+
+def test_the_summary_counts_the_sources_out_of_scope(tmp_path: Path) -> None:
+    """Green with a production registration and one test target: the summary names the scope."""
+    tree = _files(
+        tmp_path,
+        {
+            "rust/crates/fixture-crate/Cargo.toml": _FIXTURE_MANIFEST,
+            _SITE_FILE: _REGISTERING_BARE_FILE,
+            _TEST_TARGET_FILE: _BARE_STD_SITE,
+        },
+    )
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 test-only sources out of scope" in result.stdout, result.stdout
+    assert "1 register in their own function" in result.stdout, result.stdout
+
+
+def test_a_cfg_test_module_region_is_out_of_scope(tmp_path: Path) -> None:
+    """A spawn inside an inline `#[cfg(test)] mod` is not a site; its production sibling is."""
+    tree = _tree(tmp_path, _CFG_TEST_MODULE_SITE)
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stderr.count("  fresh: ") == 1, result.stderr
+    assert f"fresh: {_SITE_FILE}:2: production_helper" in result.stderr, result.stderr
+    assert "spawn_helper" not in result.stderr, result.stderr
+
+
+def test_a_cfg_all_test_feature_region_is_out_of_scope(tmp_path: Path) -> None:
+    """`cfg(all(test, feature = ...))` is a test predicate too; only the production site fails."""
+    tree = _tree(tmp_path, _CFG_ALL_TEST_SITE)
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stderr.count("  fresh: ") == 1, result.stderr
+    assert f"inventory row: {_SITE_FILE}:production_helper" in result.stderr, result.stderr
+    assert "spawn_helper" not in result.stderr, result.stderr
+
+
+def test_a_feature_only_module_stays_a_production_site(tmp_path: Path) -> None:
+    """`cfg(feature = "auto-initialize")` names no test predicate, so its spawn is a site."""
+    tree = _tree(tmp_path, _FEATURE_ONLY_SITE)
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stderr.count("  fresh: ") == 1, result.stderr
+    assert f"inventory row: {_SITE_FILE}:spawn_helper" in result.stderr, result.stderr
+
+
+def test_a_cfg_test_external_module_file_is_out_of_scope(tmp_path: Path) -> None:
+    """`#[cfg(test)] mod tests;` resolves its file (sibling and `mod.rs` forms) as test-only."""
+    tree = _files(
+        tmp_path,
+        {
+            "rust/crates/fixture-crate/src/spawn_site.rs": _CFG_TEST_EXTERNAL_DECL,
+            "rust/crates/fixture-crate/src/spawn_site/tests.rs": _CFG_TEST_NESTED_MODULES,
+            "rust/crates/fixture-crate/src/spawn_site/tests/reorg.rs": _BARE_STD_SITE,
+            "rust/crates/fixture-crate/src/spawn_site/tests/helpers/mod.rs": _BARE_STD_SITE,
+        },
+    )
+    result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stderr.count("  fresh: ") == 1, result.stderr
+    assert f"inventory row: {_SITE_FILE}:production_helper" in result.stderr, result.stderr
+    assert "fixture_spawn" not in result.stderr, result.stderr
+    assert "tests.rs" not in result.stderr, result.stderr
+
+
+def test_a_tree_of_only_test_spawns_fails_closed(tmp_path: Path) -> None:
+    """A scope that excluded every spawn site refuses to certify instead of reporting green."""
+    tree = _files(
+        tmp_path,
+        {
+            "rust/crates/fixture-crate/Cargo.toml": _FIXTURE_MANIFEST,
+            _TEST_TARGET_FILE: _BARE_STD_SITE,
+        },
+    )
     result = _run(tree, _inventory(tmp_path, "# no exceptions yet\n"))
     assert result.returncode == 2, result.stdout + result.stderr
     assert "gone blind" in result.stderr, result.stderr

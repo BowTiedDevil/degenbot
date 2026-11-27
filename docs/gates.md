@@ -309,27 +309,51 @@ fleet size at dump time. That is how `fork_pubsub_workers` and
 site registers: any `thread::Builder::new`, a bare `thread::spawn`, a
 solve-executor `tokio::runtime::Builder`, or a capacity constant that bounds
 concurrent execution — and `scripts/hooks/worker_census_spawn_gate.py` enforces
-it. The scanner reads every `*.rs` source under `rust/crates` (crate sources,
-integration tests, benches and inline `cfg(test)` modules included, because a
-test thread is invisible to the `/proc` cross-check exactly as a production one
-is) and requires each `thread::Builder::new`, `thread::spawn`,
-`Builder::new_multi_thread` and `Builder::new_current_thread` site to sit in a
-function that registers: one that calls `worker_census::register`, or one that
-delegates to a helper in the same file that does (the `OwnedPubsubRuntime::build`
-→ `publish` shape). A site neither path covers fails, named by file, line and
-function. Two blind spots are deliberate and stated in the gate's header: the
-matcher is lexical (a runtime built behind a re-spelled binding, or a std thread
-behind a renamed import, is not a site), and the rule covers std threads and
-tokio runtimes, not `rayon::ThreadPoolBuilder` pools or capacity constants.
+it over the **production** sources of `rust/crates`. The scanner deliberately
+reads past the code only a test build compiles: a `tests/` or `benches/` cargo
+target, an inline region a `test` cfg predicate gates (`#[cfg(test)]`,
+`#[cfg(all(test, feature = ...))]`), and the files those regions declare
+(`#[cfg(test)] mod tests;` → `tests.rs` / `tests/mod.rs`, and the modules those
+declare in turn).
+
+**That scope reverses the rule this gate shipped with** — that a test thread was
+"as invisible to the `/proc` cross-check as a production one", so every test-only
+spawn site carried an inventory row. The protected readers are production-only:
+the `degenbot_worker_census{resource=...}` gauge `degenbot-bot::instruments`
+exports at metrics init, the one boot dump `emit_boot_table` fires from the
+drivers' boot prelude, and the `/proc/<pid>/task/*/comm` histogram an operator
+compares against the gauge on a live bot. A test process exports no gauge, dumps
+no boot table, and is never the process that cross-check reads — a test-only
+spawn site has no reader to be invisible to. Registering one is worse than
+useless: `register` UPSERTS one process-global table, so a `cfg(test)` row would
+land in the table the same binary's production assertions read (the
+`REGISTERED_RESOURCE_IDS` closed set, `comm_histogram_census_matches_registry`),
+polluting a production contract with an id no production process can publish. A
+feature-gated module is never test-only — `#[cfg(feature = "auto-initialize")]
+pub mod test_gil` ships in a binary — and a mixed `cfg(any(test, feature =
+"writer"))` module stays in scope because its feature branch ships.
+
+Each `thread::Builder::new`, `thread::spawn`, `Builder::new_multi_thread` and
+`Builder::new_current_thread` site in that scope must sit in a function that
+registers: one that calls `worker_census::register`, or one that delegates to a
+helper in the same file that does (the `OwnedPubsubRuntime::build` → `publish`
+shape). A site neither path covers fails, named by file, line and function. Two
+blind spots are deliberate and stated in the gate's header: the matcher is
+lexical (a runtime built behind a re-spelled binding, or a std thread behind a
+renamed import, is not a site; nor is a test region reached through `#[path]` or
+produced by a macro), and the rule covers std threads and tokio runtimes, not
+`rayon::ThreadPoolBuilder` pools or capacity constants.
 
 **Census.** `scripts/hooks/worker-census-spawn-inventory.txt`: one
-`path:function` row per spawn site the two registering paths do not cover, each
-group under a written `#` reason. It is the reviewed exception list — test-only
-runtimes, and production spawners whose census row is registered a frame above
-them — and it is reconciled in both directions and fails closed: a site with no
-row, a row with no live site, a row with no reason above it, and a missing
-inventory each fail. The ratchet only grows with a reviewed reason, and a row is
-deleted in the change that registers, moves or removes its site.
+`path:function` row per production spawn site the two registering paths do not
+cover, each group under a written `#` reason. It is the reviewed exception list —
+production spawners whose census row is registered a frame above them, and the
+shipped one-shot witness threads of the GIL diagnostic seams — and it is
+reconciled in both directions and fails closed: a site with no row, a row with no
+live site, a row with no reason above it, and a missing inventory each fail. The
+ratchet only grows with a reviewed reason, and a row is deleted in the change
+that registers, moves or removes its site. Out-of-scope test code carries no row
+at all, so a row cannot excuse a production site.
 
 The other half of the census is `REGISTERED_RESOURCE_IDS` in the module: the
 closed `resource` id set, whose cardinality is the metric's contract. A
@@ -344,9 +368,11 @@ count, thread_name, sizing, binding })` with a distinct `thread_name` pattern
 low-cardinality `resource` id from `REGISTERED_RESOURCE_IDS` (reuse an id rather
 than mint a near-duplicate, and add the id there when it is new). For a live
 fleet, use `OwnedPubsubRuntime` so the count tracks instances rather than
-freezing at first registration. If the site cannot register where it spawns — a
-one-shot command's runtime, a test harness — add its row and reason to the
-inventory, with `just check-worker-census-spawn --rows` as the starting point.
+freezing at first registration. If a production site cannot register where it
+spawns — a one-shot command's runtime, a seat host whose role row is registered a
+frame above — add its row and reason to the inventory, with `just
+check-worker-census-spawn --rows` as the starting point; test-only code is out of
+scope and needs no row at all.
 
 **Run it.** `just check-worker-census-spawn` for the spawn-site gate (`--rows`
 prints the inventory rows the tree does not hold yet). The registry's own unit

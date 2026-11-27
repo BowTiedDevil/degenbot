@@ -2607,13 +2607,17 @@ check-parity-ledger-single-source:
     {{py_run}} python scripts/hooks/parity_ledger_single_source.py
 
 # The worker-census spawn-site gate (docs/gates.md section 3): every
-# `thread::Builder::new`, `Builder::new_multi_thread` or
-# `Builder::new_current_thread` site under rust/crates must sit in a function
-# that registers a `WorkerCensusEntry`, or be admitted by a row under a written
-# reason in scripts/hooks/worker-census-spawn-inventory.txt. The reconciliation
-# runs both ways (a site with no row, a row with no site) and fails closed on a
-# missing inventory or a scan that found no site. Stdlib Python only, one pass
-# over the crate tree (~0.3 s), so it rides the per-commit tier; the
+# `thread::Builder::new`, `thread::spawn`, `Builder::new_multi_thread` or
+# `Builder::new_current_thread` site in the PRODUCTION sources under rust/crates
+# must sit in a function that registers a `WorkerCensusEntry`, or be admitted by a
+# row under a written reason in scripts/hooks/worker-census-spawn-inventory.txt.
+# Test code is out of scope: a `tests`/`benches` target, a `cfg(test)` region
+# (including `cfg(all(test, ...))`) and the files such a region declares spawn
+# threads no production reader sees, and a `cfg(test)` registration would pollute
+# the table the production assertions read; a feature-gated module still counts.
+# The reconciliation runs both ways (a site with no row, a row with no site) and
+# fails closed on a missing inventory or a scan that found no site. Stdlib Python
+# only, one pass over the crate tree, so it rides the per-commit tier; the
 # negative-probe suite is tests/test_worker_census_spawn_gate.py.
 #
 # `just check-worker-census-spawn --rows` prints the rows the inventory does not

@@ -27,7 +27,7 @@
 //!
 //! # Registration is gate-enforced
 //!
-//! **Every spawn site registers.** Any `thread::Builder::new`, a bare
+//! **Every production spawn site registers.** Any `thread::Builder::new`, a bare
 //! `thread::spawn`, a `tokio::runtime::Builder` (a solve executor), or a capacity
 //! constant that bounds concurrent execution MUST register here via [`register`]: an
 //! unregistered thread is invisible to the gauge, the boot dump, and the /proc
@@ -35,13 +35,23 @@
 //!
 //! The rule is mechanical, not documentary. `just check-worker-census-spawn`
 //! (`scripts/hooks/worker_census_spawn_gate.py`, docs/gates.md section 3) scans
-//! every `rust/crates` source for the spawn shapes and requires each site to sit
-//! in a function that registers — directly, or through a helper in the same file
-//! (the [`crate::pubsub_runtime::OwnedPubsubRuntime`] shape) — or to be listed
-//! in `scripts/hooks/worker-census-spawn-inventory.txt` under a written reason.
-//! That inventory is the reviewed exception list (test-only runtimes, and
-//! production spawners whose census row is registered a frame above them), and
-//! it is a ratchet: it grows only with a reviewed reason.
+//! the production sources under `rust/crates` for the spawn shapes and requires
+//! each site to sit in a function that registers — directly, or through a helper
+//! in the same file (the [`crate::pubsub_runtime::OwnedPubsubRuntime`] shape) — or
+//! to be listed in `scripts/hooks/worker-census-spawn-inventory.txt` under a
+//! written reason. That inventory is the reviewed exception list (production
+//! spawners whose census row is registered a frame above them, and the shipped
+//! one-shot witness threads of the GIL diagnostic seams), and it is a ratchet: it
+//! grows only with a reviewed reason.
+//!
+//! Test code is out of that gate's scope by design: a `tests/` target, a
+//! `cfg(test)` region and the files such a region declares spawn threads no
+//! reader sees — a test process exports no gauge, dumps no boot table, and is
+//! never the process the /proc comm cross-check reads — and a `cfg(test)`
+//! registration would upsert the one process-global table a sibling production
+//! assertion in the same binary reads. A feature-gated module is not test code:
+//! `#[cfg(feature = "auto-initialize")] pub mod test_gil` ships, so its sites are
+//! reviewed like any other.
 //!
 //! [`REGISTERED_RESOURCE_IDS`] is the closed set of `resource` ids the metric and
 //! the boot dump may carry. A named test pins it against the tree's registration
