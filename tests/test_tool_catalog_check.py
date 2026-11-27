@@ -35,8 +35,6 @@ so the synthetic cases never invoke cargo):
     <recipe>`` extraction reads Markdown code spans only; prose 'just any
     word' is not a recipe reference.
   * ``test_a_nonlocal_source_link_fails`` -- a URL and a root escape.
-  * ``test_a_declared_count_that_disagrees_with_the_table_fails`` -- a
-    heading's row count against its table.
   * ``test_a_tool_package_without_a_lab_section_fails`` -- tool-package
     discovery is metadata-driven: a current tool package with no Lab section
     fails, and its ``[[bin]]``s are still reconciled.
@@ -77,13 +75,15 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] -- the seam unde
 import sys
 from pathlib import Path
 
+from tests.repo_script import load_script
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHECK = _REPO_ROOT / "scripts" / "tool_catalog_check.py"
 
 
 README_TEMPLATE = """# Tools
 
-## Public examples ({examples_declared} rows)
+## Public examples
 
 Consumer-facing starting points.
 
@@ -91,11 +91,11 @@ Consumer-facing starting points.
 | --- | --- | --- | --- | --- | --- |
 | `demo_consumer` | [`degenbot` examples](../crates/facade/degenbot/examples/demo_consumer.rs) | proof | `just build-demo` | none | stdout |
 
-## Lab binaries ({lab_declared} rows)
+## Lab binaries
 
 Non-publishable tool packages.
 
-### `degenbot-fixture-tools` (2 rows) — `fixture-tools/src/bin/`
+### `degenbot-fixture-tools` — `fixture-tools/src/bin/`
 
 Record / check workflows.
 
@@ -104,7 +104,7 @@ Record / check workflows.
 | [`alpha_gen`](fixture-tools/src/bin/alpha_gen/main.rs) | generate | `just check-alpha` | default | none | stdout | gate |
 | [`beta_recorder`](fixture-tools/src/bin/beta_recorder/main.rs) | record | `just check-alpha` | {beta_lane} | none | stdout | gate |
 
-## Owning-crate integration tests ({integration_declared} rows)
+## Owning-crate integration tests
 
 Boot-level smoke assertions owned by their product crates.
 
@@ -214,9 +214,7 @@ def _workspace(
     metadata_path = _write(root / "metadata.json", json.dumps(metadata))
     readme_path = _write(
         rust / "tools" / "README.md",
-        README_TEMPLATE.format(
-            examples_declared=1, lab_declared=2, integration_declared=2, beta_lane=beta_lane
-        ),
+        README_TEMPLATE.format(beta_lane=beta_lane),
     )
     _write(root / "justfile", JUSTFILE)
     return {"root": root, "readme": readme_path, "metadata": metadata_path}
@@ -315,9 +313,6 @@ def test_a_duplicated_row_fails(tmp_path: Path) -> None:
         "`just check-alpha` | default | none | stdout | gate |\n"
     )
     _rewritten_readme(workspace, duplicated, duplicated + duplicated)
-    _rewritten_readme(
-        workspace, "### `degenbot-fixture-tools` (2 rows)", "### `degenbot-fixture-tools` (3 rows)"
-    )
 
     result = _run(workspace)
 
@@ -540,18 +535,6 @@ def test_a_root_escaping_source_link_fails(tmp_path: Path) -> None:
     assert "escapes the repository root" in result.stderr
 
 
-def test_a_declared_count_that_disagrees_with_the_table_fails(tmp_path: Path) -> None:
-    workspace = _workspace(tmp_path)
-    _rewritten_readme(
-        workspace, "### `degenbot-fixture-tools` (2 rows)", "### `degenbot-fixture-tools` (3 rows)"
-    )
-
-    result = _run(workspace)
-
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "declares 3 rows, its table holds 2" in result.stderr
-
-
 # --- the integration rows ----------------------------------------------------
 
 
@@ -604,7 +587,7 @@ def test_a_tool_package_without_a_lab_section_fails(tmp_path: Path) -> None:
 def test_a_duplicated_lab_section_fails(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     text = workspace["readme"].read_text(encoding="utf-8")
-    start = text.index("### `degenbot-fixture-tools` (2 rows)")
+    start = text.index("### `degenbot-fixture-tools`")
     end = text.index("## Owning-crate integration tests")
     workspace["readme"].write_text(text[:end] + text[start:end] + text[end:], encoding="utf-8")
 
@@ -623,12 +606,6 @@ def test_a_deleted_current_integration_row_fails(tmp_path: Path) -> None:
         " | boot | `just test-rust-nextest` | gate |\n",
         "",
     )
-    _rewritten_readme(
-        workspace,
-        "## Owning-crate integration tests (2 rows)",
-        "## Owning-crate integration tests (1 row)",
-    )
-
     result = _run(workspace)
 
     assert result.returncode == 1, result.stdout + result.stderr
@@ -647,11 +624,6 @@ def test_an_unknown_integration_row_fails(tmp_path: Path) -> None:
         / "tests"
         / "other_boot.rs",
         "#[test]\nfn boot() {}\n",
-    )
-    _rewritten_readme(
-        workspace,
-        "## Owning-crate integration tests (2 rows)",
-        "## Owning-crate integration tests (3 rows)",
     )
     _rewritten_readme(
         workspace,
@@ -799,7 +771,7 @@ def test_a_fenced_fake_table_is_not_cataloged(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     fence = (
         "```\n"
-        "## Lab binaries (1 row)\n"
+        "## Lab binaries\n"
         "\n"
         "| Binary | Purpose | Current command | Lane | Inputs | Writes | Status |\n"
         "| --- | --- | --- | --- | --- | --- | --- |\n"
@@ -807,7 +779,7 @@ def test_a_fenced_fake_table_is_not_cataloged(tmp_path: Path) -> None:
         "| default | none | stdout | gate |\n"
         "```\n"
     )
-    _rewritten_readme(workspace, "## Lab binaries (2 rows)", fence + "## Lab binaries (2 rows)")
+    _rewritten_readme(workspace, "## Lab binaries", fence + "## Lab binaries")
 
     result = _run(workspace)
 
@@ -825,9 +797,7 @@ def test_a_table_under_a_non_lab_subsection_is_not_cataloged(tmp_path: Path) -> 
         "| prose just any word | `just missing-recipe` | none | stdout |\n"
         "\n"
     )
-    _rewritten_readme(
-        workspace, "## Lab binaries (2 rows)", subsection + "## Lab binaries (2 rows)"
-    )
+    _rewritten_readme(workspace, "## Lab binaries", subsection + "## Lab binaries")
 
     result = _run(workspace)
 
@@ -869,10 +839,6 @@ def test_an_untracked_target_is_outside_the_catalog_surface(tmp_path: Path) -> N
         "| [`beta_recorder`](fixture-tools/src/bin/beta_recorder/main.rs) | record "
         "| `just check-alpha` | `sql-ledger` | none | stdout | gate |\n"
     )
-    _rewritten_readme(workspace, "## Lab binaries (2 rows)", "## Lab binaries (1 rows)")
-    _rewritten_readme(
-        workspace, "`degenbot-fixture-tools` (2 rows)", "`degenbot-fixture-tools` (1 rows)"
-    )
     _rewritten_readme(workspace, beta_row, "")
 
     git = shutil.which("git")
@@ -894,3 +860,11 @@ def test_an_untracked_target_is_outside_the_catalog_surface(tmp_path: Path) -> N
     staged = _run(workspace)
     assert staged.returncode != 0
     assert "has no catalog row" in staged.stdout + staged.stderr
+
+    # The registry must declare the population this test demonstrated: the
+    # catalog is reconciled against git's index, so it is `staged`, never `tree`.
+    gate_registry = load_script("gate_registry", _REPO_ROOT / "scripts" / "gate_registry.py")
+    gate = {entry.id: entry for entry in gate_registry.load(_REPO_ROOT)}["tool-catalog"]
+    assert gate.scope == "staged", gate.scope
+    assert gate.pass_filenames is False
+    assert '"ls-files", "-z", "--cached"' in _CHECK.read_text(encoding="utf-8")

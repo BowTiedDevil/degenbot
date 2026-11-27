@@ -6,7 +6,7 @@ lane, its inputs, its write behavior, and whether an automatic gate runs it. Per
 history lives in the commit history and the ADRs; `just` recipes and Cargo metadata are
 the executable truth this catalog mirrors.
 
-## Public examples (3 rows)
+## Public examples
 
 Consumer-facing starting points. Not tools; never moved into a tool package.
 
@@ -16,7 +16,7 @@ Consumer-facing starting points. Not tools; never moved into a tool package.
 | `solve_path_probe` | [`degenbot-pools` examples](../crates/foundation/degenbot-pools/examples/solve_path_probe.rs) | ADR-084 D1/C5 consumer (ii): solve a path through the root solve door using door items only; the documented pools-consumer snippet | `just check-consumer-probes` (first command of the recipe) | none — synthetic hops built in source | stdout only; `panic!` when the door returns no solution |
 | `foreign_consumer` | [`degenbot-execution-sample` examples](../examples/degenbot-execution-sample/examples/foreign_consumer.rs) | User-defined `ExecutionAdapter` for a FOREIGN contract: projects a solved path into the sealed `SolveResult` view and encodes one transaction through the four-part seam, then repeats it through `ValidatedAdapter` (ADR-100 tier 1) — no `degenbot-arbitrage`, no pyo3 | `cargo run -p degenbot-execution-sample --example foreign_consumer` — the command `docs/execution-adapters.md` documents; no recipe names it today | none — `sol!` call types in source | stdout only |
 
-## Lab binaries (36 rows)
+## Lab binaries
 
 Non-publishable tool packages: workspace members outside `default-members`, every edge
 pointing from a tool to a product crate. Lane is the `[[bin]]` `required-features` value
@@ -28,7 +28,7 @@ tests, where named, carry the durable assertions. **Compile-lane only** rows nee
 endpoint or an external corpus that is not in the tree: CI compiles them, never executes
 them, and no offline report may claim a refreshed measurement from them.
 
-### `degenbot-fixture-tools` (8 rows) — `fixture-tools/src/bin/`
+### `degenbot-fixture-tools` — `fixture-tools/src/bin/`
 
 Record / check / regenerate workflows for committed fixtures, and test-input generators.
 
@@ -43,7 +43,7 @@ Record / check / regenerate workflows for committed fixtures, and test-input gen
 | [`record_updater_cassette`](fixture-tools/src/bin/record_updater_cassette/main.rs) | Record one updater chunk span cassette (pool `PoolCreated` + V3 liquidity scan, or an Aave market chunk), with the `--verify` gate surface and the `--kind aave-run` loop | `cargo run -p degenbot-fixture-tools --bin record_updater_cassette -- --check tests/fixtures/cassettes/*.json.zst` (offline arm; the record arm adds `--node`/`--out`) | default | `--check` arm fully offline; record arm needs a LIVE node (ADR-062 resolution) | record arm hands `--out` to the cassette module, which writes the `.json.zst` package; `--check` decodes each package, re-serializes the canonical JSON, re-checks entry digests, writes nothing, exits 1 on drift | **gate** on the offline `--check` arm (every committed cassette decodes to its canonical bytes); record arm compile-lane only. Replay owners: pool-updater `cassette_replay_run.rs`/`verification_gate_probes.rs`, aave `aave_cassette_replay.rs`/`aave_config_cassette_replay.rs`; writer contract `degenbot-rpc`'s `cassette.rs` |
 | [`concentrated_liquidity_capture_gen`](fixture-tools/src/bin/concentrated_liquidity_capture_gen/main.rs) | The ONLY sanctioned producer of exact-wei goldens for the CL replay corpus: fetch curated V3 pools at a pinned block, backfill ticks, build and solve the 2-hop CL paths, write JSONL | `cargo run -p degenbot-fixture-tools --bin concentrated_liquidity_capture_gen -- [<out.jsonl>]` | default | LIVE archive node (`DEGENBOT_CLCAP_RPC`, `DEGENBOT_CLCAP_BLOCK`, `DEGENBOT_CLCAP_PATH_CAP`, `DEGENBOT_CLCAP_MAX_FETCHES`); explicit path overrides the committed corpus default | writes the capture JSONL **and** a `.block` sidecar (pinned block + regen command) | diagnostic — **compile-lane only**, never run by tests; regeneration is manual and live-only. Offline consumer of its product: `just test-golden-replay` |
 
-### `degenbot-executor-fixture-tools` (1 row) — `executor-fixture-tools/src/bin/`
+### `degenbot-executor-fixture-tools` — `executor-fixture-tools/src/bin/`
 
 The offline three-hop production-calldata oracle, in its own minimal package: its only
 edges are the five crates its source names (`alloy`, `degenbot-execution`,
@@ -54,7 +54,7 @@ production executor's graph and nothing else.
 | --- | --- | --- | --- | --- | --- | --- |
 | [`encode_three_hop`](executor-fixture-tools/src/bin/encode_three_hop/main.rs) | Encode one three-hop `PathInfo` through the production command grammar so the execution matrices exercise production bytes | `just build-executor-three-hop-encoder` (build; the trusted FFI suite consumes `<target-dir>/debug/encode_three_hop`), consumed by `just test-executor-production-calldata` (and therefore by `just test-executor` and `just test-executor-offline`) | default | none — one JSON request document as `argv[1]` | stdout only: one hex line; a missing/invalid request exits non-zero | **gate** — the trusted FFI suite (`tests/foundry_executor/test/CmdExecutorThreeHopProductionCalldata.t.sol`) consumes its output, including failure paths |
 
-### `degenbot-solver-lab` (8 rows) — `solver-lab/src/bin/`
+### `degenbot-solver-lab` — `solver-lab/src/bin/`
 
 Solver and order-index replay, measurement, and stress instruments.
 
@@ -69,7 +69,7 @@ Solver and order-index replay, measurement, and stress instruments.
 | [`stateview_feasibility_probe`](solver-lab/src/bin/stateview_feasibility_probe/main.rs) | Reusable budget-regression instrument for the block-epoch data plane: tickmap clone sweep, journal-replay materialization, `Arc` COW, V2 scalar costs, RSS anchors | `cargo run --release -p degenbot-solver-lab --bin stateview_feasibility_probe` | default | none — synthetic in-memory journals; reads `/proc/self/statm` (Linux) | stdout tables (M1–M6 matrices) | measurement — the 1001-rep/large-memory matrix is **compile-lane only**; budget rule and numbers in `docs/architecture/stateview-feasibility.md` |
 | [`synth_corpus_gen`](solver-lab/src/bin/synth_corpus_gen/main.rs) | Generator of the giant-liquidity family shapes observed live; writes the two committed synthetic corpora | `cargo run -p degenbot-solver-lab --bin synth_corpus_gen`, then `git diff --exit-code` on both outputs and `just test-rust-nextest -p degenbot-pools -E 'test(profit_envelope)'` | default | none — outputs resolved from the repository root through `degenbot_solver_lab::paths` | **writes** `crates/foundation/degenbot-pools/tests/fixtures/synth_giant_concentrated_liquidity.jsonl` and `..._mixed.jsonl`; no `--check` | diagnostic — verification is regenerate + empty diff (the concentrated-liquidity file re-derives byte-identically; the mixed file's drift predates its current home, recorded in commit history) plus the pools kernel test |
 
-### `degenbot-engine-lab` (18 rows) — `engine-lab/src/bin/`
+### `degenbot-engine-lab` — `engine-lab/src/bin/`
 
 Bot, simulation, arbitrage, JIT, fan-out, and BAL instruments. The BAL rows' corpus and
 parity support is product-owned (`degenbot_simulation::probe_support`,
@@ -96,7 +96,7 @@ parity support is product-owned (`degenbot_simulation::probe_support`,
 | [`worker_fanout_probe`](engine-lab/src/bin/worker_fanout_probe/main.rs) | Per-worker EVM fan-out probe (ADR-089 concurrency item): serial shared `&mut evm` vs per-worker threads vs per-candidate fibers vs warm fibers, cross-leg verdict identity | `just worker-fanout-probe`; bounded smoke `WORKER_FANOUT_CANDIDATES=2 WORKER_FANOUT_WORKERS=2 COLD_MISS_LATENCY_US=1 WORKER_FANOUT_ACCOUNT_US=1` | default | offline — shape-matched corpus built in code; `WORKER_FANOUT_*`, `COLD_MISS_LATENCY_US`; optional recorded trace via `WORKER_FANOUT_TRACE` (one trace schema version per file — v1/v2 both serve this read-driven replay, an unversioned, unknown or mixed file is refused) | stdout; `WORKER_FANOUT_PLANT_DIVERGENCE=1` must exit non-zero | measurement (non-gating) — the default 21-candidate sweep is a non-routine measurement; provenance `logs/bal_matched_parity_matrix.md` |
 | [`hotpath_prometheus_probe`](engine-lab/src/bin/hotpath_prometheus_probe/main.rs) | Smallest end-to-end proof that a guard-enabled build serves profiler metrics on `:6772`: installs typed config, constructs the pump's guard, scrapes `/metrics`, asserts the families | `DEGENBOT_HOTPATH=1 cargo run -p degenbot-engine-lab --features prometheus --bin hotpath_prometheus_probe` | `prometheus` | offline but binds a local TCP port (`HOTPATH_PROMETHEUS_PORT`, default 6772); `DEGENBOT_HOTPATH=1` required | stdout; writes nothing; non-zero exit on any wiring breakage | diagnostic — its CI obligation is the Prometheus compile lane (`just check-dev-tools --engine-prometheus`); documented in `grafana/HOTPATH.md` |
 
-### `degenbot-stubgen` (1 row) — `stubgen/src/`
+### `degenbot-stubgen` — `stubgen/src/`
 
 The FFI stub generator (ADR-066).
 
@@ -104,7 +104,7 @@ The FFI stub generator (ADR-066).
 | --- | --- | --- | --- | --- | --- | --- |
 | [`degenbot-stubgen`](stubgen/src/main.rs) | Generates the committed `src/degenbot/_ffi/` stub tree from the introspection chunks embedded in a cdylib built with the binding layer's `experimental-inspect` feature (ADR-066 D1/D2); splices the typed `__getattr__` overload face from the config projection's declaration tables (ADR-066 D3) | `just gen-stubs [--check]` | default | the introspected cdylib that `just gen-stubs` builds with the temporary `experimental-inspect` toggle in its own `stubgen-inspect` target dir (never the canonical cache); the seam's introspection chunks | regenerates the committed `src/degenbot/_ffi/` stub tree; regeneration is deterministic, so two consecutive runs must be diff-empty; `--check` writes nothing and exits 1 on drift | **gate** — the stub-drift gate (`just lint-stub-drift`) runs the `--check` arm and fails closed on any FFI-crate doc/signature touch; a `pyo3` pin bump implies a generator bump and a fresh stub diff (ADR-066) |
 
-## Owning-crate integration tests (2 rows)
+## Owning-crate integration tests
 
 Boot-level smoke assertions owned by their product crates: the assertions are the gate.
 

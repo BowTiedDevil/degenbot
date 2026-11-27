@@ -30,9 +30,9 @@
 //! gate boundary behind [`gate`], the walk modules, the runtime knobs, the
 //! basket entry, and the feature-gated fixture reader. The modules beneath
 //! the door are `pub(crate)` unless the door itself names them. The item set
-//! is pinned by the committed census (`tests/solve_door_census.txt` in the
-//! facade crate), closed under D2(a): a type in a public field of a door item
-//! is a door item.
+//! is judged by the facade crate's door table
+//! (`architecture_gates.rs::consumer_paths_cross_only_the_door`), closed under
+//! D2(a): a type in a public field of a door item is a door item.
 
 // tokio's full `RuntimeMetrics` getters — which the `hotpath` crate reads for
 // solver-phase profiling — are gated behind tokio's unstable cfg; there is no

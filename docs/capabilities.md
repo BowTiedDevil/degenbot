@@ -23,7 +23,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Registration verify lifecycle** | `degenbot_bot::bot_core` | Rust-only | `VerifyLifecycle`, `run_verify_lifecycle`, `run_registration_lifecycle`, `PoolVerifications`, `VerifyClaims`, `RefusalKind` | (i) registration admission runs the lifecycle per pool (`arb_engine/crawl/admission.rs`) | no pump pose, no `EngineDriver`; no per-family verify verb matrix (ADR-022) |
 | **Registration admission** | `degenbot_bot::bot_core` + `degenbot_bot::arb_engine::crawl` | Rust-only | `RegistrationAdmission`, `RegistrationLedger`, `RegistrationLedgerHandle`, `PathAdmission`, `CrawlPathPolicy`, `BuildFlights` | (i) the crawl adapter submits candidates to the one implementation (`arb_engine/crawl/unit.rs`) and `examples/settlement_bot` calls it directly (`live.rs`); both answer the same receipt and the same report for the same candidate sequence | no EngineDriver back-reference from the crawl (ADR-093 D4); no hand-wired admission twin |
 | **Pool state & swap simulation** | `degenbot_pools::families` | Rust-only | `sim::registry::PoolEntry`, `simulate_swap`, family read modules (ADR-073) | (ii) pools-path solve probe: `just check-consumer-probes` (`solve_path_probe` example) | no tokio, no registry/db, no pyo3; no C-build dep outside `capture-fixtures` |
-| **Multi-hop solve** | `degenbot_pools::solve` | Rust-only | `solve_path_with_min_profit`, `SolveOutcome`, `GateDeps`, `WalkMemo` (the W2 door, pinned by `solve_door_census.txt`) | (ii) pools-path solve probe: `just check-consumer-probes`; production caller `bot` `solve_cycle` | no pyo3, no db, no async runtime; fixture I/O gated behind `capture-fixtures` |
+| **Multi-hop solve** | `degenbot_pools::solve` | Rust-only | `solve_path_with_min_profit`, `SolveOutcome`, `GateDeps`, `WalkMemo` (the W2 door, watched by the facade crate's door table) | (ii) pools-path solve probe: `just check-consumer-probes`; production caller `bot` `solve_cycle` | no pyo3, no db, no async runtime; fixture I/O gated behind `capture-fixtures` |
 | **CL walk memo & telemetry** | `degenbot_pools::solve::concentrated_liquidity` | Rust-only | `WalkMemo`, `WalkTelemetry`, `PreparedConcentratedLiquidityHop` | production: `bot` lane walk + telemetry | no I/O; telemetry shapes pinned by the pipeline census (ADR-083) |
 | **Path search** | `degenbot_pathfinding` | Rust-only | crate root | production: `bot` path registry | no tokio, no db, no pyo3 |
 | **Dense-index primitives** | `degenbot_primitives` | Rust-only | `Interner`, `FrozenInterner` | (i) pure-Rust consumer: registry-side tables indexed by interned ids | no alloy, no tokio, no pyo3 |
@@ -81,8 +81,9 @@ implementor · **(v)** console operator (`degenbot`).
 - The door discipline (ADR-084 D2): `pub` items are a curated surface, the
   trees beneath are `pub(crate)` unless a named consumer needs them, and a
   type reachable through a door item's public fields is itself a door item.
-  The solve tree's door and census land with W2
-  (`solve_door_census.txt`).
+  The solve tree's door lands with W2, and the door table's solve row
+  (`consumer_paths_cross_only_the_door`) judges every external solve-tree
+  module reference; the tree carries no census.
 - The dependency charter (ADR-084 D3) is the "must not pull" column turned
   into a gate: `just check-dependency-charter` (ratchet #7).
 - Breaking path cuts ship with a "was → is" migration table (ADR-084 D7).

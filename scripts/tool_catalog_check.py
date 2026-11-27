@@ -32,8 +32,8 @@ against the two executable authorities -- ``cargo metadata`` and the current
 
 Structural defects and metadata failures fail loudly with a diagnostic naming
 the row: a cell count that disagrees with its header, a duplicate target
-identity, a declared row count that disagrees with its table, a missing or
-nonlocal source link, a missing catalog section, a ``cargo metadata`` failure.
+identity, a missing or nonlocal source link, a missing catalog section, a
+``cargo metadata`` failure.
 
 Scope: the catalog's population is not merely what the README declares. The
 current tool packages are discovered from the metadata -- every package whose
@@ -99,9 +99,7 @@ _LAB_ROW_CELLS = 7
 _LANE_CELL = 3
 _DEFAULT_LANES = ("default", "`default`")
 
-_HEADING_COUNT = re.compile(r"\((\d+) rows?\)")
-_HEADING_BASE = re.compile(r"\s*\((\d+) rows?\)\s*$")
-_LAB_HEADING = re.compile(r"^`([^`]+)`\s*\((\d+) rows?\)")
+_LAB_HEADING = re.compile(r"^`([^`]+)`(\s.*)?$")
 _LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 _JUST_REF = re.compile(r"\bjust\s+([a-zA-Z0-9][a-zA-Z0-9_-]*)")
@@ -155,12 +153,11 @@ class CatalogRow:
 
 @dataclass
 class Catalog:
-    """The parsed catalog: its rows and the row counts its headings declare."""
+    """The parsed catalog: the rows of each section, in document order."""
 
     examples: list[CatalogRow] = field(default_factory=list)
     labs: dict[str, list[CatalogRow]] = field(default_factory=dict)
     integration: list[CatalogRow] = field(default_factory=list)
-    declared: dict[str, int] = field(default_factory=dict)
 
     def rows(self) -> list[CatalogRow]:
         """Collect every catalog row in document order.
@@ -423,28 +420,26 @@ def _heading_section(
     heading: str,
     no: int,
     state: _ParseState,
-    catalog: Catalog,
     findings: list[str],
     seen_sections: set[str],
 ) -> None:
     """Apply one ``## `` heading to the parse state.
 
-    A heading of a catalog section starts that section and its declared row
-    count; any other heading ends catalog parsing until the next catalog
+    A heading whose text is exactly one of the catalog's section names starts
+    that section; any other heading ends catalog parsing until the next catalog
     section.
 
     Args:
         heading: The heading text after the ``## `` marker.
         no: The heading's 1-based README line number.
         state: The parse state to update.
-        catalog: The catalog under construction.
         findings: The accumulated findings to append to.
         seen_sections: The catalog sections already seen.
 
     """
     state.owner = None
     state.lab_owner_ok = None
-    base = _HEADING_BASE.sub("", heading).strip()
+    base = heading.strip()
     if base not in _KNOWN_SECTIONS:
         state.section = None
         return
@@ -452,32 +447,24 @@ def _heading_section(
         findings.append(f"line {no}: section {base!r} appears twice; the structure is ambiguous")
     seen_sections.add(base)
     state.section = base
-    count = _HEADING_COUNT.search(heading)
-    if count is None:
-        findings.append(f"line {no}: section {base!r} declares no row count")
-    else:
-        catalog.declared[base] = int(count.group(1))
 
 
 def _lab_section_heading(
     heading: str,
     no: int,
     state: _ParseState,
-    catalog: Catalog,
     findings: list[str],
     seen_labs: set[str],
 ) -> None:
     """Apply one ``### `` heading under the Lab binaries section.
 
-    The heading must name the tool package that owns the rows under it and the
-    row count its table holds; anything else is a structural finding and the
-    heading owns no tables.
+    The heading must name the tool package that owns the rows under it; anything
+    else is a structural finding and the heading owns no tables.
 
     Args:
         heading: The heading text after the ``### `` marker.
         no: The heading's 1-based README line number.
         state: The parse state to update.
-        catalog: The catalog under construction.
         findings: The accumulated findings to append to.
         seen_labs: The lab-section owners already seen.
 
@@ -486,10 +473,7 @@ def _lab_section_heading(
     if match is None:
         state.owner = None
         state.lab_owner_ok = False
-        findings.append(
-            f"line {no}: lab section heading {heading!r} does not name a tool "
-            "package and its row count"
-        )
+        findings.append(f"line {no}: lab section heading {heading!r} does not name a tool package")
         return
     state.owner = match.group(1)
     state.lab_owner_ok = True
@@ -499,7 +483,6 @@ def _lab_section_heading(
             "must have exactly one Lab section"
         )
     seen_labs.add(state.owner)
-    catalog.declared[state.owner] = int(match.group(2))
 
 
 def parse_catalog(text: str, readme_dir: Path, root: Path) -> tuple[Catalog, list[str]]:
@@ -552,11 +535,11 @@ def parse_catalog(text: str, readme_dir: Path, root: Path) -> tuple[Catalog, lis
             continue
         if stripped.startswith("## "):
             flush()
-            _heading_section(stripped[3:].strip(), no, state, catalog, findings, seen_sections)
+            _heading_section(stripped[3:].strip(), no, state, findings, seen_sections)
         elif stripped.startswith("### "):
             flush()
             if state.section == _LAB_SECTION:
-                _lab_section_heading(stripped[4:].strip(), no, state, catalog, findings, seen_labs)
+                _lab_section_heading(stripped[4:].strip(), no, state, findings, seen_labs)
             else:
                 state.section = None
         elif stripped.startswith("|"):
@@ -566,26 +549,9 @@ def parse_catalog(text: str, readme_dir: Path, root: Path) -> tuple[Catalog, lis
     flush()
 
     for required in _KNOWN_SECTIONS:
-        if required not in catalog.declared:
+        if required not in seen_sections:
             msg = f"the catalog has no {required!r} section"
             raise CatalogRefusal(msg)
-    for owner_name, rows in catalog.labs.items():
-        declared = catalog.declared[owner_name]
-        if declared != len(rows):
-            findings.append(
-                f"lab section {owner_name!r} declares {declared} rows, its table holds {len(rows)}"
-            )
-    actual = {
-        _EXAMPLES_SECTION: len(catalog.examples),
-        _LAB_SECTION: sum(len(rows) for rows in catalog.labs.values()),
-        _INTEGRATION_SECTION: len(catalog.integration),
-    }
-    for section_name, count in actual.items():
-        declared = catalog.declared[section_name]
-        if declared != count:
-            findings.append(
-                f"section {section_name!r} declares {declared} rows, its tables hold {count}"
-            )
     return catalog, findings
 
 

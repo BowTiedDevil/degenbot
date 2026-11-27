@@ -5,7 +5,8 @@
 # one of them and skips the door `pools_root_surface_census.txt` pins.
 #
 # This file is the shrink-only allowlist of the deep paths the tree still
-# contains. `architecture_gates.rs::no_new_pools_deep_paths` fails when a NEW
+# contains. The pools row of `architecture_gates.rs`'s door table
+# (`consumer_paths_cross_only_the_door`) fails when a NEW
 # deep path appears AND when a row here no longer has a reference: a row
 # leaves by repointing every use at the root door (a root `pub use`, or the
 # capability module itself), never by being edited aside.

@@ -7,7 +7,7 @@ v5. Deepens ADR-005's layering and ADR-025's seam discipline without touching
 ADR-041's stage table, ADR-073's family read modules, or ADR-080's CL state
 extraction (sequenced behind it, see D5/W5).
 
-> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the retired solve-path-segment list in `solve_door_census_is_the_external_surface`) — the link breaks in both directions.
+> **Header note.** The solve tree's census was deleted with its last row: no external reference names a module beneath the `solve` door, so the census had nothing to grandfather. The rule it carried survives in the facade crate's authored door table (`architecture_gates.rs::consumer_paths_cross_only_the_door`), whose solve row fails on any external `solve::<module>` reference and whose census rows are reconciled in both directions.
 
 ## Context
 

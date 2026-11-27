@@ -8,6 +8,7 @@
 
 #![expect(clippy::expect_used)]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -2013,7 +2014,7 @@ fn backtick_spans(s: &str) -> Vec<String> {
 
 /// Whether a backticked span names a Rust item path (`WorkerRole`,
 /// `sim::registry::PoolEntry`) rather than describing the door
-/// (`pub(crate)`, `config show --resolved`, `solve_door_census.txt`).
+/// (`pub(crate)`, `config show --resolved`, `pools_deep_path_allowlist.txt`).
 fn is_item_path(token: &str) -> bool {
     token.split("::").all(|segment| {
         let mut chars = segment.chars();
@@ -2155,25 +2156,11 @@ fn resolve_door_item(src: &Path, token: &str) -> bool {
             })
         })
     };
-    let mut stack = vec![src.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    if declared(&text) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+    let mut resolved = false;
+    for_each_rust_source(src, &mut |_, text| {
+        resolved = resolved || declared(text);
+    });
+    resolved
 }
 
 fn mod_declared_in(file: &Path, segment: &str) -> bool {
@@ -2657,116 +2644,298 @@ fn role_edge_direction_is_enforced() {
     );
 }
 
-/// ADR-084 D2/W2: the solve door census is the external naming surface. No
-/// crate outside `degenbot-pools` may name a solve-tree module that is not in
-/// `solve_door_census.txt` (or a `pools::affected_keys` path — the module
-/// moved to the pools root as `affected`).
+/// One row of the authored door table: a capability door, the crate that owns
+/// the tree behind it, and the scan that reads a bypass out of one source text.
+///
+/// A door is the curated surface a capability module presents (ADR-084 D2); a
+/// path naming a module *beneath* it reaches past the door. Every row declares
+/// what the checker needs and nothing else, so no per-door branch lives in the
+/// checker.
+struct DoorRule {
+    /// The door this row guards, as its red message spells it.
+    door: &'static str,
+    /// The owning crate, repo-relative under `rust/`: its own sources name the
+    /// tree's modules directly instead of crossing the door.
+    owner: &'static str,
+    /// The repair the red message names.
+    repair: &'static str,
+    /// The census under `tests/` that grandfathers the bypasses the tree still
+    /// contains, or `None` when none survives.
+    census: Option<&'static str>,
+    /// The bypasses one source text names.
+    scan: fn(&str) -> BTreeSet<String>,
+}
+
+/// The solve door: the curated `degenbot_pools::solve` surface (ADR-084 W2).
+const SOLVE_DOOR: DoorRule = DoorRule {
+    door: "degenbot_pools::solve",
+    owner: "crates/foundation/degenbot-pools",
+    repair: "name the item at the `solve` door, never a module beneath it",
+    census: None,
+    scan: solve_door_paths,
+};
+
+/// The pools root door's four capability modules: `families`, `sim`, `solve`
+/// and `state` (ADR-084 W5).
+const POOLS_DOOR: DoorRule = DoorRule {
+    door: "degenbot_pools (families, sim, solve, state)",
+    owner: "crates/foundation/degenbot-pools",
+    repair: "name the capability module at the pools root, never a module beneath it",
+    census: Some("pools_deep_path_allowlist.txt"),
+    scan: pools_deep_paths,
+};
+
+/// The engine's two capability doors: `bot_core` and `arb_engine`.
+const ENGINE_DOOR: DoorRule = DoorRule {
+    door: "degenbot_bot::bot_core and degenbot_bot::arb_engine",
+    owner: "crates/engine/degenbot-bot",
+    repair: "name an item at the `bot_core` / `arb_engine` door, never an \
+              implementation module beneath it",
+    census: None,
+    scan: engine_door_paths,
+};
+
+/// The authored door table: one row per capability door whose consumer paths
+/// this target judges. A new door is a row here; the checker does not change.
+const DOOR_TABLE: [&DoorRule; 3] = [&SOLVE_DOOR, &POOLS_DOOR, &ENGINE_DOOR];
+
+/// The workspace source surface a consumer reference may live in: `rust/crates`
+/// and `rust/examples`. Test and example targets are separate crates that
+/// cannot see `pub(crate)`, which is how a lab ends up naming an implementation
+/// module; a row's own crate is excluded by the row. The `rust/tools` lab
+/// packages are outside this surface, so their diagnostic I/O stays out of the
+/// door rows.
+const CONSUMER_ROOTS: [&str; 2] = ["crates", "examples"];
+
+/// ADR-084 D2: a capability home is a door, not a tree. Every row of
+/// [`DOOR_TABLE`] is judged the same way — the bypasses the consumer surface
+/// names outside the owning crate, reconciled in BOTH directions against the
+/// row's census: an unlisted bypass is a new one, and a row with no remaining
+/// reference is stale and leaves in the change that repoints its last use.
+/// live-invariant gate (ADR-087 D2): watches every live `.rs` reference to a `degenbot_pools` module beneath a capability door, to a solve-tree module, and to a `degenbot_bot` module beneath a capability door; not tripwire precedent.
 #[test]
-fn solve_door_census_is_the_external_surface() {
-    let census = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/solve_door_census.txt"),
-    )
-    .expect("read solve_door_census.txt");
-    let allowed: std::collections::BTreeSet<String> = census
+fn consumer_paths_cross_only_the_door() {
+    for rule in DOOR_TABLE {
+        check_consumer_paths(rule);
+    }
+}
+
+fn check_consumer_paths(rule: &DoorRule) {
+    let referenced = consumer_references(rule);
+    let census = rule.census.map(census_rows).unwrap_or_default();
+    let verdict = door_verdict(&referenced, &census);
+    assert!(
+        verdict.unlisted.is_empty(),
+        "`{}` door bypass(es) (ADR-084 D2: {}): {:#?}",
+        rule.door,
+        rule.repair,
+        verdict.unlisted
+    );
+    assert!(
+        verdict.stale.is_empty(),
+        "stale row(s) in the `{}` door's census (no remaining reference; the \
+         census only shrinks — drop the row in the change that repoints its \
+         last use): {:#?}",
+        rule.door,
+        verdict.stale
+    );
+}
+
+/// Every bypass of `rule`'s door the consumer surface names.
+fn consumer_references(rule: &DoorRule) -> BTreeSet<String> {
+    let owner = workspace_root().join(rule.owner);
+    let mut referenced = BTreeSet::new();
+    for root in CONSUMER_ROOTS {
+        for_each_rust_source(&workspace_root().join(root), &mut |path, text| {
+            // The owning crate names its own modules directly.
+            if path.starts_with(&owner) {
+                return;
+            }
+            // This file's own text is the rule, not a consumer reference: the
+            // doc comments name the modules each row rejects and the door rows
+            // pin canonical type paths, so counting it would let the file
+            // satisfy its own census rows.
+            if path.file_name().and_then(|name| name.to_str()) == Some("architecture_gates.rs") {
+                return;
+            }
+            referenced.extend((rule.scan)(text));
+        });
+    }
+    referenced
+}
+
+/// The rows of one census file under `tests/`, comments and blank lines
+/// dropped. An empty census is refused: a door with nothing grandfathered
+/// carries no census at all, and an empty file would otherwise reconcile clean
+/// because it examined nothing.
+fn census_rows(name: &str) -> BTreeSet<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(name);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("{}: {error}", path.display()))
+        .expect("the door census is readable");
+    let rows: BTreeSet<String> = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(str::to_owned)
         .collect();
     assert!(
-        allowed.contains("degenbot_pools::solve"),
-        "solve door census lost its root door"
+        !rows.is_empty(),
+        "{} has no rows; a door with nothing grandfathered carries no census",
+        path.display()
     );
+    rows
+}
 
-    // Every `degenbot_pools::solve::<segment>` (and the retired
-    // `affected_keys`) path named outside the pools crate, collected from
-    // source with an anchored scan — the same command family the census was
-    // generated from, over the union of fully-qualified and bare-import
-    // (`use degenbot_pools::solve;` + `solve::…`) reference forms.
-    let mut files = Vec::new();
-    for root in ["crates", "../examples"] {
-        collect_rust_sources(&workspace_root().join(root), &mut files);
+/// The two directions of one door's census reconciliation.
+struct DoorVerdict {
+    /// References with no census row: new bypasses.
+    unlisted: Vec<String>,
+    /// Census rows with no reference: the rows the change must drop.
+    stale: Vec<String>,
+}
+
+fn door_verdict(referenced: &BTreeSet<String>, census: &BTreeSet<String>) -> DoorVerdict {
+    DoorVerdict {
+        unlisted: referenced.difference(census).cloned().collect(),
+        stale: census.difference(referenced).cloned().collect(),
     }
-    let mut offenders: Vec<String> = Vec::new();
-    for file in &files {
-        let Ok(text) = std::fs::read_to_string(file) else {
+}
+
+/// The stale direction, on a synthetic census: a row whose last reference is
+/// gone is a finding, not a row that quietly satisfies itself forever.
+#[test]
+fn a_stale_door_census_row_is_a_finding() {
+    let referenced: BTreeSet<String> = ["degenbot_pools::families::solidly".to_owned()].into();
+    let census: BTreeSet<String> = [
+        "degenbot_pools::families::solidly".to_owned(),
+        "degenbot_pools::solve::runtime".to_owned(),
+    ]
+    .into();
+    let verdict = door_verdict(&referenced, &census);
+    assert_eq!(
+        verdict.stale,
+        vec!["degenbot_pools::solve::runtime".to_owned()]
+    );
+    assert!(verdict.unlisted.is_empty());
+}
+
+/// The other direction: a bypass with no census row is a finding, so a new deep
+/// path cannot ride an existing row's key.
+#[test]
+fn an_unlisted_door_bypass_is_a_finding() {
+    let referenced: BTreeSet<String> = [
+        "degenbot_pools::families::solidly".to_owned(),
+        "degenbot_pools::resolve::solidly".to_owned(),
+    ]
+    .into();
+    let census: BTreeSet<String> = ["degenbot_pools::families::solidly".to_owned()].into();
+    let verdict = door_verdict(&referenced, &census);
+    assert_eq!(
+        verdict.unlisted,
+        vec!["degenbot_pools::resolve::solidly".to_owned()]
+    );
+    assert!(verdict.stale.is_empty());
+}
+
+/// The positive control: an exactly reconciled door reports neither direction,
+/// so an empty finding list is a verdict on a real population.
+#[test]
+fn a_reconciled_door_census_is_clean() {
+    let rows: BTreeSet<String> = [
+        "degenbot_pools::families::solidly".to_owned(),
+        "degenbot_pools::sim::registry".to_owned(),
+    ]
+    .into();
+    let verdict = door_verdict(&rows, &rows);
+    assert!(verdict.unlisted.is_empty(), "{:#?}", verdict.unlisted);
+    assert!(verdict.stale.is_empty(), "{:#?}", verdict.stale);
+}
+
+/// The focused `just` aliases select this target by test name, and libtest
+/// reports a filter that selects nothing as a green run of zero tests. A
+/// renamed test would therefore leave its alias diagnosing nothing at all, so
+/// every filter the justfile passes to this target must reach a test here, and
+/// an `--exact` filter must name one exactly.
+///
+/// live-invariant gate (ADR-087 D2): watches the justfile's filters into this target against the tests it defines; not tripwire precedent.
+#[test]
+fn the_focused_aliases_filter_live_tests() {
+    const TARGET: &str = "--test architecture_gates";
+    let justfile = std::fs::read_to_string(repo_root().join("justfile")).expect("read justfile");
+    let names = this_targets_test_names();
+    let mut checked = 0;
+    for invocation in justfile.lines() {
+        let Some((_, after_target)) = invocation.split_once(TARGET) else {
             continue;
         };
-        if file.to_string_lossy().contains("degenbot-pools")
-            || file.file_name().and_then(|n| n.to_str()) == Some("architecture_gates.rs")
-        {
+        assert!(
+            after_target.contains(" -- "),
+            "a {TARGET} invocation names no test filter: {invocation}"
+        );
+        let Some((_, selection)) = after_target.split_once(" -- ") else {
             continue;
-        }
-        for (offset, _) in text.match_indices("solve::") {
-            // The path segment before `solve::` decides the form: a
-            // `degenbot_pools::` prefix is fully qualified; a start-of-path
-            // segment is a bare import — considered only when the file
-            // imports the solve door.
-            let prefix_start = text[..offset]
-                .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
-                .map_or(0, |i| i + 1);
-            let prefix = &text[prefix_start..offset];
-            let qualified_form = prefix == "degenbot_pools::";
-            let bare_form = prefix.is_empty() && text.contains("use degenbot_pools::solve");
-            if !qualified_form && !bare_form {
-                continue;
+        };
+        let mut words = selection.split_whitespace();
+        let filter = words.next().unwrap_or_default();
+        assert!(
+            !filter.is_empty(),
+            "a {TARGET} invocation names an empty test filter: {invocation}"
+        );
+        let exact = words.any(|word| word == "--exact");
+        let matched = names.iter().any(|name| {
+            if exact {
+                *name == filter
+            } else {
+                name.contains(filter)
             }
-            let segments: Vec<&str> = text[offset..]
-                .trim_start_matches("solve::")
-                .split(|c: char| !c.is_alphanumeric() && c != '_')
-                .filter(|s| !s.is_empty())
-                .collect();
-            let Some(first) = segments.first() else {
-                continue;
-            };
-            if qualified_form {
-                // The physical `pub mod` tree beneath the solve door. A named
-                // segment must be a census row's module; anything else is a
-                // door item at the root door, which the census closes over by
-                // construction.
-                const SOLVE_SUBMODULES: [&str; 10] = [
-                    "basket",
-                    "concentrated_liquidity",
-                    "fixtures",
-                    "gate",
-                    "mixed",
-                    "mobius_int",
-                    "mobius_int_anchor",
-                    "mobius_shifted_piece",
-                    "profit_envelope",
-                    "runtime",
-                ];
-                if SOLVE_SUBMODULES.contains(first) {
-                    let path = format!("degenbot_pools::solve::{first}");
-                    if !allowed.contains(&path) {
-                        offenders.push(format!(
-                            "{}: solve path outside the census: {path}",
-                            file.display()
-                        ));
-                    }
-                }
-            }
-        }
+        });
+        assert!(
+            matched,
+            "the justfile filters {TARGET} by {filter:?} ({exact}), which no test \
+             in this target matches; the alias would report a green run of zero tests"
+        );
+        checked += 1;
     }
     assert!(
-        offenders.is_empty(),
-        "external solve-tree naming outside the census (ADR-084 D2): {offenders:#?}"
+        checked >= 10,
+        "the focused aliases select this target {checked} time(s); the ten `check-*` \
+         aliases are the diagnostic surface and must keep naming live tests"
     );
 }
 
-/// Collect `.rs` files under `dir` (bounded: the workspace source tree).
-fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rust_sources(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(path);
+/// Every `#[test]` function name this target defines, read from the file's own
+/// text so the alias guard reads the same list the test binary runs.
+fn this_targets_test_names() -> Vec<&'static str> {
+    const SOURCE: &str = include_str!("architecture_gates.rs");
+    const ATTRIBUTE: &str = "#[test]";
+    let mut names = Vec::new();
+    let mut lines = SOURCE.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() != ATTRIBUTE {
+            continue;
         }
+        let declaration = lines.next().unwrap_or_default();
+        assert!(
+            !declaration.is_empty(),
+            "{ATTRIBUTE} is the last line of the file; a test function must follow it"
+        );
+        let parsed = declaration
+            .trim()
+            .strip_prefix("fn ")
+            .and_then(|rest| rest.split_once('('));
+        assert!(
+            parsed.is_some(),
+            "{ATTRIBUTE} is not followed by a test function: {declaration}"
+        );
+        let Some((name, _)) = parsed else {
+            continue;
+        };
+        names.push(name);
     }
+    names
 }
 
 /// ADR-084: the `degenbot-pools` root surface is pinned by
@@ -2779,8 +2948,8 @@ fn pools_root_surface_is_pinned() {
     // The count is per NAME, not per statement: a declaration counts once, and
     // a `pub use` counts one per re-exported name, so a name added to an
     // existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
-    // `pub fn` does. ONE const: the count and the failure message derive from
-    // it, so a snapshot bump is one edit.
+    // `pub fn` does. ONE const: the pin and the total it is compared against
+    // both derive from it, so a snapshot bump is one edit.
     const POOLS_ROOT_PUB_ITEMS: usize = 1111;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
@@ -2819,7 +2988,8 @@ fn pools_root_surface_is_pinned() {
     assert_eq!(
         live.len(),
         pinned.len(),
-        "pools root `pub mod` count changed (live {live:?} vs pinned);          review tests/pools_root_surface_census.txt"
+        "pools root `pub mod` count changed (live {live:?} vs pinned); review \
+         tests/pools_root_surface_census.txt"
     );
     for module in &live {
         assert!(
@@ -2828,18 +2998,19 @@ fn pools_root_surface_is_pinned() {
         );
     }
 
-    let item_count =
-        count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
+    let counts = pub_name_counts(&workspace_root().join("crates/foundation/degenbot-pools/src"));
+    let item_count: usize = counts.values().sum();
     assert_eq!(
         item_count, POOLS_ROOT_PUB_ITEMS,
-        "pools root `pub` name count moved from the pinned snapshot \
-         ({POOLS_ROOT_PUB_ITEMS}); review tests/pools_root_surface_census.txt \
-         before growing the surface"
+        "pools root `pub` name count moved from the pinned snapshot ({POOLS_ROOT_PUB_ITEMS}) \
+         to {item_count}; review tests/pools_root_surface_census.txt before growing the \
+         surface. Names per top-level module: {counts:#?}"
     );
 }
 
 /// Count `pub` names in every `.rs` file under `dir` (the plan's appendix
-/// census, at NAME granularity).
+/// census, at NAME granularity), keyed by the first path segment below `dir`
+/// so a red run names the module that moved instead of only the total.
 ///
 /// A declaration (`pub fn`/`struct`/`enum`/`trait`/`mod`/`const`/`type`)
 /// counts one. A `pub use` counts one per re-exported name — the door's whole
@@ -2848,56 +3019,48 @@ fn pools_root_surface_is_pinned() {
 /// tree list is counted from its brace group (recursively, so a nested `{…}`
 /// group contributes its own names); a single-path `pub use a::b::Single;`
 /// and a glob `pub use a::b::*;` count one.
-fn count_pub_items(dir: &Path) -> usize {
-    let mut total = 0;
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
+fn pub_name_counts(dir: &Path) -> std::collections::BTreeMap<String, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for_each_rust_source(dir, &mut |path, text| {
+        let module = path
+            .strip_prefix(dir)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .map_or_else(String::new, |segment| {
+                segment.as_os_str().to_string_lossy().into_owned()
+            });
+        let mut total = 0;
+        let lines: Vec<&str> = text.lines().collect();
+        let mut index = 0;
+        while index < lines.len() {
+            let line = lines[index].trim_start();
+            index += 1;
+            if !line.starts_with("pub ") {
                 continue;
             }
-            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let lines: Vec<&str> = text.lines().collect();
-            let mut index = 0;
-            while index < lines.len() {
-                let line = lines[index].trim_start();
-                index += 1;
-                if !line.starts_with("pub ") {
-                    continue;
+            let rest = &line[4..];
+            if rest.starts_with("use ") {
+                // A use tree may span lines; read to its terminator so a
+                // multi-line block is counted once, from its whole text.
+                let mut statement = line.to_owned();
+                while !statement.contains(';') && index < lines.len() {
+                    statement.push(' ');
+                    statement.push_str(lines[index].trim());
+                    index += 1;
                 }
-                let rest = &line[4..];
-                if rest.starts_with("use ") {
-                    // A use tree may span lines; read to its terminator so a
-                    // multi-line block is counted once, from its whole text.
-                    let mut statement = line.to_owned();
-                    while !statement.contains(';') && index < lines.len() {
-                        statement.push(' ');
-                        statement.push_str(lines[index].trim());
-                        index += 1;
-                    }
-                    total += reexported_name_count(&statement);
-                } else if [
-                    "fn ", "struct ", "enum ", "trait ", "mod ", "const ", "type ",
-                ]
-                .iter()
-                .any(|kw| rest.starts_with(kw))
-                {
-                    total += 1;
-                }
+                total += reexported_name_count(&statement);
+            } else if [
+                "fn ", "struct ", "enum ", "trait ", "mod ", "const ", "type ",
+            ]
+            .iter()
+            .any(|kw| rest.starts_with(kw))
+            {
+                total += 1;
             }
         }
-    }
-    total
+        *counts.entry(module).or_insert(0) += total;
+    });
+    counts
 }
 
 /// Re-exported names in one `pub use` statement (`statement` runs from the
@@ -2944,124 +3107,15 @@ fn count_use_list_names(list: &str) -> usize {
         .sum()
 }
 
-/// ADR-084 D2: a capability home is a door, not a tree. Consumers reach the
-/// four capability modules at the `degenbot-pools` root (`families`, `sim`,
-/// `solve`, `state`); a reference into a module *beneath* one of them
-/// (`degenbot_pools::state::v3_state::…`) names an implementation module and
-/// bypasses the door `pools_root_surface_is_pinned` fixes the surface of.
-///
-/// The deep paths the tree still contains are frozen in
-/// `pools_deep_path_allowlist.txt`, which is shrink-only in both directions: a
-/// path missing from it is a new bypass, and a row with no remaining
-/// reference must leave in the same change that repoints the last use at the
-/// root door. A row is the capability + module pair, so a deeper name under an
-/// allowlisted path inherits the row.
-///
-/// The scan covers every `.rs` file of every member crate except the capability
-/// crate itself — the same reach as `solve_door_census_is_the_external_surface`,
-/// test/example targets included (they are separate crates that cannot see
-/// `pub(crate)`, which is how a lab ends up naming an implementation module).
-/// live-invariant gate (ADR-087 D2): watches every live `.rs` reference to a `degenbot_pools` module beneath a capability door; not tripwire precedent.
-#[test]
-fn no_new_pools_deep_paths() {
-    let allowlist_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_deep_path_allowlist.txt");
-    let allowlist_text =
-        std::fs::read_to_string(&allowlist_path).expect("read tests/pools_deep_path_allowlist.txt");
-    let allowlist: std::collections::BTreeSet<String> = allowlist_text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect();
-    assert!(
-        !allowlist.is_empty(),
-        "pools deep-path allowlist is empty; the gate would flag the whole \
-         current tree as new"
-    );
-
-    let pools_crate = workspace_root().join("crates/foundation/degenbot-pools");
-    let mut referenced = std::collections::BTreeSet::<String>::default();
-    for_each_rust_source(&workspace_root().join("crates"), &mut |path, text| {
-        // The capability crate owns these modules, so it names them directly.
-        if path.starts_with(&pools_crate) {
-            return;
-        }
-        // This file's own text is the rule, not a consumer reference: the doc
-        // comments below name implementation modules to show what the rule
-        // rejects, and `facade_solvers_reexport_reaches_pools_solve` asserts a
-        // canonical type path. Counting them would make an allowlist row
-        // unremovable — the gate would keep satisfying itself.
-        if path.file_name().and_then(|name| name.to_str()) == Some("architecture_gates.rs") {
-            return;
-        }
-        referenced.extend(pools_deep_paths(text));
-    });
-
-    let new_paths: Vec<&String> = referenced.difference(&allowlist).collect();
-    assert!(
-        new_paths.is_empty(),
-        "new `degenbot_pools` deep path(s) (ADR-084 D2: name the capability \
-         module at the pools root, never a module beneath it): {new_paths:#?}"
-    );
-
-    let stale: Vec<&String> = allowlist.difference(&referenced).collect();
-    assert!(
-        stale.is_empty(),
-        "stale row(s) in {} (no remaining reference; the allowlist only \
-         shrinks — drop the row in the change that repoints its last use): {stale:#?}",
-        allowlist_path.display()
-    );
-}
-
-/// ADR-084 D2: the engine's capability homes are doors, not trees. A consumer
-/// names an item at the door (`degenbot_bot::bot_core::Bot`,
-/// `degenbot::bot::arb_engine::EngineDriver`, `degenbot_bot::fleet_intake`);
-/// a second lowercase segment beneath `bot_core` or `arb_engine`
-/// (`…::bot_core::pool_builder::build_v2`) names an implementation module and
-/// bypasses the surface the door re-exports.
-///
-/// The external-import census IS the acceptance test: every `.rs` of every
-/// member crate — test and example targets included, because they are
-/// separate crates that cannot see `pub(crate)` — except the crate that owns
-/// the tree.
-/// A re-exported module name at the door (`…::bot_core::session_end`) carries
-/// no second segment and is therefore not a bypass.
-/// live-invariant gate (ADR-087 D2): watches every live `.rs` reference to a `degenbot_bot` module beneath a capability door; not tripwire precedent.
-#[test]
-fn no_bot_core_or_arb_engine_deep_paths() {
-    let bot_crate = workspace_root().join("crates/engine/degenbot-bot");
-    let mut offenders = std::collections::BTreeSet::<String>::new();
-    for root in ["crates", "examples"] {
-        for_each_rust_source(&workspace_root().join(root), &mut |path, text| {
-            // The owning crate names its own modules directly.
-            if path.starts_with(&bot_crate) {
-                return;
-            }
-            // This file's own text is the rule, not a consumer reference.
-            if path.file_name().and_then(|name| name.to_str()) == Some("architecture_gates.rs") {
-                return;
-            }
-            offenders.extend(bot_door_deep_paths(text));
-        });
-    }
-    assert!(
-        offenders.is_empty(),
-        "`degenbot_bot` door bypass(es) (ADR-084 D2: name an item at the \
-         `bot_core` / `arb_engine` door, never an implementation module beneath \
-         it): {offenders:#?}"
-    );
-}
-
 /// Every structural `<root>::<bot_core|arb_engine>::<module>::` reference in
 /// `text`, as `<root>::<door>::<module>` keys.
 ///
 /// The roots are the crate name and the umbrella's two alias chains
 /// (`degenbot::bot::<door>`, `degenbot::<door>`); the `degenbot::` row skips an
 /// alias `bot::` tail so the alias form is counted once per spelling.
-fn bot_door_deep_paths(text: &str) -> Vec<String> {
+fn engine_door_paths(text: &str) -> BTreeSet<String> {
     const DOORS: [&str; 2] = ["bot_core", "arb_engine"];
-    let mut found = Vec::new();
+    let mut found = BTreeSet::new();
     for root in ["degenbot_bot::", "degenbot::bot::", "degenbot::"] {
         for (start, _) in text.match_indices(root) {
             let mut cursor = start + root.len();
@@ -3082,10 +3136,88 @@ fn bot_door_deep_paths(text: &str) -> Vec<String> {
             if module_len == 0 || !after[module_len..].starts_with("::") {
                 continue;
             }
-            found.push(format!("{root}{door}::{}", &after[..module_len]));
+            found.insert(format!("{root}{door}::{}", &after[..module_len]));
         }
     }
     found
+}
+
+/// Every `degenbot_pools::solve::<module>` reference in `text`.
+///
+/// Two spellings reach the solve tree: the fully-qualified path and a bare
+/// import — a file carrying a `use degenbot_pools::solve` line may write
+/// `solve::<module>`, and the grouped `use degenbot_pools::solve::{self};`
+/// spelling is that same import, so the test is the `use` path PREFIX rather
+/// than one semicolon-terminated spelling of it. A named segment must be one of
+/// the physical modules beneath the door; anything else is a door item at the
+/// root door (`degenbot_pools::solve::solve_path`), which the door itself
+/// closes over. The module list is a constant rather than a directory read so
+/// the scan stays a pure text function; a module added beneath the door joins
+/// it in the change that creates it.
+fn solve_door_paths(text: &str) -> BTreeSet<String> {
+    const SOLVE_SUBMODULES: [&str; 10] = [
+        "basket",
+        "concentrated_liquidity",
+        "fixtures",
+        "gate",
+        "mixed",
+        "mobius_int",
+        "mobius_int_anchor",
+        "mobius_shifted_piece",
+        "profit_envelope",
+        "runtime",
+    ];
+    let bare_import = text.contains("use degenbot_pools::solve");
+    let mut found = BTreeSet::new();
+    for (offset, _) in text.match_indices("solve::") {
+        // The path segment before `solve::` decides the form: a
+        // `degenbot_pools::` prefix is fully qualified, and a start-of-path
+        // segment is a bare import only a file that imports the door spells.
+        let prefix_start = text[..offset]
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+            .map_or(0, |index| index + 1);
+        let qualified_form = &text[prefix_start..offset] == "degenbot_pools::";
+        let bare_form = prefix_start == offset && bare_import;
+        if !qualified_form && !bare_form {
+            continue;
+        }
+        let Some(module) = text[offset..]
+            .trim_start_matches("solve::")
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .find(|segment| !segment.is_empty())
+        else {
+            continue;
+        };
+        if SOLVE_SUBMODULES.contains(&module) {
+            found.insert(format!("degenbot_pools::solve::{module}"));
+        }
+    }
+    found
+}
+
+/// The grouped spelling of the bare import is the same door import: a file that
+/// writes `use degenbot_pools::solve::{self};` and then names
+/// `solve::runtime::…` reaches the solve tree's runtime module, so the scan
+/// must report it exactly as it reports the `use degenbot_pools::solve;` form.
+#[test]
+fn a_grouped_solve_door_import_is_a_bare_import() {
+    let source = "use degenbot_pools::solve::{self};\n\
+                  fn probe() { solve::runtime::probe(); }\n";
+    let expected: BTreeSet<String> = ["degenbot_pools::solve::runtime".to_owned()].into();
+    assert_eq!(solve_door_paths(source), expected);
+}
+
+/// The control: a `solve::runtime` path in a file that never imports the door
+/// belongs to whatever local module `solve` names there, so the scan reports
+/// nothing. Without this the grouped-import probe could pass on a scan that
+/// flags every bare `solve::` path.
+#[test]
+fn a_solve_path_without_the_door_import_is_not_a_reference() {
+    let source = "fn probe() { solve::runtime::probe(); }\n";
+    assert!(
+        solve_door_paths(source).is_empty(),
+        "a bare `solve::` path outside a door-importing file is not a solve-tree reference"
+    );
 }
 
 /// Every structural `degenbot_pools::<capability>::<module>::` reference in
@@ -3101,9 +3233,9 @@ fn bot_door_deep_paths(text: &str) -> Vec<String> {
 /// see `state::v3_state`, `state::v4_state`, or `state::v2_state` — the
 /// crate's most-named implementation modules — and would report a tree that
 /// looks cleaner than it is.
-fn pools_deep_paths(text: &str) -> Vec<String> {
+fn pools_deep_paths(text: &str) -> BTreeSet<String> {
     const CRATE_ROOT: &str = "degenbot_pools::";
-    let mut found = Vec::new();
+    let mut found = BTreeSet::new();
     for (start, _) in text.match_indices(CRATE_ROOT) {
         let mut cursor = start + CRATE_ROOT.len();
         let mut segments: Vec<&str> = Vec::new();
@@ -3117,7 +3249,7 @@ fn pools_deep_paths(text: &str) -> Vec<String> {
             cursor += len + 2;
         }
         if segments.len() == 2 {
-            found.push(format!("degenbot_pools::{}::{}", segments[0], segments[1]));
+            found.insert(format!("degenbot_pools::{}::{}", segments[0], segments[1]));
         }
     }
     found

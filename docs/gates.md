@@ -1,16 +1,31 @@
-# Gate ratchets
+# Hook gates and maintained baselines
 
-An index of the repo's **ratchets** and the `architecture_gates.rs` family: a
-ratchet is a gate that fails on *new* occurrences of a defect class while
-grandfathering the existing ones in a census, so the count can only shrink. This
-page is the entry point for finding the right gate, reading its census, and
-adding an entry correctly (the capability-home gates are decided by
-[ADR-084](adr/ADR-084-capability-homes.md)). Each ratchet below lists the
-failure class it prevents (with the incident where known), where the gate body
-lives, where its census/data file lives, how to add an entry, and how to run it
-locally.
+This page documents the gates a person maintains: the **git hooks** declared in
+`scripts/gates.toml` (each with its one CI coverage form) and the
+**maintained baselines** — a ratchet's census, a catalog, a pinned surface —
+that a green run certifies and a change must keep true. A ratchet is a gate that
+fails on *new* occurrences of a defect class while grandfathering the existing
+ones in a census, so the count can only shrink. The capability-home gates are
+decided by [ADR-084](adr/ADR-084-capability-homes.md).
 
-Seven ratchets, plus three gates that are deliberately not ratchets: comment
+It is deliberately not an index of the ordinary test suite. Behavioural, parity,
+measurement and release-verification tests carry their intent beside the code
+they exercise, and the command contract below is their register; listing them
+here would turn every test rename into a docs edit and still lag the tree. What
+belongs here is what a green run cannot say for itself: a hook's trigger and
+scope, a census whose rows a person edits, a catalog whose prose only a person
+can write, and the repair each red path names. A hook with no heading on this
+page fails `just gates-check` ([The gate registry](#the-gate-registry)).
+
+The command contract: `just test` is the default development gate, `just
+pre-push` the local push verdict, `just test-rust` the canonical cargo and
+doc-test gate, and CI the remote full-matrix verdict. The focused `check-*`
+aliases are diagnostics over the same bodies, never additional mandatory
+executions. Each entry below names the failure class it prevents (with the
+incident where known), where the gate body lives, where its census/data file
+lives, how to add an entry, and how to run it locally.
+
+Nine ratchets, plus three gates that are deliberately not ratchets: comment
 hygiene carried a census and now fails outright, the publication plan's check has
 no census to extend, and the environment-surface scan (section 8) enumerates its
 sanctions beside the scanner that applies them. A finding in any of them is an
@@ -25,6 +40,8 @@ edit to the code or the manifests, never a row.
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
+| Pools root surface | `rust/crates/facade/degenbot/tests/architecture_gates.rs::pools_root_surface_is_pinned` | `rust/crates/facade/degenbot/tests/pools_root_surface_census.txt` plus the `POOLS_ROOT_PUB_ITEMS` pin | the workspace suite (`just test-rust-nextest -p degenbot`) |
+| Pools and solve doors | `rust/crates/facade/degenbot/tests/architecture_gates.rs::consumer_paths_cross_only_the_door` (the authored door table) | `rust/crates/facade/degenbot/tests/pools_deep_path_allowlist.txt`; the solve and engine doors carry no census | the workspace suite (`just test-rust-nextest -p degenbot`) |
 | Publication plan check | `scripts/publication_plan.py --check` | none — the withheld population is empty, so a withheld member is a manifest repair and not a row | `just check-publication-plan` |
 | Tool catalog | `scripts/tool_catalog_check.py` | `rust/tools/README.md` (the living catalog itself) | `just check-tool-catalog` |
 | Environment surface | `scripts/env_surface.py` (adapters: `degenbot-config`'s `no_stray_env_reads` and `schema_completeness`; pytest: `tests/test_env_surface.py`) | none — the allowlist lives beside the scanner, and the key inventory is swept from the tree | `python3 scripts/env_surface.py reads`; the adapters run under `just test-rust-affected` / `just test-rust` |
@@ -124,6 +141,8 @@ is a command; where the repair is an edit, it names the file and the rule.
 | pytest noise gate | Fix the call site that sprays (the signatures live in `scripts/pytest_noise_gate.sh`) |
 | Capability catalog | Add the crate to `docs/capabilities.md` |
 | Dependency charter | Update `rust/crates/facade/degenbot/tests/dependency_charter.txt` |
+| Pools root surface | Re-home the name behind a capability module, or bump `POOLS_ROOT_PUB_ITEMS` and the count in the census header in the change that reviews `tests/pools_root_surface_census.txt` |
+| Pools and solve doors | Name the capability module (or the solve door item) instead of the module beneath it; then drop the allowlist row the repoint made stale |
 | Publication plan check | `just bump-version <version>` for a lockstep drift; repair the named cycle, or the withheld member's dependency shape, in the manifests |
 | Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
 | Environment surface | Route the read through `degenbot-config` (the schema key, or a resolver), or add an enumerated, justified entry to `PYTHON_ALLOWLIST` in `scripts/env_surface.py`; for a `DEGENBOT_*` inventory finding, declare the key in `SCHEMA` or classify it in `schema_completeness.rs`'s documented sets |
@@ -147,6 +166,8 @@ it survives by keeping its document true, or it is deleted (ADR-087).
 | pytest noise gate | Exception spray printed after the session ended while the exit code stayed 0 |
 | Capability catalog | **None recorded** — keeps `docs/capabilities.md` complete; 24 of the last 200 commits touch it |
 | Dependency charter | **None recorded** — keeps the charter list current; 2 of the last 200 commits touch it |
+| Pools root surface | The tautological V2 reserve validator (`validate_v2_reserve` refused a value the type already bounds) left the surface in the change that retired it (census header) |
+| Pools and solve doors | The stale direction caught the solve census's own seven rows — no external reference named any of them any more, because the tree reaches the door items directly — so the census retired and the solve door now reports bypasses without one |
 | Tool catalog | **None recorded** — keeps `rust/tools/README.md` complete; 53 of the last 200 commits touch it |
 
 The three unrecorded rows are the repository's highest-churn bookkeeping, and
@@ -779,9 +800,14 @@ directions:
 - a source link must resolve to an existing file inside the repository, and to
   the target's own `src_path`;
 - structural defects fail loudly: a row whose cell count disagrees with its
-  header, a duplicate target identity, a declared row count that disagrees
-  with its table, a missing or nonlocal source link, an ambiguous section, a
-  missing catalog section.
+  header, a duplicate target identity, a missing or nonlocal source link, an
+  ambiguous section, a missing catalog section.
+
+The catalog's headings are section anchors and nothing more: a section heading
+is exactly its name, and a lab heading is the owning package in a code span
+followed by optional prose. No heading declares a row count, so adding or
+retiring a row is a one-line edit to its table, and every count the gate
+reports is counted from the tables themselves.
 
 The catalog's population is not merely what the README declares. The current
 tool packages are discovered from the metadata -- every package whose manifest
@@ -811,15 +837,15 @@ example addition triggers), a `rust/tools` manifest or source, a `rust/examples`
 crate, an example source, one of the two integration-test sources, or the gate
 itself.
 Interpreter: a plain `python3`, standard library only -- the same uv-free
-constraint as sections 6 and 7.
+constraint as section 6.
 `tests/test_tool_catalog_check.py` is the committed negative probe: it drives
 the real gate over a throwaway workspace (a `--metadata` JSON dump standing in
 for the cargo child) and requires the red paths for an added target, a row
 whose target left the manifests, a tool package without a Lab section, a
 duplicated Lab section, a duplicate row, a malformed row, a missing source
 link, source drift, package drift, lane drift, an unknown recipe, nonlocal
-source links, a declared-count disagreement, a current-source integration row
-deleted while its live target remains, an integration row outside the
+source links, a current-source integration row deleted while its live target
+remains, an integration row outside the
 current-source rule, and the fail-closed exits, plus the green paths for the
 secondary-build-shape lane form and the committed workspace itself.
 
@@ -870,34 +896,36 @@ driver-domain, harness, and retired sets reconcile it with `SCHEMA`.
 `rust/crates/facade/degenbot/tests/architecture_gates.rs` is the idiom the
 config-statics gate follows: cargo tests on the umbrella crate, with the crate
 list derived from `cargo metadata` so the scans run under every `cargo test`
-track, and thin justfile recipes as aliases (ADR-043 §10-style precedent). The
-current gates:
+track. The target's own file is the index of its tests; what is worth knowing
+before you edit one is the baselines it maintains and the one walker every
+source scan shares:
 
-- `workspace_membership_is_exact_and_role_grouped`
-- `cli_shell_names_only_allowlisted_externals`
-- `core_crates_are_pyo3_free_under_default_features`
-- `cli_core_is_clap_and_indicatif_free`
-- `one_engine_impl_block`
-- `no_inner_allow_attributes`
-- `one_path_identity_owner_is_declared_once`
-- `the_session_registers_no_path_store_of_its_own`
-- `the_canonical_path_object_carries_no_strategy_policy`
-- `one_position_observer_implementation_is_declared_once`
-- `the_session_registers_no_position_store_of_its_own`
-- `the_position_seam_adds_no_lending_edge_to_the_engine_or_the_core`
-- `the_position_seam_sits_in_the_layer_both_sides_depend_on`
-- `no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type`
-- `core_public_docs_do_not_define_contracts_through_python_symbols`
-- `no_timeout_wrapped_value_sends_or_write_all`
-- `config_derived_statics_are_classified`
-- `capability_catalog_covers_every_public_crate` (ratchet #6 — cataloged in the table above)
-- `dependency_charter_is_respected` (ratchet #7 — cataloged in the table above)
-- `role_edge_direction_is_enforced` (ADR-084 D4 — upward role edges over `tests/role_edge_direction_census.txt`, allowlist empty at the W4 landing)
+- the **authored door table** (`consumer_paths_cross_only_the_door`) judges
+  every consumer path against one row per capability door — the solve door, the
+  four pools root modules, and the engine's `bot_core`/`arb_engine`. A row is a
+  `DoorRule` value (door name, owning crate, repair text, optional census, scan
+  fn); the checker walks the table, so a new door is a row and the census rows
+  of every door are reconciled in both directions (an unlisted bypass fails, and
+  a row with no remaining reference fails as stale). The scanned surface is
+  `rust/crates` and `rust/examples`; the `rust/tools` lab packages are outside
+  it, so their diagnostic reads stay out of the door rows.
+- the **pools root surface pin** (`pools_root_surface_is_pinned`) holds the
+  module set and the exact `POOLS_ROOT_PUB_ITEMS` name count against
+  `tests/pools_root_surface_census.txt`; a red run prints the per-module counts
+  so the review sees what moved.
+- one walker (`for_each_rust_source`) reads every `.rs` file under a directory
+  for every source scan in the target; there is no second traversal.
 
-Several have focused `check-*` aliases (`check-no-inner-allow`,
-`check-engine-impl-blocks`, `check-cli-shell-purity`,
-`check-config-derived-statics`). The full workspace suite is their canonical
-gate; the aliases are for fast diagnosis, not additional mandatory executions.
+Ten focused `check-*` aliases exist for diagnosis:
+`check-no-inner-allow`, `check-no-pyo3-in-cores`, `check-cli-core-purity`,
+`check-cli-shell-purity`, `check-engine-impl-blocks`,
+`check-config-derived-statics`, `check-capability-catalog`,
+`check-profile-policy`, `check-dependency-charter`, and
+`check-cancel-safety`. The full workspace suite is their canonical gate. Each
+alias selects tests by name, and libtest reports a filter that matches nothing
+as a green run of zero tests, so `the_focused_aliases_filter_live_tests` reads
+the justfile's invocations of this target and requires every filter — exact or
+substring — to reach a test here.
 
 ---
 
@@ -927,7 +955,11 @@ all support it (see [The gate registry](#the-gate-registry)).
 `#[test]` to `architecture_gates.rs` that scans the workspace (derive crates
 from `cargo metadata`), and a sibling `<name>_census.txt` whose header states
 the detector, the classes, the format, and the documented blind spots. Make the
-gate **bidirectional** (unlisted hit fails; stale listed entry fails). The
+gate **bidirectional** (unlisted hit fails; stale listed entry fails). A rule
+that judges several authorities the same way is one parameterized test over an
+authored row list — the door table is the example — rather than one test per
+authority; a door with no grandfathered bypass carries no census at all, since
+an empty one would reconcile clean by examining nothing. The
 workspace suite runs it; add a focused `check-*` alias when that aids diagnosis,
 without adding a duplicate pre-push execution. Use the `REGEN_*` opt-in pattern
 for any gate that regenerates an artifact, and name the justfile recipe as the
