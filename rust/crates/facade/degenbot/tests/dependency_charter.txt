@@ -7,14 +7,19 @@
 # each rule over `cargo tree` at single-package, default-feature resolution
 # (one batched spawn per rule, per-crate trees for attribution) and fails if
 # any tree package name starts with a forbidden prefix. A `*` rule applies to
-# every publishable workspace member except the `except` list.
+# every publishable workspace member except the `except` list. Every target and
+# every `except` name must itself be a publishable workspace member: the gate
+# refuses an unknown name by name, because a stale target checks no tree and a
+# vacuous exception withholds nothing.
 #
 # Add a rule when a crate's published contract must exclude a dependency
 # class; never widen a crate's tree silently - either fix the leak or widen
 # the charter WITH a rationale in the same commit.
 #
 # pyo3: the pure-Rust core must stay importable without a Python interpreter
-# (ADR-005); only the binding shell may carry it.
+# (ADR-005); only the binding shell may carry it. The binding shell is
+# `publish = false`, so the publishable-scoped `*` rule already excludes it and
+# pyo3 needs no exception.
 #
 # zstd/zstd-sys: the C-build fixture dependency (ADR-084 D3), and the same lane
 # shape serves every fixture kind. pools keeps it behind the non-default
@@ -23,7 +28,7 @@
 # ADR-068 D7), neither of which single-package default-feature resolution
 # enables; opt-in lanes (`executor-ab-probe`, the recording/replay/drift-gate
 # dev-dependency edges) still compile it, documented residual.
-*: pyo3 zstd ; except degenbot-python
+*: pyo3 zstd
 
 # ADR-098 D1: the generic execution seam is executor-agnostic. The neutral
 # opportunity descriptors (`PathInfo` / `HopInfo`) live in it, and the built-in

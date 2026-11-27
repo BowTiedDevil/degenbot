@@ -27,3 +27,5 @@
 #
 #     just check-publish-blocked --rows
 #
+# then paste the printed rows beneath this header. Never redirect over the
+# file: this header is maintained by hand and a redirect deletes it.

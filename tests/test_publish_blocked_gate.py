@@ -48,6 +48,9 @@ here can be satisfied by a re-typed copy of the gate's logic.
   * ``test_an_unreadable_manifest_refuses_not_a_finding`` -- the exit-code
     distinction: a mismatch is exit 1, a workspace the plan cannot read is
     the exit-2 refusal.
+  * ``test_the_repair_pastes_beneath_the_header_instead_of_redirecting`` --
+    the census header is authored by hand, so the gate's repair is a paste
+    beneath it, never a redirect that truncates the file.
   * ``test_the_committed_census_matches_the_tree`` -- the real gate over the
     real tree.
 """
@@ -350,6 +353,22 @@ def test_an_unreadable_manifest_refuses_not_a_finding(tmp_path: Path) -> None:
     result = _run(tree)
     assert result.returncode == 2
     assert "refusing to certify" in result.stderr
+
+
+def test_the_repair_pastes_beneath_the_header_instead_of_redirecting(tmp_path: Path) -> None:
+    """``--rows > census`` truncates the hand-maintained header; the repair must not.
+
+    Every row beneath the census header is derived, and the header itself is
+    authored, so the gate's own instruction is a paste beneath that header. A
+    redirect over the file deletes the header the document depends on.
+    """
+    tree = _tree(tmp_path, {"b": _deps(_GIT_DEP.format(version=_VERSIONED))})
+    _census(tree, [])
+    result = _run(tree)
+    assert result.returncode == 1
+    assert "--rows >" not in result.stdout
+    assert "paste the rows beneath the census header" in result.stdout
+    assert "never redirect over the file" in result.stdout
 
 
 def test_the_committed_census_matches_the_tree() -> None:

@@ -643,7 +643,7 @@ rather than promises:
 | Session consumer | `degenbot_batch_executor` | `SessionConsumer`, `ConsumerPolicy`, `SessionClock`, `ConsumerReport`, `SessionReport` | yes — the Batch execution row |
 
 **Dependency charter (ADR-084 D3): no rule widens.** The charter's live rules are
-`* : pyo3 zstd ; except degenbot-python`. `degenbot-batch-executor` already
+`* : pyo3 zstd`. `degenbot-batch-executor` already
 declares `degenbot-bot` (its `Cargo.toml`), and `SessionConsumer` adds no pyo3
 and no C-build dependency; the relocation moves code *down* the existing edge.
 No per-crate rule needs a new line, and nothing is whitelisted: if the consumer

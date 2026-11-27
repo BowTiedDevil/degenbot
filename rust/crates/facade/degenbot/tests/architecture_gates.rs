@@ -2266,32 +2266,115 @@ fn tree_entry_name(line: &str) -> &str {
     entry.split(" v").next().unwrap_or(entry).trim()
 }
 
+/// One `dependency_charter.txt` rule, with its 1-based source line so a
+/// refusal can name the line to repair.
+struct CharterRule {
+    line: usize,
+    targets: Vec<String>,
+    prefixes: Vec<String>,
+    except: Vec<String>,
+}
+
+/// One expanded rule: the member crates it applies to and the forbidden
+/// package-name prefixes it forbids.
+type CharterGroup = (Vec<String>, Vec<String>);
+
+/// Expansion outcome: the per-rule groups, or the named defect that refused
+/// them.
+type CharterExpansion = Result<Vec<CharterGroup>, String>;
+
+/// Parse charter text into rules. A syntax defect fails with the line that
+/// needs repair; only the committed file is parsed.
+fn parse_charter(charter: &str) -> Vec<CharterRule> {
+    let mut rules = Vec::new();
+    for (index, raw) in charter.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let lineno = index + 1;
+        let (head, except) = match line.split_once(';') {
+            Some((head, clause)) => {
+                let clause = clause.trim();
+                assert!(
+                    clause.starts_with("except"),
+                    "dependency_charter.txt:{lineno}: `; except <crate>...` expected, found {clause:?}"
+                );
+                (
+                    head,
+                    clause
+                        .strip_prefix("except")
+                        .expect("asserted `except` keyword")
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>(),
+                )
+            }
+            None => (line, Vec::new()),
+        };
+        let (targets, prefixes) = head.split_once(':').unwrap_or((head, ""));
+        let targets: Vec<String> = targets.split_whitespace().map(str::to_owned).collect();
+        let prefixes: Vec<String> = prefixes.split_whitespace().map(str::to_owned).collect();
+        assert!(
+            !targets.is_empty() && !prefixes.is_empty(),
+            "dependency_charter.txt:{lineno}: a rule needs `<targets> : <prefixes>` with at least one of each"
+        );
+        rules.push(CharterRule {
+            line: lineno,
+            targets,
+            prefixes,
+            except,
+        });
+    }
+    rules
+}
+
 /// Expand charter rules into per-rule (member crates, forbidden prefixes)
-/// groups.
+/// groups. Every exception and every target is refused by name when it is not
+/// a publishable member: a stale target checks no tree, and a vacuous
+/// exception withholds nothing. Exceptions are validated on every rule shape,
+/// so an explicit-target rule cannot carry an unknown name unchecked.
 fn expand_charter_rules(
-    rules: &[(Vec<String>, Vec<String>, Vec<String>)],
-    members: &[String],
-) -> Vec<(Vec<String>, Vec<String>)> {
-    let mut groups: Vec<(Vec<String>, Vec<String>)> = Vec::new();
-    for (targets, prefixes, except) in rules {
-        let crates = if targets.len() == 1 && targets[0] == "*" {
+    rules: &[CharterRule],
+    members: &std::collections::BTreeSet<String>,
+) -> CharterExpansion {
+    let mut groups: Vec<CharterGroup> = Vec::new();
+    for rule in rules {
+        for name in &rule.except {
+            ensure_publishable_member(rule, "except", name, members)?;
+        }
+        let crates = if rule.targets.len() == 1 && rule.targets[0] == "*" {
             members
                 .iter()
-                .filter(|member| !except.contains(member))
+                .filter(|member| !rule.except.contains(member))
                 .cloned()
                 .collect()
         } else {
-            for target in targets {
-                assert!(
-                    members.contains(target),
-                    "charter rule names non-member crate {target:?}"
-                );
+            for target in &rule.targets {
+                ensure_publishable_member(rule, "target", target, members)?;
             }
-            targets.clone()
+            rule.targets.clone()
         };
-        groups.push((crates, prefixes.clone()));
+        groups.push((crates, rule.prefixes.clone()));
     }
-    groups
+    Ok(groups)
+}
+
+/// Refuse a charter name that is not a publishable workspace member.
+fn ensure_publishable_member(
+    rule: &CharterRule,
+    kind: &str,
+    name: &str,
+    members: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    if members.contains(name) {
+        return Ok(());
+    }
+    Err(format!(
+        "dependency_charter.txt:{}: rule {kind} {name:?} is not a publishable workspace member; \
+         a name outside that set withholds or checks nothing",
+        rule.line
+    ))
 }
 
 /// ADR-084 D3: the dependency charter is the published contract. Every rule
@@ -2317,7 +2400,7 @@ fn dependency_charter_is_respected() {
         .expect("cargo metadata spawn");
     assert!(out.status.success(), "cargo metadata failed");
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
-    let members: Vec<String> = v["packages"]
+    let members: std::collections::BTreeSet<String> = v["packages"]
         .as_array()
         .expect("packages array")
         .iter()
@@ -2327,47 +2410,13 @@ fn dependency_charter_is_respected() {
         .collect();
     assert!(!members.is_empty(), "no publishable members found");
 
-    // Parse rules.
-    let mut rules: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
-    for line in charter.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (head, except) = match line.split_once(';') {
-            Some((head, except)) => (
-                head,
-                except
-                    .trim()
-                    .strip_prefix("except")
-                    .expect("except clause")
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>(),
-            ),
-            None => (line, Vec::new()),
-        };
-        let (targets, prefixes) = head
-            .split_once(':')
-            .expect("charter rule needs `<targets> : <prefixes>`");
-        let targets = targets
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        let prefixes = prefixes
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        assert!(
-            !targets.is_empty() && !prefixes.is_empty(),
-            "empty rule: {line}"
-        );
-        rules.push((targets, prefixes, except));
-    }
+    let rules = parse_charter(&charter);
     assert!(!rules.is_empty(), "dependency charter lost its rules");
 
     // Expand rules into per-rule (crates, forbidden prefixes) groups.
-    let groups = expand_charter_rules(&rules, &members);
+    let expansion = expand_charter_rules(&rules, &members);
+    assert!(expansion.is_ok(), "{expansion:?}");
+    let groups = expansion.expect("charter names only publishable members");
     let checks: usize = groups.iter().map(|(crates, _)| crates.len()).sum();
     assert!(checks >= 30, "charter coverage collapsed: {checks} checks");
 
@@ -2406,6 +2455,69 @@ fn dependency_charter_is_respected() {
     assert!(
         violations.is_empty(),
         "dependency charter violations (ADR-084 D3): {violations:#?}"
+    );
+}
+
+/// Red fixture for charter name validation: an `except` naming a crate cargo
+/// does not publish (the binding shell is `publish = false`) withholds
+/// nothing, so it must be refused by name rather than silently expanded.
+#[test]
+fn charter_refuses_a_vacuous_exception() {
+    let members: std::collections::BTreeSet<String> =
+        ["degenbot-core".to_owned()].into_iter().collect();
+    let rules = parse_charter("*: pyo3 zstd ; except degenbot-python\n");
+    let defect =
+        expand_charter_rules(&rules, &members).expect_err("a vacuous exception must be refused");
+    assert!(defect.contains("dependency_charter.txt:1"), "{defect}");
+    assert!(defect.contains("except \"degenbot-python\""), "{defect}");
+    assert!(
+        defect.contains("not a publishable workspace member"),
+        "{defect}"
+    );
+}
+
+/// Red fixture for the target side of the same validation: a rule naming no
+/// publishable member checks no tree, so it must be refused by name.
+#[test]
+fn charter_refuses_an_unknown_target() {
+    let members: std::collections::BTreeSet<String> =
+        ["degenbot-core".to_owned()].into_iter().collect();
+    let rules = parse_charter("degenbot-nope: pyo3\n");
+    let defect =
+        expand_charter_rules(&rules, &members).expect_err("an unknown target must be refused");
+    assert!(defect.contains("target \"degenbot-nope\""), "{defect}");
+    assert!(
+        defect.contains("not a publishable workspace member"),
+        "{defect}"
+    );
+}
+
+/// An exception that names a publishable member subtracts exactly that member.
+#[test]
+fn charter_exception_subtracts_a_publishable_member() {
+    let members: std::collections::BTreeSet<String> =
+        ["degenbot-core".to_owned(), "degenbot-pools".to_owned()]
+            .into_iter()
+            .collect();
+    let rules = parse_charter("*: pyo3 ; except degenbot-core\n");
+    let groups = expand_charter_rules(&rules, &members).expect("publishable names");
+    assert_eq!(groups[0].0, vec!["degenbot-pools".to_owned()]);
+}
+
+/// Red fixture for the grammar's exception on an explicit-target rule: the
+/// target is publishable, so only the unknown exception can fail the rule.
+#[test]
+fn charter_refuses_an_unknown_exception_on_an_explicit_target() {
+    let members: std::collections::BTreeSet<String> =
+        ["degenbot-core".to_owned()].into_iter().collect();
+    let rules = parse_charter("degenbot-core: pyo3 ; except degenbot-nope\n");
+    let defect = expand_charter_rules(&rules, &members)
+        .expect_err("an unknown exception must be refused on any target shape");
+    assert!(defect.contains("dependency_charter.txt:1"), "{defect}");
+    assert!(defect.contains("except \"degenbot-nope\""), "{defect}");
+    assert!(
+        defect.contains("not a publishable workspace member"),
+        "{defect}"
     );
 }
 

@@ -71,7 +71,7 @@ is a command; where the repair is an edit, it names the file and the rule.
 | pytest noise gate | Fix the call site that sprays (the signatures live in `scripts/pytest_noise_gate.sh`) |
 | Capability catalog | Add the crate to `docs/capabilities.md` |
 | Dependency charter | Update `rust/crates/facade/degenbot/tests/dependency_charter.txt` |
-| Publish-blocked census | `just check-publish-blocked --rows > scripts/publish-blocked-census.txt` |
+| Publish-blocked census | Run `just check-publish-blocked --rows`, then paste the rows beneath the census header (never redirect over the file: that deletes the header) |
 | Tool catalog | Add or repair the row in `rust/tools/README.md`, then re-run `just check-tool-catalog` |
 | Parity ledger | Reconcile `docs/architecture/rust-settlement-bot-parity.md` with the boot oracle |
 | Executor release ratchet | `python3 scripts/executor_release_ratchet.py generate`, only while adding a release |
@@ -507,8 +507,8 @@ only as a reviewed row carrying the reason the manifests imply.
 
 
 **Regenerating.** `just check-publish-blocked --rows` prints the rows the
-manifests imply (sorted, reasons included); paste them over the rows section.
-The header is maintained by hand.
+manifests imply (sorted, reasons included). Paste them beneath the
+hand-maintained header; never redirect over the file, which would delete it.
 
 
 **Run it.** `just check-publish-blocked` — also a dependency of

@@ -109,8 +109,9 @@ Modes
     just check-publish-blocked --rows     # the rows the manifests imply
     just check-publish-blocked --blocked  # the member names to withhold
 
-`--rows` is the regeneration form: paste its output over the census rows
-section (the header is maintained by hand).
+`--rows` is the regeneration form: it prints the rows the manifests imply,
+sorted. Paste them beneath the census's hand-maintained header; never redirect
+over the file, which would delete that header.
 
 
 Scope
@@ -251,7 +252,11 @@ def main(argv: list[str]) -> int:
                 "[workspace.package].version and every internal requirement together"
             )
         if census_findings:
-            print("fix: just check-publish-blocked --rows > scripts/publish-blocked-census.txt")
+            print(
+                "fix: just check-publish-blocked --rows, then paste the rows beneath the "
+                "census header -- never redirect over the file, which would delete the "
+                "hand-maintained header"
+            )
         return 1
     withheld = ", ".join(sorted(rows)) if rows else "none"
     print(f"publish-blocked census reconciled; withheld from publish-dry-run: {withheld}")
